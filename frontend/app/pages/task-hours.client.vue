@@ -22,12 +22,12 @@ const allUsers = ref<any[]>([])
 const updatingItemId = ref<string | null>(null)
 const mainTaskId = ref<string | null>(null)
 const currentUserId = ref<string | null>(null)
-const showModal = ref(false)
-const showReportModal = ref(false)
+// const showModal = ref(false) // Removed
+// const showReportModal = ref(false) // Removed
 const isCreating = ref(false)
-const isReporting = ref(false)
-const modalError = ref<string | null>(null)
-const reportModalError = ref<string | null>(null)
+// const isReporting = ref(false) // Removed
+const modalError = ref<string | null>(null) // Reused as SidePanel Error
+// const reportModalError = ref<string | null>(null) // Removed
 const openTaskIds = ref(new Set<string>())
 const formData = ref({
     hours: '',
@@ -45,11 +45,10 @@ const smartProcessId = ref(1164)
 
 // --- HELPERS ---
 // @ts-ignore
-const BX24 = window.BX24; // Assume global or provided
-
 const callMethodPromise = (method: string, params: any): Promise<any> => {
     return new Promise((resolve, reject) => {
         // @ts-ignore
+        const BX24 = window.BX24;
         BX24.callMethod(method, params, (result: any) => {
             if (result.error()) reject(result.error());
             else resolve(result.data());
@@ -60,6 +59,7 @@ const callMethodPromise = (method: string, params: any): Promise<any> => {
 const callBatchPromise = (commands: any): Promise<any> => {
     return new Promise((resolve) => {
         // @ts-ignore
+        const BX24 = window.BX24;
         BX24.callBatch(commands, (result: any) => resolve(result));
     });
 };
@@ -255,6 +255,20 @@ const totalStats = computed(() => {
 });
 
 // Methods
+const selectedTaskTitle = ref('');
+
+const selectTaskForEntry = (taskId: string, title: string) => {
+    formData.value.targetTaskId = taskId;
+    selectedTaskTitle.value = title;
+    // Don't clear form data aggressively, maybe user wants to add multiple entries
+    if (!formData.value.hours) formData.value.hours = ''; 
+    modalError.value = null; // Reusing this for side panel error
+    console.log('DEBUG: Selected Task', taskId);
+};
+
+// handleOpenModal removed
+// handleTransferToReport removed
+
 const handleToggleHours = async (itemId: string) => {
     updatingItemId.value = itemId;
     let itemToUpdate: any = null;
@@ -275,6 +289,7 @@ const handleToggleHours = async (itemId: string) => {
     const currentIsConsidered = itemToUpdate[IS_CONSIDERED_FIELD_CODE] === true || itemToUpdate[IS_CONSIDERED_FIELD_CODE] === 'Y';
     
     // @ts-ignore
+    const BX24 = window.BX24;
     BX24.callMethod('crm.item.update', {
         entityTypeId: smartProcessId.value,
         id: itemId,
@@ -291,7 +306,7 @@ const handleCreateHours = async () => {
     modalError.value = null;
     if (!formData.value.hours || parseFloat(formData.value.hours) <= 0) { modalError.value = 'Некорректные часы'; return; }
     if (!formData.value.description.trim()) { modalError.value = 'Нет описания'; return; }
-    if (!formData.value.targetTaskId) { modalError.value = 'Нет задачи'; return; }
+    if (!formData.value.targetTaskId) { modalError.value = 'Выберите задачу из списка'; return; }
     
     isCreating.value = true;
     
@@ -299,6 +314,7 @@ const handleCreateHours = async () => {
         const hierarchy = await getTaskHierarchy(formData.value.targetTaskId!);
         
         // @ts-ignore
+        const BX24 = window.BX24;
         BX24.callMethod('crm.item.add', {
             entityTypeId: smartProcessId.value,
             fields: {
@@ -317,7 +333,11 @@ const handleCreateHours = async () => {
             if (result.error()) {
                 modalError.value = result.error().toString();
             } else {
-                showModal.value = false;
+                // Success: clear form mostly
+                formData.value.hours = '';
+                formData.value.description = '';
+                // Keep Date and Employee
+                // Refresh
                 if (mainTaskId.value) fetchData(mainTaskId.value);
             }
         });
@@ -328,69 +348,6 @@ const handleCreateHours = async () => {
     }
 };
 
-const handleTransferToReport = () => {
-    reportModalError.value = null;
-    if (totalStats.value.totalConsidered <= 0) {
-        reportModalError.value = "Нет часов для переноса";
-        return;
-    }
-    
-    setIsReporting.value = true;
-    const itemsToTransfer: any[] = [];
-    
-    const collect = (nodes: any[]) => {
-        nodes.forEach(node => {
-            node.items.forEach((item: any) => {
-                const isCons = item[IS_CONSIDERED_FIELD_CODE] === true || item[IS_CONSIDERED_FIELD_CODE] === 'Y';
-                if (isCons && (parseFloat(item[HOURS_FIELD_CODE]) || 0) > 0) {
-                    itemsToTransfer.push(item);
-                }
-            });
-            if (node.children.length > 0) collect(node.children);
-        });
-    }
-    collect(taskTree.value);
-    
-    if (itemsToTransfer.length === 0) {
-        setIsReporting.value = false;
-        showReportModal.value = false;
-        return;
-    }
-    
-    const batchCommands = itemsToTransfer.map(item => {
-        const hours = parseFloat(item[HOURS_FIELD_CODE]) || 0;
-        return ['task.elapseditem.add', {
-            TASKID: item[TASK_ID_FIELD_CODE],
-            FIELDS: {
-                SECONDS: Math.round(hours * 3600),
-                USER_ID: item[EMPLOYEE_FIELD_CODE] || currentUserId.value,
-                COMMENT_TEXT: item[DESCRIPTION_FIELD_CODE] || item.title || `Списание ${hours.toFixed(2)}`
-            }
-        }];
-    });
-    
-    // @ts-ignore
-    BX24.callBatch(batchCommands, () => {
-        setIsReporting.value = false;
-        showReportModal.value = false;
-        // @ts-ignore
-        BX24.UI.Notification.Center.show({ content: "Перенос успешно выполнен" });
-    });
-};
-
-const handleOpenModal = (taskId: string) => {
-    formData.value = {
-        hours: '',
-        description: '',
-        date: new Date().toISOString().split('T')[0],
-        employeeId: currentUserId.value || '',
-        targetTaskId: taskId,
-        isConsidered: true
-    };
-    modalError.value = null;
-    showModal.value = true;
-};
-
 const toggleGroup = (taskId: string) => {
     if (openTaskIds.value.has(taskId)) openTaskIds.value.delete(taskId);
     else openTaskIds.value.add(taskId);
@@ -398,16 +355,48 @@ const toggleGroup = (taskId: string) => {
 
 const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('ru-RU') : '-';
 
+// --- CONFIGURATION ---
+useHead({
+  script: [
+    { src: 'https://api.bitrix24.com/api/v1/', defer: true }
+  ]
+})
+
+// @ts-ignore
+const getBX24 = () => window.BX24;
+
+const waitForBX24 = () => {
+    return new Promise<void>((resolve, reject) => {
+        let attempts = 0;
+        const check = () => {
+            if (getBX24()) {
+                resolve();
+            } else {
+                attempts++;
+                if (attempts > 20) { // 2 seconds (20 * 100ms)
+                    reject(new Error("BX24 JS SDK not loaded"));
+                } else {
+                    setTimeout(check, 100);
+                }
+            }
+        }
+        check();
+    });
+};
+
 // Init
-onMounted(() => {
-    // @ts-ignore
-    if (typeof BX24 === 'undefined') {
-        error.value = "BX24 JS SDK not found. Open inside Bitrix24.";
+onMounted(async () => {
+    try {
+        await waitForBX24();
+    } catch (e) {
+        error.value = "BX24 JS SDK not found. Open inside Bitrix24 or check internet connection.";
         isLoading.value = false;
         return;
     }
     
     // @ts-ignore
+    const BX24 = window.BX24;
+    
     BX24.init(() => {
         // @ts-ignore
         const placementInfo = BX24.placement.info();
@@ -420,15 +409,13 @@ onMounted(() => {
              tid = opts.ID || opts.taskId || opts.id || null;
         }
         
-        // Fallback for testing purely in browser with mock info if needed, but here assuming B24 frame
-        // If no placement, maybe we can pick a default or show error.
-        
         if (!tid) {
-            // Development Mock ID if needed?
-            // tid = '123'; 
-            error.value = "Не удалось определить ID задачи (Placement Options пуст). Откройте как вкладку задачи.";
-            isLoading.value = false;
-            return;
+            // Try getting from current slider if possible, but usually placement info is best.
+            // fallback to see if we can get it from URL or something? 
+             // tid = '123'; // Debug
+             error.value = "Не удалось определить ID задачи (Placement Options пуст). Откройте как вкладку задачи.";
+             isLoading.value = false;
+             return;
         }
         
         mainTaskId.value = tid;
@@ -456,148 +443,206 @@ watch(smartProcessId, () => {
     if (mainTaskId.value) fetchData(mainTaskId.value);
 });
 
+// Auto-select main task when loaded
+watch([mainTaskId, taskTree], () => {
+    if (mainTaskId.value && !formData.value.targetTaskId && taskTree.value.length > 0) {
+        // Find title for main task
+        const findTitle = (nodes: any[]): string | null => {
+            for (const node of nodes) {
+                if (String(node.taskId) === String(mainTaskId.value)) return node.taskTitle;
+                if (node.children) {
+                    const found = findTitle(node.children);
+                    if (found) return found;
+                }
+            }
+            return null;
+        }
+        const title = findTitle(taskTree.value) || 'Текущая задача';
+        selectTaskForEntry(mainTaskId.value, title);
+    }
+}, { immediate: true });
+
 // Helpers for template (format currency)
 const formatCurrency = (val: number) => val.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' });
 </script>
 
 <template>
-    <div class="h-full flex flex-col bg-slate-50 min-h-screen">
-        <!-- Header -->
-        <header class="p-4 bg-white border-b shrink-0 space-y-4">
-            <!-- Settings Spoiler -->
-             <div class="border rounded-lg bg-slate-50 overflow-hidden">
-                <button @click="isSettingsOpen = !isSettingsOpen" class="w-full flex justify-between items-center p-3 text-left">
-                    <div class="flex items-center">
-                        <span class="font-semibold text-slate-800">Настройки расчета и данных</span>
-                    </div>
-                    <span>{{ isSettingsOpen ? '▲' : '▼' }}</span>
-                </button>
-                <div v-if="isSettingsOpen" class="p-4 border-t bg-white grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">Стоимость часа для клиента</label>
-                        <input type="number" v-model.number="clientHourRate" class="w-full border p-2 rounded" />
-                    </div>
-                     <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">ID Смарт-процесса</label>
-                        <input type="number" v-model.number="smartProcessId" class="w-full border p-2 rounded" />
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Cards -->
-             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                 <div class="p-3 bg-white rounded border shadow-sm">
-                     <p class="text-xs text-slate-500">Всего</p>
+    <div class="h-full flex bg-slate-50 min-h-screen overflow-hidden">
+        <!-- LEFT: Task Tree (Scrollable) -->
+        <main class="flex-1 flex flex-col min-w-0 border-r border-slate-200">
+             <!-- Header Stats -->
+             <div class="bg-white border-b p-4 grid grid-cols-2 md:grid-cols-4 gap-4 shrink-0">
+                 <div class="px-3 py-2 bg-slate-50 rounded border">
+                     <p class="text-xs text-slate-500 uppercase font-semibold">Всего</p>
                      <p class="text-xl font-bold text-blue-600">{{ totalStats.totalHours.toFixed(2) }} ч</p>
                  </div>
-                 <div class="p-3 bg-white rounded border shadow-sm">
-                     <p class="text-xs text-slate-500">Учитываемые</p>
+                 <div class="px-3 py-2 bg-slate-50 rounded border">
+                     <p class="text-xs text-slate-500 uppercase font-semibold">Учитываемые</p>
                      <p class="text-xl font-bold text-green-600">{{ totalStats.totalConsidered.toFixed(2) }} ч</p>
                  </div>
-                 <div class="p-3 bg-white rounded border shadow-sm">
-                     <p class="text-xs text-slate-500">Не учитываемые</p>
+                 <div class="px-3 py-2 bg-slate-50 rounded border">
+                     <p class="text-xs text-slate-500 uppercase font-semibold">Не учитываемые</p>
                      <p class="text-xl font-bold text-red-600">{{ totalStats.totalUnconsidered.toFixed(2) }} ч</p>
                  </div>
                  
-                 <div class="col-span-2 md:col-span-1 flex gap-2">
-                     <button @click="handleOpenModal(mainTaskId!)" :disabled="!mainTaskId" class="bg-green-500 text-white p-2 rounded flex-1 hover:bg-green-600 disabled:opacity-50">
-                         + Отразить
-                     </button>
-                     <button @click="showReportModal = true" :disabled="totalStats.totalConsidered <= 0" class="bg-blue-500 text-white p-2 rounded flex-1 hover:bg-blue-600 disabled:opacity-50">
-                         В отчет
-                     </button>
+                 <!-- Settings Toggle -->
+                 <div class="flex items-center justify-end">
+                    <button @click="isSettingsOpen = !isSettingsOpen" class="text-slate-500 hover:text-slate-700 p-2 rounded hover:bg-slate-100 flex items-center gap-2">
+                        <span class="text-sm">Настройки</span>
+                        <span>{{ isSettingsOpen ? '▲' : '▼' }}</span>
+                    </button>
                  </div>
              </div>
-        </header>
-        
-        <!-- Main Content -->
-        <main class="flex-1 overflow-y-auto p-4">
-             <div v-if="isLoading" class="text-center p-10 text-slate-500">Загрузка...</div>
-             <div v-else-if="error" class="text-center p-10 text-red-600 bg-red-50 rounded">{{ error }}</div>
-             <div v-else class="max-w-7xl mx-auto space-y-4">
-                 <template v-if="taskTree.length">
-                     <div v-for="node in taskTree" :key="node.taskId" class="bg-white border rounded-lg overflow-hidden shadow-sm">
-                        <!-- Group Header -->
-                        <div class="p-3 bg-slate-50 border-b flex justify-between items-center">
-                            <div @click="toggleGroup(node.taskId)" class="cursor-pointer flex-1">
-                                <h3 class="font-bold text-slate-900">{{ node.taskTitle }}</h3>
-                                <p class="text-xs text-slate-500">ID: {{ node.taskId }}</p>
-                            </div>
-                            <div class="text-right flex gap-4 items-center">
-                                <div v-if="clientHourRate > 0" class="border-r pr-4">
-                                     <p class="text-xs text-blue-600">Клиенту</p>
-                                     <p class="font-bold">{{ formatCurrency(node.cumulativeConsidered * clientHourRate) }}</p>
-                                </div>
+             
+             <!-- Settings Panel Inline -->
+             <div v-if="isSettingsOpen" class="bg-slate-50 border-b p-4 grid grid-cols-1 md:grid-cols-2 gap-4 shrink-0 transition-all">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Стоимость часа</label>
+                    <input type="number" v-model.number="clientHourRate" class="w-full border p-2 rounded bg-white text-sm" />
+                </div>
+                 <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">ID Смарт-процесса</label>
+                    <input type="number" v-model.number="smartProcessId" class="w-full border p-2 rounded bg-white text-sm" />
+                </div>
+            </div>
+
+             <!-- Scrollable List -->
+             <div class="flex-1 overflow-y-auto p-4 space-y-4">
+                 <div v-if="isLoading" class="text-center py-10 text-slate-400">Загрузка структуры...</div>
+                 <div v-else-if="error" class="text-center py-10 text-red-600 bg-red-50 rounded m-4">{{ error }}</div>
+                 <template v-else-if="taskTree.length">
+                     <div 
+                        v-for="node in taskTree" 
+                        :key="node.taskId" 
+                        class="bg-white border rounded-lg overflow-hidden shadow-sm transition-shadow hover:shadow-md"
+                        :class="{'ring-2 ring-blue-500 ring-offset-2': formData.targetTaskId === node.taskId}"
+                     >
+                        <div class="p-3 bg-slate-50 border-b flex justify-between items-center select-none group">
+                            <div @click="toggleGroup(node.taskId)" class="cursor-pointer flex-1 flex items-center gap-2">
+                                <span class="text-slate-400 transform transition-transform" :class="{'rotate-180': openTaskIds.has(node.taskId)}">▼</span>
                                 <div>
-                                    <span class="text-green-600 font-bold block">{{ node.cumulativeConsidered.toFixed(2) }} ч</span>
-                                    <span class="text-red-600 font-bold block">{{ node.cumulativeUnconsidered.toFixed(2) }} ч</span>
+                                    <h3 class="font-bold text-slate-800 text-sm md:text-base group-hover:text-blue-600 transition-colors">{{ node.taskTitle }}</h3>
+                                    <p class="text-[10px] text-slate-400">ID: {{ node.taskId }}</p>
                                 </div>
-                                <button @click="toggleGroup(node.taskId)" class="text-slate-400 hover:text-slate-600">
-                                    {{ openTaskIds.has(node.taskId) ? '▲' : '▼' }}
+                            </div>
+                            
+                            <!-- Select Button -->
+                            <div class="flex items-center gap-3">
+                                <div class="text-right hidden sm:block">
+                                    <span class="text-green-600 font-bold block text-sm">{{ node.cumulativeConsidered.toFixed(2) }}</span>
+                                </div>
+                                <button 
+                                    @click="selectTaskForEntry(node.taskId, node.taskTitle)" 
+                                    class="text-xs px-3 py-1.5 rounded-full border transition-colors"
+                                    :class="formData.targetTaskId === node.taskId ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:text-blue-500'"
+                                >
+                                    {{ formData.targetTaskId === node.taskId ? 'Выбрано' : 'Выбрать' }}
                                 </button>
                             </div>
                         </div>
                         
-                        <!-- Items -->
+                        <!-- Recursive Content -->
                         <div v-if="openTaskIds.has(node.taskId)">
-                            <!-- Direct Items -->
-                            <div v-for="item in node.items" :key="item.id" class="p-3 border-t flex justify-between items-start hover:bg-slate-50">
+                            <!-- Items List -->
+                            <div v-for="item in node.items" :key="item.id" class="p-3 border-t flex justify-between items-start hover:bg-slate-50 pl-8">
                                 <div>
-                                    <p class="font-semibold text-slate-800">{{ item.title || 'Без названия' }}</p>
-                                    <p class="text-xs text-slate-500">
+                                    <p class="font-medium text-slate-700 text-sm">{{ item.title || 'Без названия' }}</p>
+                                    <p class="text-[10px] text-slate-400">
                                         {{ users[item[EMPLOYEE_FIELD_CODE]] || 'Неизвестно' }} • {{ formatDate(item.createdTime) }}
                                     </p>
                                 </div>
                                 <div class="flex items-center gap-2">
-                                    <span :class="{'text-green-600': item[IS_CONSIDERED_FIELD_CODE] === 'Y', 'text-red-600': item[IS_CONSIDERED_FIELD_CODE] !== 'Y'}" class="font-bold">
-                                        {{ parseFloat(item[HOURS_FIELD_CODE] || 0).toFixed(2) }}ч
+                                    <span :class="{'text-green-600': item[IS_CONSIDERED_FIELD_CODE] === 'Y', 'text-red-600': item[IS_CONSIDERED_FIELD_CODE] !== 'Y'}" class="font-bold text-sm">
+                                        {{ parseFloat(item[HOURS_FIELD_CODE] || 0).toFixed(2) }}
                                     </span>
-                                    <button @click="handleToggleHours(item.id)" :disabled="updatingItemId === item.id" class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200">
-                                        {{ updatingItemId === item.id ? '...' : 'Переключить' }}
+                                    <button @click="handleToggleHours(item.id)" :disabled="updatingItemId === item.id" class="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded hover:bg-slate-200">
+                                        {{ updatingItemId === item.id ? '...' : 'Изменить' }}
                                     </button>
                                 </div>
                             </div>
-                            
-                            <!-- Recursive Children -->
-                             <div v-if="node.children && node.children.length" class="pl-4 border-t bg-slate-50 p-2">
-                                 <!-- Recursion would ideally be a separate component, but simpler to flat map or just render 1 level deep if structure permits. 
-                                      The React code uses recursion <TaskGroup ... level={level+1}>.
-                                      In Vue, we use <RecursiveTaskGroup> component. 
-                                      For simplicity in this single-file output, I will refrain from strict recursion inside the SAME template easily without self-reference.
-                                      I will define a self-referencing component or just trust that the tree is flattened? 
-                                      React code handled it recursively. 
-                                      Vue <script setup> allows recursive components if named.
-                                 -->
-                                 <RecursiveTaskGroup v-for="child in node.children" :key="child.taskId" :node="child" :clientHourRate="clientHourRate" :users="users" :openTaskIds="openTaskIds" @toggle="toggleGroup" @toggleHours="handleToggleHours" />
-                             </div>
+
+                            <!-- Children Tasks -->
+                            <div v-if="node.children && node.children.length" class="pl-4 border-t bg-slate-50/50 p-2 space-y-2">
+                                 <RecursiveTaskGroup 
+                                    v-for="child in node.children" 
+                                    :key="child.taskId" 
+                                    :node="child" 
+                                    :clientHourRate="clientHourRate" 
+                                    :users="users" 
+                                    :openTaskIds="openTaskIds" 
+                                    @toggle="toggleGroup" 
+                                    @toggleHours="handleToggleHours"
+                                    @select="selectTaskForEntry"
+                                    :selectedTaskId="formData.targetTaskId" 
+                                />
+                            </div>
                         </div>
                      </div>
                  </template>
-                 <div v-else class="text-center py-10 text-slate-500">Нет данных</div>
+                 <div v-else class="text-center py-20 text-slate-400">Нет доступных задач для отображения.</div>
              </div>
         </main>
-        
-        <!-- Modals would go here (simplified for brevity, logic is same as React) -->
-         <div v-if="showModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-             <div class="bg-white p-6 rounded shadow-lg max-w-md w-full">
-                 <h3 class="font-bold text-lg mb-4">Отразить часы</h3>
-                 <div class="space-y-3">
-                     <select v-model="formData.employeeId" class="w-full border p-2 rounded">
-                         <option v-for="u in allUsers" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
-                     </select>
-                     <input type="number" v-model="formData.hours" placeholder="Часы" class="w-full border p-2 rounded" />
-                     <textarea v-model="formData.description" placeholder="Описание" class="w-full border p-2 rounded"></textarea>
-                     <input type="date" v-model="formData.date" class="w-full border p-2 rounded" />
-                     <label class="flex items-center gap-2">
-                         <input type="checkbox" v-model="formData.isConsidered" /> Учитывать
-                     </label>
-                 </div>
-                 <div class="flex gap-2 mt-4">
-                     <button @click="showModal = false" class="flex-1 bg-gray-200 p-2 rounded">Отмена</button>
-                     <button @click="handleCreateHours" :disabled="isCreating" class="flex-1 bg-green-500 text-white p-2 rounded">Сохранить</button>
-                 </div>
-             </div>
-         </div>
+
+        <!-- RIGHT: Side Panel (Fixed Width) -->
+        <aside class="w-96 bg-white border-l border-slate-200 flex flex-col shrink-0 z-10 shadow-xl">
+            <div class="p-6 border-b flex-1 overflow-y-auto">
+                <h2 class="text-lg font-bold text-slate-900 mb-1">Новая запись</h2>
+                
+                <div v-if="!formData.targetTaskId" class="p-4 bg-blue-50 text-blue-800 rounded-lg text-sm mb-6 border border-blue-100">
+                    <p>← Выберите задачу из списка слева, чтобы добавить к ней часы.</p>
+                </div>
+                
+                <div v-else class="mb-6">
+                    <p class="text-xs text-slate-500 mb-1 uppercase tracking-wide">Задача</p>
+                    <p class="font-medium text-slate-800 bg-slate-50 p-3 rounded border border-slate-200">{{ selectedTaskTitle }}</p>
+                </div>
+
+                <div class="space-y-5" :class="{'opacity-50 pointer-events-none': !formData.targetTaskId}">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Сотрудник</label>
+                        <select v-model="formData.employeeId" class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm">
+                            <option v-for="u in allUsers" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1.5">Дата</label>
+                            <input type="date" v-model="formData.date" class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1.5">Часы</label>
+                            <input type="number" v-model="formData.hours" step="0.5" min="0" placeholder="0.0" class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm" />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Описание работ</label>
+                        <textarea v-model="formData.description" rows="4" placeholder="Что было сделано..." class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"></textarea>
+                    </div>
+
+                    <div class="flex items-center gap-2 pt-2">
+                        <input type="checkbox" id="isConsidered" v-model="formData.isConsidered" class="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                        <label for="isConsidered" class="text-sm text-slate-700 select-none">Учитывать часы (Billable)</label>
+                    </div>
+                    
+                    <div v-if="modalError" class="p-3 bg-red-50 text-red-600 text-sm rounded border border-red-100">
+                        {{ modalError }}
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Footer Actions -->
+            <div class="p-6 border-t bg-slate-50">
+                <button 
+                    @click="handleCreateHours" 
+                    :disabled="isCreating || !formData.targetTaskId" 
+                    class="w-full bg-blue-600 text-white font-medium py-2.5 rounded-lg shadow-sm hover:bg-blue-700 active:transform active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    {{ isCreating ? 'Сохранение...' : 'Сохранить запись' }}
+                </button>
+            </div>
+        </aside>
     </div>
 </template>
 

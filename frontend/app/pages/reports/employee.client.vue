@@ -9,7 +9,10 @@ import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 const { t, locales: localesI18n, setLocale } = useI18n()
 
 useHead({
-  title: 'Отчет по сотрудникам'
+  title: 'Отчет по сотрудникам',
+  script: [
+    { src: 'https://api.bitrix24.com/api/v1/', defer: true }
+  ]
 })
 
 // region Init ////

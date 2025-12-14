@@ -44,8 +44,9 @@ const rowClass = computed(() => {
 const openTask = (id: string | number) => {
     // Attempt to use global BX24 or window.open
     // @ts-ignore
+    const BX24 = window.BX24;
+    
     if (typeof BX24 !== 'undefined') {
-        // @ts-ignore
         BX24.openPath(`/company/personal/user/0/tasks/task/view/${id}/`)
     } else {
         window.open(`/company/personal/user/0/tasks/task/view/${id}/`, '_blank')
