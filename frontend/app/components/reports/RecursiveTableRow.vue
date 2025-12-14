@@ -41,6 +41,16 @@ const rowClass = computed(() => {
     if (props.node.type === 'project') return 'bg-gray-50 hover:bg-gray-100 font-semibold'
     return 'hover:bg-gray-50'
 })
+const openTask = (id: string | number) => {
+    // Attempt to use global BX24 or window.open
+    // @ts-ignore
+    if (typeof BX24 !== 'undefined') {
+        // @ts-ignore
+        BX24.openPath(`/company/personal/user/0/tasks/task/view/${id}/`)
+    } else {
+        window.open(`/company/personal/user/0/tasks/task/view/${id}/`, '_blank')
+    }
+}
 </script>
 
 <template>
@@ -62,7 +72,14 @@ const rowClass = computed(() => {
             </div>
             
             <div class="flex flex-col">
-                <span class="whitespace-normal break-words">{{ node.name || node.id }}</span>
+                <span 
+                    v-if="node.type === 'task'" 
+                    @click.stop="openTask(node.id)"
+                    class="whitespace-normal break-words text-blue-600 hover:underline hover:text-blue-800"
+                >
+                    {{ node.name || node.id }}
+                </span>
+                <span v-else class="whitespace-normal break-words">{{ node.name || node.id }}</span>
             </div>
         </td>
         

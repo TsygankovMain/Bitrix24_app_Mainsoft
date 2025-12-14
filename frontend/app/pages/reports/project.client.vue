@@ -3,6 +3,8 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import ProjectEmployeeTable from '../../components/reports/ProjectEmployeeTable.vue'
+import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
+import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -29,12 +31,32 @@ const isLoading = computed({
 // Report State
 const reportData = ref<any[]>([])
 const dateFrom = ref('') // YYYY-MM-DD
+const dateTo = ref('')   // YYYY-MM-DD
 const isInit = ref(false)
+
+// Filters State
+const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
+const selectedEmployees = ref<(string|number)[]>([])
+const selectedProjects = ref<(string|number)[]>([])
+
+async function fetchFilterOptions() {
+    try {
+        const res = await apiStore.getFilterOptions()
+        filterOptions.value = res
+    } catch (e) {
+        processErrorGlobal(e)
+    }
+}
 
 async function fetchReport() {
     isLoading.value = true
     try {
-        reportData.value = await apiStore.getReportProjectEmployee(dateFrom.value)
+        reportData.value = await apiStore.getReportProjectEmployee(
+            dateFrom.value, 
+            dateTo.value, 
+            selectedEmployees.value as string[], 
+            selectedProjects.value as string[]
+        )
     } catch (e) {
         processErrorGlobal(e)
     } finally {
@@ -50,6 +72,13 @@ onMounted(async () => {
     await initApp($b24, localesI18n, setLocale)
     await $b24.parent.setTitle('Отчет по проектам') 
     isInit.value = true
+    
+    await fetchFilterOptions()
+
+    // Set default range (current month)
+    const now = new Date()
+    dateFrom.value = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+    dateTo.value = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0]
     
     // Initial fetch
     await fetchReport()
@@ -70,11 +99,34 @@ onMounted(async () => {
 
       <B24Card v-if="isInit">
           <template #header>
-            <div class="flex flex-row justify-between items-center w-full">
-                <ProseH2>Отчет по проектам</ProseH2>
-                <div class="flex gap-2 items-center">
-                    <input type="date" v-model="dateFrom" class="border rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-500" @change="fetchReport" />
+            <div class="flex flex-col gap-4 w-full">
+                <div class="flex flex-row justify-between items-center w-full">
+                    <ProseH2>Отчет по проектам</ProseH2>
                     <B24Button label="Обновить" @click="fetchReport" loading-auto />
+                </div>
+                
+                 <!-- Filters -->
+                 <div class="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-lg">
+                    <DateRangeFilter 
+                        v-model:dateFrom="dateFrom" 
+                        v-model:dateTo="dateTo" 
+                        @change="fetchReport"
+                    />
+                    
+                    <!-- For Project Report, it might make sense to filter by Projects first? Or both. User asked for both filters in both reports -->
+                    <MultiSelectFilter 
+                        label="Сотрудники" 
+                        :options="filterOptions.employees" 
+                        v-model="selectedEmployees" 
+                        @update:modelValue="fetchReport"
+                    />
+                    
+                    <MultiSelectFilter 
+                        label="Проекты" 
+                        :options="filterOptions.projects" 
+                        v-model="selectedProjects" 
+                        @update:modelValue="fetchReport"
+                    />
                 </div>
             </div>
           </template>

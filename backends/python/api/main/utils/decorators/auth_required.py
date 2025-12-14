@@ -46,6 +46,9 @@ def auth_required(view_func):
 
             except BitrixValidationError as error:
                 return JsonResponse({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
+            except Exception as e:
+                import traceback
+                return JsonResponse({"error": f"Internal Auth Error: {str(e)}", "traceback": traceback.format_exc()}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
 
         return view_func(request, *args, **kwargs)
 

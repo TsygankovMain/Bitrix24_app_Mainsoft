@@ -69,22 +69,36 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getReportEmployeeProject = async (dateFrom?: string): Promise<any> => {
-      const params = new URLSearchParams()
-      if (dateFrom) params.append('date_from', dateFrom)
-
-      return await $api(`/api/reports/employee-project?${params.toString()}`, {
+    const getFilterOptions = async (): Promise<{ employees: any[], projects: any[] }> => {
+      return await $api('/api/get-filter-options', {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
       })
     }
 
-    const getReportProjectEmployee = async (dateFrom?: string): Promise<any> => {
+    const getReportEmployeeProject = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
       const params = new URLSearchParams()
       if (dateFrom) params.append('date_from', dateFrom)
+      if (dateTo) params.append('date_to', dateTo)
+      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
+      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
 
-      return await $api(`/api/reports/project-employee?${params.toString()}`, {
+      return await $api(`/api/report-employee-project?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const getReportProjectEmployee = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+      if (dateTo) params.append('date_to', dateTo)
+      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
+      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+
+      return await $api(`/api/report-project-employee?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
@@ -92,7 +106,7 @@ export const useApiStore = defineStore(
     }
 
     const syncTimesheets = async (): Promise<{ status: string; count: number }> => {
-      return await $api('/api/timesheets/sync', {
+      return await $api('/api/sync-timesheets', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
@@ -158,7 +172,8 @@ export const useApiStore = defineStore(
       getReportEmployeeProject,
       getReportProjectEmployee,
       syncTimesheets,
-      getTimesheetsList
+      getTimesheetsList,
+      getFilterOptions
     }
   }
 )

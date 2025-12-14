@@ -181,6 +181,7 @@ class DataProcessingService:
                 "title_zadach_ierarhiya": title_hierarchy,
                 "nazvanie_zadachi": task_name,
                 "project_name": project_name,
+                "project_id": str(item.get(FIELD_PROJECT_ID) or ""),
                 "data": item.get(FIELD_DATE) or item.get("createdTime")
             }
             normalized.append(normalized_item)
@@ -537,13 +538,9 @@ class TimesheetSyncService:
                         "is_billable": item['uchitivaem'],
                         "non_billable_hours": item['ne_uchitivaemie_chasi'],
                         "description": item['opisanie'],
+                        "description": item['opisanie'],
                         "project_title": item['project_name'],
-                        # Project ID is mapped in normalize_items? 
-                        # Looking at normalize_items, it determines 'project_name' but doesn't seem to extract project_id explicitly into 'project_id' key
-                        # It reads FIELD_PROJECT_ID but doesn't map it in the result dict in lines 143-156 of services.py.
-                        # I should fix normalize_items essentially or extract it here if I had raw item.
-                        # But normalize_items consumes raw item.
-                        # I'll rely on project_name for now as that's what was in the plan for 2.2 logic.
+                        "project_id": item['project_id'],
                         
                         "task_hierarchy_ids": item['id_zadach_ierarhiya'],
                         "task_hierarchy_titles": item['title_zadach_ierarhiya'],

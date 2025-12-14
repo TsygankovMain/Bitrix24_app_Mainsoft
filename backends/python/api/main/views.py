@@ -1,4 +1,5 @@
 from django.core.paginator import Paginator
+from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -10,7 +11,7 @@ from .utils import AuthorizedRequest
 from .models import ApplicationInstallation, TimesheetItem
 
 from config import load_config
-from .services import BitrixDataService, DataProcessingService, ReportService, TimesheetSyncService, FIELD_DATE
+from .services import BitrixDataService, ReportService, TimesheetSyncService
 
 __all__ = [
     "root",
@@ -19,8 +20,7 @@ __all__ = [
     "get_list",
     "install",
     "get_token",
-    "report_employee_project",
-    "report_project_employee",
+    "get_filter_options",
     "report_employee_project",
     "report_project_employee",
     "timesheet_sync",
@@ -99,25 +99,98 @@ def get_token(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @require_GET
-@log_errors("reports_employee_project")
+@log_errors("get_filter_options")
 @auth_required
-@xframe_options_exempt
-@require_GET
-@log_errors("reports_employee_project")
-@auth_required
-def report_employee_project(request: AuthorizedRequest):
-    # Fetch from local DB
+def get_filter_options(request: AuthorizedRequest):
+    """
+    Returns unique employees and projects for filtering.
+    """
     queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
     
+    # 1. Unique Employees
+    emp_ids = list(queryset.values_list('employee_id', flat=True).distinct())
+    
+    # Fetch Names
+    data_service = BitrixDataService(request.bitrix24_account.client)
+    user_map = data_service.fetch_users(emp_ids)
+    
+    employees = []
+    for uid in emp_ids:
+        # Avoid empty users if data is inconsistent
+        if not uid: continue
+            
+        employees.append({
+            "id": str(uid),
+            "name": user_map.get(str(uid), f"User {uid}")
+        })
+    
+    # 2. Unique Projects
+    projs = queryset.values('project_id', 'project_title').distinct()
+    projects = []
+    seen_ids = set()
+    
+    for p in projs:
+        pid = p['project_id']
+        ptitle = p['project_title']
+        
+        # Determine strict ID for frontend
+        if not pid and not ptitle:
+            continue
+            
+        # Preference: Use project_id. 
+        # Fallback: project_title.
+        # This ID is what will be sent back in filter params.
+        final_id = str(pid) if pid else str(ptitle)
+        
+        if final_id not in seen_ids:
+            Title = ptitle or "Без названия"
+            projects.append({
+                "id": final_id,
+                "name": Title
+            })
+            seen_ids.add(final_id)
+
+    return JsonResponse({
+        "employees": sorted(employees, key=lambda x: x['name']),
+        "projects": sorted(projects, key=lambda x: x['name'])
+    })
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_employee_project")
+@auth_required
+def report_employee_project(request: AuthorizedRequest):
+    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
+    
+    # Filters
     date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+    emp_ids = request.GET.getlist('employee_ids[]')
+    proj_ids = request.GET.getlist('project_ids[]')
+    
+    # Date Filtering
     if date_from:
         queryset = queryset.filter(date_reflection__gte=date_from)
+    if date_to:
+        queryset = queryset.filter(date_reflection__lte=date_to)
         
+    # Employee Filtering
+    if emp_ids:
+        queryset = queryset.filter(employee_id__in=emp_ids)
+        
+    # Project Filtering
+    # Handles both ID-based and Title-based IDs (backward compatibility)
+    if proj_ids:
+        q_obj = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
+        queryset = queryset.filter(q_obj)
+
     items = []
     user_ids = set()
+    
     for model_item in queryset:
         user_ids.add(model_item.employee_id)
-        # Map Model to dict expected by ReportService
+        # Construct item for Service
         items.append({
             "sotrudnik_id": model_item.employee_id,
             "project_name": model_item.project_title,
@@ -130,10 +203,9 @@ def report_employee_project(request: AuthorizedRequest):
             "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title"
         })
     
-    # Fetch User Names
     data_service = BitrixDataService(request.bitrix24_account.client)
     user_map = data_service.fetch_users(list(user_ids))
-
+    
     report_service = ReportService()
     report = report_service.generate_employee_projects(items, user_map)
     
@@ -142,21 +214,32 @@ def report_employee_project(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @require_GET
-@log_errors("reports_project_employee")
+@log_errors("report_project_employee")
 @auth_required
 def report_project_employee(request: AuthorizedRequest):
-    # Fetch from local DB
     queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
-    
+
     date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+    emp_ids = request.GET.getlist('employee_ids[]') 
+    proj_ids = request.GET.getlist('project_ids[]')
+
     if date_from:
         queryset = queryset.filter(date_reflection__gte=date_from)
+    if date_to:
+        queryset = queryset.filter(date_reflection__lte=date_to)
+        
+    if emp_ids:
+        queryset = queryset.filter(employee_id__in=emp_ids)
+        
+    if proj_ids:
+        q_obj = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
+        queryset = queryset.filter(q_obj)
 
     items = []
     user_ids = set()
     for model_item in queryset:
         user_ids.add(model_item.employee_id)
-        # Map Model to dict expected by ReportService
         items.append({
             "sotrudnik_id": model_item.employee_id,
             "project_name": model_item.project_title,
@@ -169,7 +252,6 @@ def report_project_employee(request: AuthorizedRequest):
             "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title"
         })
     
-    # Fetch User Names
     data_service = BitrixDataService(request.bitrix24_account.client)
     user_map = data_service.fetch_users(list(user_ids))
     
@@ -177,7 +259,6 @@ def report_project_employee(request: AuthorizedRequest):
     report = report_service.generate_project_employees(items, user_map)
     
     return JsonResponse(report, safe=False)
-
 
 
 @xframe_options_exempt
@@ -215,7 +296,6 @@ def timesheet_list(request: AuthorizedRequest):
             "non_billable_hours": item.non_billable_hours,
             "description": item.description,
             "project_title": item.project_title,
-             # We can add full hierarchy if needed, it's JSON
             "date": item.date_reflection.isoformat() if item.date_reflection else None,
             "created_at": item.created_at.isoformat()
         })
@@ -228,4 +308,3 @@ def timesheet_list(request: AuthorizedRequest):
         "has_next": page_obj.has_next(),
         "has_previous": page_obj.has_previous(),
     })
-
