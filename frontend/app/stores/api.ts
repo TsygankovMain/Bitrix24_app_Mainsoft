@@ -69,6 +69,49 @@ export const useApiStore = defineStore(
       })
     }
 
+    const getReportEmployeeProject = async (dateFrom?: string): Promise<any> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+
+      return await $api(`/api/reports/employee-project?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const getReportProjectEmployee = async (dateFrom?: string): Promise<any> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+
+      return await $api(`/api/reports/project-employee?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const syncTimesheets = async (): Promise<{ status: string; count: number }> => {
+      return await $api('/api/timesheets/sync', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const getTimesheetsList = async (page: number = 1, limit: number = 50): Promise<any> => {
+      const params = new URLSearchParams()
+      params.append('page', page.toString())
+      params.append('limit', limit.toString())
+
+      return await $api(`/api/timesheets?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
     const init = async (b24: B24Frame) => {
       $b24 = b24
       await reinitToken()
@@ -82,7 +125,7 @@ export const useApiStore = defineStore(
 
       const authData = $b24.auth.getAuthData()
 
-      if(authData === false) {
+      if (authData === false) {
         throw new Error('Some problem with auth. See App logic')
       }
 
@@ -111,7 +154,11 @@ export const useApiStore = defineStore(
       init,
       getEnum,
       getList,
-      postInstall
+      postInstall,
+      getReportEmployeeProject,
+      getReportProjectEmployee,
+      syncTimesheets,
+      getTimesheetsList
     }
   }
 )

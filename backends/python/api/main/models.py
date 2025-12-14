@@ -147,6 +147,26 @@ class ApplicationInstallation(models.Model):
     comment = models.TextField(null=True)
     status_code = models.JSONField(null=True)
 
+
+class TimesheetItem(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(Bitrix24Account, on_delete=models.CASCADE, related_name="timesheets")
+    bitrix_id = models.IntegerField(db_index=True)
+    task_id = models.CharField(max_length=50)
+    employee_id = models.CharField(max_length=50)
+    hours = models.FloatField()
+    is_billable = models.BooleanField(default=False)
+    non_billable_hours = models.FloatField(default=0.0)
+    description = models.TextField(null=True, blank=True)
+    project_id = models.CharField(max_length=50, null=True, blank=True)
+    project_title = models.CharField(max_length=255, null=True, blank=True)
+    task_hierarchy_ids = models.JSONField(default=list)
+    task_hierarchy_titles = models.JSONField(default=list)
+    date_reflection = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     class Meta:
-        managed = False
-        db_table = "application_installation"
+        managed = True
+        db_table = "timesheet_item"
+        unique_together = ("bitrix24_account", "bitrix_id")
