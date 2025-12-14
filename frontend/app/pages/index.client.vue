@@ -71,6 +71,39 @@ onMounted(async () => {
     $b24 = await $initializeB24Frame()
     await initApp($b24, localesI18n, setLocale)
     await $b24.parent.setTitle(t('page.index.seo.title'))
+    
+    // Auto-redirect if in Task Tab
+    console.log('DEBUG: $b24.placement:', $b24.placement);
+    
+    // Check JSSDK wrapper properties
+    // Based on logs: PlacementManager has #title: 'TASK_VIEW_TAB'. 
+    // Trying public getter .title
+    // @ts-ignore
+    const placementCode = $b24.placement?.title || $b24.placement?.placement || ($b24.placement?.info && $b24.placement.info.placement);
+    
+    console.log('DEBUG: Resolved Placement Code:', placementCode);
+    
+    if (placementCode === 'TASK_VIEW_TAB') {
+         console.log('DEBUG: Redirecting to /task-hours via JSSDK');
+         router.push('/task-hours')
+         return 
+    }
+    
+    // Fallback: Use Global BX24 with init (Standard Pattern)
+    // @ts-ignore
+    if (typeof window.BX24 !== 'undefined') {
+        // @ts-ignore
+        window.BX24.init(() => {
+            // @ts-ignore
+            const rawPlacement = window.BX24.placement.info();
+            console.log('DEBUG: Window Placement Info:', rawPlacement);
+             if (rawPlacement && rawPlacement.placement === 'TASK_VIEW_TAB') {
+                  console.log('DEBUG: Redirecting to /task-hours via Window');
+                  router.push('/task-hours')
+             }
+        })
+    }
+
     isInit.value = true
   } catch (error) {
     processErrorGlobal(error)

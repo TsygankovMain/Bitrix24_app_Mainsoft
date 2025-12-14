@@ -85,6 +85,36 @@ def install(request: AuthorizedRequest):
         },
     )
 
+    # Register Task Tab Placement
+    try:
+        import logging
+        logger = logging.getLogger("install")
+        
+        # Ensure handler URL is valid
+        handler_url = config.app_base_url
+        if not handler_url.startswith("http"):
+             handler_url = f"https://{handler_url}"
+             
+        # Call placement.bind using call_method directly from the token (Bitrix24Account)
+        # This bypasses potential client wrapper issues.
+        response = bitrix24_account.call_method(
+            "placement.bind",
+            {
+                "PLACEMENT": "TASK_VIEW_TAB",
+                "HANDLER": handler_url,
+                "TITLE": "Отражение трудозатрат",
+                "DESCRIPTION": "Интерфейс списания трудозатрат"
+            }
+        )
+        logger.info(f"Placement bind result: {response}")
+        
+    except Exception as e:
+        import traceback
+        import logging
+        logger = logging.getLogger("install")
+        logger.error(f"Failed to bind placement: {e}")
+        logger.error(traceback.format_exc())
+
     return JsonResponse({"message": "Installation successful"})
 
 

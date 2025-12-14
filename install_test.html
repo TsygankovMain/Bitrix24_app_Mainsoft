@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Установка приложения</title>
+    <script src="https://api.bitrix24.com/api/v1/"></script>
+</head>
+<body>
+    <h2>Установка приложения "Учет часов(тест)"</h2>
+    <p id="status">Инициализация...</p>
+
+    <script>
+        BX24.init(function() {
+            // Получаем URL текущего приложения
+            var appUrl = window.location.href.replace('install.html', 'index.html');
+            
+            document.getElementById('status').innerText = 'Регистрация встройки...';
+            
+            // Регистрируем встройку в карточку задачи
+            BX24.callMethod(
+                'placement.bind',
+                {
+                    'PLACEMENT': 'TASK_VIEW_TAB',
+                    'HANDLER': appUrl,
+                    'TITLE': 'Учет часов(тест)',
+                    'DESCRIPTION': 'Приложение для учета рабочих часов в задачах'
+                },
+                function(result) {
+                    if (result.error()) {
+                        document.getElementById('status').innerText = 'Ошибка установки: ' + result.error();
+                        console.error('Ошибка:', result.error());
+                    } else {
+                        document.getElementById('status').innerText = 'Установка завершена успешно!';
+                        console.log('Результат:', result.data());
+                        
+                        // Завершаем установку
+                        BX24.installFinish();
+                    }
+                }
+            );
+        });
+    </script>
+</body>
+</html>
