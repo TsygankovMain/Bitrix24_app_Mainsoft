@@ -5,36 +5,21 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Union
 
 from b24pysdk import Client
-from b24pysdk import Client
 from b24pysdk.bitrix_api.requests import BitrixAPIRequest
 from django.db import transaction
 from .models import TimesheetItem, Bitrix24Account
+from .configuration_service import ConfigurationService
 
 logger = logging.getLogger(__name__)
 
 # Field Constants from Documentation
-ENTITY_TYPE_ID = 1164
-
-FIELD_ID = "id"
-FIELD_TASK_ID = "ufCrm87_1761919581"
-FIELD_EMPLOYEE = "ufCrm87_1761919601"
-FIELD_HOURS = "ufCrm87_1761919617"
-FIELD_IS_BILLABLE = "ufCrm87_1763717129"
-FIELD_NON_BILLABLE_HOURS = "ufCrm87_1762023633"
-FIELD_DESCRIPTION = "ufCrm87_1762026149771"
-FIELD_TASK_HIERARCHY = "ufCrm87_1764191110"
-FIELD_TITLE_HIERARCHY = "ufCrm87_1764191133"
-FIELD_PROJECT_ID = "UF_CRM_87_1764265626"
-FIELD_PROJECT_NAME = "UF_CRM_87_1764265641"
-FIELD_DATE = "ufCrm87_1764446274"
-FIELD_CREATED = "createdTime"
-
-
 class BitrixDataService:
     """Service for fetching data from Bitrix24"""
 
-    def __init__(self, client: Client):
+    def __init__(self, client: Client, config: Dict[str, Any]):
         self.client = client
+        self.config = config
+        self.entity_type_id = config.get('sp_entity_type_id', 0)
 
     def check_connection(self):
         """Diagnostic: List all SPAs to verify access and IDs"""
@@ -46,12 +31,12 @@ class BitrixDataService:
             for t in types:
                 logger.info(f"SPA: {t.get('title')} (ID: {t.get('entityTypeId')})")
             
-            # Check for 1164 specifically
-            target = next((t for t in types if str(t.get('entityTypeId')) == str(ENTITY_TYPE_ID)), None)
+            # Check for configured ID specifically
+            target = next((t for t in types if str(t.get('entityTypeId')) == str(self.entity_type_id)), None)
             if target:
-                logger.info(f"Target SPA {ENTITY_TYPE_ID} FOUND.")
+                logger.info(f"Target SPA {self.entity_type_id} FOUND.")
             else:
-                logger.error(f"Target SPA {ENTITY_TYPE_ID} NOT FOUND in crm.type.list!")
+                logger.error(f"Target SPA {self.entity_type_id} NOT FOUND in crm.type.list!")
         except Exception as e:
             logger.error(f"Failed to list SPAs: {e}")
 
@@ -83,24 +68,28 @@ class BitrixDataService:
 
     def fetch_all_items(self, extra_filter: Optional[Dict] = None) -> List[Dict[str, Any]]:
         """
-        Fetches items from Smart Process - DEBUG MODE: ALL FIELDS
+        Fetches items from Smart Process
         """
         self.check_connection()
         
-        base_filter = {"entityTypeId": ENTITY_TYPE_ID}
+        if not self.entity_type_id:
+             logger.error("No SP Entity Type ID configured")
+             return []
+
+        base_filter = {"entityTypeId": self.entity_type_id}
         if extra_filter:
             base_filter.update(extra_filter)
 
         # DEBUG: Select ALL fields to see what we actually get
         select = ["*", "UF_*"]
 
-        logger.info("Executing single request fetch (SELECT *, UF_*)")
+        logger.info(f"Executing single request fetch (SELECT *, UF_*) for SPA {self.entity_type_id}")
         
         try:
             response = self.client._bitrix_token.call_method(
                 "crm.item.list",
                 {
-                    "entityTypeId": ENTITY_TYPE_ID,
+                    "entityTypeId": self.entity_type_id,
                     "filter": base_filter,
                     "select": select,
                     "order": {"id": "DESC"},
@@ -127,30 +116,47 @@ class BitrixDataService:
 class DataProcessingService:
     """Service for normalizing and processing raw Bitrix24 data"""
 
+    def __init__(self, mapping: Dict[str, str]):
+        self.mapping = mapping
+
     def normalize_items(self, raw_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         normalized = []
         dropped_count = 0
+        
+        # Helper to get field code from mapping
+        def get_f(key):
+            return self.mapping.get(key)
+
+        field_task_id = get_f('id_zadachi')
+        field_task_hierarchy = get_f('id_zadach_ierarhiya')
+        field_title_hierarchy = get_f('title_zadach_ierarhiya')
+        field_project_name = get_f('project_title')
+        field_project_id = get_f('project_id')
+        field_is_billable = get_f('uchitivaem')
+        field_hours = get_f('kolichestvo_chasov')
+        field_non_billable = get_f('ne_uchitivaemie_chasi')
+        field_desc = get_f('opisanie')
+        field_employee = get_f('sotrudnik')
+        field_date = get_f('data')
+        
         for item in raw_items:
             # 1. Validation: Task ID is required
-            # Log why we drop items
-            if not item.get(FIELD_TASK_ID):
+            if not field_task_id or not item.get(field_task_id):
                 dropped_count += 1
-                if dropped_count <= 5: # Log first 5 dropped items
-                    logger.warning(f"Dropping item {item.get('id')} because FIELD_TASK_ID ({FIELD_TASK_ID}) is missing/empty.")
-                    logger.warning(f"Item keys available: {list(item.keys())}")
+                if dropped_count <= 5: 
+                    # logger.warning(f"Dropping item {item.get('id')} because task_id ({field_task_id}) is missing.")
+                    pass
                 continue
 
             # 2. Parse Hierarchy
             try:
-                task_hierarchy = self._parse_json_list(item.get(FIELD_TASK_HIERARCHY))
-                title_hierarchy = self._parse_json_list(item.get(FIELD_TITLE_HIERARCHY))
+                task_hierarchy = self._parse_json_list(item.get(field_task_hierarchy))
+                title_hierarchy = self._parse_json_list(item.get(field_title_hierarchy))
             except Exception:
-                # If parsing fails, skip item
                 continue
 
             # 3. Determine Project
-            # Priority: Direct Project Name > Root of Title Hierarchy > "Не определён"
-            project_name = item.get(FIELD_PROJECT_NAME)
+            project_name = item.get(field_project_name)
             if not project_name:
                 if title_hierarchy and len(title_hierarchy) > 0:
                     project_name = title_hierarchy[0]
@@ -158,31 +164,29 @@ class DataProcessingService:
                     project_name = "Не определён"
 
             # 4. Task Name
-            # Last element of title hierarchy or fallback
             task_name = title_hierarchy[-1] if title_hierarchy else "Без названия"
 
             # 5. Billable status
-            # Check different truthy values for boolean/string field
-            is_billable_raw = item.get(FIELD_IS_BILLABLE)
+            is_billable_raw = item.get(field_is_billable)
             is_billable = str(is_billable_raw).upper() in ['Y', '1', 'TRUE']
 
-            hours = float(item.get(FIELD_HOURS) or 0)
-            non_billable = float(item.get(FIELD_NON_BILLABLE_HOURS) or 0)
+            hours = float(item.get(field_hours) or 0)
+            non_billable = float(item.get(field_non_billable) or 0)
 
             normalized_item = {
-                "id_elem": str(item.get(FIELD_ID)),
-                "id_zadachi": str(item.get(FIELD_TASK_ID)),
-                "sotrudnik_id": str(item.get(FIELD_EMPLOYEE)),
+                "id_elem": str(item.get('id')),
+                "id_zadachi": str(item.get(field_task_id)),
+                "sotrudnik_id": str(item.get(field_employee)),
                 "kolichestvo_chasov": hours,
                 "uchitivaem": is_billable,
                 "ne_uchitivaemie_chasi": non_billable,
-                "opisanie": item.get(FIELD_DESCRIPTION) or "",
+                "opisanie": item.get(field_desc) or "",
                 "id_zadach_ierarhiya": task_hierarchy,
                 "title_zadach_ierarhiya": title_hierarchy,
                 "nazvanie_zadachi": task_name,
                 "project_name": project_name,
-                "project_id": str(item.get(FIELD_PROJECT_ID) or ""),
-                "data": item.get(FIELD_DATE) or item.get("createdTime")
+                "project_id": str(item.get(field_project_id) or ""),
+                "data": item.get(field_date) or item.get("createdTime")
             }
             normalized.append(normalized_item)
         
@@ -435,11 +439,130 @@ class ReportService:
         return list(report.values())
 
 
+    def generate_daily_workload(self, items: List[Dict[str, Any]], user_map: Dict[str, str], date_from: str, date_to: str) -> Dict[str, Any]:
+        """
+        Generates data for Daily Workload Report (Matrix View).
+        """
+        from datetime import datetime, timedelta, date
+
+        # 1. Parse dates and generate range
+        try:
+            start_date = date.fromisoformat(date_from)
+            end_date = date.fromisoformat(date_to)
+        except (ValueError, TypeError):
+            # Fallback to current month if invalid
+            today = date.today()
+            start_date = date(today.year, today.month, 1)
+            end_date = today
+
+        # Generate list of days for header
+        header_days = []
+        curr = start_date
+        while curr <= end_date:
+            header_days.append({
+                "date": curr.isoformat(),
+                "day": curr.day,
+                "weekday": curr.weekday(), # 0=Mon, 5=Sat, 6=Sun
+                "is_weekend": curr.weekday() >= 5
+            })
+            curr += timedelta(days=1)
+
+        # 2. Aggregate Data
+        # Structure: { emp_id: { name: "", days: { "2023-10-01": { total: 0, items: [] } } } }
+        agg = {}
+        
+        for item in items:
+            emp_id = item['sotrudnik_id']
+            date_str = item['data']
+            if not date_str:
+                continue
+                
+            # Normalize date to YYYY-MM-DD
+            try:
+                dt = datetime.fromisoformat(date_str).date()
+                d_key = dt.isoformat()
+            except ValueError:
+                continue
+            
+            # Skip if out of range (though validation should handle this in view)
+            if not (start_date <= dt <= end_date):
+                continue
+
+            if emp_id not in agg:
+                agg[emp_id] = {
+                    "id": emp_id,
+                    "name": user_map.get(emp_id, f"User {emp_id}"),
+                    "days": {}
+                }
+            
+            if d_key not in agg[emp_id]["days"]:
+                agg[emp_id]["days"][d_key] = {
+                    "total": 0.0,
+                    "items": []
+                }
+            
+            hours = float(item['kolichestvo_chasov'] or 0)
+            agg[emp_id]["days"][d_key]["total"] += hours
+            agg[emp_id]["days"][d_key]["items"].append({
+                "task_id": item['id_zadachi'],
+                "task_title": item['nazvanie_zadachi'],
+                "project_title": item['project_name'],
+                "hours": hours,
+                "description": item['opisanie']
+            })
+
+        # 3. Format Output Lines
+        rows = []
+        for emp_id, data in agg.items():
+            row_days = {}
+            for day_obj in header_days:
+                d_key = day_obj["date"]
+                day_data = data["days"].get(d_key, {"total": 0.0, "items": []})
+                
+                total = day_data["total"]
+                # Color Logic
+                # < 6: orange
+                # 6-9: green
+                # > 9: yellow
+                if total == 0:
+                    status = 'neutral' # Empty
+                elif total < 6:
+                    status = 'orange'
+                elif total <= 9:
+                    status = 'green'
+                else:
+                    status = 'yellow'
+                
+                row_days[d_key] = {
+                    "total": round(total, 2),
+                    "status": status,
+                    "items": day_data["items"]
+                }
+            
+            rows.append({
+                "employee": {
+                    "id": emp_id,
+                    "name": data["name"]
+                },
+                "days": row_days
+            })
+        
+        # Sort rows by employee name
+        rows.sort(key=lambda x: x["employee"]["name"])
+
+        return {
+            "header_days": header_days,
+            "rows": rows
+        }
+
+
 class TimesheetSyncService:
-    def __init__(self, client: Client, account: Bitrix24Account):
+    def __init__(self, client: Client, account: Bitrix24Account, config: Dict[str, Any]):
         self.client = client
         self.account = account
-        self.processing_service = DataProcessingService()
+        self.config = config
+        self.entity_type_id = config.get('sp_entity_type_id')
+        self.processing_service = DataProcessingService(config.get('fields_mapping', {}))
 
     def sync_all(self):
         """
@@ -448,6 +571,10 @@ class TimesheetSyncService:
         """
         logger.info(f"Starting sync for account {self.account.pk}")
         
+        if not self.entity_type_id:
+             logger.error("No SP Entity Type ID configured cannot sync.")
+             return 0
+
         start = 0
         limit = 50
         total_fetched = 0
@@ -459,11 +586,11 @@ class TimesheetSyncService:
         while True:
             try:
                 # 1. Fetch Batch
-                logger.info(f"Fetching batch start={start}")
+                logger.info(f"Fetching batch start={start} for SPA {self.entity_type_id}")
                 response = self.client._bitrix_token.call_method(
                     "crm.item.list",
                     {
-                        "entityTypeId": ENTITY_TYPE_ID,
+                        "entityTypeId": self.entity_type_id,
                         "select": ["*", "UF_*"],
                         "order": {"id": "DESC"},
                         "start": start,

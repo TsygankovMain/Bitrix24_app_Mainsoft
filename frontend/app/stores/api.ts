@@ -105,6 +105,20 @@ export const useApiStore = defineStore(
       })
     }
 
+    const getReportDailyWorkload = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+      if (dateTo) params.append('date_to', dateTo)
+      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
+      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+
+      return await $api(`/api/report-daily-workload?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
     const syncTimesheets = async (): Promise<{ status: string; count: number }> => {
       return await $api('/api/sync-timesheets', {
         method: 'POST',
@@ -163,6 +177,33 @@ export const useApiStore = defineStore(
       tokenJWT.value = response.token
     }
 
+    // Configuration
+    const getConfiguration = async (): Promise<any> => {
+      return await $api('/api/configuration', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const saveConfiguration = async (config: any): Promise<any> => {
+      return await $api('/api/configuration/save', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: JSON.stringify({ config })
+      })
+    }
+
+    const getSmartProcesses = async (): Promise<{ types: any[] }> => {
+      return await $api('/api/smart-processes', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const getSpFields = async (entityTypeId: number): Promise<{ fields: any[] }> => {
+      return await $api(`/api/smart-processes/fields?entityTypeId=${entityTypeId}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
     return {
       checkHealth,
       init,
@@ -171,9 +212,15 @@ export const useApiStore = defineStore(
       postInstall,
       getReportEmployeeProject,
       getReportProjectEmployee,
+      getReportDailyWorkload,
       syncTimesheets,
       getTimesheetsList,
-      getFilterOptions
+      getFilterOptions,
+
+      getConfiguration,
+      saveConfiguration,
+      getSmartProcesses,
+      getSpFields
     }
   }
 )

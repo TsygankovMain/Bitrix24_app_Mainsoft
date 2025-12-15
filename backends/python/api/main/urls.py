@@ -16,8 +16,15 @@ urlpatterns = [
     path('api/get-filter-options', get_filter_options, name='get_filter_options'),
     path('api/report-employee-project', report_employee_project, name='report_employee_project'),
     path('api/report-project-employee', report_project_employee, name='report_project_employee'),
+    path('api/report-daily-workload', report_daily_workload, name='report_daily_workload'),
 
     # Timesheets
     path('api/sync-timesheets', timesheet_sync, name='sync_timesheets'), # Matches api.ts: /api/sync-timesheets
     path('api/timesheets', timesheet_list, name='list_timesheets'),      # Matches api.ts: /api/timesheets
+
+    # Configuration
+    path('api/configuration', get_configuration, name='get_configuration'),
+    path('api/configuration/save', save_configuration, name='save_configuration'),
+    path('api/smart-processes', get_smart_processes, name='get_smart_processes'),
+    path('api/smart-processes/fields', get_sp_fields, name='get_sp_fields'),
 ]

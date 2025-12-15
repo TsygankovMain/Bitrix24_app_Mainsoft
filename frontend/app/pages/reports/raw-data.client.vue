@@ -94,7 +94,7 @@ onMounted(async () => {
 <template>
   <div class="flex flex-col gap-4 p-4 min-h-screen">
       <div class="mb-4">
-          <B24Button label="Назад" color="link" @click="$router.push('/')" />
+          <B24Button label="Назад в настройки" color="link" @click="$router.push('/settings')" />
       </div>
 
       <B24Card v-if="isInit">

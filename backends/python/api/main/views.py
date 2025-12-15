@@ -11,7 +11,8 @@ from .utils import AuthorizedRequest
 from .models import ApplicationInstallation, TimesheetItem
 
 from config import load_config
-from .services import BitrixDataService, ReportService, TimesheetSyncService
+from .services import BitrixDataService, ReportService, TimesheetSyncService, ConfigurationService
+from .installation_service import InstallationService, InstallationError
 
 __all__ = [
     "root",
@@ -23,8 +24,13 @@ __all__ = [
     "get_filter_options",
     "report_employee_project",
     "report_project_employee",
+    "report_daily_workload",
     "timesheet_sync",
     "timesheet_list",
+    "get_configuration",
+    "save_configuration",
+    "get_smart_processes",
+    "get_sp_fields",
 ]
 
 config = load_config()
@@ -85,37 +91,15 @@ def install(request: AuthorizedRequest):
         },
     )
 
-    # Register Task Tab Placement
     try:
-        import logging
-        logger = logging.getLogger("install")
-        
-        # Ensure handler URL is valid
-        handler_url = config.app_base_url
-        if not handler_url.startswith("http"):
-             handler_url = f"https://{handler_url}"
-             
-        # Call placement.bind using call_method directly from the token (Bitrix24Account)
-        # This bypasses potential client wrapper issues.
-        response = bitrix24_account.call_method(
-            "placement.bind",
-            {
-                "PLACEMENT": "TASK_VIEW_TAB",
-                "HANDLER": handler_url,
-                "TITLE": "Отражение трудозатрат",
-                "DESCRIPTION": "Интерфейс списания трудозатрат"
-            }
-        )
-        logger.info(f"Placement bind result: {response}")
-        
+        service = InstallationService(bitrix24_account.client, bitrix24_account)
+        config = service.install_app_sync()
+        return JsonResponse({"message": "Installation successful", "config": config})
+    except InstallationError as e:
+        return JsonResponse({"error": str(e)}, status=500)
     except Exception as e:
         import traceback
-        import logging
-        logger = logging.getLogger("install")
-        logger.error(f"Failed to bind placement: {e}")
-        logger.error(traceback.format_exc())
-
-    return JsonResponse({"message": "Installation successful"})
+        return JsonResponse({"error": f"Unexpected error: {str(e)}", "trace": traceback.format_exc()}, status=500)
 
 
 @xframe_options_exempt
@@ -140,8 +124,12 @@ def get_filter_options(request: AuthorizedRequest):
     # 1. Unique Employees
     emp_ids = list(queryset.values_list('employee_id', flat=True).distinct())
     
+    # Init services with config
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    data_service = BitrixDataService(request.bitrix24_account.client, config)
+    
     # Fetch Names
-    data_service = BitrixDataService(request.bitrix24_account.client)
     user_map = data_service.fetch_users(emp_ids)
     
     employees = []
@@ -233,7 +221,11 @@ def report_employee_project(request: AuthorizedRequest):
             "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title"
         })
     
-    data_service = BitrixDataService(request.bitrix24_account.client)
+    # Config & Services
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    data_service = BitrixDataService(request.bitrix24_account.client, config)
+    
     user_map = data_service.fetch_users(list(user_ids))
     
     report_service = ReportService()
@@ -282,7 +274,10 @@ def report_project_employee(request: AuthorizedRequest):
             "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title"
         })
     
-    data_service = BitrixDataService(request.bitrix24_account.client)
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    data_service = BitrixDataService(request.bitrix24_account.client, config)
+
     user_map = data_service.fetch_users(list(user_ids))
     
     report_service = ReportService()
@@ -297,7 +292,10 @@ def report_project_employee(request: AuthorizedRequest):
 @log_errors("timesheet_sync")
 @auth_required
 def timesheet_sync(request: AuthorizedRequest):
-    service = TimesheetSyncService(request.bitrix24_account.client, request.bitrix24_account)
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    
+    service = TimesheetSyncService(request.bitrix24_account.client, request.bitrix24_account, config)
     count = service.sync_all()
     return JsonResponse({"status": "success", "count": count})
 
@@ -338,3 +336,112 @@ def timesheet_list(request: AuthorizedRequest):
         "has_next": page_obj.has_next(),
         "has_previous": page_obj.has_previous(),
     })
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_configuration")
+@auth_required
+def get_configuration(request: AuthorizedRequest):
+    service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(service.get_configuration_sync())
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("save_configuration")
+@auth_required
+def save_configuration(request: AuthorizedRequest):
+    import json
+    service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        body = json.loads(request.body)
+        config = body.get('config', {})
+        service.save_configuration_sync(config)
+        return JsonResponse({"status": "success"})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_smart_processes")
+@auth_required
+def get_smart_processes(request: AuthorizedRequest):
+    service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse({"types": service.get_smart_processes_sync()})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_sp_fields")
+@auth_required
+def get_sp_fields(request: AuthorizedRequest):
+    service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    entity_type_id = request.GET.get('entityTypeId')
+    if not entity_type_id:
+         return JsonResponse({"fields": []})
+    
+    return JsonResponse({"fields": service.get_sp_fields_sync(int(entity_type_id))})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_daily_workload")
+@auth_required
+def report_daily_workload(request: AuthorizedRequest):
+    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
+
+    date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+    emp_ids = request.GET.getlist('employee_ids[]') 
+    proj_ids = request.GET.getlist('project_ids[]')
+
+    # Defaults for date if missing (current month)
+    from datetime import date, timedelta
+    if not date_from:
+        today = date.today()
+        date_from = date(today.year, today.month, 1).isoformat()
+    if not date_to:
+        today = date.today()
+        date_to = today.isoformat()
+
+    if date_from:
+        queryset = queryset.filter(date_reflection__gte=date_from)
+    if date_to:
+        queryset = queryset.filter(date_reflection__lte=date_to)
+        
+    if emp_ids:
+        queryset = queryset.filter(employee_id__in=emp_ids)
+        
+    if proj_ids:
+        q_obj = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
+        queryset = queryset.filter(q_obj)
+
+    items = []
+    user_ids = set()
+    for model_item in queryset:
+        user_ids.add(model_item.employee_id)
+        # Re-construct dictionary identical to what Service expects
+        items.append({
+            "sotrudnik_id": model_item.employee_id,
+            "project_name": model_item.project_title,
+            "kolichestvo_chasov": model_item.hours,
+            "id_zadachi": model_item.task_id,
+            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title",
+            "opisanie": model_item.description,
+            "data": model_item.date_reflection.isoformat() if model_item.date_reflection else None,
+        })
+    
+    # Config lookup for user fetching (not strictly needed since fetch_users uses generic user.get, but cleaner)
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    data_service = BitrixDataService(request.bitrix24_account.client, config)
+
+    user_map = data_service.fetch_users(list(user_ids))
+    
+    report_service = ReportService()
+    report = report_service.generate_daily_workload(items, user_map, date_from, date_to)
+    
+    return JsonResponse(report, safe=False)

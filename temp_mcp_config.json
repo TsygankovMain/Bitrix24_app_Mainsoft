@@ -1,0 +1,12 @@
+{
+    "mcpServers": {
+        "b24-dev-mcp": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@modelcontextprotocol/server-sse",
+                "https://mcp-dev.bitrix24.tech/mcp"
+            ]
+        }
+    }
+}

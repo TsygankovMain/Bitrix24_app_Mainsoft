@@ -41,27 +41,18 @@ const tiles = [
         color: 'bg-indigo-50 text-indigo-600'
     },
     {
-        icon: BugIcon,
-        title: 'Сырые данные (БД)',
-        description: 'Проверка синхронизации и данных',
-        action: () => router.push('/reports/raw-data'),
-        color: 'bg-gray-50 text-gray-600'
+        icon: ActivityIcon,
+        title: 'Ежедневная нагрузка',
+        description: 'Матрица часов по дням',
+        action: () => router.push('/reports/daily'),
+        color: 'bg-orange-50 text-orange-600'
     },
     {
         icon: SettingsIcon,
         title: 'Настройки',
         description: 'Настройки приложения',
-        action: () => { 
-            alert('Settings coming soon')
-        },
+        action: () => router.push('/settings'),
         color: 'bg-green-50 text-green-600'
-    },
-    {
-        icon: BugIcon,
-        title: 'Обратная связь',
-        description: 'Сообщить об ошибке или идее',
-        action: () => { alert('Форма обратной связи в разработке') },
-        color: 'bg-purple-50 text-purple-600'
     }
 ]
 
