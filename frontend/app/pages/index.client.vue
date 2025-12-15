@@ -368,10 +368,7 @@ onMounted(async () => {
               <h1 class="text-3xl font-bold text-gray-900 mb-2">Выберите отчет</h1>
               <p class="text-gray-500">Доступные отчеты и инструменты управления</p>
               
-               <button @click="openMeetingModal" class="mt-6 bg-blue-600 text-white px-6 py-2.5 rounded-full font-medium hover:bg-blue-700 shadow-sm transition-all active:transform active:scale-95 flex items-center gap-2 mx-auto">
-                   <svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24" fill="currentColor"><path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z"/></svg>
-                   Списать время на встречи
-               </button>
+
           </div>
 
           <!-- Grid -->
@@ -407,116 +404,9 @@ onMounted(async () => {
           </div>
       </div>
 
-      <!-- Debug Layout -->
-      <div v-if="isInit" class="mt-8 w-full max-w-4xl border-t pt-6 bg-slate-50 p-4 rounded-lg">
-          <h3 class="text-sm font-bold mb-2">Debug Console</h3>
-          <button @click="runDebugFetch" class="bg-slate-800 text-white px-3 py-1.5 rounded text-xs mb-3 hover:bg-slate-700">
-              Test 'sonet_group.get'
-          </button>
-          
-          <div v-if="debugLog.length > 0" class="bg-black text-green-400 p-3 rounded font-mono text-[11px] whitespace-pre-wrap max-h-60 overflow-y-auto border border-slate-300">
-              <div v-for="(line, i) in debugLog" :key="i" class="mb-0.5">{{ line }}</div>
-          </div>
-      </div>
 
-        <!-- Meeting Modal -->
-        <div v-if="isMeetingModalOpen" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div class="bg-white w-3/5 min-w-[600px] rounded-2xl shadow-xl overflow-hidden transform transition-all scale-100 border border-slate-100">
-                 <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                    <h3 class="font-bold text-lg text-slate-800">Списание на встречи</h3>
-                    <button @click="closeMeetingModal" class="text-slate-400 hover:text-slate-600 transition-colors">
-                        <svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24" fill="currentColor"><path d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/></svg>
-                    </button>
-                </div>
-                
-                <div class="p-6 space-y-4">
-                     <div v-if="meetingError" class="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4 border border-red-100">
-                        {{ meetingError }}
-                    </div>
 
-                    <div class="relative">
-                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Проект</label>
-                        
-                        <!-- Search Input Wrapper -->
-                        <div class="relative">
-                            <input 
-                                type="text" 
-                                v-model="projectSearch" 
-                                @focus="isDropdownOpen = true"
-                                @blur="setTimeout(() => isDropdownOpen = false, 200)"
-                                placeholder="Выберите или введите название..." 
-                                class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 pl-9 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700 cursor-pointer"
-                            >
-                             <!-- Search Icon Left -->
-                             <svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentColor" class="absolute left-2.5 top-2.5 text-slate-400 pointer-events-none"><path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-200q158 0 269-111t111-269q0-158-111-269T380-760q-158 0-269 111T0-580q0 158 111 269t269 111Z"/></svg>
-                             
-                             <!-- Chevron Icon Right -->
-                             <span 
-                                @click="isDropdownOpen = !isDropdownOpen"
-                                class="absolute right-2.5 top-2.5 text-slate-400 cursor-pointer hover:text-slate-600 transition-colors"
-                             >
-                                <svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"/></svg>
-                             </span>
-                        </div>
 
-                        <!-- Dropdown List -->
-                        <div v-if="isDropdownOpen" class="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                            <!-- Loading State -->
-                            <div v-if="isLoadingGroups" class="px-4 py-3 text-sm text-slate-500 flex items-center justify-center gap-2">
-                                <svg class="animate-spin h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                Загрузка групп...
-                            </div>
-                            
-                            <!-- List -->
-                            <template v-else>
-                                <div 
-                                    v-for="group in filteredGroups.slice(0, 100)" 
-                                    :key="group.ID" 
-                                    @click="selectGroup(group)"
-                                    class="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm text-slate-700 transition-colors border-b border-slate-50 last:border-0 flex justify-between items-center"
-                                >
-                                    <span>{{ group.NAME }}</span>
-                                    <span v-if="formData.projectId == group.ID" class="text-blue-600 font-bold">✓</span>
-                                </div>
-                                <div v-if="filteredGroups.length === 0" class="px-4 py-2 text-sm text-slate-400 italic">
-                                    Проекты не найдены
-                                </div>
-                            </template>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Дата</label>
-                            <input type="date" v-model="formData.date" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Часы</label>
-                            <input type="number" step="0.5" v-model="formData.hours" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700" placeholder="0.0">
-                        </div>
-                    </div>
-                    
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Описание</label>
-                        <textarea v-model="formData.description" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-700 h-24 resize-none" placeholder="Детали встречи..."></textarea>
-                    </div>
-
-                     <div class="flex items-center gap-2">
-                         <input type="checkbox" id="modalIsConsideredGlobal" v-model="formData.isConsidered" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
-                         <label for="modalIsConsideredGlobal" class="text-sm text-slate-700 font-medium">Учитывать часы (Billable)</label>
-                     </div>
-                </div>
-
-                <div class="p-6 border-t bg-slate-50 flex gap-3">
-                    <button @click="closeMeetingModal" class="flex-1 bg-white text-slate-700 border border-slate-300 font-medium py-2.5 rounded-lg hover:bg-slate-50 transition-colors">
-                        Отмена
-                    </button>
-                    <button @click="handleSaveMeeting" :disabled="isMeetingSaving" class="flex-1 bg-blue-600 text-white font-medium py-2.5 rounded-lg shadow-sm hover:bg-blue-700 active:transform active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                        {{ isMeetingSaving ? 'Сохранение...' : 'Сохранить' }}
-                    </button>
-                </div>
-            </div>
-        </div>
         
   </div>
 </template>
