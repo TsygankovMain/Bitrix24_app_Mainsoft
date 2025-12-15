@@ -34,6 +34,17 @@
             Просмотр необработанных данных, синхронизированных с базой данных.
           </p>
         </div>
+
+        <!-- Debug -->
+        <div class="p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
+          <h3 class="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">Отладка</h3>
+          <button @click="router.push('/settings/debug')" class="px-4 py-2 text-sm font-medium text-white bg-slate-600 rounded-md hover:bg-slate-700 transition-colors">
+            Панель отладки
+          </button>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mt-2">
+            Логи запросов и ошибок системы.
+          </p>
+        </div>
       </div>
     </div>
   </div>

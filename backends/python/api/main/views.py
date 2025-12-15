@@ -8,7 +8,7 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 
 from .utils.decorators import auth_required, log_errors
 from .utils import AuthorizedRequest
-from .models import ApplicationInstallation, TimesheetItem
+from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog
 
 from config import load_config
 from .services import BitrixDataService, ReportService, TimesheetSyncService, ConfigurationService
@@ -31,6 +31,8 @@ __all__ = [
     "save_configuration",
     "get_smart_processes",
     "get_sp_fields",
+    "get_request_logs",
+    "get_system_logs",
 ]
 
 config = load_config()
@@ -445,3 +447,67 @@ def report_daily_workload(request: AuthorizedRequest):
     report = report_service.generate_daily_workload(items, user_map, date_from, date_to)
     
     return JsonResponse(report, safe=False)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_request_logs")
+@auth_required
+def get_request_logs(request: AuthorizedRequest):
+    page_number = request.GET.get('page', 1)
+    page_size = request.GET.get('limit', 50)
+    
+    queryset = RequestLog.objects.all().order_by('-timestamp')
+    paginator = Paginator(queryset, page_size)
+    page_obj = paginator.get_page(page_number)
+    
+    items = []
+    for item in page_obj:
+        items.append({
+            "id": str(item.id),
+            "timestamp": item.timestamp.isoformat(),
+            "method": item.method,
+            "path": item.path,
+            "status_code": item.status_code,
+            "duration_ms": item.duration_ms,
+            "request_body": str(item.request_body) if item.request_body else "",
+            "response_body": str(item.response_body) if item.response_body else "",
+        })
+        
+    return JsonResponse({
+        "items": items,
+        "total": paginator.count,
+        "page": page_obj.number,
+        "pages": paginator.num_pages,
+    })
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_system_logs")
+@auth_required
+def get_system_logs(request: AuthorizedRequest):
+    page_number = request.GET.get('page', 1)
+    page_size = request.GET.get('limit', 50)
+    
+    queryset = SystemLog.objects.all().order_by('-timestamp')
+    paginator = Paginator(queryset, page_size)
+    page_obj = paginator.get_page(page_number)
+    
+    items = []
+    for item in page_obj:
+        items.append({
+            "id": str(item.id),
+            "timestamp": item.timestamp.isoformat(),
+            "level": item.level,
+            "module": item.module,
+            "message": item.message,
+            "traceback": item.traceback or ""
+        })
+        
+    return JsonResponse({
+        "items": items,
+        "total": paginator.count,
+        "page": page_obj.number,
+        "pages": paginator.num_pages,
+    })

@@ -170,3 +170,34 @@ class TimesheetItem(models.Model):
         managed = True
         db_table = "timesheet_item"
         unique_together = ("bitrix24_account", "bitrix_id")
+
+
+class RequestLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    method = models.CharField(max_length=10)
+    path = models.TextField()
+    status_code = models.IntegerField(null=True)
+    duration_ms = models.FloatField(null=True)
+    request_body = models.TextField(null=True)
+    response_body = models.TextField(null=True)
+    error_message = models.TextField(null=True)
+    
+    class Meta:
+        managed = True
+        db_table = "request_log"
+        ordering = ["-timestamp"]
+
+
+class SystemLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    level = models.CharField(max_length=20)  # INFO, ERROR, WARNING
+    module = models.CharField(max_length=100)
+    message = models.TextField()
+    traceback = models.TextField(null=True)
+    
+    class Meta:
+        managed = True
+        db_table = "system_log"
+        ordering = ["-timestamp"]

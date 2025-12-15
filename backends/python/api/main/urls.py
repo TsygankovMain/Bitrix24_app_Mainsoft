@@ -27,4 +27,8 @@ urlpatterns = [
     path('api/configuration/save', save_configuration, name='save_configuration'),
     path('api/smart-processes', get_smart_processes, name='get_smart_processes'),
     path('api/smart-processes/fields', get_sp_fields, name='get_sp_fields'),
+    
+    # Logs
+    path('api/logs/requests', get_request_logs, name='get_request_logs'),
+    path('api/logs/system', get_system_logs, name='get_system_logs'),
 ]

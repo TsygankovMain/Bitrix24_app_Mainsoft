@@ -204,6 +204,24 @@ export const useApiStore = defineStore(
       })
     }
 
+    const getRequestLogs = async (page: number = 1, limit: number = 50): Promise<any> => {
+      const params = new URLSearchParams()
+      params.append('page', page.toString())
+      params.append('limit', limit.toString())
+      return await $api(`/api/logs/requests?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const getSystemLogs = async (page: number = 1, limit: number = 50): Promise<any> => {
+      const params = new URLSearchParams()
+      params.append('page', page.toString())
+      params.append('limit', limit.toString())
+      return await $api(`/api/logs/system?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
     return {
       checkHealth,
       init,
@@ -220,7 +238,9 @@ export const useApiStore = defineStore(
       getConfiguration,
       saveConfiguration,
       getSmartProcesses,
-      getSpFields
+      getSpFields,
+      getRequestLogs,
+      getSystemLogs
     }
   }
 )
