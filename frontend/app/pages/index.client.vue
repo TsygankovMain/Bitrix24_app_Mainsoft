@@ -275,7 +275,7 @@ onMounted(async () => {
 
         <!-- Meeting Modal -->
         <div v-if="isMeetingModalOpen" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div class="bg-white w-full max-w-7xl rounded-2xl shadow-xl overflow-hidden transform transition-all scale-100 border border-slate-100">
+            <div class="bg-white w-2/5 min-w-[600px] rounded-2xl shadow-xl overflow-hidden transform transition-all scale-100 border border-slate-100">
                  <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                     <h3 class="font-bold text-lg text-slate-800">Списание на встречи</h3>
                     <button @click="closeMeetingModal" class="text-slate-400 hover:text-slate-600 transition-colors">
