@@ -56,6 +56,20 @@ const filteredGroups = computed(() => {
 
 const fetchAllGroups = async () => {
     if (groups.value.length > 0) return;
+
+    // Wait for BX24 for background fetch
+    // @ts-ignore
+    if (typeof window.BX24 === 'undefined') {
+        let attempts = 0;
+        // @ts-ignore
+        while (typeof window.BX24 === 'undefined' && attempts < 50) {
+            await new Promise(r => setTimeout(r, 100));
+            attempts++;
+        }
+    }
+
+    // @ts-ignore
+    if (!window.BX24) return;
     
     isLoadingGroups.value = true;
     meetingError.value = null;
@@ -304,6 +318,9 @@ onMounted(async () => {
     }
 
     isInit.value = true
+    
+    // Preload groups in background
+    fetchAllGroups()
   } catch (error) {
     processErrorGlobal(error)
   }
