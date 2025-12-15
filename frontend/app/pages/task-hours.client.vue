@@ -12,12 +12,18 @@ const IS_CONSIDERED_FIELD_CODE = 'ufCrm87_1763717129';
 const DESCRIPTION_FIELD_CODE = 'ufCrm87_1762026149771';
 const TASK_HIERARCHY_ID_FIELD_CODE = 'ufCrm87_1764191110';
 const TASK_HIERARCHY_TITLE_FIELD_CODE = 'ufCrm87_1764191133';
+const PROJECT_ID_FIELD_CODE = 'ufCrm87_1764265626';
+const PROJECT_NAME_FIELD_CODE = 'ufCrm87_1764265641';
+const TASK_NAME_FIELD_CODE = 'ufCrm87_1764361585';
+const REFLECTION_DATE_FIELD_CODE = 'ufCrm87_1764446274';
 
 // --- STATE ---
 const isLoading = ref(true)
 const error = ref<string | null>(null)
 const taskTree = ref<any[]>([])
 const users = ref<Record<string, string>>({})
+const groups = ref<Record<string, string>>({}) // groupId -> groupName
+const tasksMap = ref<Record<string, any>>({}) // taskId -> taskData
 const allUsers = ref<any[]>([])
 const updatingItemId = ref<string | null>(null)
 const mainTaskId = ref<string | null>(null)
@@ -108,7 +114,7 @@ const fetchData = async (currentTaskId: string) => {
     
     try {
         // 1. Root Task
-        const rootTaskResult = await callMethodPromise('tasks.task.get', { taskId: currentTaskId, select: ['ID', 'TITLE'] });
+        const rootTaskResult = await callMethodPromise('tasks.task.get', { taskId: currentTaskId, select: ['ID', 'TITLE', 'GROUP_ID'] });
         const rootTaskData = rootTaskResult.task;
         
         // 2. Subtasks (BFS)
@@ -119,7 +125,7 @@ const fetchData = async (currentTaskId: string) => {
         while (queue.length > 0) {
             const batchCmds = queue.map(id => ['tasks.task.list', {
                 filter: { PARENT_ID: id },
-                select: ['id', 'title', 'parentId']
+                select: ['id', 'title', 'parentId', 'groupId']
             }]);
             const batchResult: any = await callBatchPromise(batchCmds);
             
@@ -139,7 +145,7 @@ const fetchData = async (currentTaskId: string) => {
             }
         }
         
-        const allTasks = [{ id: rootTaskData.id, title: rootTaskData.title, parentId: null }, ...allSubTasks];
+        const allTasks = [{ id: rootTaskData.id, title: rootTaskData.title, parentId: null, groupId: rootTaskData.groupId }, ...allSubTasks];
         const allTaskIds = allTasks.map(t => t.id);
         
         // 3. Smart Process Items
@@ -167,6 +173,7 @@ const fetchData = async (currentTaskId: string) => {
                  taskId: task.id,
                  taskTitle: task.title,
                  parentId: task.parentId,
+                 groupId: task.groupId, // Pass groupId to nodes
                  items: items,
                  totalConsidered: items.reduce((sum: number, item: any) => {
                      const isCons = item[IS_CONSIDERED_FIELD_CODE] === true || item[IS_CONSIDERED_FIELD_CODE] === 'Y';
@@ -230,6 +237,24 @@ const fetchData = async (currentTaskId: string) => {
                 }
             });
             users.value = usersData;
+        }
+        
+        // 8. Populate tasksMap
+        allTasks.forEach(t => tasksMap.value[t.id] = t);
+
+        // 9. Groups
+        const groupIds = [...new Set(allTasks.map(t => t.groupId).filter(g => g && g !== '0'))];
+        if (groupIds.length > 0) {
+            const groupBatch = groupIds.reduce((acc: any, id: unknown) => ({...acc, [`group_${id}`]: ['sonet_group.get', { ID: id }]}), {});
+            const groupResult: any = await callBatchPromise(groupBatch);
+            const groupsData: Record<string, string> = {};
+            groupIds.forEach((id: unknown) => {
+                const res = groupResult[`group_${id}`];
+                if (res && !res.error() && res.data()) {
+                    groupsData[String(id)] = res.data().NAME;
+                }
+            });
+            groups.value = groupsData;
         }
 
     } catch (e: any) {
@@ -312,6 +337,10 @@ const handleCreateHours = async () => {
     try {
         const hierarchy = await getTaskHierarchy(formData.value.targetTaskId!);
         
+        const taskData = tasksMap.value[formData.value.targetTaskId!] || {};
+        const groupId = taskData.groupId;
+        const groupName = groupId ? groups.value[groupId] : '';
+
         // @ts-ignore
         const BX24 = window.BX24;
         BX24.callMethod('crm.item.add', {
@@ -326,6 +355,10 @@ const handleCreateHours = async () => {
                 createdTime: formData.value.date + 'T00:00:00',
                 [TASK_HIERARCHY_ID_FIELD_CODE]: hierarchy.idPath,
                 [TASK_HIERARCHY_TITLE_FIELD_CODE]: hierarchy.titlePath,
+                [PROJECT_ID_FIELD_CODE]: groupId,
+                [PROJECT_NAME_FIELD_CODE]: groupName,
+                [TASK_NAME_FIELD_CODE]: taskData.title || '',
+                [REFLECTION_DATE_FIELD_CODE]: formData.value.date + 'T00:00:00',
             }
         }, (result: any) => {
             isCreating.value = false;
