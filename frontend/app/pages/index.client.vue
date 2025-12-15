@@ -28,6 +28,9 @@ const isMeetingModalOpen = ref(false)
 const isMeetingSaving = ref(false)
 const meetingError = ref<string | null>(null)
 const groups = ref<any[]>([])
+const projectSearch = ref('')
+const isDropdownOpen = ref(false)
+
 const formData = ref({
     date: new Date().toISOString().split('T')[0],
     hours: '',
@@ -37,10 +40,49 @@ const formData = ref({
 })
 const currentUserId = ref<string>('')
 
+const filteredGroups = computed(() => {
+    if (!projectSearch.value) return groups.value;
+    const lower = projectSearch.value.toLowerCase();
+    return groups.value.filter(g => g.NAME.toLowerCase().includes(lower));
+})
+
+const fetchAllGroups = async () => {
+    if (groups.value.length > 0) return;
+    
+    // @ts-ignore
+    const BX24 = window.BX24;
+    
+    return new Promise<void>((resolve) => {
+        let allGroups: any[] = [];
+        
+        const fetchBatch = (start = 0) => {
+             BX24.callMethod('sonet_group.get', {
+                ORDER: { NAME: 'ASC' },
+                FILTER: { CLOSED: 'N' },
+                start: start
+            }, (res: any) => {
+                if (res.data()) {
+                    allGroups = [...allGroups, ...res.data()];
+                    if (res.more()) {
+                        res.next();
+                    } else {
+                        groups.value = allGroups;
+                        console.log("Groups loaded:", allGroups.length);
+                        resolve();
+                    }
+                } else {
+                     resolve();
+                }
+            })
+        }
+        fetchBatch(0);
+    });
+}
+
 const openMeetingModal = async () => {
     isMeetingModalOpen.value = true
     meetingError.value = null
-    // Reset form but keep date if valid? Or reset all
+    projectSearch.value = ''
     formData.value = {
         date: new Date().toISOString().split('T')[0],
         hours: '',
@@ -49,34 +91,28 @@ const openMeetingModal = async () => {
         isConsidered: true
     }
     
-    // Fetch user groups for selector
     try {
-        if (groups.value.length === 0) {
-            // @ts-ignore
-            const BX24 = window.BX24;
-            // Get user ID first if needed
-            // Actually we need to know who is current user to assign
-            BX24.callMethod('user.current', {}, (res: any) => {
+        // @ts-ignore
+        const BX24 = window.BX24;
+        BX24.callMethod('user.current', {}, (res: any) => {
                  if(res.data()) currentUserId.value = res.data().ID;
-            });
-            
-            BX24.callMethod('sonet_group.get', {
-                ORDER: { NAME: 'ASC' },
-                FILTER: { CLOSED: 'N' } // Only open groups? Or all user groups. 
-                // Default checks permissions usually.
-            }, (res: any) => {
-                if (res.data()) {
-                    groups.value = res.data();
-                }
-            })
-        }
+        });
+        
+        await fetchAllGroups();
     } catch (e) {
         console.error(e)
     }
 }
 
+const selectGroup = (group: any) => {
+    formData.value.projectId = group.ID
+    projectSearch.value = group.NAME
+    isDropdownOpen.value = false
+}
+
 const closeMeetingModal = () => {
     isMeetingModalOpen.value = false
+    isDropdownOpen.value = false
 }
 
 const handleSaveMeeting = () => {
@@ -288,12 +324,37 @@ onMounted(async () => {
                         {{ meetingError }}
                     </div>
 
-                    <div>
+                    <div class="relative">
                         <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Проект</label>
-                        <select v-model="formData.projectId" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700">
-                            <option value="" disabled>Выберите проект...</option>
-                            <option v-for="group in groups" :key="group.ID" :value="group.ID">{{ group.NAME }}</option>
-                        </select>
+                        
+                        <!-- Search Input -->
+                        <div class="relative">
+                            <input 
+                                type="text" 
+                                v-model="projectSearch" 
+                                @focus="isDropdownOpen = true"
+                                @blur="setTimeout(() => isDropdownOpen = false, 200)"
+                                placeholder="Начните вводить название проекта..." 
+                                class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 pl-9 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700"
+                            >
+                             <svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentColor" class="absolute left-2.5 top-2.5 text-slate-400"><path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-200q158 0 269-111t111-269q0-158-111-269T380-760q-158 0-269 111T0-580q0 158 111 269t269 111Z"/></svg>
+                        </div>
+
+                        <!-- Dropdown List -->
+                        <div v-if="isDropdownOpen" class="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            <div 
+                                v-for="group in filteredGroups.slice(0, 100)" 
+                                :key="group.ID" 
+                                @click="selectGroup(group)"
+                                class="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm text-slate-700 transition-colors border-b border-slate-50 last:border-0 flex justify-between items-center"
+                            >
+                                <span>{{ group.NAME }}</span>
+                                <span v-if="formData.projectId == group.ID" class="text-blue-600 font-bold">✓</span>
+                            </div>
+                            <div v-if="filteredGroups.length === 0" class="px-4 py-2 text-sm text-slate-400 italic">
+                                Проекты не найдены
+                            </div>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-4">
