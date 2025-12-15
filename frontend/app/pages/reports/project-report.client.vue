@@ -26,6 +26,16 @@ const isModalOpen = ref(false)
 const modalError = ref<string | null>(null)
 const isSaving = ref(false)
 
+useHead({
+  script: [
+    {
+      src: 'https://api.bitrix24.com/api/v1/',
+      async: true,
+      defer: true
+    }
+  ]
+})
+
 const formData = ref({
     hours: '',
     description: '',
@@ -36,8 +46,21 @@ const formData = ref({
 
 // --- LIFECYCLE ---
 onMounted(async () => {
+    // Wait for BX24
+    let attempts = 0;
+    while (typeof (window as any).BX24 === 'undefined' && attempts < 50) {
+        await new Promise(r => setTimeout(r, 100));
+        attempts++;
+    }
+
     // @ts-ignore
     const BX24 = window.BX24;
+    
+    if (!BX24) {
+        error.value = "Не удалось загрузить API Bitrix24. Попробуйте обновить страницу.";
+        isLoading.value = false;
+        return;
+    }
     
     // Check context (Placement)
     const placement = BX24.placement.info();
