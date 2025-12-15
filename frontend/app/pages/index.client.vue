@@ -51,6 +51,7 @@ const fetchAllGroups = async () => {
     if (groups.value.length > 0) return;
     
     isLoadingGroups.value = true;
+    meetingError.value = null;
     
     // @ts-ignore
     const BX24 = window.BX24;
@@ -59,23 +60,42 @@ const fetchAllGroups = async () => {
         let allGroups: any[] = [];
         
         const fetchBatch = (start = 0) => {
+             console.log("Fetching groups batch, start:", start);
              BX24.callMethod('sonet_group.get', {
                 ORDER: { NAME: 'ASC' },
-                FILTER: { CLOSED: 'N' },
+                // FILTER: { CLOSED: 'N' }, // Removed filter to see all groups
                 start: start
             }, (res: any) => {
+                if (res.error()) {
+                     console.error("Group fetch error:", res.error());
+                     meetingError.value = "Ошибка API: " + res.error();
+                     isLoadingGroups.value = false;
+                     resolve();
+                     return;
+                }
+
                 if (res.data()) {
-                    allGroups = [...allGroups, ...res.data()];
+                    const data = res.data();
+                    allGroups = [...allGroups, ...data];
+                    // console.log(`Fetched ${data.length} groups.`);
+                    
                     if (res.more()) {
                         res.next();
                     } else {
                         groups.value = allGroups;
-                        console.log("Groups loaded:", allGroups.length);
+                        console.log("Groups loaded total:", allGroups.length);
                         isLoadingGroups.value = false;
+                        if (allGroups.length === 0) {
+                             meetingError.value = "Группы не найдены (0). Проверьте права.";
+                        }
                         resolve();
                     }
                 } else {
+                     groups.value = allGroups;
                      isLoadingGroups.value = false;
+                     if (allGroups.length === 0) {
+                          meetingError.value = "Группы не найдены (пустой ответ).";
+                     }
                      resolve();
                 }
             })
@@ -106,6 +126,7 @@ const openMeetingModal = async () => {
         await fetchAllGroups();
     } catch (e) {
         console.error(e)
+        meetingError.value = "Ошибка вызова API: " + e;
     }
 }
 
