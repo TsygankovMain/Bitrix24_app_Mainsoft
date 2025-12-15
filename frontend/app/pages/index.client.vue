@@ -80,6 +80,12 @@ onMounted(async () => {
          return 
     }
     
+    if (placementCode === 'SONET_GROUP_DETAIL_TAB') {
+         console.log('DEBUG: Redirecting to /reports/project-report via JSSDK');
+         router.push('/reports/project-report')
+         return 
+    }
+    
     // Fallback: Use Global BX24 with init (Standard Pattern)
     // @ts-ignore
     if (typeof window.BX24 !== 'undefined') {
@@ -91,6 +97,9 @@ onMounted(async () => {
              if (rawPlacement && rawPlacement.placement === 'TASK_VIEW_TAB') {
                   console.log('DEBUG: Redirecting to /task-hours via Window');
                   router.push('/task-hours')
+             } else if (rawPlacement && rawPlacement.placement === 'SONET_GROUP_DETAIL_TAB') {
+                  console.log('DEBUG: Redirecting to /reports/project-report via Window');
+                  router.push('/reports/project-report')
              }
         })
     }

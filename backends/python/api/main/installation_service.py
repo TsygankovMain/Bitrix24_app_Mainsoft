@@ -194,6 +194,26 @@ class InstallationService:
         )
         logger.info("Placement TASK_VIEW_TAB bound successfully")
 
+        # Install Project/Group Tab Placement
+        try:
+             self.bitrix24_account.call_method('placement.unbind', {
+                 'PLACEMENT': 'SONET_GROUP_DETAIL_TAB',
+                 'HANDLER': handler_url
+             })
+        except Exception:
+             pass
+
+        self.bitrix24_account.call_method(
+            "placement.bind",
+            {
+                "PLACEMENT": "SONET_GROUP_DETAIL_TAB",
+                "HANDLER": handler_url,
+                "TITLE": "Отчет по проекту",
+                "DESCRIPTION": "Отчет по трудозатратам проекта и списание часов"
+            }
+        )
+        logger.info("Placement SONET_GROUP_DETAIL_TAB bound successfully")
+
     def _rollback_sync(self):
         """Rollbacks changes on failure"""
         logger.warning("Rolling back installation...")

@@ -251,7 +251,11 @@ const fetchData = async (currentTaskId: string) => {
             groupIds.forEach((id: unknown) => {
                 const res = groupResult[`group_${id}`];
                 if (res && !res.error() && res.data()) {
-                    groupsData[String(id)] = res.data().NAME;
+                    const data = res.data();
+                    const group = Array.isArray(data) ? data[0] : data;
+                    if (group && group.NAME) {
+                        groupsData[String(id)] = group.NAME;
+                    }
                 }
             });
             groups.value = groupsData;
@@ -293,8 +297,23 @@ const selectTaskForEntry = (taskId: string, title: string) => {
 // handleOpenModal removed
 // handleTransferToReport removed
 
-const handleToggleHours = async (itemId: string) => {
-    updatingItemId.value = itemId;
+const handleEditItem = (item: any) => {
+    updatingItemId.value = item.id;
+    formData.value.hours = item[HOURS_FIELD_CODE];
+    formData.value.description = item[DESCRIPTION_FIELD_CODE] || item.title;
+    formData.value.date = item.createdTime ? item.createdTime.split('T')[0] : new Date().toISOString().split('T')[0];
+    formData.value.employeeId = item[EMPLOYEE_FIELD_CODE];
+    formData.value.isConsidered = item[IS_CONSIDERED_FIELD_CODE] === 'Y';
+    formData.value.targetTaskId = item[TASK_ID_FIELD_CODE];
+    
+    // Find task title for UI
+    const taskData = tasksMap.value[item[TASK_ID_FIELD_CODE]];
+    selectedTaskTitle.value = taskData ? taskData.title : 'Неизвестная задача';
+    
+    modalError.value = null;
+};
+
+const handleEditItemById = (itemId: string) => {
     let itemToUpdate: any = null;
     const findItem = (nodes: any[]) => {
         for (const node of nodes) {
@@ -304,29 +323,26 @@ const handleToggleHours = async (itemId: string) => {
         }
     }
     findItem(taskTree.value);
-    
-    if (!itemToUpdate) {
-        updatingItemId.value = null;
-        return;
-    }
-    
-    const currentIsConsidered = itemToUpdate[IS_CONSIDERED_FIELD_CODE] === true || itemToUpdate[IS_CONSIDERED_FIELD_CODE] === 'Y';
-    
-    // @ts-ignore
-    const BX24 = window.BX24;
-    BX24.callMethod('crm.item.update', {
-        entityTypeId: smartProcessId.value,
-        id: itemId,
-        fields: {
-            [IS_CONSIDERED_FIELD_CODE]: currentIsConsidered ? 'N' : 'Y'
-        }
-    }, (result: any) => {
-        updatingItemId.value = null;
-        if (mainTaskId.value) fetchData(mainTaskId.value);
-    });
+    if (itemToUpdate) handleEditItem(itemToUpdate);
 };
 
-const handleCreateHours = async () => {
+const cancelEdit = () => {
+    updatingItemId.value = null;
+    formData.value.hours = '';
+    formData.value.description = '';
+    formData.value.date = new Date().toISOString().split('T')[0];
+    
+    // Reset to current user
+    if (currentUserId.value) formData.value.employeeId = currentUserId.value;
+    
+    // Keep target task if possible, else reset
+    if (mainTaskId.value) {
+        // formData.value.targetTaskId = mainTaskId.value; // Don't force reset task, user might be adding multiple
+    }
+    selectedTaskTitle.value = formData.value.targetTaskId && tasksMap.value[formData.value.targetTaskId] ? tasksMap.value[formData.value.targetTaskId].title : '';
+};
+
+const handleSaveHours = async () => {
     modalError.value = null;
     if (!formData.value.hours || parseFloat(formData.value.hours) <= 0) { modalError.value = 'Некорректные часы'; return; }
     if (!formData.value.description.trim()) { modalError.value = 'Нет описания'; return; }
@@ -343,36 +359,56 @@ const handleCreateHours = async () => {
 
         // @ts-ignore
         const BX24 = window.BX24;
-        BX24.callMethod('crm.item.add', {
-            entityTypeId: smartProcessId.value,
-            fields: {
-                title: formData.value.description.substring(0, 255),
-                [HOURS_FIELD_CODE]: parseFloat(formData.value.hours),
-                [IS_CONSIDERED_FIELD_CODE]: formData.value.isConsidered ? 'Y' : 'N',
-                [TASK_ID_FIELD_CODE]: formData.value.targetTaskId,
-                [EMPLOYEE_FIELD_CODE]: formData.value.employeeId,
-                [DESCRIPTION_FIELD_CODE]: formData.value.description,
-                createdTime: formData.value.date + 'T00:00:00',
-                [TASK_HIERARCHY_ID_FIELD_CODE]: hierarchy.idPath,
-                [TASK_HIERARCHY_TITLE_FIELD_CODE]: hierarchy.titlePath,
-                [PROJECT_ID_FIELD_CODE]: groupId,
-                [PROJECT_NAME_FIELD_CODE]: groupName,
-                [TASK_NAME_FIELD_CODE]: taskData.title || '',
-                [REFLECTION_DATE_FIELD_CODE]: formData.value.date + 'T00:00:00',
-            }
-        }, (result: any) => {
-            isCreating.value = false;
-            if (result.error()) {
-                modalError.value = result.error().toString();
-            } else {
-                // Success: clear form mostly
-                formData.value.hours = '';
-                formData.value.description = '';
-                // Keep Date and Employee
-                // Refresh
-                if (mainTaskId.value) fetchData(mainTaskId.value);
-            }
-        });
+        
+        const commonFields = {
+            title: formData.value.description.substring(0, 255),
+            [HOURS_FIELD_CODE]: parseFloat(formData.value.hours),
+            [IS_CONSIDERED_FIELD_CODE]: formData.value.isConsidered ? 'Y' : 'N',
+            [TASK_ID_FIELD_CODE]: formData.value.targetTaskId,
+            [EMPLOYEE_FIELD_CODE]: formData.value.employeeId,
+            assignedById: formData.value.employeeId,
+            [DESCRIPTION_FIELD_CODE]: formData.value.description,
+            createdTime: formData.value.date + 'T00:00:00',
+            [TASK_HIERARCHY_ID_FIELD_CODE]: hierarchy.idPath,
+            [TASK_HIERARCHY_TITLE_FIELD_CODE]: hierarchy.titlePath,
+            [PROJECT_ID_FIELD_CODE]: groupId,
+            [PROJECT_NAME_FIELD_CODE]: groupName,
+            [TASK_NAME_FIELD_CODE]: taskData.title || '',
+            [REFLECTION_DATE_FIELD_CODE]: formData.value.date + 'T00:00:00',
+        };
+
+        if (updatingItemId.value) {
+            // UDPATE
+             BX24.callMethod('crm.item.update', {
+                entityTypeId: smartProcessId.value,
+                id: updatingItemId.value,
+                fields: commonFields
+            }, (result: any) => {
+                isCreating.value = false;
+                if (result.error()) {
+                    modalError.value = result.error().toString();
+                } else {
+                    cancelEdit(); // Reset form
+                    if (mainTaskId.value) fetchData(mainTaskId.value);
+                }
+            });
+        } else {
+            // CREATE
+            BX24.callMethod('crm.item.add', {
+                entityTypeId: smartProcessId.value,
+                fields: commonFields
+            }, (result: any) => {
+                isCreating.value = false;
+                if (result.error()) {
+                    modalError.value = result.error().toString();
+                } else {
+                    // Success: clear form
+                    formData.value.hours = '';
+                    formData.value.description = '';
+                    if (mainTaskId.value) fetchData(mainTaskId.value);
+                }
+            });
+        }
         
     } catch (e: any) {
         modalError.value = e.message;
@@ -475,6 +511,12 @@ watch(smartProcessId, () => {
     if (mainTaskId.value) fetchData(mainTaskId.value);
 });
 
+watch(currentUserId, (newId) => {
+    if (newId && !formData.value.employeeId) {
+        formData.value.employeeId = newId;
+    }
+}, { immediate: true });
+
 // Auto-select main task when loaded
 watch([mainTaskId, taskTree], () => {
     if (mainTaskId.value && !formData.value.targetTaskId && taskTree.value.length > 0) {
@@ -569,7 +611,7 @@ const formatCurrency = (val: number) => val.toLocaleString('ru-RU', { style: 'cu
                                     <span :class="{'text-green-600': item[IS_CONSIDERED_FIELD_CODE] === 'Y', 'text-red-600': item[IS_CONSIDERED_FIELD_CODE] !== 'Y'}" class="font-bold text-sm">
                                         {{ parseFloat(item[HOURS_FIELD_CODE] || 0).toFixed(2) }}
                                     </span>
-                                    <button @click="handleToggleHours(item.id)" :disabled="updatingItemId === item.id" class="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded hover:bg-slate-200">
+                                    <button @click="handleEditItem(item)" :disabled="updatingItemId === item.id" class="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded hover:bg-slate-200">
                                         {{ updatingItemId === item.id ? '...' : 'Изменить' }}
                                     </button>
                                 </div>
@@ -585,7 +627,7 @@ const formatCurrency = (val: number) => val.toLocaleString('ru-RU', { style: 'cu
                                     :users="users" 
                                     :openTaskIds="openTaskIds" 
                                     @toggle="toggleGroup" 
-                                    @toggleHours="handleToggleHours"
+                                    @toggleHours="handleEditItemById"
                                     @select="selectTaskForEntry"
                                     :selectedTaskId="formData.targetTaskId" 
                                 />
@@ -647,13 +689,16 @@ const formatCurrency = (val: number) => val.toLocaleString('ru-RU', { style: 'cu
             </div>
             
             <!-- Footer Actions -->
-            <div class="p-6 border-t bg-slate-50">
+            <div class="p-6 border-t bg-slate-50 flex gap-3">
+                <button v-if="updatingItemId" @click="cancelEdit" class="flex-1 bg-white text-slate-700 border border-slate-300 font-medium py-2.5 rounded-lg hover:bg-slate-50">
+                    Отмена
+                </button>
                 <button 
-                    @click="handleCreateHours" 
-                    :disabled="isCreating || !formData.targetTaskId" 
-                    class="w-full bg-blue-600 text-white font-medium py-2.5 rounded-lg shadow-sm hover:bg-blue-700 active:transform active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    @click="handleSaveHours" 
+                    :disabled="isCreating || (!formData.targetTaskId && !updatingItemId)" 
+                    class="flex-1 bg-blue-600 text-white font-medium py-2.5 rounded-lg shadow-sm hover:bg-blue-700 active:transform active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    {{ isCreating ? 'Сохранение...' : 'Сохранить запись' }}
+                    {{ isCreating ? 'Сохранение...' : (updatingItemId ? 'Обновить' : 'Сохранить') }}
                 </button>
             </div>
         </aside>
