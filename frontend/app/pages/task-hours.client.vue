@@ -39,7 +39,6 @@ const formData = ref({
 })
 
 // Settings
-const isSettingsOpen = ref(false)
 const clientHourRate = ref(0)
 const smartProcessId = ref(1164)
 
@@ -484,27 +483,9 @@ const formatCurrency = (val: number) => val.toLocaleString('ru-RU', { style: 'cu
                      <p class="text-xs text-slate-500 uppercase font-semibold">Не учитываемые</p>
                      <p class="text-xl font-bold text-red-600">{{ totalStats.totalUnconsidered.toFixed(2) }} ч</p>
                  </div>
+              </div>
                  
-                 <!-- Settings Toggle -->
-                 <div class="flex items-center justify-end">
-                    <button @click="isSettingsOpen = !isSettingsOpen" class="text-slate-500 hover:text-slate-700 p-2 rounded hover:bg-slate-100 flex items-center gap-2">
-                        <span class="text-sm">Настройки</span>
-                        <span>{{ isSettingsOpen ? '▲' : '▼' }}</span>
-                    </button>
-                 </div>
-             </div>
-             
-             <!-- Settings Panel Inline -->
-             <div v-if="isSettingsOpen" class="bg-slate-50 border-b p-4 grid grid-cols-1 md:grid-cols-2 gap-4 shrink-0 transition-all">
-                <div>
-                    <label class="block text-xs font-semibold text-slate-700 mb-1">Стоимость часа</label>
-                    <input type="number" v-model.number="clientHourRate" class="w-full border p-2 rounded bg-white text-sm" />
-                </div>
-                 <div>
-                    <label class="block text-xs font-semibold text-slate-700 mb-1">ID Смарт-процесса</label>
-                    <input type="number" v-model.number="smartProcessId" class="w-full border p-2 rounded bg-white text-sm" />
-                </div>
-            </div>
+
 
              <!-- Scrollable List -->
              <div class="flex-1 overflow-y-auto p-4 space-y-4">
