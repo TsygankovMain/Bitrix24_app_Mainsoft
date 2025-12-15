@@ -30,6 +30,7 @@ const meetingError = ref<string | null>(null)
 const groups = ref<any[]>([])
 const projectSearch = ref('')
 const isDropdownOpen = ref(false)
+const isLoadingGroups = ref(false)
 
 const formData = ref({
     date: new Date().toISOString().split('T')[0],
@@ -48,6 +49,8 @@ const filteredGroups = computed(() => {
 
 const fetchAllGroups = async () => {
     if (groups.value.length > 0) return;
+    
+    isLoadingGroups.value = true;
     
     // @ts-ignore
     const BX24 = window.BX24;
@@ -68,9 +71,11 @@ const fetchAllGroups = async () => {
                     } else {
                         groups.value = allGroups;
                         console.log("Groups loaded:", allGroups.length);
+                        isLoadingGroups.value = false;
                         resolve();
                     }
                 } else {
+                     isLoadingGroups.value = false;
                      resolve();
                 }
             })
@@ -327,33 +332,51 @@ onMounted(async () => {
                     <div class="relative">
                         <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Проект</label>
                         
-                        <!-- Search Input -->
+                        <!-- Search Input Wrapper -->
                         <div class="relative">
                             <input 
                                 type="text" 
                                 v-model="projectSearch" 
                                 @focus="isDropdownOpen = true"
                                 @blur="setTimeout(() => isDropdownOpen = false, 200)"
-                                placeholder="Начните вводить название проекта..." 
-                                class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 pl-9 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700"
+                                placeholder="Выберите или введите название..." 
+                                class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 pl-9 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700 cursor-pointer"
                             >
-                             <svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentColor" class="absolute left-2.5 top-2.5 text-slate-400"><path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-200q158 0 269-111t111-269q0-158-111-269T380-760q-158 0-269 111T0-580q0 158 111 269t269 111Z"/></svg>
+                             <!-- Search Icon Left -->
+                             <svg xmlns="http://www.w3.org/2000/svg" height="18" viewBox="0 -960 960 960" width="18" fill="currentColor" class="absolute left-2.5 top-2.5 text-slate-400 pointer-events-none"><path d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.5-75.5T120-580q0-109 75.5-184.5T380-840q109 0 184.5 75.5T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-200q158 0 269-111t111-269q0-158-111-269T380-760q-158 0-269 111T0-580q0 158 111 269t269 111Z"/></svg>
+                             
+                             <!-- Chevron Icon Right -->
+                             <span 
+                                @click="isDropdownOpen = !isDropdownOpen"
+                                class="absolute right-2.5 top-2.5 text-slate-400 cursor-pointer hover:text-slate-600 transition-colors"
+                             >
+                                <svg xmlns="http://www.w3.org/2000/svg" height="20" viewBox="0 -960 960 960" width="20" fill="currentColor"><path d="M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z"/></svg>
+                             </span>
                         </div>
 
                         <!-- Dropdown List -->
                         <div v-if="isDropdownOpen" class="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                            <div 
-                                v-for="group in filteredGroups.slice(0, 100)" 
-                                :key="group.ID" 
-                                @click="selectGroup(group)"
-                                class="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm text-slate-700 transition-colors border-b border-slate-50 last:border-0 flex justify-between items-center"
-                            >
-                                <span>{{ group.NAME }}</span>
-                                <span v-if="formData.projectId == group.ID" class="text-blue-600 font-bold">✓</span>
+                            <!-- Loading State -->
+                            <div v-if="isLoadingGroups" class="px-4 py-3 text-sm text-slate-500 flex items-center justify-center gap-2">
+                                <svg class="animate-spin h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                Загрузка групп...
                             </div>
-                            <div v-if="filteredGroups.length === 0" class="px-4 py-2 text-sm text-slate-400 italic">
-                                Проекты не найдены
-                            </div>
+                            
+                            <!-- List -->
+                            <template v-else>
+                                <div 
+                                    v-for="group in filteredGroups.slice(0, 100)" 
+                                    :key="group.ID" 
+                                    @click="selectGroup(group)"
+                                    class="px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm text-slate-700 transition-colors border-b border-slate-50 last:border-0 flex justify-between items-center"
+                                >
+                                    <span>{{ group.NAME }}</span>
+                                    <span v-if="formData.projectId == group.ID" class="text-blue-600 font-bold">✓</span>
+                                </div>
+                                <div v-if="filteredGroups.length === 0" class="px-4 py-2 text-sm text-slate-400 italic">
+                                    Проекты не найдены
+                                </div>
+                            </template>
                         </div>
                     </div>
 
