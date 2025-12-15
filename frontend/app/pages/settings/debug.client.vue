@@ -92,11 +92,11 @@
     </div>
     
     <!-- Modal -->
-    <div v-if="selectedItem" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm" @click.self="selectedItem = null">
-       <div class="bg-white dark:bg-gray-800 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-lg p-6 shadow-xl border border-gray-200">
+    <div v-if="selectedItem" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm" @click.self="selectedItem = null">
+       <div class="bg-white dark:bg-gray-800 w-screen h-screen overflow-y-auto p-6 shadow-xl">
           <div class="flex justify-between items-center mb-4">
              <h3 class="text-xl font-bold">Детали лога</h3>
-             <button @click="selectedItem = null" class="text-gray-500 hover:text-gray-700">
+             <button @click="selectedItem = null" class="text-gray-500 hover:text-gray-700 bg-gray-100 p-2 rounded-full hover:bg-gray-200 transition-colors">
                ✕
              </button>
           </div>
