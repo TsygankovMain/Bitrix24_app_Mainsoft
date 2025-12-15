@@ -10,7 +10,14 @@ const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
 
 useHead({
-  title: t('page.index.seo.title')
+  title: t('page.index.seo.title'),
+  script: [
+    {
+      src: 'https://api.bitrix24.com/api/v1/',
+      async: true,
+      defer: true
+    }
+  ]
 })
 
 // region Init ////
@@ -116,9 +123,25 @@ const openMeetingModal = async () => {
         isConsidered: true
     }
     
+    // Wait for BX24 if not ready
+    // @ts-ignore
+    if (typeof window.BX24 === 'undefined') {
+        let attempts = 0;
+        while (typeof (window as any).BX24 === 'undefined' && attempts < 50) {
+            await new Promise(r => setTimeout(r, 100));
+            attempts++;
+        }
+    }
+    
+    // @ts-ignore
+    const BX24 = window.BX24;
+    
+    if (!BX24) {
+         meetingError.value = "Ошибка: API Bitrix24 не загружен. Обновите страницу.";
+         return;
+    }
+    
     try {
-        // @ts-ignore
-        const BX24 = window.BX24;
         BX24.callMethod('user.current', {}, (res: any) => {
                  if(res.data()) currentUserId.value = res.data().ID;
         });
