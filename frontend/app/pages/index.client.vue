@@ -269,6 +269,38 @@ const tiles = [
     }
 ]
 
+// Debug Logic
+const debugLog = ref<string[]>([])
+const runDebugFetch = () => {
+    debugLog.value = ["Starting Debug Fetch..."]
+    // @ts-ignore
+    if (typeof window.BX24 === 'undefined') {
+         debugLog.value.push("ERROR: window.BX24 is undefined (global)")
+         return
+    }
+    // @ts-ignore
+    const BX24 = window.BX24;
+    
+    debugLog.value.push("BX24 found. Calling sonet_group.get...")
+    
+    BX24.callMethod('sonet_group.get', {
+        ORDER: { NAME: 'ASC' },
+    }, (res: any) => {
+        if (res.error()) {
+             debugLog.value.push("API ERROR: " + JSON.stringify(res.error()))
+        } else {
+             const data = res.data()
+             debugLog.value.push(`SUCCESS. Count: ${data ? data.length : 0}`)
+             if(data && data.length > 0) {
+                 debugLog.value.push("First item ID: " + data[0].ID + ", Name: " + data[0].NAME)
+             } else {
+                 debugLog.value.push("Data is empty/null")
+             }
+             debugLog.value.push("More data?: " + res.more())
+        }
+    })
+}
+
 // region Lifecycle Hooks ////
 onMounted(async () => {
   try {
@@ -372,6 +404,18 @@ onMounted(async () => {
                       </svg>
                   </div>
               </div>
+          </div>
+      </div>
+
+      <!-- Debug Layout -->
+      <div v-if="isInit" class="mt-8 w-full max-w-4xl border-t pt-6 bg-slate-50 p-4 rounded-lg">
+          <h3 class="text-sm font-bold mb-2">Debug Console</h3>
+          <button @click="runDebugFetch" class="bg-slate-800 text-white px-3 py-1.5 rounded text-xs mb-3 hover:bg-slate-700">
+              Test 'sonet_group.get'
+          </button>
+          
+          <div v-if="debugLog.length > 0" class="bg-black text-green-400 p-3 rounded font-mono text-[11px] whitespace-pre-wrap max-h-60 overflow-y-auto border border-slate-300">
+              <div v-for="(line, i) in debugLog" :key="i" class="mb-0.5">{{ line }}</div>
           </div>
       </div>
 
