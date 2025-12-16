@@ -23,7 +23,7 @@ node_modules
 /@tmp
 
 # Local env files
-.env
+#.env
 .env.*
 !.env.example
 !.env.dev.example
