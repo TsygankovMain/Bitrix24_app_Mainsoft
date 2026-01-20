@@ -13,10 +13,10 @@
 
 | Ключ | Описание | Пример значения |
 | :--- | :--- | :--- |
-| `DB_NAME` | Имя базы данных | `appdb` |
-| `DB_USER` | Пользователь БД | `appuser` |
-| `DB_PASSWORD` | Пароль БД | `secure_password` |
-| `DB_HOST` | Хост БД | `hostname.timeweb.cloud` (адрес вашей managed базы) |
+| `DB_NAME` | Имя базы данных | `default_db` |
+| `DB_USER` | Пользователь БД | `gen_user` |
+| `DB_PASSWORD` | Пароль БД | `******` (Скопируйте из панели Timeweb, в файле он скрыт) |
+| `DB_HOST` | Хост БД | `192.168.0.4` (Внутренний IP) |
 | `DB_PORT` | Порт БД | `5432` |
 | `SECRET_KEY` | Секретный ключ Django | `django-insecure-...` (сгенерируйте сложный ключ) |
 | `VIRTUAL_HOST` | Домен вашего приложения | `myapp.twc1.net` (или ваш домен) |
