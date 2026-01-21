@@ -49,7 +49,8 @@ export default defineNuxtConfig({
       tailwindcss()
     ],
     build: {
-      target: ['chrome80', 'safari14', 'es2019'] // Ensure safe transpilation for older Bitrix clients
+      target: ['chrome80', 'safari14', 'es2019'], // Ensure safe transpilation for older Bitrix clients
+      minify: false // Disable minification for debugging
     },
     server: {
       proxy: {

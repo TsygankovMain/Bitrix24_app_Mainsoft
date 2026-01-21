@@ -180,20 +180,24 @@ const handleToggleBillable = async (item: LogItem, node: TaskNode) => {
 const initialize = async () => {
   isLoading.value = true
   error.value = null
+  let step = 'START'
   try {
     console.log('Task Module Initializing...')
     const { $initializeB24Frame } = useNuxtApp()
     
     // 1. Init B24 Frame
+    step = 'INIT_FRAME'
     // @ts-ignore
     $b24 = await $initializeB24Frame()
     if (!$b24) throw new Error('Failed to initialize Bitrix24 frame')
 
     // 2. Init App Globals (Lang, User, etc)
+    step = 'INIT_APP'
     // @ts-ignore
     await initApp($b24, useI18n().locales.value, useI18n().setLocale)
 
     // 3. Load Config
+    step = 'LOAD_CONFIG'
     try {
         config.value = await apiStore.getConfiguration()
     } catch (e) {
@@ -216,6 +220,7 @@ const initialize = async () => {
     }
 
     // 4. Get Context (Task ID)
+    step = 'PLACEMENT_INFO'
     // @ts-ignore
     const placement = $b24.placement.info()
     let currentTaskIdValue = null;
@@ -241,28 +246,29 @@ const initialize = async () => {
     }
 
     // 5. Load Data
+    step = 'LOAD_DATA'
     await loadData()
     
   } catch (e: any) {
-    console.error('Initialization failed:', e)
+    console.error(`Initialization failed at step [${step}]:`, e)
     
     // DEBUG: Inspecting the "26" error
-    let debugInfo = '';
+    let debugInfo = `Failed Step: ${step}\n`;
     try {
         if (typeof e === 'object') {
-            debugInfo = JSON.stringify(e, Object.getOwnPropertyNames(e), 2);
+            debugInfo += JSON.stringify(e, Object.getOwnPropertyNames(e), 2);
         } else {
-            debugInfo = String(e);
+            debugInfo += String(e);
         }
     } catch (err) {
-        debugInfo = 'Error stringifying error: ' + err;
+        debugInfo += 'Error stringifying error: ' + err;
     }
 
     if (e?.stack) {
         debugInfo += '\nStack: ' + e.stack;
     }
 
-    error.value = `Ошибка: ${e.message || e}\n\nDebug Info:\n${debugInfo}`;
+    error.value = `Ошибка (Этап ${step}): ${e.message || e}\n\nDebug Info:\n${debugInfo}`;
   } finally {
     isLoading.value = false
   }
