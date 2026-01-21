@@ -42,7 +42,7 @@ const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('ru-RU') : 
           </div>
           <div class="flex items-center">
             <span class="material-symbols-outlined text-sm mr-1">calendar_today</span>
-            {{ formatDate(item.createdTime) }}
+            {{ formatDate(item.data) }}
           </div>
         </div>
       </div>

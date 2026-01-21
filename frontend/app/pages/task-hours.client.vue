@@ -220,7 +220,7 @@ const fetchData = async (currentTaskId: string | number) => {
      const spBatchCmds = allTaskIds.map(taskId => ['crm.item.list', {
          entityTypeId: config.value!.sp_entity_type_id,
          filter: { [f.taskId]: taskId },
-         select: ['id', 'title', 'createdTime', f.taskId, f.employee, f.hours, f.isConsidered, f.description]
+         select: ['id', 'title', 'createdTime', f.taskId, f.employee, f.hours, f.isConsidered, f.description, 'ufCrm87_1764446274']
      }])
 
      const spResults = await callBatchPromise(spBatchCmds)
