@@ -114,6 +114,7 @@ const handleSave = async (data: any) => {
                     entityTypeId,
                     id: data.id,
                     fields
+                // @ts-ignore
                 }, (res: any) => res.error() ? reject(res.error()) : resolve(res.data()))
             })
         } else {
@@ -130,6 +131,7 @@ const handleSave = async (data: any) => {
                 $b24?.callMethod('crm.item.add', {
                     entityTypeId,
                     fields
+                // @ts-ignore
                 }, (res: any) => res.error() ? reject(res.error()) : resolve(res.data()))
             })
         }
@@ -160,6 +162,7 @@ const handleToggleBillable = async (item: LogItem, node: TaskNode) => {
                 fields: {
                     [f.isConsidered]: newVal ? 'Y' : 'N'
                 }
+            // @ts-ignore
             }, (res: any) => res.error() ? reject(res.error()) : resolve(res.data()))
         })
         
@@ -191,22 +194,50 @@ const initialize = async () => {
     await initApp($b24, useI18n().locales.value, useI18n().setLocale)
 
     // 3. Load Config
-    config.value = await apiStore.getConfiguration()
+    try {
+        config.value = await apiStore.getConfiguration()
+    } catch (e) {
+        console.warn('Failed to load config, using defaults:', e)
+    }
+
     if (!config.value || !config.value.sp_entity_type_id) {
-      throw new Error('Configuration not found or invalid SP ID')
+        console.warn('Config missing, using fallback 1164');
+        config.value = {
+            sp_entity_type_id: 1164,
+            fields: {
+                taskId: 'ufCrm87_1761919581',
+                employee: 'ufCrm87_1761919601',
+                hours: 'ufCrm87_1761919617',
+                isConsidered: 'ufCrm87_1763717129',
+                description: 'ufCrm87_1762026149771',
+                date: 'createdTime' // Fallback
+            }
+        }
     }
 
     // 4. Get Context (Task ID)
     // @ts-ignore
     const placement = $b24.placement.info()
-    if (placement.options && placement.options.taskId) {
-      currentTaskId.value = placement.options.taskId.toString()
+    let currentTaskIdValue = null;
+    
+    if (placement.options) {
+        let opts = placement.options;
+        // Parse if string (common issue in B24 desktop)
+        if (typeof opts === 'string') {
+            try { opts = JSON.parse(opts); } catch (e) { opts = {}; }
+        }
+        currentTaskIdValue = opts.taskId || opts.ID || opts.id;
+    }
+
+    if (currentTaskIdValue) {
+      currentTaskId.value = currentTaskIdValue.toString();
     } else {
-       console.warn('No taskId in placement options.')
+       console.warn('No taskId in placement options:', placement);
+       // Optional: Try to parse from URL parameters if available?
     }
 
     if (!currentTaskId.value) {
-        throw new Error('Task ID not determined. Open this app from a Task.')
+        throw new Error('Task ID not determined. Open this app from a Task. Placement info: ' + JSON.stringify(placement));
     }
 
     // 5. Load Data
@@ -214,7 +245,12 @@ const initialize = async () => {
     
   } catch (e: any) {
     console.error('Initialization failed:', e)
-    error.value = e.message || 'Unknown error occurred'
+    // Detailed error for "26" or similar codes
+    let msg = e.message || e.toString();
+    if (e.ex && e.ex.error) msg += ` (${e.ex.error})`; // B24JSDK specific
+    if (e.error && typeof e.error === 'function') msg += ` (${e.error()})`; // native BX24
+    
+    error.value = msg;
   } finally {
     isLoading.value = false
   }
