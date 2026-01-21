@@ -9,6 +9,7 @@ WORKDIR /app
 # Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
     postgresql-client \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем и устанавливаем зависимости
@@ -34,6 +35,10 @@ USER appuser
 
 # Открываем порт
 EXPOSE 8000
+
+# Добавляем Healthcheck (как рекомендовано в логах)
+HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8000/healthz || exit 1
 
 # Запускаем через start.sh (миграции + сервер)
 CMD ["/app/start.sh"]
