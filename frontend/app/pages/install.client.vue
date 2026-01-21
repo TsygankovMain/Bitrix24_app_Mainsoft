@@ -87,7 +87,7 @@ const steps = ref<Record<string, IStep>>({
     action: async () => {
       const key = {
         placement: 'TASK_VIEW_TAB',
-        handler: appUrl // Use root URL so index.html loads and router handles redirection
+        handler: `${appUrl}/task.html` // Direct standalone HTML (no Vue, no iframe)
       }
       
       // Cleanup old Deal placement if exists (optional cleanup)
