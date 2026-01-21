@@ -119,7 +119,7 @@ const fetchConfiguration = async () => {
     if (res && res.config) {
         config.value = res.config
         // Fallback or fix types
-        if (!config.value.sp_entity_type_id) {
+        if (!config.value?.sp_entity_type_id) {
              console.warn("SP Entity ID missing in config, using default 1260 or checking install response")
              // In a real app we might error out, or use a reliable default if known.
              // We can also try to fetch SP by code 'timesheet_app'
@@ -146,18 +146,18 @@ const getTaskHierarchy = async (initialTaskId: string | number) => {
       if (task) {
         idPath.unshift(task.id)
         titlePath.unshift(task.title)
-        if (task.parentId && task.parentId !== '0') {
-          currentTaskId = task.parentId
+          if (task.parentId && task.parentId !== '0') {
+            currentTaskId = task.parentId
+          } else {
+            currentTaskId = ''
+          }
         } else {
-          currentTaskId = null
+          currentTaskId = ''
         }
-      } else {
-        currentTaskId = null
+      } catch (e) {
+        console.error(`Error fetching task ${currentTaskId}`, e)
+        currentTaskId = ''
       }
-    } catch (e) {
-      console.error(`Error fetching task ${currentTaskId}`, e)
-      currentTaskId = null
-    }
   }
   return { idPath, titlePath }
 }
