@@ -292,6 +292,7 @@ const loadData = async () => {
     // 1. Fetch Root Task
     const rootTaskResult: any = await new Promise((resolve) => {
         // @ts-ignore
+        // @ts-ignore
         $b24?.callMethod('tasks.task.get', { 
             taskId: currentTaskId.value, 
             select: ['ID', 'TITLE', 'PARENT_ID', 'RESPONSIBLE_ID'] 
@@ -415,8 +416,8 @@ const loadData = async () => {
         const totalUnconsidered = items.reduce((sum, item) => sum + (!item.isBillable ? item.hours : 0), 0)
 
         nodes[task.id] = {
-            taskId: task.id,
-            taskTitle: task.title,
+            id: task.id,
+            title: task.title,
             parentId: task.parentId,
             items: items,
             totalConsidered,
@@ -433,8 +434,8 @@ const loadData = async () => {
     const tree: TaskNode[] = []
     Object.values(nodes).forEach(node => {
         if (node.parentId && nodes[node.parentId]) {
-            nodes[node.parentId].children.push(node)
-        } else if (String(node.taskId) === String(currentTaskId.value)) {
+            nodes[node.parentId]!.children.push(node)
+        } else if (String(node.id) === String(currentTaskId.value)) {
             tree.push(node)
         }
     })
@@ -462,14 +463,14 @@ const loadData = async () => {
     }
 
     if (tree.length > 0) {
-        calculateCumulativeTotals(tree[0])
-        rootTask.value = tree[0]
+        calculateCumulativeTotals(tree[0]!)
+        rootTask.value = tree[0]!
         
         // Update global stats
         stats.value = {
-            total: tree[0].cumulativeConsidered + tree[0].cumulativeUnconsidered,
-            billable: tree[0].cumulativeConsidered,
-            nonBillable: tree[0].cumulativeUnconsidered
+            total: tree[0]!.cumulativeConsidered + tree[0]!.cumulativeUnconsidered,
+            billable: tree[0]!.cumulativeConsidered,
+            nonBillable: tree[0]!.cumulativeUnconsidered
         }
     } else {
         rootTask.value = null // Should technically not happen if root found
