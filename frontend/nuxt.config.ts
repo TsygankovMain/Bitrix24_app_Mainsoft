@@ -47,6 +47,9 @@ export default defineNuxtConfig({
     plugins: [
       tailwindcss()
     ],
+    build: {
+      target: ['chrome80', 'safari14', 'es2019'] // Ensure safe transpilation for older Bitrix clients
+    },
     server: {
       proxy: {
         '/api': { target: process.env.SERVER_HOST || 'http://api-need_set:8000', changeOrigin: true }
