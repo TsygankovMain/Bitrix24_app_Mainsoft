@@ -205,7 +205,7 @@ const initialize = async () => {
     // 2. Init App Globals (Lang, User, etc)
     step = 'INIT_APP'
     // @ts-ignore
-    await initApp($b24, locales.value, setLocale)
+    await initApp($b24, locales, setLocale)
 
     // 3. Load Config
     step = 'LOAD_CONFIG'
