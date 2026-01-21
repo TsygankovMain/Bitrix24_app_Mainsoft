@@ -17,6 +17,7 @@ from .installation_service import InstallationService, InstallationError
 __all__ = [
     "root",
     "health",
+    "health_check",
     "get_enum",
     "get_list",
     "install",
