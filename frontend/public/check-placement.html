@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Check Placement</title>
+    <script src="//api.bitrix24.com/api/v1/"></script>
+</head>
+
+<body>
+    <h1>Current Placements:</h1>
+    <pre id="output">Loading...</pre>
+    <button onclick="updatePlacement()">Update Placement to /task.html</button>
+    <script>
+        BX24.init(() => {
+            BX24.callMethod('placement.get', {}, (result) => {
+                document.getElementById('output').textContent = JSON.stringify(result.data(), null, 2);
+            });
+        });
+
+        function updatePlacement() {
+            const appUrl = window.location.origin;
+            BX24.callBatch([
+                { method: 'placement.unbind', params: { PLACEMENT: 'TASK_VIEW_TAB' } },
+                {
+                    method: 'placement.bind',
+                    params: {
+                        PLACEMENT: 'TASK_VIEW_TAB',
+                        HANDLER: `${appUrl}/task.html`,
+                        TITLE: 'Учет часов'
+                    }
+                }
+            ], (result) => {
+                alert('Placement updated! Please refresh the task page.');
+                console.log('Result:', result);
+            });
+        }
+    </script>
+</body>
+
+</html>
