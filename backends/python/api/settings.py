@@ -17,11 +17,8 @@ if not VIRTUAL_HOST.startswith(("http://", "https://")):
 if VIRTUAL_HOST:
     CSRF_TRUSTED_ORIGINS = [VIRTUAL_HOST]
 
-    domain = urlparse(VIRTUAL_HOST).hostname
-    ALLOWED_HOSTS = [domain, "localhost", "127.0.0.1", "api-python"]
-else:
-    CSRF_TRUSTED_ORIGINS = []
-    ALLOWED_HOSTS = ["localhost", "127.0.0.1", "api-python"]
+# Allow all hosts for Timeweb Cloud Apps deployment
+ALLOWED_HOSTS = ["*"]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
