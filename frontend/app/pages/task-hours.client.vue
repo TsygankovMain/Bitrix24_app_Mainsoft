@@ -1,715 +1,691 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useAppInit } from '../composables/useAppInit' 
-import RecursiveTaskGroup from '../components/RecursiveTaskGroup.vue'
 import type { B24Frame } from '@bitrix24/b24jssdk'
+import StatCard from '~/components/StatCard.vue'
+import TaskGroup from '~/components/TaskGroup.vue'
 
-// --- CONFIGURATION ---
-const TASK_ID_FIELD_CODE = 'ufCrm87_1761919581';
-const EMPLOYEE_FIELD_CODE = 'ufCrm87_1761919601';
-const HOURS_FIELD_CODE = 'ufCrm87_1761919617';
-const IS_CONSIDERED_FIELD_CODE = 'ufCrm87_1763717129';
-const DESCRIPTION_FIELD_CODE = 'ufCrm87_1762026149771';
-const TASK_HIERARCHY_ID_FIELD_CODE = 'ufCrm87_1764191110';
-const TASK_HIERARCHY_TITLE_FIELD_CODE = 'ufCrm87_1764191133';
-const PROJECT_ID_FIELD_CODE = 'ufCrm87_1764265626';
-const PROJECT_NAME_FIELD_CODE = 'ufCrm87_1764265641';
-const TASK_NAME_FIELD_CODE = 'ufCrm87_1764361585';
-const REFLECTION_DATE_FIELD_CODE = 'ufCrm87_1764446274';
-
-// --- STATE ---
-const isLoading = ref(true)
-const error = ref<string | null>(null)
-const taskTree = ref<any[]>([])
-const users = ref<Record<string, string>>({})
-const groups = ref<Record<string, string>>({}) // groupId -> groupName
-const tasksMap = ref<Record<string, any>>({}) // taskId -> taskData
-const allUsers = ref<any[]>([])
-const updatingItemId = ref<string | null>(null)
-const mainTaskId = ref<string | null>(null)
-const currentUserId = ref<string | null>(null)
-// const showModal = ref(false) // Removed
-// const showReportModal = ref(false) // Removed
-const isCreating = ref(false)
-// const isReporting = ref(false) // Removed
-const modalError = ref<string | null>(null) // Reused as SidePanel Error
-// const reportModalError = ref<string | null>(null) // Removed
-const openTaskIds = ref(new Set<string>())
-const formData = ref({
-    hours: '',
-    description: '',
-    date: new Date().toISOString().split('T')[0],
-    employeeId: '',
-    targetTaskId: null as string | null,
-    isConsidered: true
-})
-
-// Settings
-const clientHourRate = ref(0)
-const smartProcessId = ref(1164)
-
-// --- HELPERS ---
-// @ts-ignore
-const callMethodPromise = (method: string, params: any): Promise<any> => {
-    return new Promise((resolve, reject) => {
-        // @ts-ignore
-        const BX24 = window.BX24;
-        BX24.callMethod(method, params, (result: any) => {
-            if (result.error()) reject(result.error());
-            else resolve(result.data());
-        });
-    });
-};
-
-const callBatchPromise = (commands: any): Promise<any> => {
-    return new Promise((resolve) => {
-        // @ts-ignore
-        const BX24 = window.BX24;
-        BX24.callBatch(commands, (result: any) => resolve(result));
-    });
-};
-
-const getTaskHierarchy = async (initialTaskId: string) => {
-    let currentTaskId: string | null = initialTaskId;
-    const idPath: string[] = [];
-    const titlePath: string[] = [];
-
-    while (currentTaskId) {
-        try {
-            const result: any = await callMethodPromise('tasks.task.get', {
-                taskId: currentTaskId,
-                select: ['ID', 'TITLE', 'PARENT_ID']
-            });
-            const task = result.task;
-
-            if (task) {
-                idPath.unshift(task.id);
-                titlePath.unshift(task.title);
-
-                if (task.parentId && task.parentId !== '0') {
-                    currentTaskId = task.parentId;
-                } else {
-                    currentTaskId = null;
-                }
-            } else {
-                currentTaskId = null;
-            }
-        } catch (e) {
-            console.error(`Error fetching task ${currentTaskId}:`, e);
-            currentTaskId = null;
-        }
-    }
-    return { idPath, titlePath };
+// --- Types ---
+interface TaskNode {
+  taskId: number | string
+  taskTitle: string
+  parentId: number | string | null
+  items: any[]
+  totalConsidered: number
+  totalUnconsidered: number
+  cumulativeConsidered: number
+  cumulativeUnconsidered: number
+  children: TaskNode[]
 }
 
-const fetchData = async (currentTaskId: string) => {
-    if (!smartProcessId.value) {
-        error.value = "ID Смарт-процесса не указан.";
-        isLoading.value = false;
-        return;
-    }
-    
-    isLoading.value = true;
-    error.value = null;
-    
-    try {
-        // 1. Root Task
-        const rootTaskResult = await callMethodPromise('tasks.task.get', { taskId: currentTaskId, select: ['ID', 'TITLE', 'GROUP_ID'] });
-        const rootTaskData = rootTaskResult.task;
-        
-        // 2. Subtasks (BFS)
-        let allSubTasks = [];
-        let queue = [currentTaskId];
-        const processedIds = new Set([currentTaskId]);
-        
-        while (queue.length > 0) {
-            const batchCmds = queue.map(id => ['tasks.task.list', {
-                filter: { PARENT_ID: id },
-                select: ['id', 'title', 'parentId', 'groupId']
-            }]);
-            const batchResult: any = await callBatchPromise(batchCmds);
-            
-            queue = [];
-            
-            for (const res of Object.values(batchResult) as any[]) {
-                if (res && !res.error()) {
-                    const tasks = res.data().tasks || [];
-                    for (const task of tasks) {
-                        if (!processedIds.has(task.id)) {
-                            allSubTasks.push(task);
-                            queue.push(task.id);
-                            processedIds.add(task.id);
-                        }
-                    }
-                }
-            }
-        }
-        
-        const allTasks = [{ id: rootTaskData.id, title: rootTaskData.title, parentId: null, groupId: rootTaskData.groupId }, ...allSubTasks];
-        const allTaskIds = allTasks.map(t => t.id);
-        
-        // 3. Smart Process Items
-        const spBatchCmds = allTaskIds.map(taskId => ['crm.item.list', {
-            entityTypeId: smartProcessId.value,
-            filter: { [TASK_ID_FIELD_CODE]: taskId },
-            select: ['id', 'title', 'createdTime', TASK_ID_FIELD_CODE, EMPLOYEE_FIELD_CODE, HOURS_FIELD_CODE, IS_CONSIDERED_FIELD_CODE, DESCRIPTION_FIELD_CODE]
-        }]);
-        
-        const spResults: any = await callBatchPromise(spBatchCmds);
-        const allItems = Object.values(spResults).flatMap((res: any) => (res && !res.error() && res.data().items) ? res.data().items : []);
-        
-        const itemsByTaskId: Record<string, any[]> = {};
-        allItems.forEach((item: any) => {
-             const tid = item[TASK_ID_FIELD_CODE];
-             if (!itemsByTaskId[tid]) itemsByTaskId[tid] = [];
-             itemsByTaskId[tid].push(item);
-        });
-        
-        // 4. Build Tree Nodes
-        const nodes: Record<string, any> = {};
-        allTasks.forEach((task: any) => {
-             const items = itemsByTaskId[task.id] || [];
-             nodes[task.id] = {
-                 taskId: task.id,
-                 taskTitle: task.title,
-                 parentId: task.parentId,
-                 groupId: task.groupId, // Pass groupId to nodes
-                 items: items,
-                 totalConsidered: items.reduce((sum: number, item: any) => {
-                     const isCons = item[IS_CONSIDERED_FIELD_CODE] === true || item[IS_CONSIDERED_FIELD_CODE] === 'Y';
-                     return sum + (isCons ? (parseFloat(item[HOURS_FIELD_CODE]) || 0) : 0);
-                 }, 0),
-                 totalUnconsidered: items.reduce((sum: number, item: any) => {
-                     const isCons = item[IS_CONSIDERED_FIELD_CODE] === true || item[IS_CONSIDERED_FIELD_CODE] === 'Y';
-                     return sum + (!isCons ? (parseFloat(item[HOURS_FIELD_CODE]) || 0) : 0);
-                 }, 0),
-                 children: []
-             };
-        });
-        
-        // 5. Assemble Hierarchy
-        const tree: any[] = [];
-        Object.values(nodes).forEach(node => {
-            if (node.parentId && nodes[node.parentId]) {
-                nodes[node.parentId].children.push(node);
-            } else if (String(node.taskId) === String(currentTaskId)) {
-                tree.push(node);
-            }
-        });
-        
-        // 6. Cumulative Totals
-        const calculateCumulativeTotals = (node: any) => {
-            let childCons = 0;
-            let childUncons = 0;
-            
-            if (node.children && node.children.length > 0) {
-                node.children.forEach((child: any) => {
-                    const totals = calculateCumulativeTotals(child);
-                    childCons += totals.considered;
-                    childUncons += totals.unconsidered;
-                });
-            }
-            node.cumulativeConsidered = (node.totalConsidered || 0) + childCons;
-            node.cumulativeUnconsidered = (node.totalUnconsidered || 0) + childUncons;
-            
-            return {
-                considered: node.cumulativeConsidered,
-                unconsidered: node.cumulativeUnconsidered
-            };
-        };
-        
-        tree.forEach(calculateCumulativeTotals);
-        taskTree.value = tree;
-        
-        // 7. Users
-        const empIds = [...new Set(allItems.map((item: any) => item[EMPLOYEE_FIELD_CODE]).filter(Boolean))];
-        if (empIds.length > 0) {
-            const userBatch = empIds.reduce((acc: any, id: unknown) => ({...acc, [`user_${id}`]: ['user.get', { ID: id }]}), {});
-            const userResult: any = await callBatchPromise(userBatch);
-            const usersData: Record<string, string> = {};
-            empIds.forEach((id: unknown) => {
-                const res = userResult[`user_${id}`];
-                if (res && !res.error() && res.data()[0]) {
-                    const user = res.data()[0];
-                    usersData[String(id)] = `${user.NAME} ${user.LAST_NAME}`;
-                } else {
-                    usersData[String(id)] = `Пользователь #${id}`;
-                }
-            });
-            users.value = usersData;
-        }
-        
-        // 8. Populate tasksMap
-        allTasks.forEach(t => tasksMap.value[t.id] = t);
+interface Configuration {
+  sp_entity_type_id: number
+  fields_mapping: Record<string, string>
+}
 
-        // 9. Groups
-        const groupIds = [...new Set(allTasks.map(t => t.groupId).filter(g => g && g !== '0'))];
-        if (groupIds.length > 0) {
-            const groupBatch = groupIds.reduce((acc: any, id: unknown) => ({...acc, [`group_${id}`]: ['sonet_group.get', { ID: id }]}), {});
-            const groupResult: any = await callBatchPromise(groupBatch);
-            const groupsData: Record<string, string> = {};
-            groupIds.forEach((id: unknown) => {
-                const res = groupResult[`group_${id}`];
-                if (res && !res.error() && res.data()) {
-                    const data = res.data();
-                    const group = Array.isArray(data) ? data[0] : data;
-                    if (group && group.NAME) {
-                        groupsData[String(id)] = group.NAME;
-                    }
-                }
-            });
-            groups.value = groupsData;
-        }
+// --- Init ---
+const { t } = useI18n()
+const { $logger, initApp, processErrorGlobal } = useAppInit('TaskHoursPage')
+const { $initializeB24Frame } = useNuxtApp()
+const apiStore = useApiStore()
 
-    } catch (e: any) {
-        console.error("Fetch Error:", e);
-        error.value = e.message || "Ошибка загрузки данных";
-    } finally {
-        isLoading.value = false;
-    }
-};
+let $b24: null | B24Frame = null
 
-const totalStats = computed(() => {
-    let considered = 0, unconsidered = 0;
-    taskTree.value.forEach(rootNode => {
-        considered += rootNode.cumulativeConsidered || 0;
-        unconsidered += rootNode.cumulativeUnconsidered || 0;
-    });
-    return { 
-        totalConsidered: considered, 
-        totalUnconsidered: unconsidered, 
-        totalHours: considered + unconsidered 
-    };
-});
+// --- State ---
+const isLoading = ref(true)
+const error = ref<string | null>(null)
+const taskTree = ref<TaskNode[]>([])
+const users = ref<Record<string, string>>({})
+const allUsers = ref<any[]>([])
 
-// Methods
-const selectedTaskTitle = ref('');
+const config = ref<Configuration | null>(null)
+const mainTaskId = ref<string | number | null>(null)
+const currentUserId = ref<string | number>('')
 
-const selectTaskForEntry = (taskId: string, title: string) => {
-    formData.value.targetTaskId = taskId;
-    selectedTaskTitle.value = title;
-    // Don't clear form data aggressively, maybe user wants to add multiple entries
-    if (!formData.value.hours) formData.value.hours = ''; 
-    modalError.value = null; // Reusing this for side panel error
-    console.log('DEBUG: Selected Task', taskId);
-};
+// UI State
+const showModal = ref(false)
+const showReportModal = ref(false)
+const isCreating = ref(false)
+const isReporting = ref(false)
+const modalError = ref<string | null>(null)
+const reportModalError = ref<string | null>(null)
+const openTaskIds = ref(new Set<string | number>())
+const updatingItemId = ref<number | string | null>(null)
 
-// handleOpenModal removed
-// handleTransferToReport removed
+// Settings State
+const isSettingsOpen = ref(false)
+const clientHourRate = ref(0) // Could be loaded from local storage or settings
 
-const handleEditItem = (item: any) => {
-    updatingItemId.value = item.id;
-    formData.value.hours = item[HOURS_FIELD_CODE];
-    formData.value.description = item[DESCRIPTION_FIELD_CODE] || item.title;
-    formData.value.date = item.createdTime ? item.createdTime.split('T')[0] : new Date().toISOString().split('T')[0];
-    formData.value.employeeId = item[EMPLOYEE_FIELD_CODE];
-    formData.value.isConsidered = item[IS_CONSIDERED_FIELD_CODE] === 'Y';
-    formData.value.targetTaskId = item[TASK_ID_FIELD_CODE];
-    
-    // Find task title for UI
-    const taskData = tasksMap.value[item[TASK_ID_FIELD_CODE]];
-    selectedTaskTitle.value = taskData ? taskData.title : 'Неизвестная задача';
-    
-    modalError.value = null;
-};
-
-const handleEditItemById = (itemId: string) => {
-    let itemToUpdate: any = null;
-    const findItem = (nodes: any[]) => {
-        for (const node of nodes) {
-            const found = node.items.find((i: any) => i.id === itemId);
-            if (found) { itemToUpdate = found; return; }
-            if (node.children.length > 0) findItem(node.children);
-        }
-    }
-    findItem(taskTree.value);
-    if (itemToUpdate) handleEditItem(itemToUpdate);
-};
-
-const cancelEdit = () => {
-    updatingItemId.value = null;
-    formData.value.hours = '';
-    formData.value.description = '';
-    formData.value.date = new Date().toISOString().split('T')[0];
-    
-    // Reset to current user
-    if (currentUserId.value) formData.value.employeeId = currentUserId.value;
-    
-    // Keep target task if possible, else reset
-    if (mainTaskId.value) {
-        // formData.value.targetTaskId = mainTaskId.value; // Don't force reset task, user might be adding multiple
-    }
-    selectedTaskTitle.value = formData.value.targetTaskId && tasksMap.value[formData.value.targetTaskId] ? tasksMap.value[formData.value.targetTaskId].title : '';
-};
-
-const handleSaveHours = async () => {
-    modalError.value = null;
-    if (!formData.value.hours || parseFloat(formData.value.hours) <= 0) { modalError.value = 'Некорректные часы'; return; }
-    if (!formData.value.description.trim()) { modalError.value = 'Нет описания'; return; }
-    if (!formData.value.targetTaskId) { modalError.value = 'Выберите задачу из списка'; return; }
-    
-    isCreating.value = true;
-    
-    try {
-        const hierarchy = await getTaskHierarchy(formData.value.targetTaskId!);
-        
-        const taskData = tasksMap.value[formData.value.targetTaskId!] || {};
-        const groupId = taskData.groupId;
-        const groupName = groupId ? groups.value[groupId] : '';
-
-        // @ts-ignore
-        const BX24 = window.BX24;
-        
-        const commonFields = {
-            title: formData.value.description.substring(0, 255),
-            [HOURS_FIELD_CODE]: parseFloat(formData.value.hours),
-            [IS_CONSIDERED_FIELD_CODE]: formData.value.isConsidered ? 'Y' : 'N',
-            [TASK_ID_FIELD_CODE]: formData.value.targetTaskId,
-            [EMPLOYEE_FIELD_CODE]: formData.value.employeeId,
-            assignedById: formData.value.employeeId,
-            [DESCRIPTION_FIELD_CODE]: formData.value.description,
-            createdTime: formData.value.date + 'T00:00:00',
-            [TASK_HIERARCHY_ID_FIELD_CODE]: hierarchy.idPath,
-            [TASK_HIERARCHY_TITLE_FIELD_CODE]: hierarchy.titlePath,
-            [PROJECT_ID_FIELD_CODE]: groupId,
-            [PROJECT_NAME_FIELD_CODE]: groupName,
-            [TASK_NAME_FIELD_CODE]: taskData.title || '',
-            [REFLECTION_DATE_FIELD_CODE]: formData.value.date + 'T00:00:00',
-        };
-
-        if (updatingItemId.value) {
-            // UDPATE
-             BX24.callMethod('crm.item.update', {
-                entityTypeId: smartProcessId.value,
-                id: updatingItemId.value,
-                fields: commonFields
-            }, (result: any) => {
-                isCreating.value = false;
-                if (result.error()) {
-                    modalError.value = result.error().toString();
-                } else {
-                    cancelEdit(); // Reset form
-                    if (mainTaskId.value) fetchData(mainTaskId.value);
-                }
-            });
-        } else {
-            // CREATE
-            BX24.callMethod('crm.item.add', {
-                entityTypeId: smartProcessId.value,
-                fields: commonFields
-            }, (result: any) => {
-                isCreating.value = false;
-                if (result.error()) {
-                    modalError.value = result.error().toString();
-                } else {
-                    // Success: clear form
-                    formData.value.hours = '';
-                    formData.value.description = '';
-                    if (mainTaskId.value) fetchData(mainTaskId.value);
-                }
-            });
-        }
-        
-    } catch (e: any) {
-        modalError.value = e.message;
-        isCreating.value = false;
-    }
-};
-
-const toggleGroup = (taskId: string) => {
-    if (openTaskIds.value.has(taskId)) openTaskIds.value.delete(taskId);
-    else openTaskIds.value.add(taskId);
-};
-
-const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('ru-RU') : '-';
-
-// --- CONFIGURATION ---
-useHead({
-  script: [
-    { src: 'https://api.bitrix24.com/api/v1/', defer: true }
-  ]
+// Form Data
+const formData = ref({
+  hours: '',
+  description: '',
+  date: new Date().toISOString().split('T')[0],
+  employeeId: '',
+  targetTaskId: null as string | number | null,
+  isConsidered: true
 })
 
-// @ts-ignore
-const getBX24 = () => window.BX24;
+// --- Computed ---
+const fields = computed(() => {
+  if (!config.value?.fields_mapping) return null
+  return {
+    hours: config.value.fields_mapping.kolichestvo_chasov || 'B24APP_HOURS',
+    isConsidered: config.value.fields_mapping.uchitivaem || 'B24APP_IS_BILLABLE',
+    employee: config.value.fields_mapping.sotrudnik || 'B24APP_EMPLOYEE',
+    taskId: config.value.fields_mapping.id_zadachi || 'B24APP_TASK_ID',
+    description: config.value.fields_mapping.opisanie || 'B24APP_DESCRIPTION',
+    hierarchyIds: config.value.fields_mapping.id_zadach_ierarhiya || 'B24APP_TASK_HIERARCHY_IDS',
+    hierarchyTitles: config.value.fields_mapping.title_zadach_ierarhiya || 'B24APP_TASK_HIERARCHY_ITLES',
+    createdTime: 'createdTime'
+  }
+})
 
-const waitForBX24 = () => {
-    return new Promise<void>((resolve, reject) => {
-        let attempts = 0;
-        const check = () => {
-            if (getBX24()) {
-                resolve();
-            } else {
-                attempts++;
-                if (attempts > 20) { // 2 seconds (20 * 100ms)
-                    reject(new Error("BX24 JS SDK not loaded"));
-                } else {
-                    setTimeout(check, 100);
-                }
-            }
+const totalStats = computed(() => {
+  let considered = 0
+  let unconsidered = 0
+  taskTree.value.forEach(node => {
+    considered += node.cumulativeConsidered || 0
+    unconsidered += node.cumulativeUnconsidered || 0
+  })
+  return {
+    considered,
+    unconsidered,
+    total: considered + unconsidered
+  }
+})
+
+// --- Helpers ---
+const callMethodPromise = (method: string, params: any) => new Promise<any>((resolve, reject) => {
+  // @ts-ignore
+  if (!window.BX24) return reject('BX24 not found')
+  // @ts-ignore
+  window.BX24.callMethod(method, params, (result: any) => {
+    if (result.error()) reject(result.error())
+    else resolve(result.data())
+  })
+})
+
+const callBatchPromise = (commands: any) => new Promise<any>((resolve) => {
+  // @ts-ignore
+  if (!window.BX24) return resolve({})
+  // @ts-ignore
+  window.BX24.callBatch(commands, (result: any) => resolve(result))
+})
+
+// --- Logic ---
+const fetchConfiguration = async () => {
+  try {
+    const res = await apiStore.getConfiguration()
+    if (res && res.config) {
+        config.value = res.config
+        // Fallback or fix types
+        if (!config.value.sp_entity_type_id) {
+             console.warn("SP Entity ID missing in config, using default 1260 or checking install response")
+             // In a real app we might error out, or use a reliable default if known.
+             // We can also try to fetch SP by code 'timesheet_app'
         }
-        check();
-    });
-};
+    }
+  } catch (e) {
+    console.error("Failed to load configuration", e)
+    error.value = "Не удалось загрузить настройки приложения. Попробуйте обновить страницу."
+  }
+}
 
-// Init
-onMounted(async () => {
+const getTaskHierarchy = async (initialTaskId: string | number) => {
+  let currentTaskId = initialTaskId
+  const idPath: any[] = []
+  const titlePath: any[] = []
+
+  while (currentTaskId) {
     try {
-        await waitForBX24();
+      const result = await callMethodPromise('tasks.task.get', {
+        taskId: currentTaskId,
+        select: ['ID', 'TITLE', 'PARENT_ID']
+      })
+      const task = result.task
+      if (task) {
+        idPath.unshift(task.id)
+        titlePath.unshift(task.title)
+        if (task.parentId && task.parentId !== '0') {
+          currentTaskId = task.parentId
+        } else {
+          currentTaskId = null
+        }
+      } else {
+        currentTaskId = null
+      }
     } catch (e) {
-        error.value = "BX24 JS SDK not found. Open inside Bitrix24 or check internet connection.";
-        isLoading.value = false;
-        return;
+      console.error(`Error fetching task ${currentTaskId}`, e)
+      currentTaskId = null
     }
-    
-    // @ts-ignore
-    const BX24 = window.BX24;
-    
-    BX24.init(() => {
-        // @ts-ignore
-        const placementInfo = BX24.placement.info();
-        let tid: string | null = null;
-        if (placementInfo && placementInfo.options) {
-             let opts = placementInfo.options;
-             if (typeof opts === 'string') {
-                 try { opts = JSON.parse(opts); } catch(e) { opts = {}; }
+  }
+  return { idPath, titlePath }
+}
+
+const fetchData = async (currentTaskId: string | number) => {
+  if (!config.value?.sp_entity_type_id) {
+    // Try to fetch config first if not ready
+    await fetchConfiguration()
+    if (!config.value?.sp_entity_type_id) {
+         setError("ID Смарт-процесса не настроен.")
+         return
+    }
+  }
+
+  setIsLoading(true)
+  setError(null)
+
+  try {
+     // 1. Get Root Task
+     const rootTaskRes = await callMethodPromise('tasks.task.get', { taskId: currentTaskId, select: ['ID', 'TITLE'] })
+     const rootTaskData = rootTaskRes.task
+
+     // 2. BFS for Subtasks
+     let allSubTasks: any[] = []
+     let queue = [currentTaskId]
+     const processedIds = new Set([currentTaskId])
+
+     const MAX_DEPTH_SAFEGUARD = 50 
+     let loops = 0
+
+     while (queue.length > 0 && loops < MAX_DEPTH_SAFEGUARD) {
+         loops++
+         const batchCmds = queue.map(id => ['tasks.task.list', {
+             filter: { PARENT_ID: id },
+             select: ['id', 'title', 'parentId']
+         }])
+         
+         const batchResult = await callBatchPromise(batchCmds)
+         queue = []
+
+         for (const res of Object.values(batchResult) as any[]) {
+             if (res && !res.error()) {
+                 const tasks = res.data().tasks || []
+                 for (const task of tasks) {
+                     if (!processedIds.has(task.id)) {
+                         allSubTasks.push(task)
+                         queue.push(task.id)
+                         processedIds.add(task.id)
+                     }
+                 }
              }
-             tid = opts.ID || opts.taskId || opts.id || null;
-        }
-        
-        if (!tid) {
-            // Try getting from current slider if possible, but usually placement info is best.
-            // fallback to see if we can get it from URL or something? 
-             // tid = '123'; // Debug
-             error.value = "Не удалось определить ID задачи (Placement Options пуст). Откройте как вкладку задачи.";
-             isLoading.value = false;
-             return;
-        }
-        
-        mainTaskId.value = tid;
-        openTaskIds.value.add(tid);
-        
-        // @ts-ignore
-        BX24.callBatch({
-            currentUser: ['user.current', {}],
-            allUsers: ['user.get', { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' }]
-        }, (result: any) => {
-             const curUser = result.currentUser && !result.currentUser.error() ? result.currentUser.data() : null;
-             if (curUser) {
-                 currentUserId.value = curUser.ID;
-             }
-             const users = result.allUsers && !result.allUsers.error() ? result.allUsers.data() : [];
-             allUsers.value = users;
+         }
+     }
+
+     const allTasks = [{ id: rootTaskData.id, title: rootTaskData.title, parentId: null }, ...allSubTasks]
+     const allTaskIds = allTasks.map(t => t.id)
+
+     // 3. Get SP Items
+     const f = fields.value!
+     const spBatchCmds = allTaskIds.map(taskId => ['crm.item.list', {
+         entityTypeId: config.value!.sp_entity_type_id,
+         filter: { [f.taskId]: taskId },
+         select: ['id', 'title', 'createdTime', f.taskId, f.employee, f.hours, f.isConsidered, f.description]
+     }])
+
+     const spResults = await callBatchPromise(spBatchCmds)
+     const allItems = Object.values(spResults).flatMap((res: any) => (res && !res.error() && res.data().items) ? res.data().items : [])
+
+     const itemsByTaskId = allItems.reduce((acc: any, item: any) => {
+         const tid = item[f.taskId]
+         if (!acc[tid]) acc[tid] = []
+         acc[tid].push(item)
+         return acc
+     }, {})
+
+     // 4. Build Nodes
+     const nodes: Record<string, TaskNode> = {}
+     allTasks.forEach(task => {
+         const items = itemsByTaskId[task.id] || []
+         // Calculate local totals
+         let totalConsidered = 0
+         let totalUnconsidered = 0
+         
+         items.forEach((item: any) => {
+             const isCons = item[f.isConsidered] === true || item[f.isConsidered] === 'Y'
+             const h = parseFloat(item[f.hours]) || 0
+             if (isCons) totalConsidered += h
+             else totalUnconsidered += h
+         })
+
+         nodes[task.id] = {
+             taskId: task.id,
+             taskTitle: task.title,
+             parentId: task.parentId,
+             items: items,
+             totalConsidered,
+             totalUnconsidered,
+             cumulativeConsidered: 0,
+             cumulativeUnconsidered: 0,
+             children: []
+         }
+     })
+
+     // 5. Build Tree & hierarchy
+     const tree: TaskNode[] = []
+     Object.values(nodes).forEach(node => {
+         if (node.parentId && nodes[node.parentId]) {
+             nodes[node.parentId].children.push(node)
+         } else if (String(node.taskId) === String(currentTaskId)) {
+             tree.push(node)
+         }
+     })
+
+     // 6. Cumulative Totals
+     const calculateCumulative = (node: TaskNode) => {
+         let childCons = 0
+         let childUncons = 0
+         
+         if (node.children.length > 0) {
+             node.children.forEach(child => {
+                 const childTotals = calculateCumulative(child)
+                 childCons += childTotals.considered
+                 childUncons += childTotals.unconsidered
+             })
+         }
+         
+         node.cumulativeConsidered = node.totalConsidered + childCons
+         node.cumulativeUnconsidered = node.totalUnconsidered + childUncons
+         
+         return { considered: node.cumulativeConsidered, unconsidered: node.cumulativeUnconsidered }
+     }
+
+     tree.forEach(calculateCumulative)
+     taskTree.value = tree
+
+     // 7. Load Users
+     const employeeIds = [...new Set(allItems.map((item: any) => item[f.employee]).filter(Boolean))] as string[]
+     if (employeeIds.length > 0) {
+         // Check which we don't have
+         const missingIds = employeeIds.filter(id => !users.value[id])
+         if (missingIds.length > 0) {
+             const userBatch = missingIds.reduce((acc: any, id) => ({...acc, [`user_${id}`]: ['user.get', { ID: id }]}), {})
+             const userResult = await callBatchPromise(userBatch)
              
-             fetchData(tid!);
-        });
-    });
-});
+             missingIds.forEach(id => {
+                 const res = userResult[`user_${id}`]
+                 if (res && !res.error() && res.data()[0]) {
+                     const user = res.data()[0]
+                     users.value[id] = `${user.NAME} ${user.LAST_NAME}`
+                 } else {
+                     users.value[id] = `Пользователь #${id}`
+                 }
+             })
+         }
+     }
 
-// Watch smartProcessId usage
-watch(smartProcessId, () => {
-    if (mainTaskId.value) fetchData(mainTaskId.value);
-});
+  } catch (e: any) {
+      console.error("Data fetch error", e)
+      setError(e.message || "Ошибка загрузки данных")
+  } finally {
+      setIsLoading(false)
+  }
+}
 
-watch(currentUserId, (newId) => {
-    if (newId && !formData.value.employeeId) {
-        formData.value.employeeId = newId;
-    }
-}, { immediate: true });
+// --- Actions ---
 
-// Auto-select main task when loaded
-watch([mainTaskId, taskTree], () => {
-    if (mainTaskId.value && !formData.value.targetTaskId && taskTree.value.length > 0) {
-        // Find title for main task
-        const findTitle = (nodes: any[]): string | null => {
-            for (const node of nodes) {
-                if (String(node.taskId) === String(mainTaskId.value)) return node.taskTitle;
-                if (node.children) {
-                    const found = findTitle(node.children);
-                    if (found) return found;
-                }
-            }
-            return null;
+const setIsLoading = (val: boolean) => isLoading.value = val
+const setError = (msg: string | null) => error.value = msg
+
+const handleToggleHours = (itemId: number | string) => {
+    updatingItemId.value = itemId
+    // Find item
+    let itemToUpdate: any = null
+    const findItem = (nodes: TaskNode[]) => {
+        for (const node of nodes) {
+            const found = node.items.find(i => i.id === itemId)
+            if (found) { itemToUpdate = found; return }
+            if (node.children.length > 0) findItem(node.children)
         }
-        const title = findTitle(taskTree.value) || 'Текущая задача';
-        selectTaskForEntry(mainTaskId.value, title);
     }
-}, { immediate: true });
+    findItem(taskTree.value)
 
-// Helpers for template (format currency)
-const formatCurrency = (val: number) => val.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' });
+    if (!itemToUpdate) {
+        updatingItemId.value = null
+        return
+    }
+
+    const f = fields.value!
+    const currentIsConsidered = itemToUpdate[f.isConsidered] === true || itemToUpdate[f.isConsidered] === 'Y'
+
+    callMethodPromise('crm.item.update', {
+        entityTypeId: config.value!.sp_entity_type_id,
+        id: itemId,
+        fields: {
+             [f.isConsidered]: currentIsConsidered ? 'N' : 'Y'
+        }
+    }).then(() => {
+        updatingItemId.value = null
+        if (mainTaskId.value) fetchData(mainTaskId.value)
+    }).catch(e => {
+        console.error(e)
+        // Show error notification?
+        updatingItemId.value = null
+    })
+}
+
+const handleCreateHours = async () => {
+    modalError.value = null
+    if (!formData.value.hours || parseFloat(formData.value.hours) <= 0) return modalError.value = 'Укажите количество часов'
+    if (!formData.value.description) return modalError.value = 'Укажите описание'
+    if (!formData.value.employeeId) return modalError.value = 'Выберите сотрудника'
+    
+    isCreating.value = true
+
+    try {
+        const hierarchy = await getTaskHierarchy(formData.value.targetTaskId!)
+        const f = fields.value!
+        
+        await callMethodPromise('crm.item.add', {
+            entityTypeId: config.value!.sp_entity_type_id,
+            fields: {
+                title: formData.value.description.substring(0, 255),
+                [f.hours]: parseFloat(formData.value.hours),
+                [f.isConsidered]: formData.value.isConsidered ? 'Y' : 'N',
+                [f.taskId]: formData.value.targetTaskId,
+                [f.employee]: formData.value.employeeId,
+                [f.description]: formData.value.description,
+                'createdTime': formData.value.date + 'T00:00:00',
+                [f.hierarchyIds]: JSON.stringify(hierarchy.idPath), // Or plain array if field supports it? Usually string for text field
+                [f.hierarchyTitles]: JSON.stringify(hierarchy.titlePath)
+            }
+        })
+        
+        isCreating.value = false
+        showModal.value = false
+        if (mainTaskId.value) fetchData(mainTaskId.value)
+
+    } catch (e: any) {
+        console.error(e)
+        modalError.value = `Ошибка: ${e.message || e}`
+        isCreating.value = false
+    }
+}
+
+const handleTransferToReport = () => {
+    reportModalError.value = null
+    if (totalStats.value.considered <= 0) return reportModalError.value = 'Нет часов для переноса'
+    
+    isReporting.value = true
+    const f = fields.value!
+    
+    const itemsToTransfer: any[] = []
+    const collect = (nodes: TaskNode[]) => {
+        nodes.forEach(node => {
+            node.items.forEach(item => {
+                // Should we check if already transferred? Field for that?
+                // For now assuming we just transfer what is currently considered
+                const isCons = item[f.isConsidered] === true || item[f.isConsidered] === 'Y'
+                if (isCons && (parseFloat(item[f.hours]) || 0) > 0) {
+                    itemsToTransfer.push(item)
+                }
+            })
+            if (node.children.length > 0) collect(node.children)
+        })
+    }
+    collect(taskTree.value)
+    
+    if (itemsToTransfer.length === 0) {
+        isReporting.value = false
+        showReportModal.value = false
+        return
+    }
+
+    const batchCommands = itemsToTransfer.map(item => {
+        const h = parseFloat(item[f.hours]) || 0
+        return ['task.elapseditem.add', {
+            TASKID: item[f.taskId],
+            FIELDS: {
+                SECONDS: Math.round(h * 3600),
+                USER_ID: item[f.employee] || currentUserId.value,
+                COMMENT_TEXT: item[f.description] || `Списание ${h} ч.`
+            }
+        }]
+    })
+
+    callBatchPromise(batchCommands).then(() => {
+        isReporting.value = false
+        showReportModal.value = false
+        alert("Часы успешно перенесены") // Use UI notification
+    })
+}
+
+const handleOpenModal = (targetId: string | number) => {
+    // Reset form
+    formData.value = {
+        hours: '',
+        description: '',
+        date: new Date().toISOString().split('T')[0],
+        employeeId: String(currentUserId.value),
+        targetTaskId: targetId,
+        isConsidered: true
+    }
+    modalError.value = null
+    showModal.value = true
+}
+
+const toggleGroup = (id: string | number) => {
+    if (openTaskIds.value.has(id)) openTaskIds.value.delete(id)
+    else openTaskIds.value.add(id)
+}
+
+const handleOpenItem = (id: string | number) => {
+    // @ts-ignore
+    if (window.BX24) window.BX24.openPath(`/crm/type/${config.value?.sp_entity_type_id}/details/${id}/`)
+}
+
+// --- Lifecycle ---
+onMounted(async () => {
+  try {
+    $b24 = await $initializeB24Frame()
+    await initApp($b24!, useI18n().locales.value, useI18n().setLocale)
+    
+    // Load config first
+    await fetchConfiguration()
+
+    // Determin Context
+    // @ts-ignore
+    if (typeof window.BX24 !== 'undefined') {
+        // @ts-ignore
+        window.BX24.init(() => {
+            // @ts-ignore
+            const placementInfo = window.BX24.placement.info()
+            let tid: any = null
+            if (placementInfo?.options) {
+                 // Options can be JSON string or object
+                 let opts = placementInfo.options
+                 if (typeof opts === 'string') {
+                     try { opts = JSON.parse(opts) } catch {}
+                 }
+                 tid = opts.ID || opts.taskId || opts.id
+            }
+
+            // Fallback for dev mode without placement (hardcode for testing?)
+            // if (!tid && import.meta.dev) tid = 1
+
+            if (!tid) {
+                setError("Не удалось определить ID задачи. Откройте приложение через вкладку задачи.")
+                isLoading.value = false
+                return
+            }
+
+            mainTaskId.value = tid
+            openTaskIds.value.add(tid)
+
+            // Load Users
+            // @ts-ignore
+            window.BX24.callBatch({
+                currentUser: ['user.current', {}],
+                allUsers: ['user.get', { FILTER: { ACTIVE: 'Y' }, sort: 'LAST_NAME', order: 'ASC'}]
+            }, (res: any) => {
+                 const cur = res.currentUser
+                 if (cur && !cur.error()) {
+                     currentUserId.value = cur.data().ID
+                     formData.value.employeeId = String(cur.data().ID)
+                 }
+                 const all = res.allUsers
+                 if (all && !all.error()) {
+                     allUsers.value = all.data()
+                 }
+                 
+                 fetchData(tid)
+            })
+        })
+    } else {
+        setError("B24 context not found")
+        isLoading.value = false
+    }
+
+  } catch (e) {
+    processErrorGlobal(e)
+  }
+})
 </script>
 
 <template>
-    <div class="h-full flex bg-slate-50 min-h-screen overflow-hidden">
-        <!-- LEFT: Task Tree (Scrollable) -->
-        <main class="flex-1 flex flex-col min-w-0 border-r border-slate-200">
-             <!-- Header Stats -->
-             <div class="bg-white border-b p-4 grid grid-cols-2 md:grid-cols-4 gap-4 shrink-0">
-                 <div class="px-3 py-2 bg-slate-50 rounded border">
-                     <p class="text-xs text-slate-500 uppercase font-semibold">Всего</p>
-                     <p class="text-xl font-bold text-blue-600">{{ totalStats.totalHours.toFixed(2) }} ч</p>
-                 </div>
-                 <div class="px-3 py-2 bg-slate-50 rounded border">
-                     <p class="text-xs text-slate-500 uppercase font-semibold">Учитываемые</p>
-                     <p class="text-xl font-bold text-green-600">{{ totalStats.totalConsidered.toFixed(2) }} ч</p>
-                 </div>
-                 <div class="px-3 py-2 bg-slate-50 rounded border">
-                     <p class="text-xs text-slate-500 uppercase font-semibold">Не учитываемые</p>
-                     <p class="text-xl font-bold text-red-600">{{ totalStats.totalUnconsidered.toFixed(2) }} ч</p>
-                 </div>
+  <div class="h-full flex flex-col bg-slate-50">
+      
+      <!-- Loading / Error -->
+      <div v-if="isLoading" class="flex items-center justify-center h-full">
+          <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
+          <p class="ml-4 text-slate-500">Загрузка данных...</p>
+      </div>
+
+      <div v-else-if="error" class="flex items-center justify-center h-full p-4">
+          <div class="bg-red-50 text-red-700 p-4 rounded-lg flex items-center">
+              <span class="material-symbols-outlined mr-2">error</span>
+              {{ error }}
+          </div>
+      </div>
+
+      <!-- Content -->
+      <div v-else class="flex flex-col h-full">
+          <!-- Header -->
+          <header class="p-4 bg-white border-b shrink-0 space-y-4">
+              <!-- Settings Toggle -->
+              <div class="border rounded-lg bg-slate-50 overflow-hidden">
+                   <button @click="isSettingsOpen = !isSettingsOpen" class="w-full flex justify-between items-center p-3 text-left hover:bg-slate-100">
+                       <div class="flex items-center">
+                           <span class="material-symbols-outlined text-slate-600 mr-2">tune</span>
+                           <span class="font-semibold text-slate-800">Настройки расчета</span>
+                       </div>
+                       <span :class="`material-symbols-outlined text-slate-500 transition-transform ${isSettingsOpen ? 'rotate-180' : ''}`">expand_more</span>
+                   </button>
+                   <div v-if="isSettingsOpen" class="p-4 border-t bg-white grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                             <label class="block text-sm font-medium text-slate-700 mb-1">Стоимость часа для клиента (руб.)</label>
+                             <input type="number" v-model.number="clientHourRate" class="w-full px-3 py-2 border rounded-lg" placeholder="3000" />
+                        </div>
+                        <div>
+                             <p class="text-sm text-slate-500 mt-6">ID Смарт-процесса: {{ config?.sp_entity_type_id }}</p>
+                        </div>
+                   </div>
               </div>
-                 
 
+              <!-- Dash -->
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <StatCard icon="schedule" label="Всего по задаче" :value="totalStats.total.toFixed(2)" unit="ч" color="text-blue-500" />
+                  <StatCard icon="task_alt" label="Учитываемые" :value="totalStats.considered.toFixed(2)" unit="ч" color="text-green-500" />
+                  <StatCard icon="block" label="Не учитываемые" :value="totalStats.unconsidered.toFixed(2)" unit="ч" color="text-red-500" />
+                  
+                  <div class="col-span-2 md:col-span-1 flex gap-2">
+                      <button @click="handleOpenModal(mainTaskId!)" class="w-full flex items-center justify-center gap-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-semibold px-3 py-2 text-sm">
+                          <span class="material-symbols-outlined">add</span> Отразить
+                      </button>
+                      <button @click="showReportModal = true" :disabled="totalStats.considered <= 0" class="w-full flex items-center justify-center gap-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-semibold px-3 py-2 text-sm disabled:bg-slate-300 disabled:cursor-not-allowed">
+                          <span class="material-symbols-outlined">send</span> В отчет
+                      </button>
+                  </div>
+              </div>
+          </header>
 
-             <!-- Scrollable List -->
-             <div class="flex-1 overflow-y-auto p-4 space-y-4">
-                 <div v-if="isLoading" class="text-center py-10 text-slate-400">Загрузка структуры...</div>
-                 <div v-else-if="error" class="text-center py-10 text-red-600 bg-red-50 rounded m-4">{{ error }}</div>
-                 <template v-else-if="taskTree.length">
-                     <div 
-                        v-for="node in taskTree" 
-                        :key="node.taskId" 
-                        class="bg-white border rounded-lg overflow-hidden shadow-sm transition-shadow hover:shadow-md"
-                        :class="{'ring-2 ring-blue-500 ring-offset-2': formData.targetTaskId === node.taskId}"
-                     >
-                        <div class="p-3 bg-slate-50 border-b flex justify-between items-center select-none group">
-                            <div @click="toggleGroup(node.taskId)" class="cursor-pointer flex-1 flex items-center gap-2">
-                                <span class="text-slate-400 transform transition-transform" :class="{'rotate-180': openTaskIds.has(node.taskId)}">▼</span>
-                                <div>
-                                    <h3 class="font-bold text-slate-800 text-sm md:text-base group-hover:text-blue-600 transition-colors">{{ node.taskTitle }}</h3>
-                                    <p class="text-[10px] text-slate-400">ID: {{ node.taskId }}</p>
-                                </div>
-                            </div>
-                            
-                            <!-- Select Button -->
-                            <div class="flex items-center gap-3">
-                                <div class="text-right hidden sm:block">
-                                    <span class="text-green-600 font-bold block text-sm">{{ node.cumulativeConsidered.toFixed(2) }}</span>
-                                </div>
-                                <button 
-                                    @click="selectTaskForEntry(node.taskId, node.taskTitle)" 
-                                    class="text-xs px-3 py-1.5 rounded-full border transition-colors"
-                                    :class="formData.targetTaskId === node.taskId ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-300 hover:border-blue-400 hover:text-blue-500'"
-                                >
-                                    {{ formData.targetTaskId === node.taskId ? 'Выбрано' : 'Выбрать' }}
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <!-- Recursive Content -->
-                        <div v-if="openTaskIds.has(node.taskId)">
-                            <!-- Items List -->
-                            <div v-for="item in node.items" :key="item.id" class="p-3 border-t flex justify-between items-start hover:bg-slate-50 pl-8">
-                                <div>
-                                    <p class="font-medium text-slate-700 text-sm">{{ item.title || 'Без названия' }}</p>
-                                    <p class="text-[10px] text-slate-400">
-                                        {{ users[item[EMPLOYEE_FIELD_CODE]] || 'Неизвестно' }} • {{ formatDate(item.createdTime) }}
-                                    </p>
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    <span :class="{'text-green-600': item[IS_CONSIDERED_FIELD_CODE] === 'Y', 'text-red-600': item[IS_CONSIDERED_FIELD_CODE] !== 'Y'}" class="font-bold text-sm">
-                                        {{ parseFloat(item[HOURS_FIELD_CODE] || 0).toFixed(2) }}
-                                    </span>
-                                    <button @click="handleEditItem(item)" :disabled="updatingItemId === item.id" class="text-[10px] bg-slate-100 text-slate-600 px-2 py-1 rounded hover:bg-slate-200">
-                                        {{ updatingItemId === item.id ? '...' : 'Изменить' }}
-                                    </button>
-                                </div>
-                            </div>
+          <!-- Tree -->
+          <main class="flex-1 overflow-y-auto p-4">
+               <div class="max-w-7xl mx-auto space-y-4">
+                   <div v-if="taskTree.length === 0" class="text-center py-10 text-slate-500">
+                       Нет данных для отображения.
+                   </div>
+                   <TaskGroup 
+                       v-for="rootTask in taskTree" 
+                       :key="rootTask.taskId" 
+                       :task="rootTask"
+                       :level="0"
+                       :clientHourRate="clientHourRate"
+                       :openTaskIds="openTaskIds"
+                       :users="users"
+                       :updatingItemId="updatingItemId"
+                       :fields="fields!"
+                       @toggle-group="toggleGroup"
+                       @open-modal="handleOpenModal"
+                       @toggle-hours="handleToggleHours"
+                       @open-item="handleOpenItem"
+                   />
+               </div>
+          </main>
+      </div>
 
-                            <!-- Children Tasks -->
-                            <div v-if="node.children && node.children.length" class="pl-4 border-t bg-slate-50/50 p-2 space-y-2">
-                                 <RecursiveTaskGroup 
-                                    v-for="child in node.children" 
-                                    :key="child.taskId" 
-                                    :node="child" 
-                                    :clientHourRate="clientHourRate" 
-                                    :users="users" 
-                                    :openTaskIds="openTaskIds" 
-                                    @toggle="toggleGroup" 
-                                    @toggleHours="handleEditItemById"
-                                    @select="selectTaskForEntry"
-                                    :selectedTaskId="formData.targetTaskId" 
-                                />
-                            </div>
-                        </div>
+      <!-- Modals (Simplified Inline or Components) -->
+      <!-- Add Hours Modal -->
+      <div v-if="showModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+           <div class="bg-white rounded-lg shadow-lg max-w-md w-full p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold">Отразить часы (Задача #{{ formData.targetTaskId }})</h3>
+                    <button @click="showModal = false" class="text-slate-500"><span class="material-symbols-outlined">close</span></button>
+                </div>
+                
+                <div v-if="modalError" class="mb-4 bg-red-50 text-red-700 p-2 rounded text-sm">{{ modalError }}</div>
+
+                <div class="space-y-4">
+                     <div>
+                         <label class="block text-sm font-medium mb-1">Сотрудник</label>
+                         <select v-model="formData.employeeId" class="w-full border rounded px-3 py-2 bg-white">
+                             <option value="">Выберите сотрудника</option>
+                             <option v-for="u in allUsers" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
+                         </select>
                      </div>
-                 </template>
-                 <div v-else class="text-center py-20 text-slate-400">Нет доступных задач для отображения.</div>
-             </div>
-        </main>
-
-        <!-- RIGHT: Side Panel (Fixed Width) -->
-        <aside class="w-96 bg-white border-l border-slate-200 flex flex-col shrink-0 z-10 shadow-xl">
-            <div class="p-6 border-b flex-1 overflow-y-auto">
-                <h2 class="text-lg font-bold text-slate-900 mb-1">Новая запись</h2>
-                
-                <div v-if="!formData.targetTaskId" class="p-4 bg-blue-50 text-blue-800 rounded-lg text-sm mb-6 border border-blue-100">
-                    <p>← Выберите задачу из списка слева, чтобы добавить к ней часы.</p>
+                     <div>
+                         <label class="block text-sm font-medium mb-1">Часы</label>
+                         <input type="number" v-model="formData.hours" step="0.5" class="w-full border rounded px-3 py-2" />
+                     </div>
+                     <div>
+                         <label class="block text-sm font-medium mb-1">Описание</label>
+                         <textarea v-model="formData.description" rows="3" class="w-full border rounded px-3 py-2"></textarea>
+                     </div>
+                     <div>
+                         <label class="block text-sm font-medium mb-1">Дата</label>
+                         <input type="date" v-model="formData.date" class="w-full border rounded px-3 py-2" />
+                     </div>
+                     <div class="flex items-center">
+                         <input type="checkbox" v-model="formData.isConsidered" id="isCons" class="mr-2" />
+                         <label for="isCons" class="text-sm">Учитываемые часы</label>
+                     </div>
                 </div>
-                
-                <div v-else class="mb-6">
-                    <p class="text-xs text-slate-500 mb-1 uppercase tracking-wide">Задача</p>
-                    <p class="font-medium text-slate-800 bg-slate-50 p-3 rounded border border-slate-200">{{ selectedTaskTitle }}</p>
+
+                <div class="flex gap-3 mt-6">
+                    <button @click="showModal = false" class="flex-1 px-4 py-2 bg-slate-100 rounded hover:bg-slate-200">Отмена</button>
+                    <button @click="handleCreateHours" :disabled="isCreating" class="flex-1 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50">
+                        {{ isCreating ? 'Сохранение...' : 'Сохранить' }}
+                    </button>
                 </div>
+           </div>
+      </div>
 
-                <div class="space-y-5" :class="{'opacity-50 pointer-events-none': !formData.targetTaskId}">
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Сотрудник</label>
-                        <select v-model="formData.employeeId" class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm">
-                            <option v-for="u in allUsers" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
-                        </select>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-1.5">Дата</label>
-                            <input type="date" v-model="formData.date" class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm" />
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 mb-1.5">Часы</label>
-                            <input type="number" v-model="formData.hours" step="0.5" min="0" placeholder="0.0" class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm" />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Описание работ</label>
-                        <textarea v-model="formData.description" rows="4" placeholder="Что было сделано..." class="w-full border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"></textarea>
-                    </div>
-
-                    <div class="flex items-center gap-2 pt-2">
-                        <input type="checkbox" id="isConsidered" v-model="formData.isConsidered" class="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                        <label for="isConsidered" class="text-sm text-slate-700 select-none">Учитывать часы (Billable)</label>
-                    </div>
-                    
-                    <div v-if="modalError" class="p-3 bg-red-50 text-red-600 text-sm rounded border border-red-100">
-                        {{ modalError }}
-                    </div>
+      <!-- Report Modal -->
+      <div v-if="showReportModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+           <div class="bg-white rounded-lg shadow-lg max-w-md w-full p-6">
+                <h3 class="text-lg font-bold mb-4">Перенос в отчет</h3>
+                <div class="bg-blue-50 p-4 rounded mb-4">
+                    <p class="text-sm text-blue-900">Сумма к переносу: <strong>{{ totalStats.considered.toFixed(2) }} ч</strong></p>
                 </div>
-            </div>
-            
-            <!-- Footer Actions -->
-            <div class="p-6 border-t bg-slate-50 flex gap-3">
-                <button v-if="updatingItemId" @click="cancelEdit" class="flex-1 bg-white text-slate-700 border border-slate-300 font-medium py-2.5 rounded-lg hover:bg-slate-50">
-                    Отмена
-                </button>
-                <button 
-                    @click="handleSaveHours" 
-                    :disabled="isCreating || (!formData.targetTaskId && !updatingItemId)" 
-                    class="flex-1 bg-blue-600 text-white font-medium py-2.5 rounded-lg shadow-sm hover:bg-blue-700 active:transform active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {{ isCreating ? 'Сохранение...' : (updatingItemId ? 'Обновить' : 'Сохранить') }}
-                </button>
-            </div>
-        </aside>
-    </div>
+                <p class="text-sm text-slate-600 mb-6">Это создаст записи времени в штатном отчете Битрикс24.</p>
+                <div class="flex gap-3">
+                    <button @click="showReportModal = false" class="flex-1 px-4 py-2 bg-slate-100 rounded hover:bg-slate-200">Отмена</button>
+                    <button @click="handleTransferToReport" :disabled="isReporting" class="flex-1 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50">
+                        {{ isReporting ? 'Перенос...' : 'Перенести' }}
+                    </button>
+                </div>
+           </div>
+      </div>
+
+  </div>
 </template>
-
-<script lang="ts">
-// Recursive component definition
-import { defineComponent } from 'vue';
-export default defineComponent({
-  name: 'TaskHoursPage',
-});
-</script>
-
