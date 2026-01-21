@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitrix24 Task Hours App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="//api.bitrix24.com/api/v1/"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+    <style>
+        html {
+            /* Увеличиваем базовый размер шрифта для лучшей читаемости */
+            font-size: 115%; 
+        }
+        html, body, #root {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #f8fafc; /* Tailwind's slate-50 */
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            user-select: none;
+            vertical-align: middle;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root" class="h-full"></div>
+    <script type="text/babel">
+        const App = () => {
+            const { useState, useEffect, useMemo, useCallback } = React;
+
+            // --- КОНФИГУРАЦИЯ (ОПТИМИЗИРОВАНО) ---
+            const TASK_ID_FIELD_CODE = 'ufCrm87_1761919581';
+            const EMPLOYEE_FIELD_CODE = 'ufCrm87_1761919601';
+            const HOURS_FIELD_CODE = 'ufCrm87_1761919617'; // Поле для количества часов
+            const IS_CONSIDERED_FIELD_CODE = 'ufCrm87_1763717129'; // Поле-флаг (чекбокс "Учитываем?")
+            const DESCRIPTION_FIELD_CODE = 'ufCrm87_1762026149771';
+            const TASK_HIERARCHY_ID_FIELD_CODE = 'ufCrm87_1764191110';
+            const TASK_HIERARCHY_TITLE_FIELD_CODE = 'ufCrm87_1764191133';
+            // --- КОНЕЦ КОНФИГУРАЦИИ ---
+
+            const initialFormData = { hours: '', description: '', date: new Date().toISOString().split('T')[0], employeeId: '', targetTaskId: null, isConsidered: true };
+
+            // Состояния
+            const [isLoading, setIsLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [taskTree, setTaskTree] = useState([]);
+            const [users, setUsers] = useState({});
+            const [allUsers, setAllUsers] = useState([]);
+            const [updatingItemId, setUpdatingItemId] = useState(null);
+            const [mainTaskId, setMainTaskId] = useState(null);
+            const [currentUserId, setCurrentUserId] = useState(null);
+            const [showModal, setShowModal] = useState(false);
+            const [showReportModal, setShowReportModal] = useState(false);
+            const [isCreating, setIsCreating] = useState(false);
+            const [isReporting, setIsReporting] = useState(false);
+            const [modalError, setModalError] = useState(null);
+            const [reportModalError, setReportModalError] = useState(null);
+            const [openTaskIds, setOpenTaskIds] = useState(new Set());
+            const [formData, setFormData] = useState(initialFormData);
+
+            // ✨ НОВЫЙ ФУНКЦИОНАЛ: Состояния для настроек
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [clientHourRate, setClientHourRate] = useState(0);
+            const [smartProcessId, setSmartProcessId] = useState(1164); // Начальное значение по умолчанию
+
+            // --- НАДЕЖНЫЙ МЕХАНИЗМ ЗАГРУЗКИ ДАННЫХ ---
+            
+            const callMethodPromise = (method, params) => new Promise((resolve, reject) => {
+                BX24.callMethod(method, params, result => {
+                    if (result.error()) reject(result.error());
+                    else resolve(result.data());
+                });
+            });
+
+            const callBatchPromise = (commands) => new Promise((resolve) => {
+                BX24.callBatch(commands, result => resolve(result));
+            });
+
+            // ✨ НОВЫЙ ФУНКЦИОНАЛ: Функция для сбора иерархии задач
+            const getTaskHierarchy = useCallback(async (initialTaskId) => {
+                let currentTaskId = initialTaskId;
+                const idPath = [];
+                const titlePath = [];
+
+                while (currentTaskId) {
+                    try {
+                        const result = await callMethodPromise('tasks.task.get', {
+                            taskId: currentTaskId,
+                            select: ['ID', 'TITLE', 'PARENT_ID']
+                        });
+                        const task = result.task;
+
+                        if (task) {
+                            idPath.unshift(task.id);
+                            titlePath.unshift(task.title);
+
+                            if (task.parentId && task.parentId !== '0') {
+                                currentTaskId = task.parentId;
+                            } else {
+                                currentTaskId = null; // Достигли корневой задачи
+                            }
+                        } else {
+                            currentTaskId = null; // Задача не найдена или ошибка, прекращаем
+                        }
+                    } catch (e) {
+                        console.error(`Ошибка при получении задачи ${currentTaskId}:`, e);
+                        currentTaskId = null; // Ошибка, прекращаем
+                    }
+                }
+                return { idPath, titlePath };
+            }, [callMethodPromise]);
+
+            // ✨ ИЗМЕНЕНО: fetchData теперь зависит от smartProcessId
+            const fetchData = useCallback(async (currentTaskId) => {
+                if (!smartProcessId) {
+                    setError("ID Смарт-процесса не указан. Проверьте настройки.");
+                    setIsLoading(false);
+                    return;
+                }
+                setIsLoading(true);
+                setError(null);
+                try {
+                    // 1. Получаем корневую задачу
+                    const rootTaskResult = await callMethodPromise('tasks.task.get', { taskId: currentTaskId, select: ['ID', 'TITLE'] });
+                    const rootTaskData = rootTaskResult.task;
+                    
+                    // 2. Итеративно собираем все подзадачи
+                    let allSubTasks = [];
+                    let queue = [currentTaskId];
+                    const processedIds = new Set([currentTaskId]);
+                    
+                    while (queue.length > 0) {
+                        const batchCmds = queue.map(id => ['tasks.task.list', {
+                            filter: { PARENT_ID: id },
+                            select: ['id', 'title', 'parentId']
+                        }]);
+                        const batchResult = await callBatchPromise(batchCmds);
+                        
+                        queue = [];
+                        
+                        for (const res of Object.values(batchResult)) {
+                            if (res && !res.error()) {
+                                const tasks = res.data().tasks || [];
+                                for (const task of tasks) {
+                                    if (!processedIds.has(task.id)) {
+                                        allSubTasks.push(task);
+                                        queue.push(task.id);
+                                        processedIds.add(task.id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    const allTasks = [{ id: rootTaskData.id, title: rootTaskData.title, parentId: null }, ...allSubTasks];
+                    const allTaskIds = allTasks.map(t => t.id);
+
+                    // 3. Находим все связанные смарт-процессы
+                    const spBatchCmds = allTaskIds.map(taskId => ['crm.item.list', {
+                        entityTypeId: smartProcessId,
+                        filter: { [TASK_ID_FIELD_CODE]: taskId },
+                        select: ['id', 'title', 'createdTime', TASK_ID_FIELD_CODE, EMPLOYEE_FIELD_CODE, HOURS_FIELD_CODE, IS_CONSIDERED_FIELD_CODE, DESCRIPTION_FIELD_CODE]
+                    }]);
+                    const spResults = await callBatchPromise(spBatchCmds);
+                    const allItems = Object.values(spResults).flatMap(res => (res && !res.error() && res.data().items) ? res.data().items : []);
+
+                    const itemsByTaskId = allItems.reduce((acc, item) => {
+                        const taskId = item[TASK_ID_FIELD_CODE];
+                        if (!acc[taskId]) acc[taskId] = [];
+                        acc[taskId].push(item);
+                        return acc;
+                    }, {});
+
+                    // 4. Строим узлы дерева с локальными часами
+                    const nodes = {};
+                    allTasks.forEach(task => {
+                        const items = itemsByTaskId[task.id] || [];
+                        nodes[task.id] = {
+                            taskId: task.id,
+                            taskTitle: task.title,
+                            parentId: task.parentId,
+                            items: items,
+                            totalConsidered: items.reduce((sum, item) => {
+                                const isConsidered = item[IS_CONSIDERED_FIELD_CODE] === true || item[IS_CONSIDERED_FIELD_CODE] === 'Y';
+                                return sum + (isConsidered ? (parseFloat(item[HOURS_FIELD_CODE]) || 0) : 0);
+                            }, 0),
+                            totalUnconsidered: items.reduce((sum, item) => {
+                                const isConsidered = item[IS_CONSIDERED_FIELD_CODE] === true || item[IS_CONSIDERED_FIELD_CODE] === 'Y';
+                                return sum + (!isConsidered ? (parseFloat(item[HOURS_FIELD_CODE]) || 0) : 0);
+                            }, 0),
+                            children: []
+                        };
+                    });
+                    
+                    // 5. Собираем иерархию
+                    const tree = [];
+                    Object.values(nodes).forEach(node => {
+                        if (node.parentId && nodes[node.parentId]) {
+                            nodes[node.parentId].children.push(node);
+                        } else if (String(node.taskId) === String(currentTaskId)) {
+                            tree.push(node);
+                        }
+                    });
+                    
+                    // 6. Рекурсивно вычисляем кумулятивные (накопленные) часы
+                    const calculateCumulativeTotals = (node) => {
+                        let childConsidered = 0;
+                        let childUnconsidered = 0;
+
+                        if (node.children && node.children.length > 0) {
+                            node.children.forEach(child => {
+                                const childTotals = calculateCumulativeTotals(child);
+                                childConsidered += childTotals.considered;
+                                childUnconsidered += childTotals.unconsidered;
+                            });
+                        }
+                        node.cumulativeConsidered = (node.totalConsidered || 0) + childConsidered;
+                        node.cumulativeUnconsidered = (node.totalUnconsidered || 0) + childUnconsidered;
+                        
+                        return {
+                            considered: node.cumulativeConsidered,
+                            unconsidered: node.cumulativeUnconsidered
+                        };
+                    };
+                    
+                    tree.forEach(calculateCumulativeTotals);
+                    
+                    setTaskTree(tree);
+
+                    // 7. Загружаем информацию о пользователях
+                    const employeeIds = [...new Set(allItems.map(item => item[EMPLOYEE_FIELD_CODE]).filter(Boolean))];
+                    if (employeeIds.length > 0) {
+                        const userBatch = employeeIds.reduce((acc, id) => ({...acc, [`user_${id}`]: ['user.get', { ID: id }]}), {});
+                        const userResult = await callBatchPromise(userBatch);
+                        const usersData = {};
+                        employeeIds.forEach(id => {
+                            const res = userResult[`user_${id}`];
+                            if (res && !res.error() && res.data()[0]) {
+                                const user = res.data()[0];
+                                usersData[id] = `${user.NAME} ${user.LAST_NAME}`;
+                            } else {
+                                usersData[id] = `Пользователь #${id}`;
+                            }
+                        });
+                        setUsers(usersData);
+                    }
+                } catch (e) {
+                    console.error("Ошибка при загрузке данных:", e);
+                    setError(e.message || "Произошла неизвестная ошибка при загрузке данных.");
+                } finally {
+                    setIsLoading(false);
+                }
+            }, [smartProcessId]); // ✨ ИЗМЕНЕНО: Добавляем зависимость от ID смарт-процесса
+            
+            // ✨ ИЗМЕНЕНО: Эффект теперь также зависит от smartProcessId, чтобы перезагружать данные при его смене
+            useEffect(() => {
+                let isMounted = true;
+                BX24.init(() => {
+                    if (!isMounted) return;
+                    const placementInfo = BX24.placement.info();
+                    let currentTaskId = null;
+                    if (placementInfo?.options) {
+                        let options = placementInfo.options;
+                        if (typeof options === 'string') { try { options = JSON.parse(options); } catch (e) { options = {}; }}
+                        currentTaskId = options.ID || options.taskId || options.id;
+                    }
+                    if (!currentTaskId) {
+                        setError('Не удалось получить ID задачи.');
+                        setIsLoading(false);
+                        return;
+                    }
+                    setMainTaskId(currentTaskId);
+                    setOpenTaskIds(prev => prev.size === 0 ? new Set([currentTaskId]) : prev);
+                    
+                    BX24.callBatch({
+                        currentUser: ['user.current', {}],
+                        allUsers: ['user.get', { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' }]
+                    }, (result) => {
+                        if (!isMounted) return;
+                        const currentUserRes = result.currentUser;
+                        if (currentUserRes && !currentUserRes.error()) {
+                            const user = currentUserRes.data();
+                            setCurrentUserId(user.ID);
+                            setFormData(prev => ({ ...prev, employeeId: user.ID }));
+                        }
+                        const allUsersRes = result.allUsers;
+                        if (allUsersRes && !allUsersRes.error()) { setAllUsers(allUsersRes.data()); }
+                        
+                        fetchData(currentTaskId);
+                    });
+                });
+                return () => { isMounted = false; };
+            }, [fetchData, mainTaskId]);
+
+
+            const { totalConsidered, totalUnconsidered, totalHours } = useMemo(() => {
+                let considered = 0, unconsidered = 0;
+                taskTree.forEach(rootNode => {
+                    considered += rootNode.cumulativeConsidered || 0;
+                    unconsidered += rootNode.cumulativeUnconsidered || 0;
+                });
+                return { totalConsidered: considered, totalUnconsidered: unconsidered, totalHours: considered + unconsidered };
+            }, [taskTree]);
+
+            const handleToggleHours = (itemId) => {
+                setUpdatingItemId(itemId);
+                let itemToUpdate = null;
+                const findItem = (nodes) => {
+                    for (const node of nodes) {
+                        const found = node.items.find(i => i.id === itemId);
+                        if (found) { itemToUpdate = found; return; }
+                        if (node.children.length > 0) findItem(node.children);
+                    }
+                }
+                findItem(taskTree);
+
+                if (!itemToUpdate) {
+                    setError('Не удалось найти элемент для обновления.');
+                    setUpdatingItemId(null);
+                    return;
+                }
+
+                const currentIsConsidered = itemToUpdate[IS_CONSIDERED_FIELD_CODE] === true || itemToUpdate[IS_CONSIDERED_FIELD_CODE] === 'Y';
+                
+                BX24.callMethod('crm.item.update', {
+                    entityTypeId: smartProcessId,
+                    id: itemId, 
+                    fields: { 
+                        [IS_CONSIDERED_FIELD_CODE]: currentIsConsidered ? 'N' : 'Y'
+                    }
+                }, (result) => {
+                    if (result.error()) setError(`Ошибка обновления: ${result.error().toString()}`);
+                    setUpdatingItemId(null);
+                    fetchData(mainTaskId);
+                });
+            };
+
+            const handleCreateHours = async () => {
+                setModalError(null);
+                if (!formData.hours || isNaN(formData.hours) || parseFloat(formData.hours) <= 0) return setModalError('Укажите корректное количество часов');
+                if (!formData.description.trim()) return setModalError('Укажите описание');
+                if (!formData.date) return setModalError('Укажите дату');
+                if (!formData.employeeId) return setModalError('Выберите сотрудника');
+                if (!formData.targetTaskId) return setModalError('Не выбрана задача для списания часов.');
+
+                setIsCreating(true);
+
+                let idPath = [];
+                let titlePath = [];
+
+                try {
+                    const hierarchy = await getTaskHierarchy(formData.targetTaskId);
+                    idPath = hierarchy.idPath;
+                    titlePath = hierarchy.titlePath;
+                } catch (e) {
+                    console.error("Ошибка при получении иерархии задачи:", e);
+                    setModalError(`Не удалось получить иерархию задачи: ${e.message || e.toString()}`);
+                    setIsCreating(false);
+                    return;
+                }
+
+                BX24.callMethod('crm.item.add', {
+                    entityTypeId: smartProcessId,
+                    fields: {
+                        title: formData.description.substring(0, 255),
+                        [HOURS_FIELD_CODE]: parseFloat(formData.hours),
+                        [IS_CONSIDERED_FIELD_CODE]: formData.isConsidered ? 'Y' : 'N',
+                        [TASK_ID_FIELD_CODE]: formData.targetTaskId,
+                        [EMPLOYEE_FIELD_CODE]: formData.employeeId,
+                        [DESCRIPTION_FIELD_CODE]: formData.description,
+                        createdTime: formData.date + 'T00:00:00',
+                        [TASK_HIERARCHY_ID_FIELD_CODE]: idPath,
+                        [TASK_HIERARCHY_TITLE_FIELD_CODE]: titlePath,
+                    }
+                }, (result) => {
+                    setIsCreating(false);
+                    if (result.error()) {
+                        setModalError(`Не удалось создать элемент: ${result.error().toString()}`);
+                    } else {
+                        setShowModal(false);
+                        fetchData(mainTaskId);
+                    }
+                });
+            };
+
+            const handleTransferToReport = () => {
+                setReportModalError(null);
+                if (totalConsidered <= 0) return setReportModalError('Нет учитываемых часов для переноса');
+                setIsReporting(true);
+                
+                const itemsToTransfer = [];
+                const collectItems = (nodes) => {
+                    nodes.forEach(node => {
+                        node.items.forEach(item => {
+                            const isConsidered = item[IS_CONSIDERED_FIELD_CODE] === true || item[IS_CONSIDERED_FIELD_CODE] === 'Y';
+                            if (isConsidered && (parseFloat(item[HOURS_FIELD_CODE]) || 0) > 0) {
+                                itemsToTransfer.push(item);
+                            }
+                        });
+                        if (node.children.length > 0) collectItems(node.children);
+                    });
+                };
+                collectItems(taskTree);
+
+                if (itemsToTransfer.length === 0) {
+                    setIsReporting(false);
+                    setShowReportModal(false);
+                    return;
+                }
+                const batchCommands = itemsToTransfer.map(item => {
+                    const hours = parseFloat(item[HOURS_FIELD_CODE]) || 0;
+                    return ['task.elapseditem.add', {
+                        TASKID: item[TASK_ID_FIELD_CODE],
+                        FIELDS: { SECONDS: Math.round(hours * 3600), USER_ID: item[EMPLOYEE_FIELD_CODE] || currentUserId, COMMENT_TEXT: item[DESCRIPTION_FIELD_CODE] || item.title || `Списание ${hours.toFixed(2)} ч.` }
+                    }];
+                });
+                BX24.callBatch(batchCommands, () => {
+                    setIsReporting(false);
+                    setShowReportModal(false);
+                    BX24.UI.Notification.Center.show({ content: "Часы успешно перенесены в отчет." });
+                });
+            };
+
+            const handleOpenModal = (targetTaskId) => {
+                setFormData({ ...initialFormData, employeeId: currentUserId, targetTaskId: targetTaskId });
+                setModalError(null);
+                setShowModal(true);
+            };
+
+            const toggleGroup = (taskId) => {
+                const newOpenTaskIds = new Set(openTaskIds);
+                if (newOpenTaskIds.has(taskId)) newOpenTaskIds.delete(taskId);
+                else newOpenTaskIds.add(taskId);
+                setOpenTaskIds(newOpenTaskIds);
+            };
+
+            const handleOpenItem = (itemId) => BX24.openPath(`/crm/type/${smartProcessId}/details/${itemId}/`);
+            const formatDate = (d) => d ? new Date(d).toLocaleDateString('ru-RU') : 'Не указана';
+
+            const StatCard = ({ icon, label, value, unit, color }) => (
+                <div className="p-3 bg-white rounded-lg border border-slate-200 shadow-sm flex items-center">
+                    <span className={`material-symbols-outlined text-3xl mr-3 ${color}`}>{icon}</span>
+                    <div> <p className="text-xs text-slate-500">{label}</p> <p className="text-xl font-bold text-slate-900">{value} <span className="text-sm text-slate-500">{unit}</span></p> </div>
+                </div>
+            );
+
+            const HoursItemCard = ({ item }) => {
+                const isUpdating = updatingItemId === item.id;
+                const hours = parseFloat(item[HOURS_FIELD_CODE]) || 0;
+                const isConsidered = item[IS_CONSIDERED_FIELD_CODE] === true || item[IS_CONSIDERED_FIELD_CODE] === 'Y';
+                
+                return (
+                    <div className={`p-3 border-t transition-opacity ${isUpdating ? 'opacity-50' : ''}`}>
+                        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-slate-800 truncate hover:text-blue-600 cursor-pointer" onClick={() => handleOpenItem(item.id)} title={item.title}>{item.title || 'Без названия'}</p>
+                                <div className="flex items-center text-xs text-slate-500 mt-2 gap-3">
+                                    <div className="flex items-center"><span className="material-symbols-outlined text-sm mr-1">person</span>{users[item[EMPLOYEE_FIELD_CODE]] || 'Неизвестно'}</div>
+                                    <div className="flex items-center"><span className="material-symbols-outlined text-sm mr-1">calendar_today</span>{formatDate(item.createdTime)}</div>
+                                </div>
+                            </div>
+                            <div className="flex md:flex-col items-center md:items-end justify-between mt-2 md:mt-0 gap-2">
+                                <div className="flex items-center gap-2 text-sm font-bold">
+                                    <span className={isConsidered ? 'text-green-600' : 'text-red-600'} title={isConsidered ? 'Учитываемые' : 'Не учитываемые'}>
+                                        {hours.toFixed(2)}ч
+                                    </span>
+                                </div>
+                                <button onClick={() => handleToggleHours(item.id)} disabled={isUpdating} className="px-2 py-1 text-xs font-semibold rounded-full transition-all flex items-center bg-blue-100 text-blue-800 hover:bg-blue-200 disabled:bg-slate-200 disabled:text-slate-500 disabled:cursor-not-allowed">
+                                    <span className={`material-symbols-outlined text-sm mr-1 ${isUpdating ? 'animate-spin' : ''}`}>{isUpdating ? 'sync' : 'swap_horiz'}</span>{isUpdating ? '...' : 'Переключить'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+            
+            // ✨ ИЗМЕНЕНО: Компонент теперь принимает clientHourRate для расчета суммы
+            const TaskGroup = ({ task, level, clientHourRate }) => {
+                const hasContent = task.items.length > 0 || task.children.length > 0;
+                if (!hasContent && level > 0) return null;
+                
+                const clientSum = task.cumulativeConsidered * clientHourRate;
+
+                return (
+                    <div style={{ marginLeft: level > 0 ? '1rem' : '0' }}>
+                        <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+                            <div className="w-full text-left p-3 bg-slate-50 border-b flex justify-between items-center">
+                                <div className="flex-1 min-w-0" onClick={() => toggleGroup(task.taskId)} role="button">
+                                    <h3 className="text-sm font-bold text-slate-900 truncate">
+                                        {level > 0 && <span className="font-normal text-purple-600">[Подзадача] </span>}
+                                        {task.taskTitle}
+                                    </h3>
+                                    <p className="text-xs text-slate-600 mt-1 flex items-center">
+                                        <span>ID: {task.taskId}</span>
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-4 ml-4 text-right shrink-0">
+                                    {/* ✨ НОВЫЙ ФУНКЦИОНАЛ: Отображение суммы для клиента */}
+                                    {clientHourRate > 0 && (
+                                        <div className="border-r pr-4 border-slate-200">
+                                            <p className="text-xs text-blue-600">Сумма для клиента</p>
+                                            <p className="text-sm font-bold text-slate-800">{clientSum.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} руб.</p>
+                                        </div>
+                                    )}
+                                    <div>
+                                        <p className="text-xs text-green-600">Учтено (всего)</p>
+                                        <p className="text-sm font-bold text-slate-800">{task.cumulativeConsidered.toFixed(2)} ч</p>
+                                        {task.children.length > 0 && task.totalConsidered > 0 && (
+                                            <p className="text-xs text-slate-500 italic">в т.ч. своих: {task.totalConsidered.toFixed(2)} ч</p>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-red-600">Не учтено (всего)</p>
+                                        <p className="text-sm font-bold text-slate-800">{task.cumulativeUnconsidered.toFixed(2)} ч</p>
+                                        {task.children.length > 0 && task.totalUnconsidered > 0 && (
+                                            <p className="text-xs text-slate-500 italic">в т.ч. своих: {task.totalUnconsidered.toFixed(2)} ч</p>
+                                        )}
+                                    </div>
+                                    <div className="flex flex-col items-center gap-1">
+                                         <button onClick={() => handleOpenModal(task.taskId)} title="Отразить часы для этой задачи" className="p-1 rounded-full bg-green-100 text-green-700 hover:bg-green-200"><span className="material-symbols-outlined text-base">add</span></button>
+                                         <button onClick={() => toggleGroup(task.taskId)} title="Развернуть/Свернуть" className="p-1 rounded-full hover:bg-slate-200"><span className={`material-symbols-outlined text-slate-500 transition-transform ${openTaskIds.has(task.taskId) ? 'rotate-180' : ''}`}>expand_more</span></button>
+                                    </div>
+                                </div>
+                            </div>
+                            {openTaskIds.has(task.taskId) && (
+                                <div>
+                                    {task.items.map(item => <HoursItemCard key={item.id} item={item} />)}
+                                    {task.children.length > 0 && (
+                                        <div className="p-2 space-y-2 bg-slate-50 border-t">
+                                            {/* ✨ ИЗМЕНЕНО: Пробрасываем clientHourRate в дочерние компоненты */}
+                                            {task.children.map(childTask => <TaskGroup key={childTask.taskId} task={childTask} level={level + 1} clientHourRate={clientHourRate} />)}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            };
+
+            if (isLoading) { return (<div className="flex items-center justify-center h-full"><div className="loader"></div><p className="ml-4 text-slate-500">Загрузка данных...</p></div>); }
+            if (error) { return (<div className="flex items-center justify-center h-full p-4 text-center text-red-600 bg-red-100 rounded-lg"><span className="material-symbols-outlined mr-2">error</span>{error}</div>); }
+
+            return (
+                <div className="h-full flex flex-col">
+                    <header className="p-4 bg-white border-b shrink-0 space-y-4">
+                        {/* ✨ НОВЫЙ ФУНКЦИОНАЛ: Компонент-спойлер с настройками */}
+                        <div className="border rounded-lg bg-slate-50 overflow-hidden">
+                            <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="w-full flex justify-between items-center p-3 text-left">
+                                <div className="flex items-center">
+                                    <span className="material-symbols-outlined text-slate-600 mr-2">tune</span>
+                                    <span className="font-semibold text-slate-800">Настройки расчета и данных</span>
+                                </div>
+                                <span className={`material-symbols-outlined text-slate-500 transition-transform ${isSettingsOpen ? 'rotate-180' : ''}`}>expand_more</span>
+                            </button>
+                            {isSettingsOpen && (
+                                <div className="p-4 border-t bg-white grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">Стоимость часа для клиента (руб.)</label>
+                                        <input 
+                                            type="number" 
+                                            value={clientHourRate} 
+                                            onChange={(e) => setClientHourRate(parseFloat(e.target.value) || 0)}
+                                            placeholder="Например: 3000" 
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">ID Смарт-процесса</label>
+                                        <input 
+                                            type="number" 
+                                            value={smartProcessId} 
+                                            onChange={(e) => setSmartProcessId(parseInt(e.target.value) || 0)}
+                                            placeholder="Например: 1164" 
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <StatCard icon="schedule" label="Всего по задаче" value={totalHours.toFixed(2)} unit="ч" color="text-blue-500"/>
+                            <StatCard icon="task_alt" label="Учитываемые" value={totalConsidered.toFixed(2)} unit="ч" color="text-green-500"/>
+                            <StatCard icon="block" label="Не учитываемые" value={totalUnconsidered.toFixed(2)} unit="ч" color="text-red-500"/>
+                            <div className="col-span-2 md:col-span-1 flex gap-2">
+                                <button onClick={() => handleOpenModal(mainTaskId)} className="w-full h-full flex items-center justify-center gap-2 px-3 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition-all text-sm">
+                                    <span className="material-symbols-outlined">add</span><span>Отразить</span>
+                                </button>
+                                <button onClick={() => setShowReportModal(true)} disabled={totalConsidered <= 0} className="w-full h-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 transition-all disabled:bg-slate-300 disabled:cursor-not-allowed text-sm">
+                                    <span className="material-symbols-outlined">send</span><span>В отчет</span>
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+                    
+                    <main className="flex-1 overflow-y-auto p-4">
+                        <div className="max-w-7xl mx-auto space-y-4">
+                            {taskTree.length > 0 && (taskTree[0].cumulativeConsidered > 0 || taskTree[0].cumulativeUnconsidered > 0) ? 
+                                taskTree.map((rootTask) => <TaskGroup key={rootTask.taskId} task={rootTask} level={0} clientHourRate={clientHourRate} />) : 
+                                (
+                                <div className="text-center py-10">
+                                    <span className="material-symbols-outlined text-5xl text-slate-400" style={{ fontSize: '3.5rem' }}>hourglass_empty</span>
+                                    <p className="mt-2 text-slate-600 font-semibold">Нет отметок времени</p>
+                                    <p className="text-sm text-slate-500">Нажмите "Отразить", чтобы добавить первую запись.</p>
+                                </div>
+                            )}
+                        </div>
+                    </main>
+
+                    {showModal && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                            <div className="bg-white rounded-lg shadow-lg max-w-md w-full p-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-lg font-semibold text-slate-900">Отразить часы для задачи #{formData.targetTaskId}</h3>
+                                    <button onClick={() => setShowModal(false)} disabled={isCreating} className="text-slate-500 hover:text-slate-700"><span className="material-symbols-outlined">close</span></button>
+                                </div>
+                                {modalError && (<div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{modalError}</div>)}
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">Сотрудник <span className="text-red-500">*</span></label>
+                                        <select value={formData.employeeId} onChange={(e) => setFormData({...formData, employeeId: e.target.value})} disabled={isCreating} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                            <option value="">-- Выберите сотрудника --</option>
+                                            {allUsers.map(user => (<option key={user.ID} value={user.ID}>{user.NAME} {user.LAST_NAME}</option>))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">Количество часов <span className="text-red-500">*</span></label>
+                                        <input type="number" step="0.5" min="0" value={formData.hours} onChange={(e) => setFormData({...formData, hours: e.target.value})} disabled={isCreating} placeholder="Например: 8" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">Описание <span className="text-red-500">*</span></label>
+                                        <textarea value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} disabled={isCreating} placeholder="Опишите выполненную работу" rows="3" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">Дата отражения <span className="text-red-500">*</span></label>
+                                        <input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} disabled={isCreating} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                                    </div>
+                                    <div className="flex items-center">
+                                        <input id="isConsidered" type="checkbox" checked={formData.isConsidered} onChange={(e) => setFormData({...formData, isConsidered: e.target.checked})} disabled={isCreating} className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                        <label htmlFor="isConsidered" className="ml-2 block text-sm text-slate-900">Учитываемые часы</label>
+                                    </div>
+                                </div>
+                                <div className="flex gap-3 mt-6">
+                                    <button onClick={() => setShowModal(false)} disabled={isCreating} className="flex-1 px-4 py-2 bg-slate-100 text-slate-800 font-semibold rounded-lg hover:bg-slate-200 transition-all disabled:opacity-50">Отмена</button>
+                                    <button onClick={handleCreateHours} disabled={isCreating} className="flex-1 px-4 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition-all disabled:opacity-50 flex items-center justify-center">
+                                        {isCreating ? <><span className="material-symbols-outlined mr-2 animate-spin">sync</span>Создание...</> : <><span className="material-symbols-outlined mr-2">check</span>Сохранить</>}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    {showReportModal && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                            <div className="bg-white rounded-lg shadow-lg max-w-md w-full p-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-lg font-semibold text-slate-900">Перенести часы в отчет</h3>
+                                    <button onClick={() => setShowReportModal(false)} disabled={isReporting} className="text-slate-500 hover:text-slate-700"><span className="material-symbols-outlined">close</span></button>
+                                </div>
+                                {reportModalError && (<div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{reportModalError}</div>)}
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                                    <p className="text-sm text-blue-900"><span className="font-semibold">Сумма для переноса:</span></p>
+                                    <p className="text-3xl font-bold text-blue-600 mt-2">{totalConsidered.toFixed(2)} ч</p>
+                                    <p className="text-xs text-blue-700 mt-2">Будут созданы отдельные записи времени для каждой метки с учитываемыми часами.</p>
+                                </div>
+                                <p className="text-sm text-slate-600 mb-6">Это действие создаст записи в отчете времени Bitrix24, но <strong>не изменит</strong> данные в этом приложении.</p>
+                                <div className="flex gap-3">
+                                    <button onClick={() => setShowReportModal(false)} disabled={isReporting} className="flex-1 px-4 py-2 bg-slate-100 text-slate-800 font-semibold rounded-lg hover:bg-slate-200 transition-all disabled:opacity-50">Отмена</button>
+                                    <button onClick={handleTransferToReport} disabled={isReporting} className="flex-1 px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 transition-all disabled:opacity-50 flex items-center justify-center">
+                                        {isReporting ? <><span className="material-symbols-outlined mr-2 animate-spin">sync</span>Перенос...</> : <><span className="material-symbols-outlined mr-2">send</span>Перенести</>}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
