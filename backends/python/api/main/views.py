@@ -558,10 +558,9 @@ def get_system_logs(request: AuthorizedRequest):
     })
 
 @xframe_options_exempt
-@require_GET
 def serve_spa(request):
     """
-    Serve index.html for any non-API route to support SPA navigation.
+    Serve index.html for any route (GET or POST) to support Bitrix24 iframe loading and SPA navigation.
     """
     try:
         # settings.BASE_DIR points to /app inside container
