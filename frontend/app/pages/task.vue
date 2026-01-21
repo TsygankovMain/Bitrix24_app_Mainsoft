@@ -245,18 +245,31 @@ const initialize = async () => {
     
   } catch (e: any) {
     console.error('Initialization failed:', e)
-    // Detailed error for "26" or similar codes
-    let msg = e.message || e.toString();
-    if (e.ex && e.ex.error) msg += ` (${e.ex.error})`; // B24JSDK specific
-    if (e.error && typeof e.error === 'function') msg += ` (${e.error()})`; // native BX24
     
-    error.value = msg;
+    // DEBUG: Inspecting the "26" error
+    let debugInfo = '';
+    try {
+        if (typeof e === 'object') {
+            debugInfo = JSON.stringify(e, Object.getOwnPropertyNames(e), 2);
+        } else {
+            debugInfo = String(e);
+        }
+    } catch (err) {
+        debugInfo = 'Error stringifying error: ' + err;
+    }
+
+    if (e?.stack) {
+        debugInfo += '\nStack: ' + e.stack;
+    }
+
+    error.value = `Ошибка: ${e.message || e}\n\nDebug Info:\n${debugInfo}`;
   } finally {
     isLoading.value = false
   }
 }
 
 const loadData = async () => {
+    // ... logic ...
     if (!$b24 || !currentTaskId.value) return
     
     // 1. Fetch Task Info (Root + Subtasks)
