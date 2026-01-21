@@ -99,6 +99,7 @@ def install(request):
     Handle Bitrix24 application installation.
     Supports HEAD/GET for Marketplace validation.
     """
+    print(f"DEBUG: install view called. Method: {request.method} Path: {request.path}")
     if request.method in ["HEAD", "GET"]:
         return HttpResponse(status=200)
 
@@ -562,6 +563,7 @@ def serve_spa(request):
     """
     Serve index.html for any route (GET or POST) to support Bitrix24 iframe loading and SPA navigation.
     """
+    print(f"DEBUG: serve_spa view called. Method: {request.method} Path: {request.path}")
     try:
         # settings.BASE_DIR points to /app inside container
         # index.html is copied to /app/frontend_build/index.html
