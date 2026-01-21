@@ -269,156 +269,194 @@ const initialize = async () => {
 }
 
 const loadData = async () => {
-    // ... logic ...
     if (!$b24 || !currentTaskId.value) return
-    
-    // 1. Fetch Task Info (Root + Subtasks)
-    
-    const cmd = {
-        root: {
-            method: 'tasks.task.get',
-            params: {
-                id: currentTaskId.value,
-                select: ['ID', 'TITLE', 'PARENT_ID', 'RESPONSIBLE_ID']
-            }
-        },
-        children: {
-            method: 'tasks.task.list',
-            params: {
-                filter: { PARENT_ID: currentTaskId.value },
-                select: ['ID', 'TITLE', 'PARENT_ID', 'RESPONSIBLE_ID']
-            }
-        }
-    }
-
-    const taskResult: any = await new Promise((resolve, reject) => {
-        // @ts-ignore
-        $b24?.callBatch(cmd, (res: any) => {
-             resolve(res)
-        })
-    })
-
-    // Helper to extract data or throw
-    const getResultData = (key: string) => {
-        const r = taskResult[key]
-        if (!r || r.error()) throw new Error(`Failed to fetch ${key}: ${r ? r.error() : 'No result'}`)
-        return r.data()
-    }
-
-    // Root Task
-    const rootData = getResultData('root')
-    const root = rootData && rootData.task ? rootData.task : rootData 
-    
-    // Children
-    const childrenData = getResultData('children')
-    const children = childrenData && childrenData.tasks ? childrenData.tasks : childrenData 
-
-    if (!root) throw new Error('Root task not found')
-
-    // 2. Fetch Time Logs (Smart Process Items)
-    const allTaskIds = [root.id, ...children.map((c: any) => c.id)]
-    
-    // Field Mapping
     const f = config.value.fields
     
-    const filter = {
-        entityTypeId: config.value.sp_entity_type_id,
-        filter: {
-            [`=${f.taskId}`]: allTaskIds 
-        },
-        select: ['id', f.taskId, f.employee, f.hours, f.isConsidered, f.description, 'createdTime', f.date || 'createdTime'] 
-    }
-
-    const itemsResult: any = await new Promise((resolve) => {
+    // 1. Fetch Root Task
+    const rootTaskResult: any = await new Promise((resolve) => {
         // @ts-ignore
-        $b24?.callMethod('crm.item.list', filter, (res: any) => {
-            resolve(res)
-        })
+        $b24?.callMethod('tasks.task.get', { 
+            taskId: currentTaskId.value, 
+            select: ['ID', 'TITLE', 'PARENT_ID', 'RESPONSIBLE_ID'] 
+        }, (res: any) => resolve(res))
     })
 
-    if (itemsResult.error()) throw itemsResult.error()
-    
-    const rawItems = itemsResult.data().items
-    
-    // 3. Build Tree
-    const logs: LogItem[] = rawItems.map((item: any) => ({
-        id: item.id,
-        taskId: item[f.taskId],
-        employeeId: item[f.employee],
-        hours: parseFloat(item[f.hours] || 0),
-        isBillable: item[f.isConsidered] === 'Y' || item[f.isConsidered] === true || item[f.isConsidered] === 1, 
-        description: item[f.description],
-        date: item[f.date] || item.createdTime // TODO: Format date correctly if custom field
-    }))
-
-    // Construct Nodes
-    const taskMap = new Map<string, TaskNode>()
-
-    // Init Root Node
-    const rootNode: TaskNode = {
-        id: root.id,
-        title: root.title,
-        parentId: root.parentId,
-        items: [],
-        stats: { total: 0, billable: 0, nonBillable: 0 },
-        children: [],
-        isOpen: true,
-        responsibleId: root.responsibleId
+    if (!rootTaskResult || rootTaskResult.error()) {
+        throw new Error(`Root task fetch failed: ${rootTaskResult?.error()}`)
     }
-    taskMap.set(root.id, rootNode)
+    const rootData = rootTaskResult.data().task
 
-    // Init Children Nodes
-    children.forEach((c: any) => {
-        const node: TaskNode = {
-            id: c.id,
-            title: c.title,
-            parentId: c.parentId,
-            items: [],
-            stats: { total: 0, billable: 0, nonBillable: 0 },
-            children: [],
-            responsibleId: c.responsibleId
-        }
-        taskMap.set(c.id, node)
-        // Link to root (since we fetched only direct children)
-        if (c.parentId === root.id) {
-            rootNode.children.push(node)
-        }
-    })
+    // 2. Iteratively collect ALL subtasks (BFS)
+    let allSubTasks: any[] = []
+    let queue = [currentTaskId.value]
+    const processedIds = new Set([currentTaskId.value])
 
-    // Distribute Logs
-    logs.forEach(log => {
-        const node = taskMap.get(log.taskId)
-        if (node) {
-            node.items.push(log)
-        }
-    })
-
-    // Calculate Stats (Bottom Up)
-    const calcNodeStats = (node: TaskNode) => {
-        let total = 0, billable = 0, nonBillable = 0
+    while (queue.length > 0) {
+        const batchCmds = queue.map(id => ({
+            method: 'tasks.task.list',
+            params: {
+                filter: { PARENT_ID: id },
+                select: ['ID', 'TITLE', 'PARENT_ID', 'RESPONSIBLE_ID']
+            }
+        }))
         
-        // Sum items
-        node.items.forEach(i => {
-            total += i.hours
-            if (i.isBillable) billable += i.hours
-            else nonBillable += i.hours
+        // BX24.callBatch in loop
+        const batchResult: any = await new Promise((resolve) => {
+             // @ts-ignore
+             $b24?.callBatch(batchCmds, (res: any) => resolve(res))
         })
 
-        // Sum children
-        node.children.forEach(c => {
-            calcNodeStats(c) 
-            total += c.stats.total
-            billable += c.stats.billable
-            nonBillable += c.stats.nonBillable
-        })
+        queue = [] // Clear for next level
 
-        node.stats = { total, billable, nonBillable }
+        // Process batch results (array or object depending on b24jssdk/bitrix response structure)
+        // b24jssdk callBatch returns object where keys are indices if array passed? 
+        // Actually usually strictly indexed if array passed. 
+        // Let's assume standard behavior: result is an object/array corresponding to keys.
+        
+        const results = Array.isArray(batchResult) ? batchResult : Object.values(batchResult)
+        
+        for (const res of results as any[]) {
+            if (res && !res.error()) {
+                const tasks = res.data().tasks || []
+                for (const task of tasks) {
+                     if (!processedIds.has(task.id)) {
+                        allSubTasks.push(task)
+                        queue.push(task.id)
+                        processedIds.add(task.id)
+                    }
+                }
+            }
+        }
     }
 
-    calcNodeStats(rootNode)
+    const allTasks = [{ id: rootData.id, title: rootData.title, parentId: null, responsibleId: rootData.responsibleId }, ...allSubTasks]
+    const allTaskIds = allTasks.map(t => t.id)
+
+    // 3. Fetch Time Logs (Smart Process Items)
+    // Batching logic if too many IDs? index_test.html processes all. Let's do batching of commands if needed, 
+    // but index_test.html maps allTaskIds to commands. If tasks > 50, batching is needed for callBatch limits.
+    // index_test.html does: allTaskIds.map ... callBatch. This might fail if > 50 tasks. 
+    // But let's copy logic first.
     
-    rootTask.value = rootNode
-    stats.value = rootNode.stats
+    // Chunking for safety (Bitrix batch limit is 50)
+    const chunkSize = 50
+    let allItems: any[] = []
+    
+    for (let i = 0; i < allTaskIds.length; i += chunkSize) {
+        const chunk = allTaskIds.slice(i, i + chunkSize)
+        const spBatchCmds = chunk.map(taskId => ({
+             method: 'crm.item.list',
+             params: {
+                entityTypeId: config.value.sp_entity_type_id,
+                filter: { [`=${f.taskId}`]: taskId },
+                select: ['id', 'title', 'createdTime', f.taskId, f.employee, f.hours, f.isConsidered, f.description]
+             }
+        }))
+
+        const spResults: any = await new Promise((resolve) => {
+             // @ts-ignore
+             $b24?.callBatch(spBatchCmds, (res: any) => resolve(res))
+        })
+        
+        const results = Array.isArray(spResults) ? spResults : Object.values(spResults)
+        results.forEach((res: any) => {
+            if (res && !res.error() && res.data().items) {
+                allItems.push(...res.data().items)
+            }
+        })
+    }
+    
+    const itemsByTaskId = allItems.reduce((acc, item) => {
+        const taskId = item[f.taskId]
+        if (!acc[taskId]) acc[taskId] = []
+        acc[taskId].push(item)
+        return acc
+    }, {} as Record<string, any[]>)
+
+
+    // 4. Build Tree Nodes
+    const nodes: Record<string, TaskNode> = {}
+    
+    allTasks.forEach(task => {
+        const rawItems = itemsByTaskId[task.id] || []
+        
+        // Map raw items to LogItem
+        const items: LogItem[] = rawItems.map((item: any) => ({
+            id: item.id,
+            taskId: item[f.taskId],
+            employeeId: item[f.employee],
+            hours: parseFloat(item[f.hours] || 0),
+            isBillable: item[f.isConsidered] === 'Y' || item[f.isConsidered] === true, 
+            description: item[f.description],
+            date: item.createdTime, // or custom field if used
+            title: item.title,
+            createdTime: item.createdTime
+        }))
+
+        // Calc Local stats
+        const totalConsidered = items.reduce((sum, item) => sum + (item.isBillable ? item.hours : 0), 0)
+        const totalUnconsidered = items.reduce((sum, item) => sum + (!item.isBillable ? item.hours : 0), 0)
+
+        nodes[task.id] = {
+            taskId: task.id,
+            taskTitle: task.title,
+            parentId: task.parentId,
+            items: items,
+            totalConsidered,
+            totalUnconsidered,
+            cumulativeConsidered: 0, // calc later
+            cumulativeUnconsidered: 0, // calc later
+            children: [],
+            isOpen: true, // Default open
+            responsibleId: task.responsibleId
+        }
+    })
+
+    // 5. Assemble Hierarchy
+    const tree: TaskNode[] = []
+    Object.values(nodes).forEach(node => {
+        if (node.parentId && nodes[node.parentId]) {
+            nodes[node.parentId].children.push(node)
+        } else if (String(node.taskId) === String(currentTaskId.value)) {
+            tree.push(node)
+        }
+    })
+
+    // 6. Recursive Cumulative Calculation
+    const calculateCumulativeTotals = (node: TaskNode) => {
+        let childConsidered = 0
+        let childUnconsidered = 0
+
+        if (node.children && node.children.length > 0) {
+            node.children.forEach(child => {
+                const childTotals = calculateCumulativeTotals(child)
+                childConsidered += childTotals.considered
+                childUnconsidered += childTotals.unconsidered
+            })
+        }
+        
+        node.cumulativeConsidered = node.totalConsidered + childConsidered
+        node.cumulativeUnconsidered = node.totalUnconsidered + childUnconsidered
+        
+        return {
+            considered: node.cumulativeConsidered,
+            unconsidered: node.cumulativeUnconsidered
+        }
+    }
+
+    if (tree.length > 0) {
+        calculateCumulativeTotals(tree[0])
+        rootTask.value = tree[0]
+        
+        // Update global stats
+        stats.value = {
+            total: tree[0].cumulativeConsidered + tree[0].cumulativeUnconsidered,
+            billable: tree[0].cumulativeConsidered,
+            nonBillable: tree[0].cumulativeUnconsidered
+        }
+    } else {
+        rootTask.value = null // Should technically not happen if root found
+    }
 }
 
 const handleTransfer = async () => {
@@ -462,21 +500,21 @@ onMounted(() => {
       <StatCard
         icon="schedule"
         label="Всего часов"
-        :value="stats.total.toFixed(2)"
+        :value="rootTask ? (rootTask.cumulativeConsidered + rootTask.cumulativeUnconsidered).toFixed(2) : '0.00'"
         unit="ч"
         color="text-blue-600"
       />
       <StatCard
         icon="attach_money"
         label="Оплачиваемо"
-        :value="stats.billable.toFixed(2)"
+        :value="rootTask ? rootTask.cumulativeConsidered.toFixed(2) : '0.00'"
         unit="ч"
         color="text-green-500"
       />
       <StatCard
         icon="money_off"
         label="Внутренние"
-        :value="stats.nonBillable.toFixed(2)"
+        :value="rootTask ? rootTask.cumulativeUnconsidered.toFixed(2) : '0.00'"
         unit="ч"
         color="text-slate-400"
       />

@@ -55,10 +55,12 @@ const toggleOpen = () => {
 
       <!-- Stats Badge -->
       <div class="flex items-center space-x-3">
-         <div v-if="node.stats.total > 0" class="flex text-xs font-semibold space-x-1">
-             <span class="text-gray-500" title="Всего">{{ formatHours(node.stats.total) }}ч</span>
+         <div v-if="(node.cumulativeConsidered + node.cumulativeUnconsidered) > 0" class="flex text-xs font-semibold space-x-1">
+             <span class="text-gray-500" title="Всего">{{ formatHours(node.cumulativeConsidered + node.cumulativeUnconsidered) }}ч</span>
              <span class="text-gray-300">|</span>
-             <span class="text-green-600" title="Оплачиваемо">{{ formatHours(node.stats.billable) }}ч</span>
+             <span class="text-green-600" title="Оплачиваемо">{{ formatHours(node.cumulativeConsidered) }}ч</span>
+              <span class="text-gray-300">|</span>
+             <span class="text-red-500" title="Внутренние">{{ formatHours(node.cumulativeUnconsidered) }}ч</span>
          </div>
          
          <!-- Add Button -->
