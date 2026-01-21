@@ -37,7 +37,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'bitrix24account',
-                'managed': False,
+                'managed': True,
             },
             bases=(models.Model, b24pysdk.bitrix_api.credentials.bitrix_token.AbstractBitrixToken),
         ),

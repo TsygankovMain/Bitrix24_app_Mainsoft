@@ -36,7 +36,7 @@ class Bitrix24Account(models.Model, AbstractBitrixToken):
     current_scope = models.JSONField(null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = "bitrix24account"
         unique_together = ("b24_user_id", "domain_url")
 
