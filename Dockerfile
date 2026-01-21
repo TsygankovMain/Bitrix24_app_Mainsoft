@@ -20,6 +20,12 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 # Копируем исходный код
 COPY backends/python/api/ /app/
 
+# Сборка статики во время билда (ускоряет запуск)
+# Используем фейковые данные для сборки, так как подключения к БД нет
+RUN SECRET_KEY=build_only \
+    DB_NAME=none DB_USER=none DB_PASSWORD=none DB_HOST=none DB_PORT=5432 \
+    python manage.py collectstatic --noinput
+
 # Делаем скрипт запуска исполняемым
 RUN chmod +x /app/start.sh
 
@@ -29,5 +35,5 @@ USER appuser
 # Открываем порт
 EXPOSE 8000
 
-# Запускаем через start.sh (миграции + статика + сервер)
+# Запускаем через start.sh (миграции + сервер)
 CMD ["/app/start.sh"]
