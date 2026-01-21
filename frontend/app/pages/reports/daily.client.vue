@@ -56,8 +56,7 @@ async function fetchFilterOptions() {
 async function fetchReport() {
     isLoading.value = true
     try {
-        const result = await apiStore.syncTimesheets()
-        alert(`Синхронизировано ${result.count} записей!`)
+        await apiStore.syncTimesheets()
         reportData.value = await apiStore.getReportDailyWorkload(
             dateFrom.value, 
             dateTo.value, 
