@@ -29,14 +29,25 @@ interface TaskNode {
   title: string
   parentId: string | null
   items: LogItem[]
-  stats: { total: number; billable: number; nonBillable: number }
+  
+  // Local (Own)
+  totalConsidered: number
+  totalUnconsidered: number
+
+  // Cumulative (Own + Children)
+  cumulativeConsidered: number
+  cumulativeUnconsidered: number
+
   children: TaskNode[]
   isOpen?: boolean
   responsibleId?: string
+  
+  // Legacy stats object (optional for backward compatibility if needed, but we are removing usage)
+  stats?: { total: number; billable: number; nonBillable: number }
 }
 
 // --- State ---
-const { t } = useI18n()
+const { t, locales, setLocale } = useI18n()
 const apiStore = useApiStore()
 // @ts-ignore
 const { initApp } = useAppInit() 
@@ -194,7 +205,7 @@ const initialize = async () => {
     // 2. Init App Globals (Lang, User, etc)
     step = 'INIT_APP'
     // @ts-ignore
-    await initApp($b24, useI18n().locales.value, useI18n().setLocale)
+    await initApp($b24, locales.value, setLocale)
 
     // 3. Load Config
     step = 'LOAD_CONFIG'
