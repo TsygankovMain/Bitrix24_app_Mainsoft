@@ -220,7 +220,7 @@ const fetchData = async (currentTaskId: string | number) => {
      const spBatchCmds = allTaskIds.map(taskId => ['crm.item.list', {
          entityTypeId: config.value!.sp_entity_type_id,
          filter: { [f.taskId]: taskId },
-         select: ['id', 'title', 'createdTime', f.taskId, f.employee, f.hours, f.isConsidered, f.description, 'ufCrm87_1764446274']
+         select: ['id', 'title', 'createdTime', f.taskId, f.employee, f.hours, f.isConsidered, f.description]
      }])
 
      const spResults = await callBatchPromise(spBatchCmds)
@@ -477,7 +477,12 @@ const handleOpenItem = (id: string | number) => {
 // --- Lifecycle ---
 onMounted(async () => {
   try {
-    $b24 = await $initializeB24Frame()
+    try {
+        $b24 = await $initializeB24Frame()
+    } catch (e) {
+        console.error('B24 Init Failed', e)
+    }
+    // @ts-ignore
     await initApp($b24!, useI18n().locales.value, useI18n().setLocale)
     
     // Load config first
