@@ -300,7 +300,13 @@ const loadData = async () => {
     if (!rootTaskResult || rootTaskResult.error()) {
         throw new Error(`Root task fetch failed: ${rootTaskResult?.error()}`)
     }
-    const rootData = rootTaskResult.data().task
+    const rootDataRaw = rootTaskResult.data().task
+    const rootData = {
+        id: rootDataRaw.ID || rootDataRaw.id,
+        title: rootDataRaw.TITLE || rootDataRaw.title,
+        parentId: rootDataRaw.PARENT_ID || rootDataRaw.parentId || null,
+        responsibleId: rootDataRaw.RESPONSIBLE_ID || rootDataRaw.responsibleId
+    }
 
     // 2. Iteratively collect ALL subtasks (BFS)
     let allSubTasks: any[] = []
@@ -335,10 +341,16 @@ const loadData = async () => {
             if (res && !res.error()) {
                 const tasks = res.data().tasks || []
                 for (const task of tasks) {
-                     if (!processedIds.has(task.id)) {
-                        allSubTasks.push(task)
-                        queue.push(task.id)
-                        processedIds.add(task.id)
+                     const taskId = task.ID || task.id
+                     if (!processedIds.has(taskId)) {
+                        allSubTasks.push({
+                            id: taskId,
+                            title: task.TITLE || task.title,
+                            parentId: task.PARENT_ID || task.parentId,
+                            responsibleId: task.RESPONSIBLE_ID || task.responsibleId
+                        })
+                        queue.push(taskId)
+                        processedIds.add(taskId)
                     }
                 }
             }
