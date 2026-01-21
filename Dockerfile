@@ -1,44 +1,61 @@
-# ---------- Base stage ----------
+# Stage 1: Build Frontend
+FROM node:20-slim AS frontend-builder
+WORKDIR /app/frontend
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Copy manifest files
+COPY frontend/package.json frontend/pnpm-lock.yaml* ./
+
+# Install dependencies
+RUN pnpm install
+
+# Copy source code
+COPY frontend/ .
+
+# Build static site (Nuxt generate)
+RUN pnpm run generate
+
+# Stage 2: Final Backend Image
 FROM python:3.11-slim
 
-# Создаем пользователя appuser
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# Install system dependencies (curl for healthcheck, pg_client for db)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m appuser
 
 WORKDIR /app
 
-# Установка системных зависимостей
-RUN apt-get update && apt-get install -y \
-    postgresql-client \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Копируем и устанавливаем зависимости
+# Install Python dependencies
 COPY backends/python/api/requirements.txt .
-# Устанавливаем whitenoise и uvicorn, если они не в requirements
 RUN pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir uvicorn whitenoise
 
-# Копируем исходный код
+# Copy backend code
 COPY backends/python/api/ /app/
 
-# Сборка статики во время билда (ускоряет запуск)
-# Используем фейковые данные для сборки, так как подключения к БД нет
-RUN SECRET_KEY=build_only \
-    DB_NAME=none DB_USER=none DB_PASSWORD=none DB_HOST=none DB_PORT=5432 \
-    python manage.py collectstatic --noinput
+# Copy built frontend assets from Stage 1
+# We place them in static/frontend so whitenoise can find them (setup needed in settings.py)
+COPY --from=frontend-builder /app/frontend/.output/public /app/frontend_build
 
-# Делаем скрипт запуска исполняемым
+# Copy and setup start script
 RUN chmod +x /app/start.sh
 
-# Переключаемся на пользователя appuser
+# Switch to non-root user
 USER appuser
 
-# Открываем порт
-EXPOSE 8000
+# Health Check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/healthz || exit 1
 
-# Добавляем Healthcheck (как рекомендовано в логах)
-HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:8000/healthz || exit 1
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
-# Запускаем через start.sh (миграции + сервер)
+# Entrypoint
 CMD ["/app/start.sh"]

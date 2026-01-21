@@ -1,6 +1,8 @@
 from django.core.paginator import Paginator
 from django.db.models import Q
-from django.http import JsonResponse
+from django.db.models import Q
+from django.http import JsonResponse, HttpResponse
+from django.conf import settings
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -18,6 +20,7 @@ __all__ = [
     "root",
     "health",
     "health_check",
+    "serve_spa",
     "get_enum",
     "get_list",
     "install",
@@ -523,3 +526,22 @@ def get_system_logs(request: AuthorizedRequest):
         "page": page_obj.number,
         "pages": paginator.num_pages,
     })
+
+@xframe_options_exempt
+@require_GET
+def serve_spa(request):
+    """
+    Serve index.html for any non-API route to support SPA navigation.
+    """
+    try:
+        # settings.BASE_DIR points to /app inside container
+        # index.html is copied to /app/frontend_build/index.html
+        index_path = settings.BASE_DIR / "frontend_build" / "index.html"
+        with open(index_path, 'r') as f:
+            return HttpResponse(f.read())
+    except FileNotFoundError:
+        return HttpResponse(
+            f"Frontend not found at {index_path}. "
+            "Please ensure 'npm run generate' ran successfully during build.",
+            status=404
+        )

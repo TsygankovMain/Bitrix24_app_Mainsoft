@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, re_path
 from .views import *
 
 # Explicitly mapping URLs to views to match frontend api.ts calls
@@ -32,4 +32,7 @@ urlpatterns = [
     # Logs
     path('api/logs/requests', get_request_logs, name='get_request_logs'),
     path('api/logs/system', get_system_logs, name='get_system_logs'),
+
+    # SPA Entry Point (Catch-all for frontend routing)
+    re_path(r'^.*$', serve_spa, name='serve_spa'),
 ]
