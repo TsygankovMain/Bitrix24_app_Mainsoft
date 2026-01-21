@@ -93,10 +93,40 @@ def get_list(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @csrf_exempt
-@require_POST
 @log_errors("install")
+def install(request):
+    """
+    Handle Bitrix24 application installation.
+    Supports HEAD/GET for Marketplace validation.
+    """
+    if request.method in ["HEAD", "GET"]:
+        return HttpResponse(status=200)
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    # Manual Auth Check since we removed @auth_required to support HEAD
+    try:
+        # Re-using the decorator logic or manually calling the auth service
+        # Since @auth_required populated request.bitrix24_account, we need to do it here manually
+        # effectively inlining the auth check for POST requests ONLY.
+        
+        # However, to keep it clean, let's keep @auth_required but make it smarter?
+        # No, decorators are hard to make conditional on method easily without complexity.
+        # Simplest way: wrapper function.
+        pass
+    except Exception:
+        pass
+
+    # Better approach: 
+    # We can't easily inline the complex auth logic from decorators.
+    # Let's use a dual-handler approach or simply wrap the logic.
+    
+    return _install_post_logic(request)
+
+@require_POST
 @auth_required
-def install(request: AuthorizedRequest):
+def _install_post_logic(request: AuthorizedRequest):
     bitrix24_account = request.bitrix24_account
 
     ApplicationInstallation.objects.update_or_create(
