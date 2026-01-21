@@ -232,12 +232,10 @@ const initialize = async () => {
 
     // 4. Get Context (Task ID)
     step = 'PLACEMENT_INFO'
-    // @ts-ignore
-    const placement = $b24.getPlacementInfo()
     let currentTaskIdValue = null;
     
-    if (placement.options) {
-        let opts = placement.options;
+    if ($b24.placement?.options) {
+        let opts = $b24.placement.options;
         // Parse if string (common issue in B24 desktop)
         if (typeof opts === 'string') {
             try { opts = JSON.parse(opts); } catch (e) { opts = {}; }
@@ -248,12 +246,12 @@ const initialize = async () => {
     if (currentTaskIdValue) {
       currentTaskId.value = currentTaskIdValue.toString();
     } else {
-       console.warn('No taskId in placement options:', placement);
+       console.warn('No taskId in placement options:', $b24.placement);
        // Optional: Try to parse from URL parameters if available?
     }
 
     if (!currentTaskId.value) {
-        throw new Error('Task ID not determined. Open this app from a Task. Placement info: ' + JSON.stringify(placement));
+        throw new Error('Task ID not determined. Open this app from a Task. Placement info: ' + JSON.stringify($b24.placement));
     }
 
     // 5. Load Data
