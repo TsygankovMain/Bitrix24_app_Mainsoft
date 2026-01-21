@@ -265,7 +265,7 @@ const fetchData = async (currentTaskId: string | number) => {
      const tree: TaskNode[] = []
      Object.values(nodes).forEach(node => {
          if (node.parentId && nodes[node.parentId]) {
-             nodes[node.parentId].children.push(node)
+             nodes[node.parentId]!.children.push(node)
          } else if (String(node.taskId) === String(currentTaskId)) {
              tree.push(node)
          }
