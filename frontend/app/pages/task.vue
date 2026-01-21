@@ -233,7 +233,7 @@ const initialize = async () => {
     // 4. Get Context (Task ID)
     step = 'PLACEMENT_INFO'
     // @ts-ignore
-    const placement = $b24.placement.info()
+    const placement = $b24.getPlacementInfo()
     let currentTaskIdValue = null;
     
     if (placement.options) {
