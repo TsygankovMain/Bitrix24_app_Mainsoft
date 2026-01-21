@@ -86,31 +86,17 @@ const steps = ref<Record<string, IStep>>({
     caption: t('page.install.step.placement.caption'),
     action: async () => {
       const key = {
-        placement: 'CRM_DEAL_DETAIL_TAB',
-        handler: `${appUrl}/handler/placement-crm-deal-detail-tab`
+        placement: 'TASK_VIEW_TAB',
+        handler: appUrl // Use root URL so index.html loads and router handles redirection
       }
-      const exists = (steps.value.init?.data?.placementList as { placement: string, handler: string }[]).some(item => item.placement === key.placement && item.handler === key.handler )
-      if (exists) {
-        await $b24.callBatch([
-          {
-            method: 'placement.unbind',
-            params: {
-              PLACEMENT: key.placement
-            }
-          },
-          {
-            method: 'placement.bind',
-            params: {
-              PLACEMENT: key.placement,
-              HANDLER: key.handler,
-              TITLE: '[demo] Some Tab',
-              OPTIONS: {
-                errorHandlerUrl: `${appUrl}/handler/background-some-problem`
-              }
-            }
-          }
-        ])
+      
+      // Cleanup old Deal placement if exists (optional cleanup)
+      // await $b24.callBatch([{ method: 'placement.unbind', params: { PLACEMENT: 'CRM_DEAL_DETAIL_TAB' } }], false)
 
+      const exists = (steps.value.init?.data?.placementList as { placement: string, handler: string }[]).some(item => item.placement === key.placement && item.handler === key.handler )
+      
+      if (exists) {
+        // Just update interface if needed
         return
       }
 
@@ -120,9 +106,10 @@ const steps = ref<Record<string, IStep>>({
           params: {
             PLACEMENT: key.placement,
             HANDLER: key.handler,
-            TITLE: '[demo] Some Tab',
+            TITLE: 'Учет часов',
+            DESCRIPTION: 'Интерфейс учета трудозатрат',
             OPTIONS: {
-              errorHandlerUrl: `${appUrl}/handler/background-some-problem`
+                // Any initial options
             }
           }
         }
