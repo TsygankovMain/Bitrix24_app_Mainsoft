@@ -320,8 +320,8 @@ onMounted(async () => {
     console.log('DEBUG: Resolved Placement Code:', placementCode);
     
     if (placementCode === 'TASK_VIEW_TAB') {
-         console.log('DEBUG: Redirecting to /task-hours via JSSDK');
-         router.push('/task-hours')
+         console.log('DEBUG: Redirecting to /task via JSSDK');
+         router.push('/task')
          return 
     }
     
@@ -340,8 +340,8 @@ onMounted(async () => {
             const rawPlacement = window.BX24.placement.info();
             console.log('DEBUG: Window Placement Info:', rawPlacement);
              if (rawPlacement && rawPlacement.placement === 'TASK_VIEW_TAB') {
-                  console.log('DEBUG: Redirecting to /task-hours via Window');
-                  router.push('/task-hours')
+                  console.log('DEBUG: Redirecting to /task via Window');
+                  router.push('/task')
              } else if (rawPlacement && rawPlacement.placement === 'SONET_GROUP_DETAIL_TAB') {
                   console.log('DEBUG: Redirecting to /reports/project-report via Window');
                   router.push('/reports/project-report')
