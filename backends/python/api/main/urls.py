@@ -5,6 +5,7 @@ from .views import *
 urlpatterns = [
     path('api', root, name='root'),
     path('api/health', health, name='health'),
+    path('healthz', health_check, name='health_check'),
     path('api/enum', get_enum, name='enum'),
     path('api/list', get_list, name='list'),
     

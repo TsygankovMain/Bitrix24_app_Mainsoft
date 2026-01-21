@@ -57,6 +57,17 @@ def health(request: AuthorizedRequest):
         "timestamp": timezone.now().timestamp(),
     })
 
+def health_check(request):
+    """
+    Public health check for deployment platforms (e.g. Timeweb Cloud Apps).
+    No auth required.
+    """
+    return JsonResponse({
+        "status": "ok",
+        "timestamp": timezone.now().timestamp(),
+    })
+
+
 
 @xframe_options_exempt
 @require_GET
