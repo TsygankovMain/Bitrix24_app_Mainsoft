@@ -258,6 +258,9 @@ const initialize = async () => {
     step = 'LOAD_DATA'
     await loadData()
     
+    // 6. Load parent tasks in background (non-blocking)
+    setTimeout(() => loadParentTasks(), 100)
+    
   } catch (e: any) {
     console.error(`Initialization failed at step [${step}]:`, e)
     
@@ -281,6 +284,55 @@ const initialize = async () => {
   } finally {
     isLoading.value = false
   }
+}
+
+// Background loading of parent tasks (up the hierarchy)
+const loadParentTasks = async () => {
+    if (!$b24 || !rootTask.value || !rootTask.value.parentId) {
+        console.log('[BFS] No parent tasks to load')
+        return
+    }
+
+    console.log('[BFS] Starting parent task collection (up) in background...')
+    try {
+        const parentTasks: any[] = []
+        let currentParentId = rootTask.value.parentId
+        const processedIds = new Set([rootTask.value.id])
+
+        // Walk up the hierarchy
+        while (currentParentId && !processedIds.has(currentParentId)) {
+            const parentResult: any = await new Promise((resolve) => {
+                // @ts-ignore
+                $b24?.callMethod('tasks.task.get', {
+                    taskId: currentParentId,
+                    select: ['ID', 'TITLE', 'PARENT_ID', 'RESPONSIBLE_ID']
+                }, (res: any) => resolve(res))
+            })
+
+            if (parentResult && !parentResult.error()) {
+                const parentRaw = parentResult.data().task
+                const parent = {
+                    id: parentRaw.ID || parentRaw.id,
+                    title: parentRaw.TITLE || parentRaw.title,
+                    parentId: parentRaw.PARENT_ID || parentRaw.parentId || null,
+                    responsibleId: parentRaw.RESPONSIBLE_ID || parentRaw.responsibleId
+                }
+                parentTasks.push(parent)
+                processedIds.add(parent.id)
+                currentParentId = parent.parentId
+            } else {
+                break // Stop if error
+            }
+        }
+
+        console.log(`[BFS] Loaded ${parentTasks.length} parent tasks (up)`)
+        
+        // TODO: Optionally update UI with parent tasks
+        // This could trigger a re-render or add them to a separate state
+        
+    } catch (e) {
+        console.error('[BFS] Parent task loading failed:', e)
+    }
 }
 
 const loadData = async () => {
@@ -308,7 +360,8 @@ const loadData = async () => {
         responsibleId: rootDataRaw.RESPONSIBLE_ID || rootDataRaw.responsibleId
     }
 
-    // 2. Iteratively collect ALL subtasks (BFS)
+    // 2. Iteratively collect ALL subtasks (BFS DOWN - immediate priority)
+    console.log('[BFS] Starting subtask collection (down)...')
     let allSubTasks: any[] = []
     let queue = [currentTaskId.value]
     const processedIds = new Set([currentTaskId.value])
@@ -322,7 +375,6 @@ const loadData = async () => {
             }
         }))
         
-        // BX24.callBatch in loop
         const batchResult: any = await new Promise((resolve) => {
              // @ts-ignore
              $b24?.callBatch(batchCmds, (res: any) => resolve(res))
@@ -330,11 +382,6 @@ const loadData = async () => {
 
         queue = [] // Clear for next level
 
-        // Process batch results (array or object depending on b24jssdk/bitrix response structure)
-        // b24jssdk callBatch returns object where keys are indices if array passed? 
-        // Actually usually strictly indexed if array passed. 
-        // Let's assume standard behavior: result is an object/array corresponding to keys.
-        
         const results = Array.isArray(batchResult) ? batchResult : Object.values(batchResult)
         
         for (const res of results as any[]) {
@@ -356,8 +403,9 @@ const loadData = async () => {
             }
         }
     }
+    console.log(`[BFS] Loaded ${allSubTasks.length} subtasks (down)`)
 
-    const allTasks = [{ id: rootData.id, title: rootData.title, parentId: null, responsibleId: rootData.responsibleId }, ...allSubTasks]
+    const allTasks = [rootData, ...allSubTasks]
     const allTaskIds = allTasks.map(t => t.id)
 
     // 3. Fetch Time Logs (Smart Process Items)
