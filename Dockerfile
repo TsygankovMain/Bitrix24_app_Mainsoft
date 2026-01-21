@@ -15,6 +15,8 @@ RUN pnpm install
 COPY frontend/ .
 
 # Build static site (Nuxt generate)
+# IMPORTANT: Must set app URL for build-time baking of runtimeConfig
+ENV NUXT_PUBLIC_APP_URL="https://tsygankovmain-bitrix24-app-mainsoft-6536.twc1.net"
 RUN pnpm run generate
 
 # Stage 2: Final Backend Image
