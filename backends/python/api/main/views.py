@@ -559,6 +559,7 @@ def get_system_logs(request: AuthorizedRequest):
     })
 
 @xframe_options_exempt
+@csrf_exempt
 def serve_spa(request):
     """
     Serve index.html for any route (GET or POST) to support Bitrix24 iframe loading and SPA navigation.
