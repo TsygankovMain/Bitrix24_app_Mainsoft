@@ -12,8 +12,7 @@ const apiStore = useApiStore()
 useHead({
   title: 'Ежедневная нагрузка',
   script: [
-    { src: 'https://api.bitrix24.com/api/v1/', defer: true },
-    { src: 'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js', defer: true }
+    { src: 'https://api.bitrix24.com/api/v1/', defer: true }
   ]
 })
 
@@ -73,13 +72,9 @@ async function fetchReport() {
 
 
 // Excel Export
-function handleExportExcel() {
-    // @ts-ignore
-    if (typeof window.XLSX === 'undefined') {
-        alert('Библиотека экспорта еще не загрузилась. Попробуйте через пару секунд.');
-        return;
-    }
+import * as XLSX from 'xlsx'
 
+function handleExportExcel() {
     if (!reportData.value) return;
 
     const exportData: any[] = [];
@@ -98,8 +93,6 @@ function handleExportExcel() {
         exportData.push(rowData);
     });
 
-    // @ts-ignore
-    const XLSX = window.XLSX;
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Ежедневная нагрузка");

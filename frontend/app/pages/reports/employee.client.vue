@@ -11,8 +11,7 @@ const { t, locales: localesI18n, setLocale } = useI18n()
 useHead({
   title: 'Отчет по сотрудникам',
   script: [
-    { src: 'https://api.bitrix24.com/api/v1/', defer: true },
-    { src: 'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js', defer: true }
+    { src: 'https://api.bitrix24.com/api/v1/', defer: true }
   ]
 })
 
@@ -70,13 +69,9 @@ async function fetchReport() {
 }
 
 // Excel Export
-function handleExportExcel() {
-    // @ts-ignore
-    if (typeof window.XLSX === 'undefined') {
-        alert('Библиотека экспорта еще не загрузилась. Попробуйте через пару секунд.');
-        return;
-    }
+import * as XLSX from 'xlsx'
 
+function handleExportExcel() {
     const exportData: any[] = [];
     
     // Recursive function to flatten data
@@ -97,8 +92,8 @@ function handleExportExcel() {
 
     reportData.value.forEach(node => processNode(node));
 
-    // @ts-ignore
-    const XLSX = window.XLSX;
+    reportData.value.forEach(node => processNode(node));
+
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Отчет по сотрудникам");
