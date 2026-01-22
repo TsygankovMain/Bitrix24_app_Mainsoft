@@ -94,6 +94,15 @@ function handleExportExcel() {
     });
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
+
+    // Adjust Column Widths
+    const cols = [{ wch: 30 }]; // Employee Name column
+    // Add width for date columns
+    reportData.value.header_days.forEach(() => {
+        cols.push({ wch: 5 }); // Minimal width for hours
+    });
+    worksheet['!cols'] = cols;
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Ежедневная нагрузка");
     XLSX.writeFile(workbook, `Report_Daily_${dateFrom.value}_${dateTo.value}.xlsx`);

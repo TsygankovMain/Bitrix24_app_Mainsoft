@@ -71,19 +71,22 @@ async function fetchReport() {
 // Excel Export
 import * as XLSX from 'xlsx'
 
+
 function handleExportExcel() {
     const exportData: any[] = [];
+    const rowLevels: number[] = [];
     
     // Recursive function to flatten data
     const processNode = (node: any, level = 0) => {
         const indent = "    ".repeat(level);
         exportData.push({
             "Название": indent + node.name,
-            "Тип": node.type,
+            // "Тип": node.type,
             "Всего часов": node.total_hours,
             "Учитываемые": node.billable_hours,
             "Не учитываемые": node.non_billable_hours
         });
+        rowLevels.push(level);
 
         if (node.children && node.children.length > 0) {
             node.children.forEach((child: any) => processNode(child, level + 1));
@@ -92,9 +95,23 @@ function handleExportExcel() {
 
     reportData.value.forEach(node => processNode(node));
 
-    reportData.value.forEach(node => processNode(node));
-
     const worksheet = XLSX.utils.json_to_sheet(exportData);
+
+    // Adjust Column Widths
+    worksheet['!cols'] = [
+        { wch: 50 }, // Name
+        { wch: 15 }, // Total Hours
+        { wch: 15 }, // Billable
+        { wch: 15 }  // Non-billable
+    ];
+
+    // Adjust Row Levels (Grouping)
+    const rows: any[] = [{ level: 0 }]; // Header row
+    rowLevels.forEach(level => {
+        rows.push({ level: level, hidden: false });
+    });
+    worksheet['!rows'] = rows;
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Отчет по проектам");
     XLSX.writeFile(workbook, `Report_Projects_${dateFrom.value}_${dateTo.value}.xlsx`);
