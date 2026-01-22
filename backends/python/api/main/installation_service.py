@@ -183,16 +183,7 @@ class InstallationService:
         except Exception:
              pass
 
-        self.bitrix24_account.call_method(
-            "placement.bind",
-            {
-                "PLACEMENT": "TASK_VIEW_TAB",
-                "HANDLER": handler_url,
-                "TITLE": "Учет часов",
-                "DESCRIPTION": "Интерфейс учета трудозатрат"
-            }
-        )
-        logger.info("Placement TASK_VIEW_TAB bound successfully")
+        logger.info("Placement TASK_VIEW_TAB unbind attempt finished")
 
         # Install Project/Group Tab Placement
         try:
@@ -203,16 +194,7 @@ class InstallationService:
         except Exception:
              pass
 
-        self.bitrix24_account.call_method(
-            "placement.bind",
-            {
-                "PLACEMENT": "SONET_GROUP_DETAIL_TAB",
-                "HANDLER": handler_url,
-                "TITLE": "Отчет по проекту",
-                "DESCRIPTION": "Отчет по трудозатратам проекта и списание часов"
-            }
-        )
-        logger.info("Placement SONET_GROUP_DETAIL_TAB bound successfully")
+        logger.info("Placement SONET_GROUP_DETAIL_TAB unbind attempt finished")
 
     def _rollback_sync(self):
         """Rollbacks changes on failure"""
