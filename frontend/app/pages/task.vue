@@ -52,12 +52,28 @@ onMounted(async () => {
         await initApp($b24, localesI18n, setLocale)
         
         // 1. Get Placement Info
+        // Check if we are in a placement
+        console.log('TaskPage: $b24.placement', $b24.placement);
+        
+        // Try to get options from various sources
         // @ts-ignore
-        const placementInfo = $b24.placement.info()
-        const tid = placementInfo.options?.taskId || placementInfo.options?.ID || placementInfo.options?.id
+        let options = $b24.placement?.options || ($b24.placement?.info && $b24.placement.info.options);
+        
+        // Fallback to window.BX24 if options are missing but we expect them
+        if (!options && typeof window.BX24 !== 'undefined') {
+             try {
+                 // @ts-ignore
+                 const rawInfo = window.BX24.placement.info();
+                 if (rawInfo) options = rawInfo.options;
+             } catch(e) { console.warn('BX24.placement.info failed', e); }
+        }
+
+        const tid = options?.taskId || options?.ID || options?.id
 
         if (!tid) {
-            error.value = "Не передан ID задачи. Откройте приложение во вкладке задачи."
+            // Debug info to help user if it fails
+            console.error('TaskPage: No Task ID found. Options:', options);
+            error.value = "Не передан ID задачи (options пуст). Откройте приложение во вкладке задачи."
             isLoading.value = false
             return
         }
