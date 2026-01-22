@@ -85,9 +85,9 @@ function handleExportExcel() {
         exportData.push({
             "Название": indent + node.name,
             "Тип": node.type,
-            "Всего часов": node.total,
-            "Учитываемые": node.billable,
-            "Не учитываемые": node.nonBillable
+            "Всего часов": node.total_hours,
+            "Учитываемые": node.billable_hours,
+            "Не учитываемые": node.non_billable_hours
         });
 
         if (node.children && node.children.length > 0) {
