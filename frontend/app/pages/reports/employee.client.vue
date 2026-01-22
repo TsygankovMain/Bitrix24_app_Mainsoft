@@ -62,6 +62,7 @@ async function fetchReport() {
             selectedEmployees.value as string[], 
             selectedProjects.value as string[]
         )
+    } catch (e) {
         processErrorGlobal(e)
     } finally {
         isLoading.value = false
