@@ -96,57 +96,63 @@ onMounted(async () => {
 })
 
 async function loadConfigAndUsers() {
-    return new Promise<void>((resolve) => {
-        // @ts-ignore
-        $b24.callBatch({
-            users: ['user.get', { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' }],
-            appParam: ['app.option.get', {}]
-        }, (res: any) => {
-            // Users
-            if (res.users && !res.users.error()) {
-                const map: Record<string, any> = {}
-                res.users.data().forEach((u: any) => map[u.ID] = u)
-                usersMap.value = map
-            }
+    // @ts-ignore
+    const result = await $b24.callBatch({
+        users: { method: 'user.get', params: { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' } },
+        appParam: { method: 'app.option.get' }
+    })
 
-            // Config
-            if (res.appParam && !res.appParam.error()) {
-                try {
-                    const result = res.appParam.data()
-                    if (result && result.timestamp_config) {
-                        const rawConfig = JSON.parse(result.timestamp_config)
-                        
-                        const spId = rawConfig.sp_entity_type_id
-                        const backendFields = rawConfig.fields_mapping || {}
-                        
-                        const fields: any = {}
-                        Object.entries(BACKEND_MAPPING).forEach(([backendKey, frontendKey]) => {
-                            if (backendFields[backendKey]) {
-                                fields[frontendKey] = backendFields[backendKey]
-                            }
-                        })
+    // SDK returns a Specific Response Object, let's assume .result or .data() or similar. 
+    // Based on useAppInit: const data = response.getData()
+    // and structure is { users: { data: ..., error: ... } }
+    
+    // @ts-ignore
+    const data = result.getData()
 
-                        if (!spId || !fields.TASK_ID || !fields.HOURS) {
-                            throw new Error("Неполная конфигурация.")
-                        }
+    // Users
+    if (data.users && !data.users.error) {
+        const map: Record<string, any> = {}
+        // data.users.data is the array
+        data.users.data.forEach((u: any) => map[u.ID] = u)
+        usersMap.value = map
+    }
 
-                        config.value = {
-                            DEFAULT_SMART_PROCESS_ID: spId,
-                            FIELDS: fields
-                        }
-                    } else {
-                        throw new Error("Конфигурация не найдена. Переустановите приложение.")
+    // Config
+    if (data.appParam && !data.appParam.error) {
+        try {
+            const resultData = data.appParam.data
+            if (resultData && resultData.timestamp_config) {
+                const rawConfig = JSON.parse(resultData.timestamp_config)
+                
+                const spId = rawConfig.sp_entity_type_id
+                const backendFields = rawConfig.fields_mapping || {}
+                
+                const fields: any = {}
+                Object.entries(BACKEND_MAPPING).forEach(([backendKey, frontendKey]) => {
+                    if (backendFields[backendKey]) {
+                        fields[frontendKey] = backendFields[backendKey]
                     }
-                } catch (e: any) {
-                    console.error("Config Error:", e)
-                    initError.value = e.message
+                })
+
+                if (!spId || !fields.TASK_ID || !fields.HOURS) {
+                    throw new Error("Неполная конфигурация.")
+                }
+
+                config.value = {
+                    DEFAULT_SMART_PROCESS_ID: spId,
+                    FIELDS: fields
                 }
             } else {
-                initError.value = "Ошибка получения настроек приложения."
+                throw new Error("Конфигурация не найдена. Переустановите приложение.")
             }
-            resolve()
-        })
-    })
+        } catch (e: any) {
+            console.error("Config Error:", e)
+            initError.value = e.message
+        }
+    } else {
+        // If appParam failed
+        initError.value = "Ошибка получения настроек приложения."
+    }
 }
 
 
@@ -162,9 +168,10 @@ async function loadData(taskId: string) {
 
     try {
         // 1. Root Task
-        const rootTaskRes = await callMethodPromise('tasks.task.get', { taskId, select: ['ID', 'TITLE'] })
         // @ts-ignore
-        const rootTask = rootTaskRes.task
+        const rootTaskRes = await $b24.callMethod('tasks.task.get', { taskId, select: ['ID', 'TITLE'] })
+        // @ts-ignore
+        const rootTask = rootTaskRes.data().task
 
         // 2. BFS Subtasks
         let allTasks = [{ id: rootTask.id, title: rootTask.title, parentId: null }]
@@ -174,21 +181,27 @@ async function loadData(taskId: string) {
         // Safety limit
         let iterations = 0
         while(queue.length > 0 && iterations < 50) {
-            const batch: any[] = []
+            const batch: any = {}
             const currentLevelIds = queue.splice(0, 50)
             
+            // Batch keys must be strings
             currentLevelIds.forEach(pid => {
-                batch.push(['tasks.task.list', { filter: { PARENT_ID: pid }, select: ['ID', 'TITLE', 'PARENT_ID', 'GROUP_ID'] }])
+                batch[`tasks_${pid}`] = { 
+                    method: 'tasks.task.list', 
+                    params: { filter: { PARENT_ID: pid }, select: ['ID', 'TITLE', 'PARENT_ID', 'GROUP_ID'] } 
+                }
             })
 
-            if (batch.length === 0) break
+            if (Object.keys(batch).length === 0) break
 
-            const results = await callBatchPromise(batch)
-            
             // @ts-ignore
-            Object.values(results).forEach((res: any) => {
-                if (!res.error()) {
-                    const tasks = res.data().tasks || []
+            const batchResult = await $b24.callBatch(batch)
+             // @ts-ignore
+            const batchData = batchResult.getData()
+            
+            Object.values(batchData).forEach((res: any) => {
+                if (!res.error) {
+                    const tasks = res.data.tasks || []
                     tasks.forEach((t: any) => {
                         if (!processed.has(t.id)) {
                             processed.add(t.id)
@@ -208,16 +221,26 @@ async function loadData(taskId: string) {
 
         for (let i = 0; i < allTaskIds.length; i += CHUNK_SIZE) {
             const chunk = allTaskIds.slice(i, i + CHUNK_SIZE)
-            const batchCmds = chunk.map(tid => ['crm.item.list', { 
-                entityTypeId: SMART_PROCESS_ID,
-                filter: { [FIELDS.TASK_ID]: tid },
-                select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE']
-            }])
+            const batchCmds: any = {}
             
-            const chunkResults = await callBatchPromise(batchCmds)
+            chunk.forEach(tid => {
+                batchCmds[`items_${tid}`] = {
+                    method: 'crm.item.list',
+                    params: { 
+                        entityTypeId: SMART_PROCESS_ID,
+                        filter: { [FIELDS.TASK_ID]: tid },
+                        select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE']
+                    }
+                }
+            })
+            
+            // @ts-ignore
+            const chunkResult = await $b24.callBatch(batchCmds)
              // @ts-ignore
-            Object.values(chunkResults).forEach((res: any) => {
-                if(!res.error()) allItems.push(...res.data().items)
+            const chunkData = chunkResult.getData()
+
+            Object.values(chunkData).forEach((res: any) => {
+                if(!res.error) allItems.push(...res.data.items)
             })
         }
 
@@ -298,47 +321,30 @@ async function loadData(taskId: string) {
     }
 }
 
-// --- HELPERS ---
-
-function callMethodPromise(method: string, params: any): Promise<any> {
-    return new Promise((resolve, reject) => {
-        // @ts-ignore
-        $b24.callMethod(method, params, (res: any) => {
-            if (res.error()) reject(res.error())
-            else resolve(res.data())
-        })
-    })
-}
-
-function callBatchPromise(calls: any[]): Promise<any> {
-    return new Promise((resolve) => {
-         // @ts-ignore
-        $b24.callBatch(calls, (res: any) => resolve(res))
-    })
-}
-
 // --- ACTIONS ---
 
 async function handleSaveItem(data: any) {
     if (!config.value) return
     const { id, hours, isConsidered, description, employeeId } = data
-    // Optimistic update omitted for brevity
+    isLoading.value = true 
     
-    isLoading.value = true // Show loading strictly? Or just background. Let's do background reload.
-    
-    // @ts-ignore
-    $b24.callMethod('crm.item.update', {
-        entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-        id: id,
-        fields: {
-            [config.value.FIELDS.HOURS]: hours,
-            [config.value.FIELDS.IS_CONSIDERED]: isConsidered ? 'Y' : 'N',
-            [config.value.FIELDS.DESCRIPTION]: description,
-            [config.value.FIELDS.EMPLOYEE]: employeeId
-        }
-    }, (res: any) => {
-        if (rootTaskId.value) loadData(rootTaskId.value) // reload
-    })
+    try {
+        // @ts-ignore
+        await $b24.callMethod('crm.item.update', {
+            entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
+            id: id,
+            fields: {
+                [config.value.FIELDS.HOURS]: hours,
+                [config.value.FIELDS.IS_CONSIDERED]: isConsidered ? 'Y' : 'N',
+                [config.value.FIELDS.DESCRIPTION]: description,
+                [config.value.FIELDS.EMPLOYEE]: employeeId
+            }
+        })
+        if (rootTaskId.value) await loadData(rootTaskId.value)
+    } catch (e: any) {
+        alert("Ошибка сохранения: " + e.message)
+        isLoading.value = false
+    }
     
     editingItem.value = null
 }
@@ -391,22 +397,27 @@ function handleExportExcel() {
     link.click()
 }
 
-function handleTransferToReport() {
+async function handleTransferToReport() {
     isReporting.value = true
-    const batch: any[] = []
+    const batch: any = {}
+    let count = 0
     
     const collect = (nodes: any[]) => {
         nodes.forEach(node => {
             node.items.forEach((item: any) => {
                 if (item.isConsidered && item.hours > 0) {
-                    batch.push(['task.elapseditem.add', {
-                        TASKID: node.taskId,
-                        FIELDS: {
-                            SECONDS: Math.round(item.hours * 3600),
-                            COMMENT_TEXT: item.description || `Отражение часов: ${item.title}`,
-                            USER_ID: item.employeeId
+                    batch[`report_${item.id}`] = {
+                        method: 'task.elapseditem.add',
+                        params: {
+                            TASKID: node.taskId,
+                            FIELDS: {
+                                SECONDS: Math.round(item.hours * 3600),
+                                COMMENT_TEXT: item.description || `Отражение часов: ${item.title}`,
+                                USER_ID: item.employeeId
+                            }
                         }
-                    }])
+                    }
+                    count++
                 }
             })
             if (node.children) collect(node.children)
@@ -415,19 +426,23 @@ function handleTransferToReport() {
     
     collect(taskTree.value)
     
-    if (batch.length === 0) {
+    if (count === 0) {
         alert("Нет данных для переноса (0 учтенных часов).")
         isReporting.value = false
         isReportModalOpen.value = false
         return
     }
 
-     // @ts-ignore
-    $b24.callBatch(batch, (res: any) => {
+    try {
+         // @ts-ignore
+        await $b24.callBatch(batch)
+        alert("Часы успешно перенесены в стандартный отчет Битрикс24!")
+    } catch (e: any) {
+        alert("Ошибка переноса: " + e.message)
+    } finally {
         isReporting.value = false
         isReportModalOpen.value = false
-        alert("Часы успешно перенесены в стандартный отчет Битрикс24!")
-    })
+    }
 }
 
 </script>
