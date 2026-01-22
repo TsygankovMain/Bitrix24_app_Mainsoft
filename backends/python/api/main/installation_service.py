@@ -196,6 +196,29 @@ class InstallationService:
 
         logger.info("Placement SONET_GROUP_DETAIL_TAB unbind attempt finished")
 
+        # 3. Bind Placements
+        try:
+             self.bitrix24_account.call_method('placement.bind', {
+                 'PLACEMENT': 'TASK_VIEW_TAB',
+                 'HANDLER': handler_url,
+                 'TITLE': 'Учет времени',
+                 'DESCRIPTION': 'Приложение для отражения часов'
+             })
+             logger.info("Bound TASK_VIEW_TAB")
+        except Exception as e:
+             logger.error(f"Failed to bind TASK_VIEW_TAB: {e}")
+
+        try:
+             self.bitrix24_account.call_method('placement.bind', {
+                 'PLACEMENT': 'SONET_GROUP_DETAIL_TAB',
+                 'HANDLER': handler_url,
+                 'TITLE': 'Учет времени',
+                 'DESCRIPTION': 'Приложение для отражения часов'
+             })
+             logger.info("Bound SONET_GROUP_DETAIL_TAB")
+        except Exception as e:
+             logger.error(f"Failed to bind SONET_GROUP_DETAIL_TAB: {e}")
+
     def _rollback_sync(self):
         """Rollbacks changes on failure"""
         logger.warning("Rolling back installation...")
