@@ -12,7 +12,8 @@ const apiStore = useApiStore()
 useHead({
   title: 'Ежедневная нагрузка',
   script: [
-    { src: 'https://api.bitrix24.com/api/v1/', defer: true }
+    { src: 'https://api.bitrix24.com/api/v1/', defer: true },
+    { src: 'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js', defer: true }
   ]
 })
 
@@ -68,6 +69,40 @@ async function fetchReport() {
     } finally {
         isLoading.value = false
     }
+
+
+// Excel Export
+function handleExportExcel() {
+    // @ts-ignore
+    if (typeof window.XLSX === 'undefined') {
+        alert('Библиотека экспорта еще не загрузилась. Попробуйте через пару секунд.');
+        return;
+    }
+
+    if (!reportData.value) return;
+
+    const exportData: any[] = [];
+    const days = reportData.value.header_days;
+
+    reportData.value.rows.forEach(row => {
+        const rowData: any = {
+            "Сотрудник": row.employee.name
+        };
+        
+        days.forEach(day => {
+            const dayInfo = row.days[day.date];
+            rowData[day.date] = dayInfo.total > 0 ? dayInfo.total : '';
+        });
+
+        exportData.push(rowData);
+    });
+
+    // @ts-ignore
+    const XLSX = window.XLSX;
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Ежедневная нагрузка");
+    XLSX.writeFile(workbook, `Report_Daily_${dateFrom.value}_${dateTo.value}.xlsx`);
 }
 
 function openDetail(employeeName: string, date: string, items: any[]) {
@@ -144,7 +179,10 @@ onMounted(async () => {
          <div class="flex flex-col gap-4 bg-gray-50 p-4 rounded-lg">
              <div class="flex flex-row justify-between items-center w-full">
                  <h2 class="text-xl font-bold text-gray-900">Ежедневная нагрузка</h2>
-                 <B24Button label="Обновить" @click="fetchReport" loading-auto />
+                 <div class="flex gap-2">
+                    <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
+                    <B24Button label="Обновить" @click="fetchReport" loading-auto />
+                 </div>
              </div>
              
              <div class="flex flex-wrap gap-4 items-end">

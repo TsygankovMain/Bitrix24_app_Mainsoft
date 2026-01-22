@@ -11,7 +11,8 @@ const { t, locales: localesI18n, setLocale } = useI18n()
 useHead({
   title: 'Отчет по проектам',
   script: [
-    { src: 'https://api.bitrix24.com/api/v1/', defer: true }
+    { src: 'https://api.bitrix24.com/api/v1/', defer: true },
+    { src: 'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js', defer: true }
   ]
 })
 
@@ -68,6 +69,42 @@ async function fetchReport() {
     }
 }
 
+// Excel Export
+function handleExportExcel() {
+    // @ts-ignore
+    if (typeof window.XLSX === 'undefined') {
+        alert('Библиотека экспорта еще не загрузилась. Попробуйте через пару секунд.');
+        return;
+    }
+
+    const exportData: any[] = [];
+    
+    // Recursive function to flatten data
+    const processNode = (node: any, level = 0) => {
+        const indent = "    ".repeat(level);
+        exportData.push({
+            "Название": indent + node.name,
+            "Тип": node.type,
+            "Всего часов": node.total,
+            "Учитываемые": node.billable,
+            "Не учитываемые": node.nonBillable
+        });
+
+        if (node.children && node.children.length > 0) {
+            node.children.forEach((child: any) => processNode(child, level + 1));
+        }
+    };
+
+    reportData.value.forEach(node => processNode(node));
+
+    // @ts-ignore
+    const XLSX = window.XLSX;
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Отчет по проектам");
+    XLSX.writeFile(workbook, `Report_Projects_${dateFrom.value}_${dateTo.value}.xlsx`);
+}
+
 // region Lifecycle Hooks ////
 onMounted(async () => {
   try {
@@ -106,7 +143,10 @@ onMounted(async () => {
             <div class="flex flex-col gap-4 w-full">
                 <div class="flex flex-row justify-between items-center w-full">
                     <ProseH2>Отчет по проектам</ProseH2>
-                    <B24Button label="Обновить" @click="fetchReport" loading-auto />
+                    <div class="flex gap-2">
+                        <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
+                        <B24Button label="Обновить" @click="fetchReport" loading-auto />
+                    </div>
                 </div>
                 
                  <!-- Filters -->
