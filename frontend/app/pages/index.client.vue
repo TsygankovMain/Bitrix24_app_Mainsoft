@@ -64,37 +64,7 @@ const tiles = [
     }
 ]
 
-// Debug Logic
-const debugLog = ref<string[]>([])
-const runDebugFetch = () => {
-    debugLog.value = ["Starting Debug Fetch..."]
-    // @ts-ignore
-    if (typeof window.BX24 === 'undefined') {
-         debugLog.value.push("ERROR: window.BX24 is undefined (global)")
-         return
-    }
-    // @ts-ignore
-    const BX24 = window.BX24;
-    
-    debugLog.value.push("BX24 found. Calling sonet_group.get...")
-    
-    BX24.callMethod('sonet_group.get', {
-        ORDER: { NAME: 'ASC' },
-    }, (res: any) => {
-        if (res.error()) {
-             debugLog.value.push("API ERROR: " + JSON.stringify(res.error()))
-        } else {
-             const data = res.data()
-             debugLog.value.push(`SUCCESS. Count: ${data ? data.length : 0}`)
-             if(data && data.length > 0) {
-                 debugLog.value.push("First item ID: " + data[0].ID + ", Name: " + data[0].NAME)
-             } else {
-                 debugLog.value.push("Data is empty/null")
-             }
-             debugLog.value.push("More data?: " + res.more())
-        }
-    })
-}
+
 
 // region Lifecycle Hooks ////
 onMounted(async () => {
