@@ -69,6 +69,7 @@ async function fetchReport() {
     } finally {
         isLoading.value = false
     }
+}
 
 
 // Excel Export
