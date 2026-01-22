@@ -102,25 +102,34 @@ async function loadConfigAndUsers() {
         appParam: { method: 'app.option.get' }
     })
 
-    // SDK returns a Specific Response Object, let's assume .result or .data() or similar. 
-    // Based on useAppInit: const data = response.getData()
-    // and structure is { users: { data: ..., error: ... } }
+    console.log('loadConfigAndUsers: result =', result)
     
     // @ts-ignore
     const data = result.getData()
+    console.log('loadConfigAndUsers: data =', data)
 
-    // Users
+    // Users - with safe checks
     if (data.users && !data.users.error) {
         const map: Record<string, any> = {}
-        // data.users.data is the array
-        data.users.data.forEach((u: any) => map[u.ID] = u)
-        usersMap.value = map
+        const usersData = data.users.data
+        console.log('loadConfigAndUsers: usersData =', usersData)
+        
+        if (Array.isArray(usersData)) {
+            usersData.forEach((u: any) => map[u.ID] = u)
+            usersMap.value = map
+        } else {
+            console.warn('users.data is not an array:', usersData)
+        }
+    } else {
+        console.warn('No users data or error:', data.users)
     }
 
-    // Config
+    // Config - with safe checks
     if (data.appParam && !data.appParam.error) {
         try {
             const resultData = data.appParam.data
+            console.log('loadConfigAndUsers: appParam.data =', resultData)
+            
             if (resultData && resultData.timestamp_config) {
                 const rawConfig = JSON.parse(resultData.timestamp_config)
                 
@@ -150,7 +159,7 @@ async function loadConfigAndUsers() {
             initError.value = e.message
         }
     } else {
-        // If appParam failed
+        console.error('appParam error or missing:', data.appParam)
         initError.value = "Ошибка получения настроек приложения."
     }
 }
