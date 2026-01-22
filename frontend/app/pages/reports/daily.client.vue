@@ -159,8 +159,8 @@ onMounted(async () => {
     
     // Default range: Current Month
     const now = new Date()
-    dateFrom.value = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0] || ''
-    dateTo.value = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0] || ''
+    dateFrom.value = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0] ?? ''
+    dateTo.value = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0] ?? ''
 
     await fetchReport()
   } catch (error) {
