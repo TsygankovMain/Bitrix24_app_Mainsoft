@@ -82,36 +82,7 @@ onMounted(async () => {
         // 2. Load Config & Users
         await loadConfigAndUsers()
         
-        // 3. If config loading failed due to missing configuration, try auto-install
-        if (initError.value && initError.value.includes("Конфигурация не найдена")) {
-            console.log('TaskPage: Config not found, attempting auto-install...')
-            isLoading.value = true
-            try {
-                const response = await fetch('/api/install', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                })
-                
-                if (!response.ok) {
-                    throw new Error(`Install failed: ${response.status} ${response.statusText}`)
-                }
-                
-                const installResult = await response.json()
-                console.log('TaskPage: Auto-install result:', installResult)
-                
-                // Retry loading config
-                initError.value = null
-                await loadConfigAndUsers()
-            } catch (installError: any) {
-                console.error('TaskPage: Auto-install failed:', installError)
-                initError.value = "Не удалось автоматически установить приложение. Переустановите приложение вручную через маркетплейс Битрикс24."
-                isLoading.value = false
-            }
-        }
-        
-        // 4. Load Data
+        // 3. Load Data
         if (config.value && !initError.value) {
             await loadData(rootTaskId.value!)
         }
