@@ -5,6 +5,7 @@ import { SettingsIcon } from '@bitrix24/b24icons-vue/main'
 import { BugIcon } from '@bitrix24/b24icons-vue/outline'
 import { ActivityIcon } from '@bitrix24/b24icons-vue/main'
 import { CrmLettersIcon } from '@bitrix24/b24icons-vue/crm'
+import { BookOpen1Icon } from '@bitrix24/b24icons-vue/main'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -61,6 +62,13 @@ const tiles = [
         description: 'Настройки приложения',
         action: () => router.push('/settings'),
         color: 'bg-green-50 text-green-600'
+    },
+    {
+        icon: BookOpen1Icon,
+        title: 'Юзергайд',
+        description: 'Инструкция и описание полей',
+        action: () => router.push('/guide'),
+        color: 'bg-purple-50 text-purple-600'
     }
 ]
 
