@@ -24,7 +24,7 @@ const fields = [
 
 <template>
   <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen">
-    <div class="max-w-4xl mx-auto">
+    <div class="w-full">
       <!-- Header -->
       <div class="mb-8">
         <B24Button label="Назад к отчетам" color="link" @click="router.push('/')" class="mb-4 pl-0" />
@@ -84,7 +84,7 @@ const fields = [
         <!-- Section 3: Reports -->
         <section>
           <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 border-b pb-2">2. Доступные Отчеты</h2>
-          <div class="grid md:grid-cols-2 gap-6">
+          <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             
             <!-- Employee Report -->
             <div class="border rounded-xl p-6 hover:shadow-lg transition-shadow bg-white dark:bg-gray-800">
@@ -121,7 +121,7 @@ const fields = [
             </div>
 
             <!-- Daily Report -->
-            <div class="border rounded-xl p-6 hover:shadow-lg transition-shadow bg-white dark:bg-gray-800 md:col-span-2">
+            <div class="border rounded-xl p-6 hover:shadow-lg transition-shadow bg-white dark:bg-gray-800">
                 <div class="flex items-center gap-3 mb-3">
                     <div class="w-3 h-3 rounded-full bg-orange-500"></div>
                     <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100">Ежедневная нагрузка</h3>
