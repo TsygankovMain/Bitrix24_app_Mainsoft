@@ -39,8 +39,9 @@ const fields = [
       <div class="space-y-12">
         
         <!-- Section 1: Intro -->
-        <section class="prose dark:prose-invert max-w-none">
-          <p class="text-lg text-gray-600 dark:text-gray-300">
+
+        <section class="bg-purple-50 dark:bg-gray-800 p-6 rounded-lg border border-purple-100 dark:border-gray-700">
+          <p class="text-lg text-gray-700 dark:text-gray-300 leading-relaxed">
             Данное приложение предназначено для учета и анализа рабочего времени сотрудников на основе данных из Смарт-процессов Битрикс24.
             Оно позволяет агрегировать данные от таймшетов, распределять их по проектам и строить детальные отчеты.
           </p>
