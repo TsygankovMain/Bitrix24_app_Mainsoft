@@ -157,8 +157,8 @@ async function loadData(taskId: string) {
                 console.log(`📋 [Embedded] Response for ${key}:`, res)
                 
                 if (!res.error) {
-                    // API returns: { result: { tasks: [...] } } with UPPERCASE field names
-                    const tasks = res.result?.tasks || res.data?.tasks || []
+                    // API can return: { result: { tasks: [...] } } OR { tasks: [...] } directly
+                    const tasks = res.result?.tasks || res.data?.tasks || res.tasks || []
                     console.log(`📋 [Embedded] Found ${tasks.length} tasks in response`)
                     
                     if (tasks.length > 0) {
@@ -218,8 +218,8 @@ async function loadData(taskId: string) {
                 console.log(`📋 [Embedded] CRM response for ${key}:`, res)
                 
                 if(!res.error) {
-                    // API returns: { result: { items: [...] } }
-                    const items = res.result?.items || res.data?.items || []
+                    // API can return: { result: { items: [...] } } OR { items: [...] } directly
+                    const items = res.result?.items || res.data?.items || res.items || []
                     console.log(`📋 [Embedded] Found ${items.length} items in response`)
                     
                     if (items.length > 0) {
