@@ -152,7 +152,8 @@ async function loadData(taskId: string) {
             
             Object.values(batchData).forEach((res: any) => {
                 if (!res.error) {
-                    const tasks = res.data.tasks || []
+                    // API returns: { result: { tasks: [...] } }
+                    const tasks = res.result?.tasks || res.data?.tasks || []
                     tasks.forEach((t: any) => {
                         if (!processed.has(t.id)) {
                             processed.add(t.id)
@@ -189,7 +190,11 @@ async function loadData(taskId: string) {
             const chunkData = chunkResult.getData()
 
             Object.values(chunkData).forEach((res: any) => {
-                if(!res.error) allItems.push(...res.data.items)
+                if(!res.error) {
+                    // API returns: { result: { items: [...] } }
+                    const items = res.result?.items || res.data?.items || []
+                    allItems.push(...items)
+                }
             })
         }
 
