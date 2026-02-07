@@ -32,6 +32,17 @@ const BACKEND_MAPPING = {
     'data': 'DATE'
 }
 
+// Computed properties
+const usersList = computed(() => Object.values(usersMap.value))
+
+const totalClientAmount = computed(() => {
+    let total = 0
+    taskTree.value.forEach((task: any) => {
+        total += task.cumulativeConsidered * clientHourRate.value
+    })
+    return total.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+})
+
 // --- INITIALIZATION ---
 onMounted(async () => {
     try {
