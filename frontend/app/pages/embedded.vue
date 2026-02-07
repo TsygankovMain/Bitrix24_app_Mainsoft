@@ -113,9 +113,19 @@ async function loadData(taskId: string) {
 
     try {
         // 1. Root Task
+        console.log('🔍 [Embedded] Loading root task:', taskId)
         const rootTaskRes = await ($b24 as any).callMethod('tasks.task.get', { taskId, select: ['ID', 'TITLE'] })
+        console.log('📦 [Embedded] rootTaskRes =', rootTaskRes)
+        
         const rootTaskData = rootTaskRes.getData()
+        console.log('📦 [Embedded] rootTaskData =', rootTaskData)
+        
         const rootTask = rootTaskData.task
+        console.log('📦 [Embedded] rootTask =', rootTask)
+        
+        if (!rootTask || !rootTask.id) {
+            throw new Error('Не удалось загрузить данные корневой задачи. Ответ API: ' + JSON.stringify(rootTaskData))
+        }
 
         // 2. BFS Subtasks
         let allTasks = [{ id: rootTask.id, title: rootTask.title, parentId: null }]
