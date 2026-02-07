@@ -114,7 +114,8 @@ async function loadData(taskId: string) {
     try {
         // 1. Root Task
         const rootTaskRes = await ($b24 as any).callMethod('tasks.task.get', { taskId, select: ['ID', 'TITLE'] })
-        const rootTask = rootTaskRes.data().task
+        const rootTaskData = rootTaskRes.getData()
+        const rootTask = rootTaskData.task
 
         // 2. BFS Subtasks
         let allTasks = [{ id: rootTask.id, title: rootTask.title, parentId: null }]
