@@ -250,7 +250,7 @@ async function loadData(taskId: string) {
                 if (isConsidered) nodesMap[tid].totalConsidered += hours
                 else nodesMap[tid].totalUnconsidered += hours
             }
-        }
+        })
 
         console.log('🌳 [Embedded] All tasks loaded:', allTasks.length)
         console.log('🌳 [Embedded] All items loaded:', allItems.length)
