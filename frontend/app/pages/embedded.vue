@@ -152,13 +152,20 @@ async function loadData(taskId: string) {
             
             Object.values(batchData).forEach((res: any) => {
                 if (!res.error) {
-                    // API returns: { result: { tasks: [...] } }
+                    // API returns: { result: { tasks: [...] } } with UPPERCASE field names
                     const tasks = res.result?.tasks || res.data?.tasks || []
+                    console.log(`📋 [Embedded] Batch response tasks:`, tasks.length)
                     tasks.forEach((t: any) => {
-                        if (!processed.has(t.id)) {
-                            processed.add(t.id)
-                            allTasks.push({ id: t.id, title: t.title, parentId: t.parentId })
-                            queue.push(t.id)
+                        // API fields are UPPERCASE: ID, TITLE, PARENT_ID
+                        const taskId = t.ID || t.id
+                        const taskTitle = t.TITLE || t.title
+                        const taskParentId = t.PARENT_ID || t.parentId
+                        
+                        if (!processed.has(taskId)) {
+                            processed.add(taskId)
+                            allTasks.push({ id: taskId, title: taskTitle, parentId: taskParentId })
+                            queue.push(taskId)
+                            console.log(`➕ [Embedded] Added subtask: ${taskId} - ${taskTitle} (parent: ${taskParentId})`)
                         }
                     })
                 }
