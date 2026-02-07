@@ -120,7 +120,8 @@ async function loadData(taskId: string) {
         const rootTaskData = rootTaskRes.getData()
         console.log('📦 [Embedded] rootTaskData =', rootTaskData)
         
-        const rootTask = rootTaskData.task
+        // API returns: { result: { task: { id, title } } }
+        const rootTask = rootTaskData.result?.task || rootTaskData.task
         console.log('📦 [Embedded] rootTask =', rootTask)
         
         if (!rootTask || !rootTask.id) {
