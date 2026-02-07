@@ -20,29 +20,6 @@ const clientHourRate = ref(3000)
 const currentEditingId = ref<string | null>(null)
 const editingItem = ref<any>(null)
 
-// Helper functions for hours/minutes conversion
-function getMinutesFromHours(decimalHours: number): number {
-    const fractionalPart = decimalHours - Math.floor(decimalHours)
-    const minutes = Math.round(fractionalPart * 60)
-    // Round to nearest 15
-    return Math.round(minutes / 15) * 15
-}
-
-function updateHoursFromInput(e: Event, type: 'hours' | 'minutes') {
-    if (!editingItem.value) return
-    
-    const target = e.target as HTMLInputElement | HTMLSelectElement
-    const value = parseInt(target.value) || 0
-    
-    if (type === 'hours') {
-        const currentMinutes = getMinutesFromHours(editingItem.value.hours)
-        editingItem.value.hours = value + (currentMinutes / 60)
-    } else {
-        const currentHours = Math.floor(editingItem.value.hours)
-        editingItem.value.hours = currentHours + (value / 60)
-    }
-}
-
 // Config mapping
 const BACKEND_MAPPING = {
     'id_zadachi': 'TASK_ID',
@@ -570,7 +547,7 @@ async function deleteItem() {
                 <div>
                     <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Сотрудник</label>
                     <select v-model="editingItem.employeeId" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none bg-white">
-                        <option v-for="u in usersMap" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
+                        <option v-for="u in Object.values(usersMap)" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
                     </select>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
@@ -579,31 +556,8 @@ async function deleteItem() {
                         <input type="date" v-model="editingItem.date" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Время</label>
-                        <div class="grid grid-cols-2 gap-2">
-                            <div>
-                                <input 
-                                    type="number" 
-                                    :value="Math.floor(editingItem.hours)" 
-                                    @input="(e) => updateHoursFromInput(e, 'hours')"
-                                    min="0"
-                                    class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none font-bold text-center"
-                                    placeholder="ч"
-                                >
-                            </div>
-                            <div>
-                                <select 
-                                    :value="getMinutesFromHours(editingItem.hours)" 
-                                    @change="(e) => updateHoursFromInput(e, 'minutes')"
-                                    class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none font-bold text-center bg-white"
-                                >
-                                    <option value="0">0 мин</option>
-                                    <option value="15">15 мин</option>
-                                    <option value="30">30 мин</option>
-                                    <option value="45">45 мин</option>
-                                </select>
-                            </div>
-                        </div>
+                        <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Часы</label>
+                        <input type="number" v-model.number="editingItem.hours" step="0.25" min="0" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none font-bold">
                     </div>
                 </div>
                 <div>
