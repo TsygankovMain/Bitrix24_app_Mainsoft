@@ -70,8 +70,7 @@ onMounted(async () => {
 
 async function loadConfigAndUsers() {
     const result = await ($b24 as any).callBatch({
-        users: { method: 'user.get', params: { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' } },
-        appParam: { method: 'app.option.get' }
+        users: { method: 'user.get', params: { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' } }
     })
 
     const data = result.getData()
@@ -86,38 +85,22 @@ async function loadConfigAndUsers() {
         }
     }
 
-    // Config
-    if (data.appParam && !data.appParam.error) {
-        try {
-            const resultData = data.appParam.data
-            if (resultData && resultData.timestamp_config) {
-                const rawConfig = JSON.parse(resultData.timestamp_config)
-                const spId = rawConfig.sp_entity_type_id
-                const backendFields = rawConfig.fields_mapping || {}
-                
-                const fields: any = {}
-                Object.entries(BACKEND_MAPPING).forEach(([backendKey, frontendKey]) => {
-                    if (backendFields[backendKey]) {
-                        fields[frontendKey] = backendFields[backendKey]
-                    }
-                })
-
-                if (!spId || !fields.TASK_ID || !fields.HOURS) {
-                    throw new Error("Неполная конфигурация.")
-                }
-
-                config.value = {
-                    DEFAULT_SMART_PROCESS_ID: spId,
-                    FIELDS: fields
-                }
-            } else {
-                throw new Error("Конфигурация не найдена. Переустановите приложение.")
-            }
-        } catch (e: any) {
-            console.error("Config Error:", e)
-            error.value = e.message
+    // HARDCODED Config (from Application_Documentation.md)
+    console.log('⚙️ [Embedded] Using HARDCODED configuration')
+    config.value = {
+        DEFAULT_SMART_PROCESS_ID: 1164,
+        FIELDS: {
+            TASK_ID: 'ufCrm87_1761919581',
+            EMPLOYEE: 'ufCrm87_1761919601',
+            HOURS: 'ufCrm87_1761919617',
+            IS_CONSIDERED: 'ufCrm87_1763717129',
+            DESCRIPTION: 'ufCrm87_1762026149771',
+            TASK_HIERARCHY: 'ufCrm87_1764191110',
+            TITLE_HIERARCHY: 'ufCrm87_1764191133',
+            DATE: 'ufCrm87_1764446274'
         }
     }
+    console.log('✅ [Embedded] Config loaded (hardcoded)', config.value)
 }
 
 async function loadData(taskId: string) {
