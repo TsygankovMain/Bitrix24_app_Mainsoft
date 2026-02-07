@@ -41,7 +41,8 @@ const BACKEND_MAPPING = {
     'uchitivaem': 'IS_CONSIDERED',
     'opisanie': 'DESCRIPTION',
     'id_zadach_ierarhiya': 'TASK_HIERARCHY',
-    'title_zadach_ierarhiya': 'TITLE_HIERARCHY'
+    'title_zadach_ierarhiya': 'TITLE_HIERARCHY',
+    'data': 'DATE'
 }
 
 // --- INIT LOGIC ---
@@ -238,7 +239,7 @@ async function loadData(taskId: string) {
                     params: { 
                         entityTypeId: SMART_PROCESS_ID,
                         filter: { [FIELDS.TASK_ID]: tid },
-                        select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE']
+                        select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE]
                     }
                 }
             })
@@ -278,6 +279,12 @@ async function loadData(taskId: string) {
                 const u = usersMap.value[empId]
                 const empName = u ? `${u.NAME} ${u.LAST_NAME}` : `User ${empId}`
 
+                // Date handling
+                let dateVal = item[FIELDS.DATE]
+                if (!dateVal && item.createdTime) {
+                    dateVal = item.createdTime.split('T')[0]
+                }
+
                 nodesMap[tid].items.push({
                     id: item.id,
                     title: item.title,
@@ -286,7 +293,8 @@ async function loadData(taskId: string) {
                     isConsidered: isConsidered,
                     description: item[FIELDS.DESCRIPTION] || '',
                     employeeId: empId,
-                    employeeName: empName
+                    employeeName: empName,
+                    date: dateVal
                 })
                 
                 if (isConsidered) nodesMap[tid].totalConsidered += hours
@@ -334,7 +342,7 @@ async function loadData(taskId: string) {
 
 async function handleSaveItem(data: any) {
     if (!config.value) return
-    const { id, hours, isConsidered, description, employeeId } = data
+    const { id, hours, isConsidered, description, employeeId, date } = data
     isLoading.value = true 
     
     try {
@@ -346,7 +354,8 @@ async function handleSaveItem(data: any) {
                 [config.value.FIELDS.HOURS]: hours,
                 [config.value.FIELDS.IS_CONSIDERED]: isConsidered ? 'Y' : 'N',
                 [config.value.FIELDS.DESCRIPTION]: description,
-                [config.value.FIELDS.EMPLOYEE]: employeeId
+                [config.value.FIELDS.EMPLOYEE]: employeeId,
+                [config.value.FIELDS.DATE]: date
             }
         })
         if (rootTaskId.value) await loadData(rootTaskId.value)
@@ -545,6 +554,10 @@ async function handleTransferToReport() {
                             <span class="text-sm font-medium">Учитывать?</span>
                         </label>
                     </div>
+                </div>
+                 <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Дата</label>
+                    <input type="date" v-model="editingItem.date" class="w-full border-slate-300 rounded-lg p-2 border text-sm">
                 </div>
                  <div>
                     <label class="block text-sm font-medium text-slate-700 mb-1">Описание</label>

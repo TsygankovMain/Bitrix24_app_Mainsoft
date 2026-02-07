@@ -239,7 +239,7 @@ def report_employee_project(request: AuthorizedRequest):
     if date_from:
         queryset = queryset.filter(date_reflection__gte=date_from)
     if date_to:
-        queryset = queryset.filter(date_reflection__lte=date_to)
+        queryset = queryset.filter(date_reflection__date__lte=date_to)
         
     # Employee Filtering
     if emp_ids:
@@ -297,7 +297,7 @@ def report_project_employee(request: AuthorizedRequest):
     if date_from:
         queryset = queryset.filter(date_reflection__gte=date_from)
     if date_to:
-        queryset = queryset.filter(date_reflection__lte=date_to)
+        queryset = queryset.filter(date_reflection__date__lte=date_to)
         
     if emp_ids:
         queryset = queryset.filter(employee_id__in=emp_ids)
@@ -458,7 +458,7 @@ def report_daily_workload(request: AuthorizedRequest):
     if date_from:
         queryset = queryset.filter(date_reflection__gte=date_from)
     if date_to:
-        queryset = queryset.filter(date_reflection__lte=date_to)
+        queryset = queryset.filter(date_reflection__date__lte=date_to)
         
     if emp_ids:
         queryset = queryset.filter(employee_id__in=emp_ids)
