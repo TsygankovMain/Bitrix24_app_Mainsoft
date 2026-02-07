@@ -147,14 +147,24 @@ async function loadData(taskId: string) {
 
             if (Object.keys(batch).length === 0) break
 
+            console.log(`🔄 [Embedded] Calling batch for ${currentLevelIds.length} parent IDs:`, currentLevelIds)
             const batchResult = await ($b24 as any).callBatch(batch)
             const batchData = batchResult.getData()
+            console.log(`📦 [Embedded] Full batch response:`, batchData)
             
-            Object.values(batchData).forEach((res: any) => {
+            Object.entries(batchData).forEach(([key, res]: [string, any]) => {
+                console.log(`🔍 [Embedded] Processing batch key: ${key}`)
+                console.log(`📋 [Embedded] Response for ${key}:`, res)
+                
                 if (!res.error) {
                     // API returns: { result: { tasks: [...] } } with UPPERCASE field names
                     const tasks = res.result?.tasks || res.data?.tasks || []
-                    console.log(`📋 [Embedded] Batch response tasks:`, tasks.length)
+                    console.log(`📋 [Embedded] Found ${tasks.length} tasks in response`)
+                    
+                    if (tasks.length > 0) {
+                        console.log(`📋 [Embedded] First task structure:`, tasks[0])
+                    }
+                    
                     tasks.forEach((t: any) => {
                         // API fields are UPPERCASE: ID, TITLE, PARENT_ID
                         const taskId = t.ID || t.id
@@ -168,6 +178,8 @@ async function loadData(taskId: string) {
                             console.log(`➕ [Embedded] Added subtask: ${taskId} - ${taskTitle} (parent: ${taskParentId})`)
                         }
                     })
+                } else {
+                    console.error(`❌ [Embedded] Error in batch response for ${key}:`, res.error)
                 }
             })
             iterations++
@@ -175,6 +187,9 @@ async function loadData(taskId: string) {
 
         // 3. Load Items
         const allTaskIds = allTasks.map(t => t.id)
+        console.log(`⏱️ [Embedded] Loading time entries for ${allTaskIds.length} tasks:`, allTaskIds)
+        console.log(`⏱️ [Embedded] Using entityTypeId: ${SMART_PROCESS_ID}, TASK_ID field: ${FIELDS.TASK_ID}`)
+        
         const CHUNK_SIZE = 50
         let allItems: any[] = []
 
@@ -193,14 +208,27 @@ async function loadData(taskId: string) {
                 }
             })
             
+            console.log(`⏱️ [Embedded] Batch commands for CRM items:`, batchCmds)
             const chunkResult = await ($b24 as any).callBatch(batchCmds)
             const chunkData = chunkResult.getData()
+            console.log(`📦 [Embedded] CRM items batch response:`, chunkData)
 
-            Object.values(chunkData).forEach((res: any) => {
+            Object.entries(chunkData).forEach(([key, res]: [string, any]) => {
+                console.log(`🔍 [Embedded] Processing CRM batch key: ${key}`)
+                console.log(`📋 [Embedded] CRM response for ${key}:`, res)
+                
                 if(!res.error) {
                     // API returns: { result: { items: [...] } }
                     const items = res.result?.items || res.data?.items || []
+                    console.log(`📋 [Embedded] Found ${items.length} items in response`)
+                    
+                    if (items.length > 0) {
+                        console.log(`📋 [Embedded] First item structure:`, items[0])
+                    }
+                    
                     allItems.push(...items)
+                } else {
+                    console.error(`❌ [Embedded] Error in CRM batch response for ${key}:`, res.error)
                 }
             })
         }
