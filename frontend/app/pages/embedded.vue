@@ -359,23 +359,56 @@ function closeEditor() {
     editingItem.value = null
 }
 
+function createNewEntry() {
+    if (!rootTaskId.value) return
+    
+    // Create new entry template
+    const newEntry = {
+        id: null, // null means it's a new entry
+        taskId: rootTaskId.value,
+        description: '',
+        employeeId: Object.values(usersMap.value)[0]?.ID || '',
+        date: new Date().toISOString().split('T')[0],
+        hours: 1,
+        isConsidered: true,
+        splitHours: 0.5,
+        keepOriginalConsidered: false
+    }
+    
+    editingItem.value = newEntry
+    currentEditingId.value = 'new'
+}
+
 async function saveCurrentItem() {
     if (!editingItem.value || !config.value) return
     isLoading.value = true
     
     try {
-        await ($b24 as any).callMethod('crm.item.update', {
-            entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-            id: editingItem.value.id,
-            fields: {
-                [config.value.FIELDS.HOURS]: editingItem.value.hours,
-                [config.value.FIELDS.IS_CONSIDERED]: editingItem.value.isConsidered ? 'Y' : 'N',
-                [config.value.FIELDS.DESCRIPTION]: editingItem.value.description,
-                [config.value.FIELDS.EMPLOYEE]: editingItem.value.employeeId,
-                [config.value.FIELDS.DATE]: editingItem.value.date,
-                TITLE: editingItem.value.description.substring(0, 255)
-            }
-        })
+        const fields = {
+            [config.value.FIELDS.HOURS]: editingItem.value.hours,
+            [config.value.FIELDS.IS_CONSIDERED]: editingItem.value.isConsidered ? 'Y' : 'N',
+            [config.value.FIELDS.DESCRIPTION]: editingItem.value.description,
+            [config.value.FIELDS.EMPLOYEE]: editingItem.value.employeeId,
+            [config.value.FIELDS.DATE]: editingItem.value.date,
+            [config.value.FIELDS.TASK_ID]: editingItem.value.taskId || rootTaskId.value,
+            TITLE: editingItem.value.description.substring(0, 255)
+        }
+        
+        if (editingItem.value.id) {
+            // Update existing
+            await ($b24 as any).callMethod('crm.item.update', {
+                entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
+                id: editingItem.value.id,
+                fields: fields
+            })
+        } else {
+            // Create new
+            await ($b24 as any).callMethod('crm.item.add', {
+                entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
+                fields: fields
+            })
+        }
+        
         if (rootTaskId.value) await loadData(rootTaskId.value)
         closeEditor()
     } catch (e: any) {
@@ -474,6 +507,11 @@ async function deleteItem() {
         </div>
 
         <div class="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg p-3">
+            <button @click="createNewEntry" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold transition-colors">
+                <span class="material-symbols-outlined">add</span>
+                <span>Отразить</span>
+            </button>
+            <div class="h-8 w-px bg-slate-300"></div>
             <div class="flex flex-col">
                 <label class="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Стоимость часа (руб.)</label>
                 <input type="number" v-model="clientHourRate" class="bg-transparent font-bold text-slate-900 focus:outline-none w-24 mt-1">
