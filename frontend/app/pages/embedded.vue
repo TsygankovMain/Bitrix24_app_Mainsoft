@@ -243,16 +243,24 @@ async function loadData(taskId: string) {
                 if (isConsidered) nodesMap[tid].totalConsidered += hours
                 else nodesMap[tid].totalUnconsidered += hours
             }
-        })
+        }
+
+        console.log('🌳 [Embedded] All tasks loaded:', allTasks.length)
+        console.log('🌳 [Embedded] All items loaded:', allItems.length)
 
         const roots: any[] = []
         Object.values(nodesMap).forEach(node => {
             if (node.parentId && nodesMap[node.parentId]) {
                 nodesMap[node.parentId].children.push(node)
+                console.log(`📎 [Embedded] Task ${node.taskId} is child of ${node.parentId}`)
             } else if (String(node.taskId) === String(taskId)) {
                 roots.push(node) 
+                console.log(`🌲 [Embedded] Task ${node.taskId} is ROOT`)
             }
         })
+
+        console.log('🌲 [Embedded] Roots found:', roots.length)
+        console.log('🌲 [Embedded] Root tasks:', roots.map(r => ({ id: r.taskId, title: r.taskTitle, children: r.children.length })))
 
         const calculateTotals = (node: any) => {
             let childCons = 0
@@ -271,6 +279,7 @@ async function loadData(taskId: string) {
 
         taskTree.value = roots
         expandedTasks.value = new Set([rootTaskId.value!])
+        console.log('✅ [Embedded] Task tree built:', taskTree.value)
         isLoading.value = false
 
     } catch (e: any) {
