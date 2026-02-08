@@ -129,6 +129,7 @@ function createForTask() {
                     :currentEditingId="currentEditingId"
                     @toggle="(id) => emit('toggle', id)"
                     @select="(item) => emit('select', item)"
+                    @createForTask="(taskId) => emit('createForTask', taskId)"
                 />
             </div>
         </div>
