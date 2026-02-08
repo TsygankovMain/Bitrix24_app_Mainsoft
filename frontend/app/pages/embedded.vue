@@ -81,13 +81,15 @@ async function loadConfigAndUsers() {
     // Users
     if (data.users && !data.users.error) {
         const map: Record<string, any> = {}
-        const usersData = data.users.data
-        console.log('👥 [Embedded] Users data:', usersData)
+        // BX24 user.get returns array in 'result' property
+        console.log('📦 [Embedded] Full users response:', data.users)
+        const usersData = data.users.result || data.users.data || data.users
+        
+        console.log('👥 [Embedded] Users data extracted:', usersData)
         if (Array.isArray(usersData)) {
             usersData.forEach((u: any) => {
                 // Ensure ID is string
                 const uid = String(u.ID)
-                console.log(`👤 [Embedded] User ${uid}: ${u.NAME} ${u.LAST_NAME}`)
                 map[uid] = u
             })
             usersMap.value = map
