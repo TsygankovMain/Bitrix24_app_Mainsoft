@@ -100,7 +100,17 @@ async function loadConfigAndUsers() {
             DESCRIPTION: 'ufCrm87_1762026149771',
             TASK_HIERARCHY: 'ufCrm87_1764191110',
             TITLE_HIERARCHY: 'ufCrm87_1764191133',
+            PROJECT_ID: 'ufCrm87_1764265626',
+            PROJECT_TITLE: 'ufCrm87_1764265641',
             DATE: 'ufCrm87_1764446274'
+        },
+        TASK_FIELDS: {
+            OUR_INN: 'UF_TASKS_TASK_1758105743485',
+            CLIENT_INN: 'UF_TASKS_TASK_1758026758173'
+        },
+        SPA_FIELDS: {
+            OUR_INN: 'ufCrm87_1769624604091',
+            CLIENT_INN: 'ufCrm87_1769624613999'
         }
     }
     console.log('✅ [Embedded] Config loaded (hardcoded)', config.value)
@@ -344,6 +354,93 @@ const totalClientAmount = computed(() => {
 })
 
 // --- ACTIONS ---
+
+async function getTaskHierarchy(taskId: string) {
+    if (!config.value) return null
+    
+    const idPath: string[] = []
+    const titlePath: string[] = []
+    let projectId: string | null = null
+    let projectTitle = ''
+    let ourInn = ''
+    let clientInn = ''
+    
+    try {
+        // 1. Get task info (GROUP_ID and INN fields)
+        const taskRes = await ($b24 as any).callMethod('tasks.task.get', {
+            taskId: taskId,
+            select: ['ID', 'TITLE', 'GROUP_ID', config.value.TASK_FIELDS.OUR_INN, config.value.TASK_FIELDS.CLIENT_INN]
+        })
+        
+        const taskData = taskRes.getData()
+        if (taskData && taskData.task) {
+            const task = taskData.task
+            if (task.groupId && task.groupId !== '0') {
+                projectId = task.groupId
+            }
+            // Get INN fields
+            ourInn = task[config.value.TASK_FIELDS.OUR_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.OUR_INN]) || ''
+            clientInn = task[config.value.TASK_FIELDS.CLIENT_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.CLIENT_INN]) || ''
+        }
+        
+        // 2. Get project/group name if exists
+        if (projectId) {
+            try {
+                const groupRes = await ($b24 as any).callMethod('sonet_group.get', {
+                    FILTER: { ID: projectId }
+                })
+                const groupData = groupRes.getData()
+                if (groupData && groupData[0]) {
+                    projectTitle = groupData[0].NAME
+                }
+            } catch (e) {
+                console.error('[Embedded] Error getting group:', e)
+            }
+        }
+        
+        // 3. Collect hierarchy (from task up to root)
+        let currentTaskId = taskId
+        while (currentTaskId) {
+            try {
+                const result = await ($b24 as any).callMethod('tasks.task.get', {
+                    taskId: currentTaskId,
+                    select: ['ID', 'TITLE', 'PARENT_ID']
+                })
+                const data = result.getData()
+                const task = data.task
+                
+                if (task) {
+                    idPath.unshift(task.id)
+                    titlePath.unshift(task.title)
+                    
+                    if (task.parentId && task.parentId !== '0') {
+                        currentTaskId = task.parentId
+                    } else {
+                        currentTaskId = null
+                    }
+                } else {
+                    currentTaskId = null
+                }
+            } catch (e) {
+                console.error(`[Embedded] Error getting task ${currentTaskId}:`, e)
+                currentTaskId = null
+            }
+        }
+        
+        return {
+            idPath,
+            titlePath,
+            projectId,
+            projectTitle,
+            ourInn,
+            clientInn
+        }
+    } catch (e) {
+        console.error('[Embedded] Error in getTaskHierarchy:', e)
+        return null
+    }
+}
+
 function toggleTask(taskId: string) {
     if (expandedTasks.value.has(taskId)) {
         expandedTasks.value.delete(taskId)
@@ -387,14 +484,32 @@ async function saveCurrentItem() {
     isLoading.value = true
     
     try {
-        const fields = {
+        const taskIdToSave = editingItem.value.taskId ||  rootTaskId.value
+        
+        // Base fields
+        const fields: any = {
             [config.value.FIELDS.HOURS]: editingItem.value.hours,
             [config.value.FIELDS.IS_CONSIDERED]: editingItem.value.isConsidered ? 'Y' : 'N',
             [config.value.FIELDS.DESCRIPTION]: editingItem.value.description,
             [config.value.FIELDS.EMPLOYEE]: editingItem.value.employeeId,
             [config.value.FIELDS.DATE]: editingItem.value.date,
-            [config.value.FIELDS.TASK_ID]: editingItem.value.taskId || rootTaskId.value,
+            [config.value.FIELDS.TASK_ID]: taskIdToSave,
             TITLE: editingItem.value.description.substring(0, 255)
+        }
+        
+        // If creating new entry, collect hierarchy
+        if (!editingItem.value.id && taskIdToSave) {
+            const hierarchy = await getTaskHierarchy(taskIdToSave)
+            if (hierarchy) {
+                fields[config.value.FIELDS.TASK_HIERARCHY] = hierarchy.idPath
+                fields[config.value.FIELDS.TITLE_HIERARCHY] = hierarchy.titlePath
+                if (hierarchy.projectId) {
+                    fields[config.value.FIELDS.PROJECT_ID] = hierarchy.projectId
+                    fields[config.value.FIELDS.PROJECT_TITLE] = hierarchy.projectTitle
+                }
+                if (hierarchy.ourInn) fields[config.value.SPA_FIELDS.OUR_INN] = hierarchy.ourInn
+                if (hierarchy.clientInn) fields[config.value.SPA_FIELDS.CLIENT_INN] = hierarchy.clientInn
+            }
         }
         
         if (editingItem.value.id) {
