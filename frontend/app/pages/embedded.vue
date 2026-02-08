@@ -492,6 +492,23 @@ function openItemInCRM(itemId: string) {
     ;($b24 as any).openPath(url)
 }
 
+function createEntryForTask(taskId: string) {
+    const newEntry = {
+        id: null,
+        taskId: taskId,
+        description: '',
+        employeeId: usersList.value[0]?.ID || '',
+        date: new Date().toISOString().split('T')[0],
+        hours: 1,
+        isConsidered: true,
+        splitHours: 0.5,
+        keepOriginalConsidered: false
+    }
+    
+    editingItem.value = newEntry
+    currentEditingId.value = 'new'
+}
+
 async function saveCurrentItem() {
     if (!editingItem.value || !config.value) return
     isLoading.value = true
@@ -688,6 +705,7 @@ async function deleteItem() {
                     :currentEditingId="currentEditingId"
                     @toggle="toggleTask"
                     @select="selectItem"
+                    @createForTask="createEntryForTask"
                 />
             </div>
         </div>

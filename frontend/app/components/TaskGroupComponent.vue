@@ -10,6 +10,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     toggle: [taskId: string]
     select: [item: any]
+    createForTask: [taskId: string]
 }>()
 
 const isExpanded = computed(() => props.expandedTasks.has(props.task.taskId))
@@ -27,6 +28,10 @@ function toggleTask() {
 
 function selectItem(item: any) {
     emit('select', item)
+}
+
+function createForTask() {
+    emit('createForTask', props.task.taskId)
 }
 </script>
 
@@ -62,6 +67,10 @@ function selectItem(item: any) {
                     </p>
                 </div>
                 <div class="flex flex-col items-center gap-1">
+                    <button @click.stop="createForTask" title="Отразить время" class="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1">
+                        <span class="material-symbols-outlined text-sm">add_circle</span>
+                        Отразить
+                    </button>
                     <button @click.stop="toggleTask" title="Развернуть/Свернуть" class="p-1 rounded-full hover:bg-slate-200">
                         <span class="material-symbols-outlined text-slate-500 transition-transform" :class="{ 'rotate-180': isExpanded }">expand_more</span>
                     </button>
