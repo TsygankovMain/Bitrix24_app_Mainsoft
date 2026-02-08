@@ -754,8 +754,13 @@ async function deleteItem() {
                     </label>
                     <button @click="splitItem" class="w-full py-2 bg-white border border-purple-300 text-purple-700 font-medium rounded-lg hover:bg-purple-100 text-sm">Выполнить разделение</button>
                 </div>
+                
+                <button v-if="editingItem.id" @click="openItemInCRM(editingItem.id)" class="w-full py-2 bg-blue-50 border border-blue-200 text-blue-700 font-medium rounded-lg hover:bg-blue-100 text-sm flex items-center justify-center gap-2">
+                    <span class="material-symbols-outlined text-base">open_in_new</span>
+                    Открыть в CRM
+                </button>
 
-                <button @click="deleteItem" class="w-full py-2 bg-red-50 border border-red-200 text-red-700 font-medium rounded-lg hover:bg-red-100 text-sm flex items-center justify-center gap-2">
+                <button v-if="editingItem.id" @click="deleteItem" class="w-full py-2 bg-red-50 border border-red-200 text-red-700 font-medium rounded-lg hover:bg-red-100 text-sm flex items-center justify-center gap-2">
                     <span class="material-symbols-outlined text-base">delete</span>
                     Удалить запись
                 </button>
