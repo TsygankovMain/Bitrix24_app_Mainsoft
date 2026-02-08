@@ -479,6 +479,12 @@ function createNewEntry() {
     currentEditingId.value = 'new'
 }
 
+function openItemInCRM(itemId: string) {
+    if (!config.value) return
+    const url = `/crm/type/${config.value.DEFAULT_SMART_PROCESS_ID}/details/${itemId}/`
+    ;($b24 as any).openPath(url)
+}
+
 async function saveCurrentItem() {
     if (!editingItem.value || !config.value) return
     isLoading.value = true
