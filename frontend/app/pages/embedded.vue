@@ -388,8 +388,10 @@ async function getTaskHierarchy(taskId: string) {
         const taskData = taskRes.getData()
         if (taskData && taskData.task) {
             const task = taskData.task
-            if (task.groupId && task.groupId !== '0') {
-                projectId = task.groupId
+            console.log(`🔍 [Embedded] Hierarchy: Initial task ${taskId} data:`, task)
+            const gid = task.groupId || task.group_id || task.GROUP_ID
+            if (gid && gid !== '0') {
+                projectId = gid
             }
             // Get INN fields
             ourInn = task[config.value.TASK_FIELDS.OUR_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.OUR_INN]) || ''
@@ -412,7 +414,8 @@ async function getTaskHierarchy(taskId: string) {
         }
         
         // 3. Collect hierarchy (from task up to root)
-        let currentTaskId = taskId
+        let currentTaskId: string | null = taskId
+        
         while (currentTaskId) {
             try {
                 const result = await ($b24 as any).callMethod('tasks.task.get', {
@@ -423,11 +426,15 @@ async function getTaskHierarchy(taskId: string) {
                 const task = data.task
                 
                 if (task) {
-                    idPath.unshift(task.id)
-                    titlePath.unshift(task.title)
+                    const tid = task.id || task.ID
+                    const ttitle = task.title || task.TITLE
+                    const tparent = task.parentId || task.parent_id || task.PARENT_ID
                     
-                    if (task.parentId && task.parentId !== '0') {
-                        currentTaskId = task.parentId
+                    idPath.unshift(String(tid))
+                    titlePath.unshift(String(ttitle))
+                    
+                    if (tparent && tparent !== '0') {
+                        currentTaskId = String(tparent)
                     } else {
                         currentTaskId = null
                     }
@@ -438,8 +445,12 @@ async function getTaskHierarchy(taskId: string) {
                 console.error(`[Embedded] Error getting task ${currentTaskId}:`, e)
                 currentTaskId = null
             }
+            // Output current step
+            console.log(`🔍 [Embedded] Hierarchy step: path length ${idPath.length}`)
         }
         
+        console.log('✅ [Embedded] Hierarchy collected:', { idPath, titlePath, projectId, projectTitle })
+
         return {
             idPath,
             titlePath,
@@ -448,10 +459,13 @@ async function getTaskHierarchy(taskId: string) {
             ourInn,
             clientInn
         }
+
     } catch (e) {
         console.error('[Embedded] Error in getTaskHierarchy:', e)
         return null
     }
+}
+
 }
 
 function toggleTask(taskId: string) {
@@ -547,6 +561,7 @@ async function saveCurrentItem() {
         
         if (editingItem.value.id) {
             // Update existing
+            console.log('💾 [Embedded] Updating item fields:', fields)
             await ($b24 as any).callMethod('crm.item.update', {
                 entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
                 id: editingItem.value.id,
@@ -554,6 +569,7 @@ async function saveCurrentItem() {
             })
         } else {
             // Create new
+            console.log('💾 [Embedded] Creating new item fields:', fields)
             await ($b24 as any).callMethod('crm.item.add', {
                 entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
                 fields: fields
