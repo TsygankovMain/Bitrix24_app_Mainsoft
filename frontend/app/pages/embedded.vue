@@ -82,10 +82,17 @@ async function loadConfigAndUsers() {
     if (data.users && !data.users.error) {
         const map: Record<string, any> = {}
         const usersData = data.users.data
+        console.log('👥 [Embedded] Users data:', usersData)
         if (Array.isArray(usersData)) {
-            usersData.forEach((u: any) => map[u.ID] = u)
+            usersData.forEach((u: any) => {
+                console.log(`👤 [Embedded] User ${u.ID}: ${u.NAME} ${u.LAST_NAME}`)
+                map[u.ID] = u
+            })
             usersMap.value = map
+            console.log('✅ [Embedded] Users loaded:', Object.keys(map).length)
         }
+    } else {
+        console.error('❌ [Embedded] Error loading users:', data.users?.error)
     }
 
     // HARDCODED Config (from Application_Documentation.md)
