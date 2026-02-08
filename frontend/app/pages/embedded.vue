@@ -85,8 +85,10 @@ async function loadConfigAndUsers() {
         console.log('👥 [Embedded] Users data:', usersData)
         if (Array.isArray(usersData)) {
             usersData.forEach((u: any) => {
-                console.log(`👤 [Embedded] User ${u.ID}: ${u.NAME} ${u.LAST_NAME}`)
-                map[u.ID] = u
+                // Ensure ID is string
+                const uid = String(u.ID)
+                console.log(`👤 [Embedded] User ${uid}: ${u.NAME} ${u.LAST_NAME}`)
+                map[uid] = u
             })
             usersMap.value = map
             console.log('✅ [Embedded] Users loaded:', Object.keys(map).length)
@@ -275,7 +277,9 @@ async function loadData(taskId: string) {
                 const hours = parseFloat(item[FIELDS.HOURS]) || 0
                 const isConsidered = item[FIELDS.IS_CONSIDERED] === 'Y' || item[FIELDS.IS_CONSIDERED] === true
                 const empId = item[FIELDS.EMPLOYEE]
-                const u = usersMap.value[empId]
+                
+                // Force string comparison for user lookup
+                const u = usersMap.value[String(empId)]
                 const empName = u ? `${u.NAME} ${u.LAST_NAME}` : `User ${empId}`
 
                 let dateVal = item[FIELDS.DATE]
@@ -486,13 +490,10 @@ function createNewEntry() {
     currentEditingId.value = 'new'
 }
 
-function openItemInCRM(itemId: string) {
-    if (!config.value) return
-    const url = `/crm/type/${config.value.DEFAULT_SMART_PROCESS_ID}/details/${itemId}/`
-    ;($b24 as any).openPath(url)
-}
+
 
 function createEntryForTask(taskId: string) {
+    console.log(`🔘 [Embedded] createEntryForTask clicked for taskId: ${taskId}`)
     const newEntry = {
         id: null,
         taskId: taskId,
@@ -772,11 +773,6 @@ async function deleteItem() {
                     </label>
                     <button @click="splitItem" class="w-full py-2 bg-white border border-purple-300 text-purple-700 font-medium rounded-lg hover:bg-purple-100 text-sm">Выполнить разделение</button>
                 </div>
-                
-                <button v-if="editingItem.id" @click="openItemInCRM(editingItem.id)" class="w-full py-2 bg-blue-50 border border-blue-200 text-blue-700 font-medium rounded-lg hover:bg-blue-100 text-sm flex items-center justify-center gap-2">
-                    <span class="material-symbols-outlined text-base">open_in_new</span>
-                    Открыть в CRM
-                </button>
 
                 <button v-if="editingItem.id" @click="deleteItem" class="w-full py-2 bg-red-50 border border-red-200 text-red-700 font-medium rounded-lg hover:bg-red-100 text-sm flex items-center justify-center gap-2">
                     <span class="material-symbols-outlined text-base">delete</span>
