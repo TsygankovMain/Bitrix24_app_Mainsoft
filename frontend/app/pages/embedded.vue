@@ -387,19 +387,22 @@ async function getTaskHierarchy(taskId: string) {
         })
         
         const taskData = taskRes.getData()
-        if (taskData && taskData.task) {
-            const task = taskData.task
-            const debugTask = JSON.stringify(task) // Clone for log
+        // API can return { task: {...} } OR { result: { task: {...} } }
+        const taskObj = taskData?.result?.task || taskData?.task
+        console.log(`🔍 [Embedded] Hierarchy: taskData keys:`, taskData ? Object.keys(taskData) : 'null', 'taskObj:', !!taskObj)
+        if (taskObj) {
+            const debugTask = JSON.stringify(taskObj)
             console.log(`🔍 [Embedded] Hierarchy: Initial task ${taskId} raw data:`, debugTask)
             
-            // Try all possible cases
-            const gid = task.groupId || task.group_id || task.GROUP_ID || task.GroupId
+            // Try all possible cases for GROUP_ID
+            const gid = taskObj.groupId || taskObj.group_id || taskObj.GROUP_ID || taskObj.GroupId
+            console.log(`🔍 [Embedded] Hierarchy: GROUP_ID candidates:`, { groupId: taskObj.groupId, group_id: taskObj.group_id, GROUP_ID: taskObj.GROUP_ID, GroupId: taskObj.GroupId, resolved: gid })
             if (gid && gid !== '0') {
-                projectId = String(gid) // Ensure string
+                projectId = String(gid)
             }
             // Get INN fields
-            ourInn = task[config.value.TASK_FIELDS.OUR_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.OUR_INN]) || ''
-            clientInn = task[config.value.TASK_FIELDS.CLIENT_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.CLIENT_INN]) || ''
+            ourInn = taskObj[config.value.TASK_FIELDS.OUR_INN] || (taskObj.uf && taskObj.uf[config.value.TASK_FIELDS.OUR_INN]) || ''
+            clientInn = taskObj[config.value.TASK_FIELDS.CLIENT_INN] || (taskObj.uf && taskObj.uf[config.value.TASK_FIELDS.CLIENT_INN]) || ''
         } else {
              console.warn(`⚠️ [Embedded] Hierarchy: Task ${taskId} not found or no data`)
         }
