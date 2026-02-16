@@ -18,6 +18,7 @@ urlpatterns = [
     path('api/report-employee-project', views.report_employee_project, name='report_employee_project'),
     path('api/report-project-employee', views.report_project_employee, name='report_project_employee'),
     path('api/report-daily-workload', views.report_daily_workload, name='report_daily_workload'),
+    path('api/report-project-task-employee', views.report_project_task_employee, name='report_project_task_employee'),
 
     # Timesheets
     path('api/sync-timesheets', views.timesheet_sync, name='sync_timesheets'), # Matches api.ts: /api/sync-timesheets

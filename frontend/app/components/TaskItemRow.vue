@@ -22,7 +22,7 @@ const hours = computed(() => parseFloat(props.item.hours).toFixed(2))
                 <span class="text-sm text-slate-700 truncate">{{ item.title || 'Без названия' }}</span>
             </div>
             <div class="text-xs text-slate-400 ml-3.5 mt-0.5 flex gap-2">
-                <span>{{ new Date(item.createdTime).toLocaleDateString() }}</span>
+                <span>{{ new Date(item.date || item.createdTime).toLocaleDateString('ru-RU') }}</span>
                 <span>•</span>
                 <span class="truncate max-w-[200px]">{{ item.employeeName }}</span>
             </div>

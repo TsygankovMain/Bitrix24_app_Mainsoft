@@ -57,6 +57,13 @@ const tiles = [
         color: 'bg-orange-50 text-orange-600'
     },
     {
+        icon: CrmLettersIcon,
+        title: 'Учет по проектам/задачам',
+        description: 'Проект → Задача → Сотрудник → Метки',
+        action: () => router.push('/reports/project-task'),
+        color: 'bg-teal-50 text-teal-600'
+    },
+    {
         icon: SettingsIcon,
         title: 'Настройки',
         description: 'Настройки приложения',

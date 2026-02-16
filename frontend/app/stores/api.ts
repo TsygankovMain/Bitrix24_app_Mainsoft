@@ -119,6 +119,20 @@ export const useApiStore = defineStore(
       })
     }
 
+    const getReportProjectTaskEmployee = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+      if (dateTo) params.append('date_to', dateTo)
+      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
+      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+
+      return await $api(`/api/report-project-task-employee?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
     const syncTimesheets = async (): Promise<{ status: string; count: number }> => {
       return await $api('/api/sync-timesheets', {
         method: 'POST',
@@ -230,6 +244,7 @@ export const useApiStore = defineStore(
       postInstall,
       getReportEmployeeProject,
       getReportProjectEmployee,
+      getReportProjectTaskEmployee,
       getReportDailyWorkload,
       syncTimesheets,
       getTimesheetsList,

@@ -29,6 +29,7 @@ __all__ = [
     "report_employee_project",
     "report_project_employee",
     "report_daily_workload",
+    "report_project_task_employee",
     "timesheet_sync",
     "timesheet_list",
     "get_configuration",
@@ -237,7 +238,7 @@ def report_employee_project(request: AuthorizedRequest):
     
     # Date Filtering
     if date_from:
-        queryset = queryset.filter(date_reflection__gte=date_from)
+        queryset = queryset.filter(date_reflection__date__gte=date_from)
     if date_to:
         queryset = queryset.filter(date_reflection__date__lte=date_to)
         
@@ -295,7 +296,7 @@ def report_project_employee(request: AuthorizedRequest):
     proj_ids = request.GET.getlist('project_ids[]')
 
     if date_from:
-        queryset = queryset.filter(date_reflection__gte=date_from)
+        queryset = queryset.filter(date_reflection__date__gte=date_from)
     if date_to:
         queryset = queryset.filter(date_reflection__date__lte=date_to)
         
@@ -331,6 +332,59 @@ def report_project_employee(request: AuthorizedRequest):
     report_service = ReportService()
     report = report_service.generate_project_employees(items, user_map)
     
+    return JsonResponse(report, safe=False)
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_project_task_employee")
+@auth_required
+def report_project_task_employee(request: AuthorizedRequest):
+    """Report: Project -> Task Hierarchy -> Employee -> Items"""
+    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
+
+    date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+    emp_ids = request.GET.getlist('employee_ids[]')
+    proj_ids = request.GET.getlist('project_ids[]')
+
+    if date_from:
+        queryset = queryset.filter(date_reflection__date__gte=date_from)
+    if date_to:
+        queryset = queryset.filter(date_reflection__date__lte=date_to)
+
+    if emp_ids:
+        queryset = queryset.filter(employee_id__in=emp_ids)
+
+    if proj_ids:
+        q_obj = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
+        queryset = queryset.filter(q_obj)
+
+    items = []
+    user_ids = set()
+    for model_item in queryset:
+        user_ids.add(model_item.employee_id)
+        items.append({
+            "sotrudnik_id": model_item.employee_id,
+            "project_name": model_item.project_title,
+            "kolichestvo_chasov": model_item.hours,
+            "id_zadach_ierarhiya": model_item.task_hierarchy_ids,
+            "title_zadach_ierarhiya": model_item.task_hierarchy_titles,
+            "uchitivaem": model_item.is_billable,
+            "opisanie": model_item.description,
+            "data": model_item.date_reflection.isoformat() if model_item.date_reflection else None,
+            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title",
+            "id_zadachi": model_item.task_id,
+        })
+
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    data_service = BitrixDataService(request.bitrix24_account.client, config)
+
+    user_map = data_service.fetch_users(list(user_ids))
+
+    report_service = ReportService()
+    report = report_service.generate_project_task_employees(items, user_map)
+
     return JsonResponse(report, safe=False)
 
 
@@ -456,7 +510,7 @@ def report_daily_workload(request: AuthorizedRequest):
         date_to = today.isoformat()
 
     if date_from:
-        queryset = queryset.filter(date_reflection__gte=date_from)
+        queryset = queryset.filter(date_reflection__date__gte=date_from)
     if date_to:
         queryset = queryset.filter(date_reflection__date__lte=date_to)
         

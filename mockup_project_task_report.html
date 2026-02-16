@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мокап — Учет по проектам/задачам</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', sans-serif; background: #f8fafc; color: #334155; min-height: 100vh; }
+        
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        
+        /* Header */
+        .page-header { 
+            background: white; 
+            border: 1px solid #e2e8f0; 
+            border-radius: 12px; 
+            padding: 20px 24px; 
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .page-header h1 { font-size: 20px; font-weight: 700; color: #0f172a; }
+        .page-header .subtitle { font-size: 13px; color: #94a3b8; margin-top: 2px; }
+        
+        .btn-group { display: flex; gap: 8px; }
+        .btn { 
+            padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; 
+            cursor: pointer; border: none; display: flex; align-items: center; gap: 6px;
+            transition: all 0.15s ease;
+        }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-outline { background: white; border: 1px solid #e2e8f0; color: #475569; }
+        .btn-outline:hover { background: #f1f5f9; }
+        .btn-success { background: #10b981; color: white; }
+        .btn-success:hover { background: #059669; }
+        
+        /* Filters */
+        .filters { 
+            background: #f1f5f9; border-radius: 10px; padding: 16px; 
+            display: flex; gap: 16px; flex-wrap: wrap; align-items: end;
+            margin-bottom: 20px;
+        }
+        .filter-group { display: flex; flex-direction: column; gap: 4px; }
+        .filter-group label { font-size: 12px; font-weight: 600; color: #64748b; text-transform: uppercase; }
+        .filter-group input, .filter-group select { 
+            padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; 
+            font-size: 13px; background: white; min-width: 150px;
+        }
+        
+        /* Report Table */
+        .report-card { 
+            background: white; border: 1px solid #e2e8f0; border-radius: 12px; 
+            overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        
+        /* Tree structure */
+        .tree-row { 
+            display: flex; align-items: center; padding: 12px 16px; 
+            border-bottom: 1px solid #f1f5f9; transition: background 0.1s;
+        }
+        .tree-row:hover { background: #f8fafc; }
+        
+        .tree-row .name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+        .tree-row .name .icon { color: #94a3b8; font-size: 20px; flex-shrink: 0; }
+        .tree-row .name .text { font-size: 14px; font-weight: 500; }
+        .tree-row .name .badge { 
+            font-size: 10px; padding: 2px 8px; border-radius: 100px; 
+            font-weight: 600; flex-shrink: 0;
+        }
+        
+        .stat-col { width: 100px; text-align: right; flex-shrink: 0; }
+        .stat-col .val { font-size: 14px; font-weight: 600; }
+        .stat-col .label { font-size: 10px; color: #94a3b8; text-transform: uppercase; }
+        
+        /* Hierarchy levels */
+        .level-project { background: #eff6ff; }
+        .level-project .name .text { font-weight: 700; color: #1e40af; font-size: 15px; }
+        .level-project .name .icon { color: #3b82f6; }
+        .level-project .stat-col .val { color: #1e40af; }
+        
+        .level-task { padding-left: 40px; }
+        .level-task .name .text { font-weight: 600; color: #0f172a; }
+        .level-task .name .icon { color: #f59e0b; }
+        
+        .level-subtask { padding-left: 64px; }
+        .level-subtask .name .text { color: #475569; font-weight: 500; }
+        .level-subtask .name .icon { color: #a78bfa; }
+        .level-subtask .name .badge { background: #f3e8ff; color: #7c3aed; }
+        
+        .level-employee { padding-left: 88px; }
+        .level-employee .name .text { color: #334155; font-weight: 500; }
+        .level-employee .name .icon { color: #10b981; }
+        
+        .level-entry { padding-left: 112px; background: #fafbfc; }
+        .level-entry .name .text { color: #64748b; font-size: 13px; font-weight: 400; }
+        .level-entry .name .icon { color: #cbd5e1; font-size: 18px; }
+        .level-entry .stat-col .val { font-weight: 500; font-size: 13px; }
+        
+        .level-employee-direct { padding-left: 64px; }
+        .level-employee-direct .name .text { color: #334155; font-weight: 500; }
+        .level-employee-direct .name .icon { color: #10b981; }
+        
+        .level-entry-direct { padding-left: 88px; background: #fafbfc; }
+        .level-entry-direct .name .text { color: #64748b; font-size: 13px; font-weight: 400; }
+        .level-entry-direct .name .icon { color: #cbd5e1; font-size: 18px; }
+        .level-entry-direct .stat-col .val { font-weight: 500; font-size: 13px; }
+        
+        .considered { color: #059669; }
+        .not-considered { color: #ef4444; }
+        
+        /* Toggle arrow */
+        .toggle { 
+            width: 24px; height: 24px; display: flex; align-items: center; 
+            justify-content: center; border-radius: 6px; cursor: pointer;
+            transition: background 0.1s; flex-shrink: 0;
+        }
+        .toggle:hover { background: #e2e8f0; }
+        
+        /* Summary row */
+        .summary-row { 
+            background: #f8fafc; border-top: 2px solid #e2e8f0; 
+            padding: 16px; display: flex; justify-content: flex-end; gap: 40px;
+            font-weight: 700; color: #0f172a;
+        }
+        .summary-row .label { font-size: 12px; color: #64748b; text-transform: uppercase; }
+        .summary-row .val { font-size: 16px; margin-top: 2px; }
+        
+        /* Legend */
+        .legend { 
+            margin-top: 16px; display: flex; gap: 24px; 
+            font-size: 12px; color: #94a3b8; padding: 12px 0;
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .dot-project { background: #3b82f6; }
+        .dot-task { background: #f59e0b; }
+        .dot-subtask { background: #a78bfa; }
+        .dot-employee { background: #10b981; }
+        .dot-entry { background: #cbd5e1; }
+        
+        /* Section header */
+        .section-separator {
+            background: #0f172a; color: white; padding: 10px 16px;
+            display: flex; align-items: center; gap: 8px;
+            font-size: 13px; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .section-separator .material-symbols-outlined { font-size: 18px; }
+        
+        .table-header {
+            display: flex; align-items: center; padding: 10px 16px;
+            background: #f1f5f9; border-bottom: 2px solid #e2e8f0;
+            font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .table-header .name { flex: 1; }
+        
+        /* Description section */
+        .description {
+            background: white; border: 1px solid #e2e8f0; border-radius: 12px;
+            padding: 24px; margin-top: 24px;
+        }
+        .description h2 { font-size: 16px; font-weight: 700; margin-bottom: 16px; color: #0f172a; }
+        .description h3 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; color: #334155; }
+        .description ul { padding-left: 20px; }
+        .description li { font-size: 13px; color: #64748b; margin-bottom: 6px; line-height: 1.5; }
+        .description code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 12px; color: #e11d48; }
+        .highlight { background: #fefce8; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 12px 0; }
+        .highlight p { font-size: 13px; color: #78350f; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        
+        <!-- Header -->
+        <div class="page-header">
+            <div>
+                <h1>📊 Учет по проектам/задачам</h1>
+                <div class="subtitle">Группировка: Проект → Задача → Сотрудник → Метки времени</div>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-success">
+                    <span class="material-symbols-outlined" style="font-size:18px">download</span>
+                    Скачать Excel
+                </button>
+                <button class="btn btn-primary">
+                    <span class="material-symbols-outlined" style="font-size:18px">refresh</span>
+                    Обновить
+                </button>
+            </div>
+        </div>
+        
+        <!-- Filters -->
+        <div class="filters">
+            <div class="filter-group">
+                <label>Дата от</label>
+                <input type="date" value="2026-02-01">
+            </div>
+            <div class="filter-group">
+                <label>Дата до</label>
+                <input type="date" value="2026-02-16">
+            </div>
+            <div class="filter-group">
+                <label>Сотрудники</label>
+                <select><option>Все сотрудники</option></select>
+            </div>
+            <div class="filter-group">
+                <label>Проекты</label>
+                <select><option>Все проекты</option></select>
+            </div>
+        </div>
+        
+        <!-- Report -->
+        <div class="report-card">
+            
+            <!-- Table header -->
+            <div class="table-header">
+                <div class="name">Название</div>
+                <div class="stat-col">Всего</div>
+                <div class="stat-col">Учтено</div>
+                <div class="stat-col">Не учтено</div>
+            </div>
+            
+            <!-- ===================== ПРОЕКТ 1: Без подзадач ===================== -->
+            <!-- Проект -->
+            <div class="tree-row level-project">
+                <div class="name">
+                    <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                    <span class="material-symbols-outlined icon">folder</span>
+                    <span class="text">ООО "РосТехСтрой" — Автоматизация склада</span>
+                </div>
+                <div class="stat-col"><div class="val">42.50</div><div class="label">часов</div></div>
+                <div class="stat-col"><div class="val considered">38.00</div><div class="label">часов</div></div>
+                <div class="stat-col"><div class="val not-considered">4.50</div><div class="label">часов</div></div>
+            </div>
+            
+                <!-- Задача 1 (без подзадач) -->
+                <div class="tree-row level-task">
+                    <div class="name">
+                        <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                        <span class="material-symbols-outlined icon">task_alt</span>
+                        <span class="text">Разработка модуля приемки товаров</span>
+                    </div>
+                    <div class="stat-col"><div class="val">24.50</div></div>
+                    <div class="stat-col"><div class="val considered">22.00</div></div>
+                    <div class="stat-col"><div class="val not-considered">2.50</div></div>
+                </div>
+                
+                    <!-- Сотрудник (непосредственно в задаче) -->
+                    <div class="tree-row level-employee-direct">
+                        <div class="name">
+                            <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                            <span class="material-symbols-outlined icon">person</span>
+                            <span class="text">Иванов Алексей</span>
+                        </div>
+                        <div class="stat-col"><div class="val">16.00</div></div>
+                        <div class="stat-col"><div class="val considered">14.00</div></div>
+                        <div class="stat-col"><div class="val not-considered">2.00</div></div>
+                    </div>
+                    
+                        <!-- Метки времени -->
+                        <div class="tree-row level-entry-direct">
+                            <div class="name">
+                                <span class="material-symbols-outlined icon">schedule</span>
+                                <span class="text">Проектирование схемы БД приемки — <b>03.02.2026</b></span>
+                            </div>
+                            <div class="stat-col"><div class="val">6.00</div></div>
+                            <div class="stat-col"><div class="val considered">6.00</div></div>
+                            <div class="stat-col"><div class="val">—</div></div>
+                        </div>
+                        <div class="tree-row level-entry-direct">
+                            <div class="name">
+                                <span class="material-symbols-outlined icon">schedule</span>
+                                <span class="text">Реализация API эндпоинтов — <b>04.02.2026</b></span>
+                            </div>
+                            <div class="stat-col"><div class="val">8.00</div></div>
+                            <div class="stat-col"><div class="val considered">8.00</div></div>
+                            <div class="stat-col"><div class="val">—</div></div>
+                        </div>
+                        <div class="tree-row level-entry-direct">
+                            <div class="name">
+                                <span class="material-symbols-outlined icon">schedule</span>
+                                <span class="text">Исправление багов интеграции — <b>05.02.2026</b></span>
+                            </div>
+                            <div class="stat-col"><div class="val">2.00</div></div>
+                            <div class="stat-col"><div class="val not-considered">—</div></div>
+                            <div class="stat-col"><div class="val not-considered">2.00</div></div>
+                        </div>
+                    
+                    <!-- Сотрудник 2 -->
+                    <div class="tree-row level-employee-direct">
+                        <div class="name">
+                            <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                            <span class="material-symbols-outlined icon">person</span>
+                            <span class="text">Петрова Мария</span>
+                        </div>
+                        <div class="stat-col"><div class="val">8.50</div></div>
+                        <div class="stat-col"><div class="val considered">8.00</div></div>
+                        <div class="stat-col"><div class="val not-considered">0.50</div></div>
+                    </div>
+                    
+                        <div class="tree-row level-entry-direct">
+                            <div class="name">
+                                <span class="material-symbols-outlined icon">schedule</span>
+                                <span class="text">Верстка формы приемки — <b>04.02.2026</b></span>
+                            </div>
+                            <div class="stat-col"><div class="val">4.00</div></div>
+                            <div class="stat-col"><div class="val considered">4.00</div></div>
+                            <div class="stat-col"><div class="val">—</div></div>
+                        </div>
+                        <div class="tree-row level-entry-direct">
+                            <div class="name">
+                                <span class="material-symbols-outlined icon">schedule</span>
+                                <span class="text">Тестирование формы — <b>05.02.2026</b></span>
+                            </div>
+                            <div class="stat-col"><div class="val">4.50</div></div>
+                            <div class="stat-col"><div class="val considered">4.00</div></div>
+                            <div class="stat-col"><div class="val not-considered">0.50</div></div>
+                        </div>
+            
+                <!-- Задача 2 (с подзадачами!) -->
+                <div class="tree-row level-task">
+                    <div class="name">
+                        <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                        <span class="material-symbols-outlined icon">task_alt</span>
+                        <span class="text">Настройка отчетности</span>
+                    </div>
+                    <div class="stat-col"><div class="val">18.00</div></div>
+                    <div class="stat-col"><div class="val considered">16.00</div></div>
+                    <div class="stat-col"><div class="val not-considered">2.00</div></div>
+                </div>
+
+                    <!-- Подзадача 1 -->
+                    <div class="tree-row level-subtask">
+                        <div class="name">
+                            <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                            <span class="material-symbols-outlined icon">subdirectory_arrow_right</span>
+                            <span class="text">Дашборд складских остатков</span>
+                            <span class="badge" style="background:#f3e8ff;color:#7c3aed">Подзадача</span>
+                        </div>
+                        <div class="stat-col"><div class="val">10.00</div></div>
+                        <div class="stat-col"><div class="val considered">10.00</div></div>
+                        <div class="stat-col"><div class="val">—</div></div>
+                    </div>
+                    
+                        <!-- Сотрудник подзадачи -->
+                        <div class="tree-row level-employee">
+                            <div class="name">
+                                <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                                <span class="material-symbols-outlined icon">person</span>
+                                <span class="text">Сидоров Дмитрий</span>
+                            </div>
+                            <div class="stat-col"><div class="val">10.00</div></div>
+                            <div class="stat-col"><div class="val considered">10.00</div></div>
+                            <div class="stat-col"><div class="val">—</div></div>
+                        </div>
+                        
+                            <div class="tree-row level-entry">
+                                <div class="name">
+                                    <span class="material-symbols-outlined icon">schedule</span>
+                                    <span class="text">Макет дашборда в Figma — <b>06.02.2026</b></span>
+                                </div>
+                                <div class="stat-col"><div class="val">4.00</div></div>
+                                <div class="stat-col"><div class="val considered">4.00</div></div>
+                                <div class="stat-col"><div class="val">—</div></div>
+                            </div>
+                            <div class="tree-row level-entry">
+                                <div class="name">
+                                    <span class="material-symbols-outlined icon">schedule</span>
+                                    <span class="text">Реализация виджетов — <b>07.02.2026</b></span>
+                                </div>
+                                <div class="stat-col"><div class="val">6.00</div></div>
+                                <div class="stat-col"><div class="val considered">6.00</div></div>
+                                <div class="stat-col"><div class="val">—</div></div>
+                            </div>
+
+                    <!-- Подзадача 2 -->
+                    <div class="tree-row level-subtask">
+                        <div class="name">
+                            <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                            <span class="material-symbols-outlined icon">subdirectory_arrow_right</span>
+                            <span class="text">Экспорт в Excel</span>
+                            <span class="badge" style="background:#f3e8ff;color:#7c3aed">Подзадача</span>
+                        </div>
+                        <div class="stat-col"><div class="val">8.00</div></div>
+                        <div class="stat-col"><div class="val considered">6.00</div></div>
+                        <div class="stat-col"><div class="val not-considered">2.00</div></div>
+                    </div>
+                    
+                        <!-- Сотрудник подзадачи -->
+                        <div class="tree-row level-employee">
+                            <div class="name">
+                                <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                                <span class="material-symbols-outlined icon">person</span>
+                                <span class="text">Иванов Алексей</span>
+                            </div>
+                            <div class="stat-col"><div class="val">8.00</div></div>
+                            <div class="stat-col"><div class="val considered">6.00</div></div>
+                            <div class="stat-col"><div class="val not-considered">2.00</div></div>
+                        </div>
+                        
+                            <div class="tree-row level-entry">
+                                <div class="name">
+                                    <span class="material-symbols-outlined icon">schedule</span>
+                                    <span class="text">Генерация XLSX шаблона — <b>10.02.2026</b></span>
+                                </div>
+                                <div class="stat-col"><div class="val">4.00</div></div>
+                                <div class="stat-col"><div class="val considered">4.00</div></div>
+                                <div class="stat-col"><div class="val">—</div></div>
+                            </div>
+                            <div class="tree-row level-entry">
+                                <div class="name">
+                                    <span class="material-symbols-outlined icon">schedule</span>
+                                    <span class="text">Доработка стилей — <b>11.02.2026</b></span>
+                                </div>
+                                <div class="stat-col"><div class="val">2.00</div></div>
+                                <div class="stat-col"><div class="val considered">2.00</div></div>
+                                <div class="stat-col"><div class="val">—</div></div>
+                            </div>
+                            <div class="tree-row level-entry">
+                                <div class="name">
+                                    <span class="material-symbols-outlined icon">schedule</span>
+                                    <span class="text">Отладка формул — <b>12.02.2026</b></span>
+                                </div>
+                                <div class="stat-col"><div class="val">2.00</div></div>
+                                <div class="stat-col"><div class="val">—</div></div>
+                                <div class="stat-col"><div class="val not-considered">2.00</div></div>
+                            </div>
+            
+            <!-- ===================== ПРОЕКТ 2 ===================== -->
+            <div class="tree-row level-project">
+                <div class="name">
+                    <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                    <span class="material-symbols-outlined icon">folder</span>
+                    <span class="text">ИП Козлов — Интернет-магазин</span>
+                </div>
+                <div class="stat-col"><div class="val">15.00</div><div class="label">часов</div></div>
+                <div class="stat-col"><div class="val considered">12.00</div><div class="label">часов</div></div>
+                <div class="stat-col"><div class="val not-considered">3.00</div><div class="label">часов</div></div>
+            </div>
+            
+                <!-- Задача (без подзадач) -->
+                <div class="tree-row level-task">
+                    <div class="name">
+                        <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                        <span class="material-symbols-outlined icon">task_alt</span>
+                        <span class="text">Интеграция с платежной системой</span>
+                    </div>
+                    <div class="stat-col"><div class="val">15.00</div></div>
+                    <div class="stat-col"><div class="val considered">12.00</div></div>
+                    <div class="stat-col"><div class="val not-considered">3.00</div></div>
+                </div>
+                
+                    <div class="tree-row level-employee-direct">
+                        <div class="name">
+                            <span class="toggle"><span class="material-symbols-outlined">expand_more</span></span>
+                            <span class="material-symbols-outlined icon">person</span>
+                            <span class="text">Козлов Андрей</span>
+                        </div>
+                        <div class="stat-col"><div class="val">15.00</div></div>
+                        <div class="stat-col"><div class="val considered">12.00</div></div>
+                        <div class="stat-col"><div class="val not-considered">3.00</div></div>
+                    </div>
+                    
+                        <div class="tree-row level-entry-direct">
+                            <div class="name">
+                                <span class="material-symbols-outlined icon">schedule</span>
+                                <span class="text">Настройка вебхуков — <b>13.02.2026</b></span>
+                            </div>
+                            <div class="stat-col"><div class="val">5.00</div></div>
+                            <div class="stat-col"><div class="val considered">5.00</div></div>
+                            <div class="stat-col"><div class="val">—</div></div>
+                        </div>
+                        <div class="tree-row level-entry-direct">
+                            <div class="name">
+                                <span class="material-symbols-outlined icon">schedule</span>
+                                <span class="text">Обработка callback — <b>14.02.2026</b></span>
+                            </div>
+                            <div class="stat-col"><div class="val">7.00</div></div>
+                            <div class="stat-col"><div class="val considered">7.00</div></div>
+                            <div class="stat-col"><div class="val">—</div></div>
+                        </div>
+                        <div class="tree-row level-entry-direct">
+                            <div class="name">
+                                <span class="material-symbols-outlined icon">schedule</span>
+                                <span class="text">Решение конфликта версий — <b>15.02.2026</b></span>
+                            </div>
+                            <div class="stat-col"><div class="val">3.00</div></div>
+                            <div class="stat-col"><div class="val">—</div></div>
+                            <div class="stat-col"><div class="val not-considered">3.00</div></div>
+                        </div>
+            
+            <!-- Summary -->
+            <div class="summary-row">
+                <div>
+                    <div class="label">Всего часов</div>
+                    <div class="val">57.50</div>
+                </div>
+                <div>
+                    <div class="label" style="color:#059669">Учтено</div>
+                    <div class="val considered">50.00</div>
+                </div>
+                <div>
+                    <div class="label" style="color:#ef4444">Не учтено</div>
+                    <div class="val not-considered">7.50</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Legend -->
+        <div class="legend">
+            <div class="legend-item"><div class="legend-dot dot-project"></div>Проект</div>
+            <div class="legend-item"><div class="legend-dot dot-task"></div>Задача</div>
+            <div class="legend-item"><div class="legend-dot dot-subtask"></div>Подзадача</div>
+            <div class="legend-item"><div class="legend-dot dot-employee"></div>Сотрудник</div>
+            <div class="legend-item"><div class="legend-dot dot-entry"></div>Метка времени</div>
+        </div>
+        
+        <!-- Description of hierarchy -->
+        <div class="description">
+            <h2>📋 Описание структуры отчета</h2>
+            
+            <h3>Иерархия группировки:</h3>
+            
+            <div class="highlight">
+                <p><b>Если задача БЕЗ подзадач:</b><br>
+                📁 Проект → 📋 Задача → 👤 Сотрудник → 🕐 Метки времени</p>
+            </div>
+            
+            <div class="highlight">
+                <p><b>Если задача С подзадачами:</b><br>
+                📁 Проект → 📋 Задача → 🔹 Подзадача → 👤 Сотрудник подзадачи → 🕐 Метки времени</p>
+            </div>
+            
+            <h3>Демоданные в мокапе:</h3>
+            <ul>
+                <li><b>Проект 1 "ООО РосТехСтрой"</b> — содержит 2 задачи: одну без подзадач (3 сотрудника), одну с двумя подзадачами</li>
+                <li><b>Проект 2 "ИП Козлов"</b> — содержит 1 задачу без подзадач с 1 сотрудником</li>
+                <li>Демонстрируются оба варианта: прямые записи в задаче и через подзадачи</li>
+                <li>Показаны учтённые (зелёные) и неучтённые (красные) часы</li>
+            </ul>
+            
+            <h3>Столбцы:</h3>
+            <ul>
+                <li><b>Всего</b> — общее количество часов на уровне</li>
+                <li><b>Учтено</b> — часы с флагом "Учитывать" = Да (зелёный цвет)</li>
+                <li><b>Не учтено</b> — часы с флагом "Учитывать" = Нет (красный цвет)</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

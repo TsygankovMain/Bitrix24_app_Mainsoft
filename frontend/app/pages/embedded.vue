@@ -379,7 +379,7 @@ async function getTaskHierarchy(taskId: string) {
     let clientInn = ''
     
     try {
-        // 1. Get task info (GROUP_ID and INN fields)
+            // 1. Get task info (GROUP_ID and INN fields)
         const taskRes = await ($b24 as any).callMethod('tasks.task.get', {
             taskId: taskId,
             select: ['ID', 'TITLE', 'GROUP_ID', config.value.TASK_FIELDS.OUR_INN, config.value.TASK_FIELDS.CLIENT_INN]
@@ -388,14 +388,19 @@ async function getTaskHierarchy(taskId: string) {
         const taskData = taskRes.getData()
         if (taskData && taskData.task) {
             const task = taskData.task
-            console.log(`🔍 [Embedded] Hierarchy: Initial task ${taskId} data:`, task)
-            const gid = task.groupId || task.group_id || task.GROUP_ID
+            const debugTask = JSON.stringify(task) // Clone for log
+            console.log(`🔍 [Embedded] Hierarchy: Initial task ${taskId} raw data:`, debugTask)
+            
+            // Try all possible cases
+            const gid = task.groupId || task.group_id || task.GROUP_ID || task.GroupId
             if (gid && gid !== '0') {
-                projectId = gid
+                projectId = String(gid) // Ensure string
             }
             // Get INN fields
             ourInn = task[config.value.TASK_FIELDS.OUR_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.OUR_INN]) || ''
             clientInn = task[config.value.TASK_FIELDS.CLIENT_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.CLIENT_INN]) || ''
+        } else {
+             console.warn(`⚠️ [Embedded] Hierarchy: Task ${taskId} not found or no data`)
         }
         
         // 2. Get project/group name if exists
@@ -407,6 +412,8 @@ async function getTaskHierarchy(taskId: string) {
                 const groupData = groupRes.getData()
                 if (groupData && groupData[0]) {
                     projectTitle = groupData[0].NAME
+                } else if (groupData && groupData.result && groupData.result[0]) {
+                     projectTitle = groupData.result[0].NAME
                 }
             } catch (e) {
                 console.error('[Embedded] Error getting group:', e)
@@ -415,23 +422,24 @@ async function getTaskHierarchy(taskId: string) {
         
         // 3. Collect hierarchy (from task up to root)
         let currentTaskId: string | null = taskId
+        let loopCount = 0
         
-        while (currentTaskId) {
+        while (currentTaskId && loopCount < 20) { // Safety break
             try {
                 const result = await ($b24 as any).callMethod('tasks.task.get', {
                     taskId: currentTaskId,
                     select: ['ID', 'TITLE', 'PARENT_ID']
                 })
                 const data = result.getData()
-                const task = data.task
+                const task = data.task || data.result?.task
                 
                 if (task) {
-                    const tid = task.id || task.ID
-                    const ttitle = task.title || task.TITLE
-                    const tparent = task.parentId || task.parent_id || task.PARENT_ID
+                    const tid = task.id || task.ID || task.Id
+                    const ttitle = task.title || task.TITLE || task.Title
+                    const tparent = task.parentId || task.parent_id || task.PARENT_ID || task.ParentId
                     
-                    idPath.unshift(String(tid))
-                    titlePath.unshift(String(ttitle))
+                    if (tid) idPath.unshift(String(tid))
+                    if (ttitle) titlePath.unshift(String(ttitle))
                     
                     if (tparent && tparent !== '0') {
                         currentTaskId = String(tparent)
@@ -446,10 +454,18 @@ async function getTaskHierarchy(taskId: string) {
                 currentTaskId = null
             }
             // Output current step
-            console.log(`🔍 [Embedded] Hierarchy step: path length ${idPath.length}`)
+            console.log(`🔍 [Embedded] Hierarchy step: path length ${idPath.length}, next parent: ${currentTaskId}`)
+            loopCount++
         }
         
-        console.log('✅ [Embedded] Hierarchy collected:', { idPath, titlePath, projectId, projectTitle })
+        console.log('✅ [Embedded] Hierarchy collected FINAL:', { 
+            idPath, 
+            titlePath, 
+            projectId, 
+            projectTitle,
+            ourInn: !!ourInn,
+            clientInn: !!clientInn
+        })
 
         return {
             idPath,
@@ -464,8 +480,6 @@ async function getTaskHierarchy(taskId: string) {
         console.error('[Embedded] Error in getTaskHierarchy:', e)
         return null
     }
-}
-
 }
 
 function toggleTask(taskId: string) {

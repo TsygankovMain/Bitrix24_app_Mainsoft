@@ -403,7 +403,106 @@ class ReportService:
 
         return self._convert_tree_to_list(tree)
 
-    def generate_timesheet(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def generate_project_task_employees(self, items: List[Dict[str, Any]], user_map: Dict[str, str] = None) -> List[Dict[str, Any]]:
+        """
+        Group by Project -> Task Hierarchy -> Employee -> Items
+        For the new "Учет по проектам/задачам" report.
+        """
+        tree = {}
+        user_map = user_map or {}
+
+        for item in items:
+            emp_id = item['sotrudnik_id']
+            proj_name = item['project_name'] or "Без проекта"
+            
+            # Hours logic
+            hours = item['kolichestvo_chasov']
+            is_billable = item.get('uchitivaem', False)
+            billable = hours if is_billable else 0.0
+            non_billable = hours if not is_billable else 0.0
+            
+            # 1. Project Node
+            if proj_name not in tree:
+                tree[proj_name] = {
+                    "type": "project",
+                    "id": proj_name,
+                    "name": proj_name,
+                    "total_hours": 0.0,
+                    "billable_hours": 0.0,
+                    "non_billable_hours": 0.0,
+                    "children": {}
+                }
+            
+            proj_node = tree[proj_name]
+            proj_node["total_hours"] += hours
+            proj_node["billable_hours"] += billable
+            proj_node["non_billable_hours"] += non_billable
+            
+            # 2. Task Hierarchy
+            t_ids = item.get('id_zadach_ierarhiya') or []
+            t_titles = item.get('title_zadach_ierarhiya') or []
+            
+            current_level_children = proj_node["children"]
+            
+            if not t_ids:
+                t_ids = ["unknown"]
+                t_titles = ["Без задачи"]
+
+            for idx, t_id in enumerate(t_ids):
+                t_title = t_titles[idx] if idx < len(t_titles) else f"Task {t_id}"
+                
+                if t_id not in current_level_children:
+                    current_level_children[t_id] = {
+                        "type": "task",
+                        "id": t_id,
+                        "name": t_title,
+                        "total_hours": 0.0,
+                        "billable_hours": 0.0,
+                        "non_billable_hours": 0.0,
+                        "children": {},
+                        "employees": {}
+                    }
+                
+                task_node = current_level_children[t_id]
+                task_node["total_hours"] += hours
+                task_node["billable_hours"] += billable
+                task_node["non_billable_hours"] += non_billable
+                
+                if idx == len(t_ids) - 1:
+                    # Leaf task — add employee grouping
+                    if emp_id not in task_node["employees"]:
+                        task_node["employees"][emp_id] = {
+                            "type": "employee",
+                            "id": emp_id,
+                            "name": user_map.get(emp_id, f"Сотрудник {emp_id}"),
+                            "total_hours": 0.0,
+                            "billable_hours": 0.0,
+                            "non_billable_hours": 0.0,
+                            "items": []
+                        }
+                    
+                    emp_node = task_node["employees"][emp_id]
+                    emp_node["total_hours"] += hours
+                    emp_node["billable_hours"] += billable
+                    emp_node["non_billable_hours"] += non_billable
+                    emp_node["items"].append(item)
+                else:
+                    current_level_children = task_node["children"]
+
+        return self._convert_pte_tree(tree)
+
+    def _convert_pte_tree(self, nodes_dict: Dict) -> List[Dict]:
+        """Convert project-task-employee tree to list, handling employees dict."""
+        result = []
+        for key, node in nodes_dict.items():
+            if "children" in node:
+                node["children"] = self._convert_pte_tree(node["children"])
+            if "employees" in node:
+                node["employees"] = list(node["employees"].values())
+            result.append(node)
+        return result
+
+
         """
         Matrix: Employee vs Date (Day of month)
         Assumption: items are filtered by month before passing here, 
@@ -664,7 +763,6 @@ class TimesheetSyncService:
                         "hours": item['kolichestvo_chasov'],
                         "is_billable": item['uchitivaem'],
                         "non_billable_hours": item['ne_uchitivaemie_chasi'],
-                        "description": item['opisanie'],
                         "description": item['opisanie'],
                         "project_title": item['project_name'],
                         "project_id": item['project_id'],
