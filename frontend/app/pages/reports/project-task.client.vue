@@ -61,9 +61,8 @@ async function fetchReport() {
             selectedEmployees.value as string[], 
             selectedProjects.value as string[]
         )
-        // Expand all project nodes by default
+        // All groups collapsed by default
         expandedNodes.value = new Set()
-        reportData.value.forEach(p => expandedNodes.value.add(`project-${p.id}`))
     } catch (e) {
         processErrorGlobal(e)
     } finally {

@@ -113,7 +113,8 @@ async function loadConfigAndUsers() {
             TITLE_HIERARCHY: 'ufCrm87_1764191133',
             PROJECT_ID: 'ufCrm87_1764265626',
             PROJECT_TITLE: 'ufCrm87_1764265641',
-            DATE: 'ufCrm87_1764446274'
+            DATE: 'ufCrm87_1764446274',
+            TASK_NAME: 'ufCrm87_1764361585'
         },
         TASK_FIELDS: {
             OUR_INN: 'UF_TASKS_TASK_1758105743485',
@@ -492,7 +493,8 @@ function toggleTask(taskId: string) {
 
 function selectItem(item: any) {
     currentEditingId.value = item.id
-    editingItem.value = { ...item, splitHours: 0, splitInvert: false }
+    const taskId = findTaskIdForItem(item.id)
+    editingItem.value = { ...item, taskId, splitHours: 0, splitInvert: false }
 }
 
 function closeEditor() {
@@ -558,8 +560,8 @@ async function saveCurrentItem() {
             TITLE: editingItem.value.description.substring(0, 255)
         }
         
-        // If creating new entry, collect hierarchy
-        if (!editingItem.value.id && taskIdToSave) {
+        // Always collect hierarchy (for both new and existing entries)
+        if (taskIdToSave) {
             const hierarchy = await getTaskHierarchy(taskIdToSave)
             if (hierarchy) {
                 fields[config.value.FIELDS.TASK_HIERARCHY] = hierarchy.idPath
@@ -567,6 +569,10 @@ async function saveCurrentItem() {
                 if (hierarchy.projectId) {
                     fields[config.value.FIELDS.PROJECT_ID] = hierarchy.projectId
                     fields[config.value.FIELDS.PROJECT_TITLE] = hierarchy.projectTitle
+                }
+                // Task name from hierarchy (last element = current task title)
+                if (hierarchy.titlePath && hierarchy.titlePath.length > 0) {
+                    fields[config.value.FIELDS.TASK_NAME] = hierarchy.titlePath[hierarchy.titlePath.length - 1]
                 }
                 if (hierarchy.ourInn) fields[config.value.SPA_FIELDS.OUR_INN] = hierarchy.ourInn
                 if (hierarchy.clientInn) fields[config.value.SPA_FIELDS.CLIENT_INN] = hierarchy.clientInn
@@ -617,19 +623,41 @@ async function splitItem() {
             fields: { [config.value.FIELDS.HOURS]: remainingHours }
         })
 
-        // Create new
+        // Create new split entry with full hierarchy
         const newConsidered = editingItem.value.splitInvert ? !editingItem.value.isConsidered : editingItem.value.isConsidered
+        const splitTaskId = findTaskIdForItem(editingItem.value.id)
+        
+        const splitFields: any = {
+            TITLE: editingItem.value.description + ' (разделено)',
+            [config.value.FIELDS.HOURS]: splitHours,
+            [config.value.FIELDS.IS_CONSIDERED]: newConsidered ? 'Y' : 'N',
+            [config.value.FIELDS.DESCRIPTION]: editingItem.value.description + ' (разделено)',
+            [config.value.FIELDS.EMPLOYEE]: editingItem.value.employeeId,
+            [config.value.FIELDS.DATE]: editingItem.value.date,
+            [config.value.FIELDS.TASK_ID]: splitTaskId
+        }
+        
+        // Collect hierarchy for the split entry
+        if (splitTaskId) {
+            const hierarchy = await getTaskHierarchy(splitTaskId)
+            if (hierarchy) {
+                splitFields[config.value.FIELDS.TASK_HIERARCHY] = hierarchy.idPath
+                splitFields[config.value.FIELDS.TITLE_HIERARCHY] = hierarchy.titlePath
+                if (hierarchy.projectId) {
+                    splitFields[config.value.FIELDS.PROJECT_ID] = hierarchy.projectId
+                    splitFields[config.value.FIELDS.PROJECT_TITLE] = hierarchy.projectTitle
+                }
+                if (hierarchy.titlePath && hierarchy.titlePath.length > 0) {
+                    splitFields[config.value.FIELDS.TASK_NAME] = hierarchy.titlePath[hierarchy.titlePath.length - 1]
+                }
+                if (hierarchy.ourInn) splitFields[config.value.SPA_FIELDS.OUR_INN] = hierarchy.ourInn
+                if (hierarchy.clientInn) splitFields[config.value.SPA_FIELDS.CLIENT_INN] = hierarchy.clientInn
+            }
+        }
+
         await ($b24 as any).callMethod('crm.item.add', {
             entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-            fields: {
-                TITLE: editingItem.value.description + ' (разделено)',
-                [config.value.FIELDS.HOURS]: splitHours,
-                [config.value.FIELDS.IS_CONSIDERED]: newConsidered ? 'Y' : 'N',
-                [config.value.FIELDS.DESCRIPTION]: editingItem.value.description + ' (разделено)',
-                [config.value.FIELDS.EMPLOYEE]: editingItem.value.employeeId,
-                [config.value.FIELDS.DATE]: editingItem.value.date,
-                [config.value.FIELDS.TASK_ID]: findTaskIdForItem(editingItem.value.id)
-            }
+            fields: splitFields
         })
 
         if (rootTaskId.value) await loadData(rootTaskId.value)
