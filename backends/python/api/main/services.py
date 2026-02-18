@@ -667,6 +667,7 @@ class TimesheetSyncService:
         """
         Fetches all items from Bitrix24 and saves them to the database.
         Uses batching to handle 3000+ items.
+        Deletes local records that no longer exist in Bitrix24.
         """
         logger.info(f"Starting sync for account {self.account.pk}")
         
@@ -677,10 +678,7 @@ class TimesheetSyncService:
         start = 0
         limit = 50
         total_fetched = 0
-        
-        # We also need to map fields using DataProcessingService logic
-        # But DataProcessingService.normalize_items returns a dict with app-specific keys
-        # We can reuse it.
+        all_bitrix_ids = set()
 
         while True:
             try:
@@ -706,6 +704,13 @@ class TimesheetSyncService:
                 # 2. Normalize
                 normalized_items = self.processing_service.normalize_items(items)
                 
+                # Track all bitrix_ids we received
+                for item in normalized_items:
+                    try:
+                        all_bitrix_ids.add(int(item['id_elem']))
+                    except (ValueError, KeyError):
+                        pass
+                
                 # 3. Save to DB
                 self._save_batch(normalized_items)
 
@@ -723,8 +728,17 @@ class TimesheetSyncService:
                 
             except Exception as e:
                 logger.error(f"Sync error at start={start}: {e}")
-                # We stop on error to avoid infinite loops or partial implementation issues
                 raise e
+
+        # 4. Delete orphaned records (exist locally but not in Bitrix24)
+        if all_bitrix_ids:
+            deleted_count, _ = TimesheetItem.objects.filter(
+                bitrix24_account=self.account
+            ).exclude(
+                bitrix_id__in=all_bitrix_ids
+            ).delete()
+            if deleted_count > 0:
+                logger.info(f"Deleted {deleted_count} orphaned records")
 
         logger.info(f"Sync complete. Total items: {total_fetched}")
         return total_fetched
