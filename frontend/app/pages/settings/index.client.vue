@@ -13,6 +13,23 @@
         <!-- Theme Switcher -->
         <ThemeSwitcher />
 
+        <!-- Reports Settings -->
+        <div class="p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
+          <h3 class="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">Отчёты</h3>
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-gray-700 dark:text-gray-300">Кликабельные метки</p>
+              <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                Названия меток времени в отчётах становятся ссылками, открывающими карточку элемента.
+              </p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer ml-4">
+              <input type="checkbox" v-model="clickableLabelsEnabled" @change="saveUserSettings" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+        </div>
+
         <!-- Configuration Link -->
         <div class="p-4 bg-gray-100 dark:bg-gray-800 rounded-lg">
           <h3 class="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">Конфигурация</h3>
@@ -54,11 +71,25 @@
 import ThemeSwitcher from '~/components/ThemeSwitcher.vue'
 
 const router = useRouter()
+const userSettings = useUserSettingsStore()
 
 useHead({
   title: 'Настройки'
 })
 
-// The useTheme composable is called within ThemeSwitcher,
-// but we could also call it here if the page needed direct access to the theme state.
+const clickableLabelsEnabled = ref(userSettings.configSettings.clickableLabelsEnabled ?? false)
+
+// Sync local ref with store changes
+watch(() => userSettings.configSettings.clickableLabelsEnabled, (val) => {
+  clickableLabelsEnabled.value = val ?? false
+})
+
+async function saveUserSettings() {
+  userSettings.configSettings.clickableLabelsEnabled = clickableLabelsEnabled.value
+  try {
+    await userSettings.saveSettings()
+  } catch (e) {
+    console.error('Failed to save user settings:', e)
+  }
+}
 </script>

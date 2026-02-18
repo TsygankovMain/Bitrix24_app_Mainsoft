@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { B24Icon } from '@bitrix24/b24icons-vue' // Assuming we have this or similar
+import { openCrmItemCard } from '~/utils/openCrmItem'
 
 
 const props = defineProps({
@@ -10,6 +10,14 @@ const props = defineProps({
   },
   level: {
     type: Number,
+    default: 0
+  },
+  clickableLabels: {
+    type: Boolean,
+    default: false
+  },
+  entityTypeId: {
+    type: [String, Number],
     default: 0
   }
 })
@@ -50,6 +58,12 @@ const openTask = (id: string | number) => {
         BX24.openPath(`/company/personal/user/0/tasks/task/view/${id}/`)
     } else {
         window.open(`/company/personal/user/0/tasks/task/view/${id}/`, '_blank')
+    }
+}
+
+const handleLabelClick = (itemIdElem: string | number) => {
+    if (props.clickableLabels && props.entityTypeId) {
+        openCrmItemCard(props.entityTypeId, itemIdElem)
     }
 }
 </script>
@@ -106,7 +120,9 @@ const openTask = (id: string | number) => {
             v-for="(child, key) in node.children" 
             :key="key" 
             :node="child" 
-            :level="level + 1" 
+            :level="level + 1"
+            :clickable-labels="clickableLabels"
+            :entity-type-id="entityTypeId"
           />
       </template>
 
@@ -115,7 +131,12 @@ const openTask = (id: string | number) => {
           <tr v-for="item in node.items" :key="item.id_elem" class="bg-white hover:bg-gray-50 border-b">
                <td class="py-2 pr-4 text-sm text-gray-600 flex items-start" :style="{ paddingLeft: `${(level + 1) * 20 + 20}px` }">
                    <span class="mr-2 mt-0.5">📄</span>
-                   <span class="whitespace-normal break-words">{{ item.opisanie || 'Без описания' }}</span>
+                   <span 
+                       v-if="clickableLabels && entityTypeId && item.id_elem"
+                       @click.stop="handleLabelClick(item.id_elem)"
+                       class="whitespace-normal break-words text-blue-600 hover:underline hover:text-blue-800 cursor-pointer"
+                   >{{ item.opisanie || 'Без описания' }}</span>
+                   <span v-else class="whitespace-normal break-words">{{ item.opisanie || 'Без описания' }}</span>
                </td>
                
                <td class="px-6 py-2 whitespace-nowrap text-sm text-gray-900">
@@ -137,3 +158,4 @@ const openTask = (id: string | number) => {
       </template>
   </template>
 </template>
+

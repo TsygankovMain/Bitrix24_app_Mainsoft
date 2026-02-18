@@ -4,6 +4,7 @@ import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
+import { openCrmItemCard } from '~/utils/openCrmItem'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -20,6 +21,7 @@ const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
+const userSettings = useUserSettingsStore()
 // endregion ////
 
 const { contextId, isLoading: isLoadingState, load } = useDashboard({ isLoading: ref(false), load: () => {} })
@@ -36,6 +38,15 @@ const dateFrom = ref('')
 const dateTo = ref('')
 const isInit = ref(false)
 const expandedNodes = ref<Set<string>>(new Set())
+const entityTypeId = ref<string | number>(0)
+
+const clickableLabelsEnabled = computed(() => userSettings.configSettings.clickableLabelsEnabled ?? false)
+
+function handleLabelClick(itemIdElem: string | number) {
+    if (clickableLabelsEnabled.value && entityTypeId.value) {
+        openCrmItemCard(entityTypeId.value, itemIdElem)
+    }
+}
 
 // Filters State
 const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
@@ -190,6 +201,16 @@ onMounted(async () => {
     
     await fetchFilterOptions()
     
+    // Load entity type ID for clickable labels
+    try {
+      const cfg = await apiStore.getConfiguration()
+      if (cfg?.sp_entity_type_id) {
+        entityTypeId.value = cfg.sp_entity_type_id
+      }
+    } catch (e) {
+      console.warn('Could not load entity type ID:', e)
+    }
+    
     // Set default range (current month)
     const now = new Date()
     dateFrom.value = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0] ?? ''
@@ -342,7 +363,8 @@ onMounted(async () => {
                                                   <div v-for="item in emp.items" :key="'si-' + item.id_zadachi" class="flex items-center px-4 py-1.5 pl-32 bg-gray-50/50 border-t border-gray-50/30">
                                                       <div class="flex items-center gap-2 flex-1 min-w-0">
                                                           <span class="text-xs text-gray-400">🕐</span>
-                                                          <span class="text-xs text-gray-500">{{ item.opisanie || item.nazvanie_zadachi || '—' }}</span>
+                                                          <span v-if="clickableLabelsEnabled && entityTypeId && item.id_elem" @click.stop="handleLabelClick(item.id_elem)" class="text-xs text-blue-600 hover:underline hover:text-blue-800 cursor-pointer">{{ item.opisanie || item.nazvanie_zadachi || '—' }}</span>
+                                                          <span v-else class="text-xs text-gray-500">{{ item.opisanie || item.nazvanie_zadachi || '—' }}</span>
                                                           <span class="text-xs text-gray-400">— {{ formatDate(item.data) }}</span>
                                                       </div>
                                                       <div class="w-24 text-right text-xs text-gray-500">{{ formatHours(item.kolichestvo_chasov) }}</div>
@@ -377,8 +399,9 @@ onMounted(async () => {
                                           <div v-for="item in emp.items" :key="'i-' + item.id_zadachi" class="flex items-center px-4 py-1.5 pl-24 bg-gray-50/50 border-t border-gray-50/30">
                                               <div class="flex items-center gap-2 flex-1 min-w-0">
                                                   <span class="text-xs text-gray-400">🕐</span>
-                                                  <span class="text-xs text-gray-500">{{ item.opisanie || item.nazvanie_zadachi || '—' }}</span>
-                                                  <span class="text-xs text-gray-400">— {{ formatDate(item.data) }}</span>
+                                              <span v-if="clickableLabelsEnabled && entityTypeId && item.id_elem" @click.stop="handleLabelClick(item.id_elem)" class="text-xs text-blue-600 hover:underline hover:text-blue-800 cursor-pointer">{{ item.opisanie || item.nazvanie_zadachi || '—' }}</span>
+                                              <span v-else class="text-xs text-gray-500">{{ item.opisanie || item.nazvanie_zadachi || '—' }}</span>
+                                              <span class="text-xs text-gray-400">— {{ formatDate(item.data) }}</span>
                                               </div>
                                               <div class="w-24 text-right text-xs text-gray-500">{{ formatHours(item.kolichestvo_chasov) }}</div>
                                               <div class="w-24 text-right text-xs" :class="item.uchitivaem ? 'text-emerald-600' : 'text-gray-400'">{{ item.uchitivaem ? formatHours(item.kolichestvo_chasov) : '—' }}</div>

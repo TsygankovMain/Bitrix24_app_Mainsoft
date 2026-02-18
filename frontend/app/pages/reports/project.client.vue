@@ -21,6 +21,7 @@ const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
+const userSettings = useUserSettingsStore()
 // endregion ////
 
 const { contextId, isLoading: isLoadingState, load } = useDashboard({ isLoading: ref(false), load: () => {} })
@@ -36,6 +37,9 @@ const reportData = ref<any[]>([])
 const dateFrom = ref('') // YYYY-MM-DD
 const dateTo = ref('')   // YYYY-MM-DD
 const isInit = ref(false)
+const entityTypeId = ref<string | number>(0)
+
+const clickableLabelsEnabled = computed(() => userSettings.configSettings.clickableLabelsEnabled ?? false)
 
 // Filters State
 const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
@@ -128,6 +132,16 @@ onMounted(async () => {
     
     await fetchFilterOptions()
 
+    // Load entity type ID for clickable labels
+    try {
+      const cfg = await apiStore.getConfiguration()
+      if (cfg?.sp_entity_type_id) {
+        entityTypeId.value = cfg.sp_entity_type_id
+      }
+    } catch (e) {
+      console.warn('Could not load entity type ID:', e)
+    }
+
     // Set default range (current month)
     const now = new Date()
     dateFrom.value = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0] ?? ''
@@ -191,7 +205,7 @@ onMounted(async () => {
               <span class="text-gray-500">Загрузка...</span>
           </div>
           <div v-else>
-              <ProjectEmployeeTable :data="reportData" />
+              <ProjectEmployeeTable :data="reportData" :clickable-labels="clickableLabelsEnabled" :entity-type-id="entityTypeId" />
           </div>
       </B24Card>
   </div>

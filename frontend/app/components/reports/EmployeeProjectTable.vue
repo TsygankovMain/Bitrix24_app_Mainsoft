@@ -6,6 +6,14 @@ defineProps({
   data: {
     type: Array as PropType<any[]>,
     required: true
+  },
+  clickableLabels: {
+    type: Boolean,
+    default: false
+  },
+  entityTypeId: {
+    type: [String, Number],
+    default: 0
   }
 })
 </script>
@@ -28,8 +36,11 @@ defineProps({
             :key="node.id" 
             :node="node" 
             :level="0"
+            :clickable-labels="clickableLabels"
+            :entity-type-id="entityTypeId"
         />
       </tbody>
     </table>
   </div>
 </template>
+
