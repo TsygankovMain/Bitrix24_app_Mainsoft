@@ -267,7 +267,8 @@ def report_employee_project(request: AuthorizedRequest):
             "uchitivaem": model_item.is_billable,
             "opisanie": model_item.description,
             "data": model_item.date_reflection.isoformat() if model_item.date_reflection else None,
-            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title"
+            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title",
+            "id_elem": model_item.bitrix_id,
         })
     
     # Config & Services
@@ -320,7 +321,8 @@ def report_project_employee(request: AuthorizedRequest):
             "uchitivaem": model_item.is_billable,
             "opisanie": model_item.description,
             "data": model_item.date_reflection.isoformat() if model_item.date_reflection else None,
-            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title"
+            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title",
+            "id_elem": model_item.bitrix_id,
         })
     
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
@@ -374,6 +376,7 @@ def report_project_task_employee(request: AuthorizedRequest):
             "data": model_item.date_reflection.isoformat() if model_item.date_reflection else None,
             "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title",
             "id_zadachi": model_item.task_id,
+            "id_elem": model_item.bitrix_id,
         })
 
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
