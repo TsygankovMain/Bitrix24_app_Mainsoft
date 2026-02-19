@@ -106,6 +106,16 @@ const router = useRouter()
 
           <!-- Mockup: Main Interface -->
 
+          <div class="border rounded-xl shadow-2xl bg-white overflow-hidden ring-1 ring-slate-900/5">
+              <!-- Fake Header -->
+              <div class="bg-slate-50 px-6 py-4 border-b flex items-center justify-between">
+                  <div>
+                      <div class="font-bold text-slate-700 text-lg flex items-center gap-2">
+                          <span class="text-blue-500">📦</span> Учет трудозатрат
+                      </div>
+                      <div class="text-xs text-slate-400 mt-1">Встройка для учета времени по задачам</div>
+                  </div>
+                  <div class="flex gap-6 text-sm">
                       <div class="flex flex-col items-end">
                           <span class="text-xs text-slate-400 uppercase">План по проекту</span>
                           <span class="font-bold text-slate-700">120 ч.</span>
