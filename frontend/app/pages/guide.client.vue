@@ -33,7 +33,9 @@ const router = useRouter()
         <!-- 1. Введение -->
         <section class="space-y-6 w-full">
           <div class="w-full">
-
+            <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-4">1. Введение</h2>
+            <p class="lead text-lg text-gray-700 w-full">
+              Добро пожаловать в систему «Учет трудозатрат»! Это приложение создано для того, чтобы сделать процесс фиксации рабочего времени простым, прозрачным и полезным для каждого сотрудника и руководителя.
             </p>
             <div class="grid md:grid-cols-3 gap-6 mt-8 w-full">
                 <div class="p-6 bg-blue-50 rounded-xl border border-blue-100">
