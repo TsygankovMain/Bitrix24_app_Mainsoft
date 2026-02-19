@@ -261,7 +261,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="mx-3 flex flex-col items-center justify-center gap-1 h-dvh">
+  <div class="mx-auto px-6 max-w-2xl w-full flex flex-col items-center justify-center gap-1 h-dvh">
     <Logo
       class="size-[208px]"
       :class="[
@@ -273,13 +273,13 @@ onMounted(async () => {
       size="xs"
       animation="elastic"
       :color="progressColor"
-      class="w-1/2 sm:w-1/3"
+      class="w-3/4 sm:w-2/3"
     />
     <div class="mt-6 flex flex-col items-center justify-center gap-2">
       <ProseH1 class="text-nowrap mb-0">
         {{ $t('page.install.ui.title') }}
       </ProseH1>
-      <ProseP small accent="less">
+      <ProseP small>
         {{ steps[stepCode]?.caption || '...' }}
       </ProseP>
     </div>

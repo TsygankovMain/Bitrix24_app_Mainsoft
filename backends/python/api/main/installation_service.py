@@ -149,38 +149,40 @@ class InstallationService:
             'ne_uchitivaemie_chasi': ('B24APP_NON_BILLABLE', 'Неучитываемые часы', 'double'),
             'opisanie': ('B24APP_DESCRIPTION', 'Описание', 'string'),
             'project_title': ('B24APP_PROJECT', 'Проект', 'string'),
-            # 'project_id' can be stored in project string or separate integer
             'project_id': ('B24APP_PROJECT_ID', 'ID Проекта', 'integer'),
             'data': ('B24APP_DATE', 'Дата отражения', 'date'),
-            'id_zadach_ierarhiya': ('B24APP_TASK_HIERARCHY_IDS', 'Иерархия ID', 'string'), # JSON string
-            'title_zadach_ierarhiya': ('B24APP_TASK_HIERARCHY_ITLES', 'Иерархия Названий', 'string'), # JSON string
+            'id_zadach_ierarhiya': ('B24APP_TASK_HIER_IDS', 'Иерархия ID', 'string'),
+            'title_zadach_ierarhiya': ('B24APP_TASK_HIER_TITLES', 'Иерархия Названий', 'string'),
             'task_name': ('B24APP_TASK_NAME', 'Название задачи', 'string'),
             'our_inn': ('B24APP_OUR_INN', 'Наш ИНН', 'string'),
             'client_inn': ('B24APP_CLIENT_INN', 'ИНН клиента', 'string'),
         }
         
         mapping = {}
+        errors = []
         
-        for key, (chem_name, label, type_) in required_fields.items():
-            # userfieldconfig.add
-            # For SP, moduleId = 'crm', fieldId = 'CRM_<ID>'
+        for key, (field_suffix, label, type_) in required_fields.items():
+            # userfieldconfig.add creates UF fields
+            # entityId format: CRM_{sp_id} for smart processes
+            # fieldName: Bitrix appends UF_CRM_{sp_id}_ prefix automatically
+            entity_id = f"CRM_{sp_id}"
             
             field_config = {
                 'moduleId': 'crm',
                 'field': {
-                    'entityId': f"CRM_{sp_id}",
-                    'fieldName': chem_name,
+                    'entityId': entity_id,
+                    'fieldName': field_suffix,
                     'userTypeId': type_,
-                    'editFormLabel': {'ru': label},
-                    'listColumnLabel': {'ru': label},
-                    'filterLabel': {'ru': label},
+                    'editFormLabel': {'ru': label, 'en': label},
+                    'listColumnLabel': {'ru': label, 'en': label},
+                    'filterLabel': {'ru': label, 'en': label},
                 }
             }
             
             try:
+                logger.info(f"Creating field {key}: entityId={entity_id}, fieldName={field_suffix}, type={type_}")
                 response = self.bitrix24_account.call_method('userfieldconfig.add', field_config)
-                # response['result']['field']['fieldName'] or similar
-                # actually userfieldconfig returns the created field object
+                logger.info(f"Response for {key}: {response}")
                 
                 # Check response structure
                 res = response.get('result', {})
@@ -189,17 +191,34 @@ class InstallationService:
                 
                 if created_name:
                     mapping[key] = created_name
-                    logger.info(f"Created field {key} -> {created_name}")
+                    logger.info(f"✅ Created field {key} -> {created_name}")
                 else:
-                    logger.warning(f"Field creation returned unexpected response for {key}")
+                    # Maybe the response structure is different
+                    logger.warning(f"⚠️ Field creation for {key} returned unexpected response: {response}")
+                    # Try to extract from other response formats
+                    if isinstance(res, dict) and 'fieldName' in res:
+                        mapping[key] = res['fieldName']
+                    else:
+                        errors.append(f"{key}: unexpected response format")
                     
             except Exception as e:
-                # If field already exists (e.g. reinstall), we might catch error or ignore
-                # Ideally we check existence first or handle "already exists" error
-                logger.warning(f"Error creating field {key}: {e}")
-                # Fallback: assume it exists with the name we asked for?
-                mapping[key] = chem_name 
+                error_msg = str(e)
+                logger.warning(f"❌ Error creating field {key}: {error_msg}")
+                errors.append(f"{key}: {error_msg}")
                 
+                # Check if "already exists" error — try to find existing field
+                if 'already' in error_msg.lower() or 'exist' in error_msg.lower() or 'уже' in error_msg.lower():
+                    # Field likely exists, try to guess its name
+                    # Bitrix creates fields as ufCrmXX_XXXXXXXXX format
+                    logger.info(f"Field {key} may already exist, using suffix as fallback")
+                    mapping[key] = field_suffix
+                else:
+                    mapping[key] = field_suffix  # fallback
+        
+        if errors:
+            logger.warning(f"Field creation completed with {len(errors)} errors: {errors}")
+        
+        logger.info(f"Final mapping ({len(mapping)} fields): {mapping}")
         return mapping
 
     def _install_placements_sync(self) -> None:

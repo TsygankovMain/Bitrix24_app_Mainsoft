@@ -198,7 +198,7 @@ onMounted(async () => {
               </div>
 
               <div class="w-full">
-                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Смарт-процесс</label>
+                  <label class="block text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Смарт-процесс</label>
                   <select 
                     v-model="selectedSpId" 
                     class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
@@ -219,7 +219,7 @@ onMounted(async () => {
                             />
                             <B24Button 
                                 label="Создать смарт-процесс" 
-                                color="warning" 
+                                color="primary" 
                                 size="sm"
                                 @click="handleCreateSmartProcess" 
                                 :loading="isCreatingSP"
@@ -227,14 +227,14 @@ onMounted(async () => {
                             />
                             <B24Button 
                                 label="Создать все поля" 
-                                color="danger" 
+                                color="primary" 
                                 size="sm"
                                 @click="handleCreateFields" 
                                 :loading="isCreatingFields"
                                 :disabled="!selectedSpId || isCreatingFields"
                             />
                         </div>
-                        <p class="text-sm text-gray-500">
+                        <p class="text-sm text-gray-700 dark:text-gray-300">
                             Выберите процесс и нажмите "Подгрузить", чтобы получить список полей.
                             Или создайте новый процесс и поля кнопками выше.
                         </p>
