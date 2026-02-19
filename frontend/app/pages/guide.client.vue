@@ -6,19 +6,6 @@ useHead({
 })
 
 const router = useRouter()
-const route = useRoute()
-
-const backLabel = computed(() => {
-  return route.query.from === 'embedded' ? 'Назад к задаче' : 'Назад к меню'
-})
-
-function goBack() {
-  if (route.query.from === 'embedded') {
-    router.back()
-  } else {
-    router.push('/')
-  }
-}
 </script>
 
 <template>
@@ -26,7 +13,7 @@ function goBack() {
     <div class="w-full max-w-full">
       <!-- Header -->
       <div class="mb-8">
-        <B24Button :label="backLabel" color="link" @click="goBack" class="mb-4 pl-0" />
+        <B24Button label="Назад к меню" color="link" @click="router.push('/')" class="mb-4 pl-0" />
         <div class="flex items-center gap-4">
             <div class="p-3 bg-purple-100 rounded-full text-purple-600">
                 <BookOpen1Icon class="w-8 h-8" />
