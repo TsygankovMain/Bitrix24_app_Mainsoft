@@ -163,8 +163,22 @@ async function handleCreateFields() {
 
     isCreatingFields.value = true
     statusMessage.value = null
-    const spId = selectedSpId.value
-    console.log('🔧 [CreateFields] Starting for SP ID:', spId)
+    const entityTypeId = selectedSpId.value
+    console.log('🔧 [CreateFields] Starting for entityTypeId:', entityTypeId)
+
+    // IMPORTANT: userfieldconfig.add requires the SPA's ordinal `id`, NOT `entityTypeId`
+    // e.g. if entityTypeId=1040, the actual id might be 87 (like in ufCrm87_xxx)
+    // Find the real id from the smartProcesses list
+    const spInfo = smartProcesses.value.find((sp: any) => sp.entityTypeId === entityTypeId)
+    const spaOrdinalId = spInfo?.id
+    console.log('🔧 [CreateFields] SPA ordinal id:', spaOrdinalId, 'entityTypeId:', entityTypeId)
+    console.log('🔧 [CreateFields] Full SP info:', JSON.stringify(spInfo))
+
+    if (!spaOrdinalId) {
+        showStatus('error', `Не удалось определить внутренний ID для entityTypeId=${entityTypeId}. Перезагрузите страницу.`)
+        isCreatingFields.value = false
+        return
+    }
 
     // Fields to create, with Bitrix24 API types
     const FIELDS_TO_CREATE = [
@@ -192,13 +206,13 @@ async function handleCreateFields() {
         showStatus('success', `Создание поля ${created + 1}/${FIELDS_TO_CREATE.length}: ${field.label}...`)
 
         try {
-            console.log(`📝 [CreateFields] Creating: ${field.key} (${field.name}, type=${field.type}, entityId=CRM_${spId})`)
+            console.log(`📝 [CreateFields] Creating: ${field.key} (${field.name}, type=${field.type}, entityId=CRM_${spaOrdinalId})`)
 
             // @ts-ignore - callMethod typing
             const result = await $b24!.callMethod('userfieldconfig.add', {
                 moduleId: 'crm',
                 field: {
-                    entityId: `CRM_${spId}`,
+                    entityId: `CRM_${spaOrdinalId}`,
                     fieldName: field.name,
                     userTypeId: field.type,
                     editFormLabel: { ru: field.label, en: field.label },
@@ -249,7 +263,7 @@ async function handleCreateFields() {
         console.log('💾 [CreateFields] Saving mapping:', newMapping)
         const newConfig = {
             ...config.value,
-            sp_entity_type_id: spId,
+            sp_entity_type_id: entityTypeId,
             fields_mapping: newMapping,
             is_configured: true,
         }
@@ -258,7 +272,7 @@ async function handleCreateFields() {
         mapping.value = { ...newMapping }
 
         // Reload fields list
-        await loadSpFields(spId)
+        await loadSpFields(entityTypeId)
 
         if (errors.length === 0) {
             showStatus('success', `✅ Создано ${created} из ${FIELDS_TO_CREATE.length} полей. Маппинг сохранён.`)
