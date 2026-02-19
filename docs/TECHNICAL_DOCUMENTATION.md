@@ -186,10 +186,10 @@ dev_pyton_app/
 Конфигурация хранится в `app.option` ключ `timestamp_config` (JSON):
 ```json
 {
-  "sp_entity_type_id": 1164,
+  "sp_entity_type_id": 1040,
   "fields_mapping": {
-    "id_zadachi": "ufCrm87_1761919581",
-    "sotrudnik": "ufCrm87_1761919601",
+    "id_zadachi": "ufCrm10TaskId",
+    "sotrudnik": "ufCrm10Employee",
     ...
   },
   "is_configured": true
@@ -198,28 +198,42 @@ dev_pyton_app/
 Бэкенд загружает конфигурацию через `ConfigurationService.get_configuration_sync()` при каждом API-запросе.
 
 ### Фронтенд
-- Отчётные страницы (`employee`, `project`, `daily`, `project-task`) работают через бэкенд → конфигурация динамическая.
-- **Виджет (`embedded.vue`)** — ⚠️ содержит **захардкоженную конфигурацию** (см. раздел [Хардкод](#хардкод)).
+- Используется `stores/fieldConfig.ts` (Pinia) для загрузки конфигурации при старте приложения.
+- **Виджет (`embedded.vue`)** и все отчеты используют этот стор для получения ID полей.
+- **Маппинг** и создание полей происходят на странице настроек (`settings/mapping.client.vue`) через прямой вызов Bitrix API (`userfieldconfig.add`).
 
 ---
 
 ## 7. Модель данных
 
+### Основные поля (динамические ID)
+
+Поля создаются автоматически с префиксом `UF_CRM_{id}_`. Маппинг хранит связь между внутренним ключом и реальным кодом поля в Битрикс24.
+
+| Ключ | Назначение | Тип |
+|------|------------|-----|
+| `id_zadachi` | ID задачи | integer |
+| `sotrudnik` | Сотрудник | employee |
+| `kolichestvo_chasov` | Часы | double |
+| `uchitivaem` | Учитываем? | boolean |
+| `ne_uchitivaemie_chasi` | Не учтено | double |
+| `opisanie` | Описание | string |
+| `project_title` | Название проекта | string |
+| `project_id` | ID проекта | integer |
+| `data` | Дата | date |
+| `task_name` | Название задачи | string |
+| `our_inn` | Наш ИНН | string |
+| `client_inn` | ИНН клиента | string |
+
 ### Иерархические поля
 
-Поля `id_zadach_ierarhiya` / `title_zadach_ierarhiya` — JSON-массивы, хранящие путь от корневой задачи до текущей:
+Поля `id_zadach_ierarhiya` / `title_zadach_ierarhiya` — **множественные** строковые поля, хранящие путь от корневой задачи:
 
 ```
-Задача «Разработка» (ID: 901) → «Backend» (ID: 905) → «БД» (ID: 912)
-
-id_zadach_ierarhiya:    ["901", "905", "912"]
-title_zadach_ierarhiya: ["Разработка", "Backend", "БД"]
+Задача «Разработка» (ID: 901) → «Backend» (ID: 905)
+id_zadach_ierarhiya:    ["901", "905"]
+title_zadach_ierarhiya: ["Разработка", "Backend"]
 ```
-
-### Определение проекта (приоритеты)
-1. Поле `project_title` (прямое)
-2. Первый элемент `title_zadach_ierarhiya` (корневая задача)
-3. Fallback: «Не определён»
 
 ---
 
@@ -228,14 +242,11 @@ title_zadach_ierarhiya: ["Разработка", "Backend", "БД"]
 | Метод | URL | Описание |
 |-------|-----|----------|
 | POST | `/api/sync/` | Синхронизация данных из Б24 |
-| POST | `/api/report/employee-project/` | Отчёт по сотрудникам |
-| POST | `/api/report/project-employee/` | Отчёт по проектам |
-| POST | `/api/report/project-task-employee/` | Отчёт по проектам/задачам |
-| POST | `/api/report/daily-workload/` | Ежедневная нагрузка |
-| POST | `/api/install/` | Регистрация портала |
-| GET/POST | `/api/configuration/` | Чтение/Сохранение конфигурации |
-| GET | `/api/configuration/smart-processes/` | Список Смарт-процессов |
-| GET | `/api/configuration/sp-fields/<id>/` | Поля Смарт-процесса |
+| POST | `/api/report/...` | Генерация отчетов (employee, project, daily) |
+| POST | `/api/smart-processes/create` | Создание Смарт-процесса (backend fallback) |
+| POST | `/api/smart-processes/create-fields` | Создание полей (backend fallback) |
+| POST | `/api/configuration/save` | Сохранение конфига (`app.option.set`) |
+| GET | `/api/configuration` | Чтение конфига |
 
 Все эндпоинты ожидают `AUTH_ID` в теле запроса для авторизации.
 

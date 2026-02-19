@@ -48,44 +48,45 @@ const fields = [
           </p>
         </section>
 
-        <!-- Section 2: Configuration -->
+        <!-- Section 2: Instructions -->
         <section>
-          <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 border-b pb-2">1. Настройка и Данные</h2>
-          <div class="bg-blue-50 dark:bg-gray-800 p-6 rounded-lg mb-6">
-            <h3 class="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-2">Смарт-процесс и Маппинг</h3>
-            <p class="text-gray-700 dark:text-gray-300 mb-4">
-              Для работы приложения необходимо указать источник данных. Это делается в разделе 
-              <span @click="router.push('/settings/mapping')" class="text-blue-600 cursor-pointer hover:underline font-medium">Настройки -> Маппинг</span>.
-            </p>
-            <p class="text-gray-700 dark:text-gray-300">
-              Вам нужно выбрать Смарт-процесс, в котором хранятся записи о времени, и сопоставить поля приложения с полями этого процесса.
-            </p>
-          </div>
-
-          <h4 class="text-md font-bold text-gray-800 dark:text-gray-200 mb-3">Описание внутренних полей приложения:</h4>
-          <div class="overflow-x-auto border rounded-lg">
-            <table class="min-w-full divide-y divide-gray-200 bg-white dark:bg-gray-800">
-              <thead class="bg-gray-50 dark:bg-gray-700">
-                <tr>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Поле (Key)</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Название</th>
-                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Описание</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-                <tr v-for="field in fields" :key="field.key">
-                    <td class="px-4 py-2 text-sm font-mono text-purple-600 bg-gray-50 dark:bg-gray-900">{{ field.key }}</td>
-                    <td class="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{{ field.label }}</td>
-                    <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">{{ field.desc }}</td>
-                </tr>
-              </tbody>
-            </table>
+          <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 border-b pb-2">1. Инструкции</h2>
+          <div class="grid md:grid-cols-2 gap-6 mb-8">
+             <div class="border rounded-xl p-6 hover:shadow-lg transition-shadow bg-purple-50 dark:bg-gray-800 border-purple-100 cursor-pointer" @click="router.push('/guide/reflection')">
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="text-3xl">⏱️</div>
+                    <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100">Как отражать часы</h3>
+                </div>
+                <p class="text-gray-600 dark:text-gray-400">
+                    Пошаговая инструкция по работе с вкладкой в задаче: добавление времени, разделение записей (split), редактирование.
+                </p>
+                <div class="mt-4 text-purple-600 font-medium hover:underline">Читать инструкцию →</div>
+             </div>
           </div>
         </section>
 
-        <!-- Section 3: Reports -->
+        <!-- Section 3: Configuration -->
         <section>
-          <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 border-b pb-2">2. Доступные Отчеты</h2>
+          <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 border-b pb-2">2. Настройка и Данные</h2>
+          <div class="bg-blue-50 dark:bg-gray-800 p-6 rounded-lg mb-6">
+            <h3 class="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-2">Автоматическая настройка</h3>
+            <p class="text-gray-700 dark:text-gray-300 mb-4">
+              Для работы приложения необходимо создать источник данных (Смарт-процесс) и поля. Это делается автоматически:
+            </p>
+            <ol class="list-decimal list-inside space-y-2 text-gray-700 dark:text-gray-300 mb-4 ml-2">
+                <li>Перейдите в <span @click="router.push('/settings/mapping')" class="text-blue-600 cursor-pointer hover:underline font-medium">Настройки -> Маппинг</span>.</li>
+                <li>Нажмите кнопку <strong>«Создать Смарт-процесс»</strong> (если он еще не выбран).</li>
+                <li>Нажмите кнопку <strong>«Создать все поля»</strong>.</li>
+            </ol>
+            <p class="text-gray-700 dark:text-gray-300">
+              После этого приложение полностью готово к работе.
+            </p>
+          </div>
+        </section>
+
+        <!-- Section 4: Available Reports -->
+        <section>
+          <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 border-b pb-2">3. Доступные Отчеты</h2>
           <div class="grid md:grid-cols-2 lg:grid-cols-2 gap-6">
             
             <!-- Employee Report -->
@@ -94,6 +95,7 @@ const fields = [
                     <div class="w-3 h-3 rounded-full bg-blue-500"></div>
                     <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100">Отчет по сотрудникам</h3>
                 </div>
+                <!-- ... existing content ... -->
                 <p class="text-gray-600 dark:text-gray-400 mb-4">
                     Позволяет увидеть, над какими проектами работал конкретный сотрудник и сколько времени потратил.
                 </p>
@@ -130,7 +132,6 @@ const fields = [
                 </div>
                 <p class="text-gray-600 dark:text-gray-400 mb-4">
                     Матричный вид (Табель рабочего времени), отображающий активность сотрудников по дням месяца.
-                    Идеально подходит для контроля заполнения таймшетов и выявления пропусков.
                 </p>
                 <B24Button label="Перейти" size="sm" color="primary" variant="outline" @click="router.push('/reports/daily')" />
             </div>
@@ -154,7 +155,7 @@ const fields = [
           </div>
         </section>
 
-        <!-- Section 4: Sync -->
+        <!-- Section 5: Sync -->
         <section class="bg-yellow-50 dark:bg-yellow-900/20 p-6 rounded-lg border border-yellow-100 dark:border-yellow-900">
             <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">Важно: Обновление данных</h2>
             <p class="text-gray-700 dark:text-gray-300">
