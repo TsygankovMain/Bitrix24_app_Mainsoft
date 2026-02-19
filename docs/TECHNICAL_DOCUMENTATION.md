@@ -91,10 +91,12 @@ dev_pyton_app/
 │   └── stores/
 │       └── api.ts                — API store (запросы к бэкенду)
 ├── docs/                         — Документация
+│   ├── MARKETPLACE_DESCRIPTION.md — Описание для Маркетплейса
+│   ├── LOGO_PROMPT.md            — Промт для логотипа
+│   └── ...
 ├── Dockerfile
 ├── docker-compose.yml
 └── DEPLOY_README.md
-```
 
 ---
 
@@ -137,7 +139,12 @@ dev_pyton_app/
 
 ### Виджет (embedded.vue)
 
-Встраивается во вкладку задачи через placement `TASK_VIEW_TAB`.
+Встраивается в **блок задачи** (через placement `TASK_VIEW_TAB` или как Embedded Application).
+
+**Особенности интеграции (SidePanel):**
+- Приложение определяет контекст запуска (iframe в слайдере или iframe на странице).
+- Использует **Native SidePanel API** (`BX24.openPath`) для открытия вспомогательных окон (Юзергайд, Настройки) внутри слайдера Битрикс24, сохраняя контекст задачи.
+- Реализован **Fallback механизм** изменения размера окна (через `postMessage`) для корректного отображения модалок (Report Modal, Help Modal).
 
 **Алгоритм работы:**
 1. Получает `taskId` из placement options
@@ -152,6 +159,11 @@ dev_pyton_app/
 - `splitItem()` — разделение записи с сохранением привязок
 - `getTaskHierarchy()` — сбор полной иерархии задач до корня
 - `findTaskIdForItem()` — поиск taskId по itemId в дереве
+
+### UX/UI Особенности (Fast Adaptive Patch)
+- **Адаптивность**: Полная поддержка мобильных устройств (flebox, wrapping).
+- **Центрированные модалки**: Компоненты (`HelpSidePanel`, `ReportModal`) используют `Teleport` и центрирование для корректного отображения поверх iframe.
+- **HTML-First Mockups**: Юзергайд использует не скриншоты, а верстку (Tailwind) для отображения интерфейса, что гарантирует актуальность и четкость.
 
 ### Отчёты
 
