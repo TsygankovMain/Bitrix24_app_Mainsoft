@@ -13,9 +13,50 @@ const router = useRouter()
 // --- STATE ---
 const isHelpOpen = ref(false)
 
+
+import { requestIframeFullHeight, requestIframeAutoHeight } from '@/utils/iframe-resizer'
+
+// --- Diagnostics & Navigation ---
+const isNativeSidePanelAvailable = ref(false)
+
 function openHelp() {
+    if (isNativeSidePanelAvailable.value) {
+        // Try native slider first
+        try {
+             /* 
+                Using BX24.openApplication to open the guide route in a native slider. 
+                This puts the guide OUTSIDE the iframe constraints.
+             */
+             // @ts-ignore
+             window.BX24.openApplication(
+                { 
+                    url: '/guide?from=slider' 
+                },
+                {
+                    title: 'Справочник',
+                    width: 900
+                }
+             );
+             return;
+        } catch (e) {
+            console.error('Native slider failed, using fallback', e)
+        }
+    }
+    
+    // Fallback to local teleported component
+    // Request full height to prevent clipping
+    requestIframeFullHeight()
     isHelpOpen.value = true
 }
+
+// Watch for closing to reset height
+watch(isHelpOpen, (newVal) => {
+    if (!newVal) {
+        // Delay slightly to allow transition
+        setTimeout(() => requestIframeAutoHeight(), 300)
+    }
+})
+
 
 let $b24: null | B24Frame = null
 const fieldConfigStore = useFieldConfigStore()
@@ -46,6 +87,23 @@ const usersList = computed(() => Object.values(usersMap.value))
 
 // --- INITIALIZATION ---
 onMounted(async () => {
+    // Diagnostics
+    const isInIframe = window.self !== window.top
+    const hasBX24 = typeof (window as any).BX24 !== 'undefined'
+    // @ts-ignore
+    const hasParentBX = !!(window.parent && window.parent.BX)
+    
+    console.info('[Diagnostics] Env:', { isInIframe, hasBX24, hasParentBX })
+    
+    // Check if we can open native slider
+    // @ts-ignore
+    if (hasBX24 && typeof window.BX24.openApplication === 'function') {
+        console.info('[Diagnostics] Native SidePanel (openApplication) is AVAILABLE')
+        isNativeSidePanelAvailable.value = true
+    } else {
+        console.warn('[Diagnostics] Native SidePanel is NOT available')
+    }
+
     try {
         $b24 = await $initializeB24Frame()
         await initApp($b24, localesI18n, setLocale)

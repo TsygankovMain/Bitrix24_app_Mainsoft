@@ -2,6 +2,7 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import * as Helper from '@bitrix24/b24jssdk'
+import { requestIframeFullHeight, requestIframeAutoHeight } from '@/utils/iframe-resizer'
 
 // --- ICONS ---
 // Using Material Symbols directly via class "material-symbols-outlined" 
@@ -25,10 +26,23 @@ const clientHourRate = ref(3000)
 const rootTaskId = ref<string | null>(null)
 const taskTree = ref<any[]>([])
 
+
 // Modals
 const editingItem = ref<any>(null)
 const isReportModalOpen = ref(false)
 const isReporting = ref(false)
+
+// Watch for modals to resize iframe
+watch(isReportModalOpen, (isOpen) => {
+    if (isOpen) requestIframeFullHeight()
+    else setTimeout(() => requestIframeAutoHeight(), 300)
+})
+
+watch(editingItem, (item) => {
+    if (item) requestIframeFullHeight()
+    else setTimeout(() => requestIframeAutoHeight(), 300)
+})
+
 
 // Users Map
 const usersMap = ref<Record<string, any>>({})
@@ -491,7 +505,11 @@ async function handleTransferToReport() {
     </div>
 
     <!-- MODAL EDIT -->
-    <div v-if="editingItem" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+
+    <!-- MODAL EDIT -->
+    <Teleport to="body">
+    <div v-if="editingItem" class="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+
         <div class="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
             <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                 <h3 class="font-bold text-slate-800">Редактирование</h3>
@@ -531,6 +549,7 @@ async function handleTransferToReport() {
             </div>
         </div>
     </div>
+    </Teleport>
     
      <!-- MODAL REPORT -->
     <Teleport to="body">
