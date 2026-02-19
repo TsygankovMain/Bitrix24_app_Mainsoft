@@ -9,8 +9,8 @@ const router = useRouter()
 </script>
 
 <template>
-  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen w-full flex-1 min-w-0">
-    <div class="w-full max-w-7xl mx-auto">
+  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen w-full flex-1 min-w-0 text-left">
+    <div class="w-full space-y-24">
       
       <!-- Header -->
       <div class="mb-12 border-b pb-8">
@@ -28,7 +28,7 @@ const router = useRouter()
         </div>
       </div>
 
-      <div class="space-y-24">
+      <div class="space-y-24 w-full">
 
         <!-- 1. Введение -->
         <section class="space-y-6">
