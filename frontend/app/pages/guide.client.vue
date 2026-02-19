@@ -31,13 +31,13 @@ const router = useRouter()
       <div class="space-y-24 w-full">
 
         <!-- 1. Введение -->
-        <section class="space-y-6">
-          <div class="prose max-w-none dark:prose-invert">
-            <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100">1. Введение</h2>
-            <p class="lead text-lg text-gray-700">
+        <section class="space-y-6 w-full">
+          <div class="w-full">
+            <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-4">1. Введение</h2>
+            <p class="lead text-lg text-gray-700 w-full">
               Добро пожаловать в систему учёта часов! Это приложение создано для того, чтобы сделать процесс фиксации рабочего времени простым, прозрачным и полезным для каждого сотрудника и руководителя.
             </p>
-            <div class="grid md:grid-cols-3 gap-6 mt-8 not-prose">
+            <div class="grid md:grid-cols-3 gap-6 mt-8 w-full">
                 <div class="p-6 bg-blue-50 rounded-xl border border-blue-100">
                     <h3 class="font-bold text-blue-900 mb-2">🎯 Точность</h3>
                     <p class="text-sm text-blue-800">Фиксируйте время именно там, где работаете — прямо внутри задач Битрикс24. Никаких сторонних таблиц.</p>
