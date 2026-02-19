@@ -180,22 +180,22 @@ async function handleCreateFields() {
         return
     }
 
-    // Fields to create, with Bitrix24 API types
+    // Field suffix names (Bitrix will create as UF_CRM_{id}_{suffix})
     const FIELDS_TO_CREATE = [
-        { key: 'id_zadachi', name: 'B24APP_TASK_ID', label: 'ID Задачи', type: 'integer' },
-        { key: 'sotrudnik', name: 'B24APP_EMPLOYEE', label: 'Сотрудник', type: 'employee' },
-        { key: 'kolichestvo_chasov', name: 'B24APP_HOURS', label: 'Количество часов', type: 'double' },
-        { key: 'uchitivaem', name: 'B24APP_IS_BILLABLE', label: 'Учитываем?', type: 'boolean' },
-        { key: 'ne_uchitivaemie_chasi', name: 'B24APP_NON_BILLABLE', label: 'Неучитываемые часы', type: 'double' },
-        { key: 'opisanie', name: 'B24APP_DESCRIPTION', label: 'Описание', type: 'string' },
-        { key: 'project_title', name: 'B24APP_PROJECT', label: 'Проект', type: 'string' },
-        { key: 'project_id', name: 'B24APP_PROJECT_ID', label: 'ID Проекта', type: 'integer' },
-        { key: 'data', name: 'B24APP_DATE', label: 'Дата отражения', type: 'date' },
-        { key: 'id_zadach_ierarhiya', name: 'B24APP_HIER_IDS', label: 'Иерархия ID', type: 'string' },
-        { key: 'title_zadach_ierarhiya', name: 'B24APP_HIER_TITLES', label: 'Иерархия Названий', type: 'string' },
-        { key: 'task_name', name: 'B24APP_TASK_NAME', label: 'Название задачи', type: 'string' },
-        { key: 'our_inn', name: 'B24APP_OUR_INN', label: 'Наш ИНН', type: 'string' },
-        { key: 'client_inn', name: 'B24APP_CLIENT_INN', label: 'ИНН клиента', type: 'string' },
+        { key: 'id_zadachi', suffix: 'TASK_ID', label: 'ID Задачи', type: 'integer' },
+        { key: 'sotrudnik', suffix: 'EMPLOYEE', label: 'Сотрудник', type: 'employee' },
+        { key: 'kolichestvo_chasov', suffix: 'HOURS', label: 'Количество часов', type: 'double' },
+        { key: 'uchitivaem', suffix: 'IS_BILLABLE', label: 'Учитываем?', type: 'boolean' },
+        { key: 'ne_uchitivaemie_chasi', suffix: 'NON_BILLABLE', label: 'Неучитываемые часы', type: 'double' },
+        { key: 'opisanie', suffix: 'DESCRIPTION', label: 'Описание', type: 'string' },
+        { key: 'project_title', suffix: 'PROJECT', label: 'Проект', type: 'string' },
+        { key: 'project_id', suffix: 'PROJECT_ID', label: 'ID Проекта', type: 'integer' },
+        { key: 'data', suffix: 'DATE', label: 'Дата отражения', type: 'date' },
+        { key: 'id_zadach_ierarhiya', suffix: 'HIER_IDS', label: 'Иерархия ID', type: 'string' },
+        { key: 'title_zadach_ierarhiya', suffix: 'HIER_TITLES', label: 'Иерархия Названий', type: 'string' },
+        { key: 'task_name', suffix: 'TASK_NAME', label: 'Название задачи', type: 'string' },
+        { key: 'our_inn', suffix: 'OUR_INN', label: 'Наш ИНН', type: 'string' },
+        { key: 'client_inn', suffix: 'CLIENT_INN', label: 'ИНН клиента', type: 'string' },
     ]
 
     const newMapping: Record<string, string> = {}
@@ -205,15 +205,18 @@ async function handleCreateFields() {
     for (const field of FIELDS_TO_CREATE) {
         showStatus('success', `Создание поля ${created + 1}/${FIELDS_TO_CREATE.length}: ${field.label}...`)
 
+        // Build full fieldName: UF_CRM_{spaId}_{suffix}
+        const fullFieldName = `UF_CRM_${spaOrdinalId}_${field.suffix}`
+
         try {
-            console.log(`📝 [CreateFields] Creating: ${field.key} (${field.name}, type=${field.type}, entityId=CRM_${spaOrdinalId})`)
+            console.log(`📝 [CreateFields] Creating: ${field.key} -> fieldName=${fullFieldName}, type=${field.type}, entityId=CRM_${spaOrdinalId}`)
 
             // @ts-ignore - callMethod typing
             const result = await $b24!.callMethod('userfieldconfig.add', {
                 moduleId: 'crm',
                 field: {
                     entityId: `CRM_${spaOrdinalId}`,
-                    fieldName: field.name,
+                    fieldName: fullFieldName,
                     userTypeId: field.type,
                     editFormLabel: { ru: field.label, en: field.label },
                     listColumnLabel: { ru: field.label, en: field.label },
@@ -232,7 +235,7 @@ async function handleCreateFields() {
             } else {
                 // Try to find fieldName in any structure
                 console.warn(`⚠️ [CreateFields] ${field.key}: unexpected response structure:`, data)
-                newMapping[field.key] = field.name // fallback
+                newMapping[field.key] = fullFieldName // fallback
                 errors.push(`${field.label}: создано, но нет fieldName в ответе`)
             }
             created++
@@ -245,12 +248,12 @@ async function handleCreateFields() {
             // Check if field already exists
             if (errMsg.includes('already') || errMsg.includes('exist') || errMsg.includes('уже')) {
                 console.log(`ℹ️ [CreateFields] ${field.key} already exists, skipping`)
-                newMapping[field.key] = field.name
+                newMapping[field.key] = fullFieldName
                 errors.push(`${field.label}: уже существует`)
                 created++
             } else {
                 errors.push(`${field.label}: ${errMsg}`)
-                newMapping[field.key] = field.name // fallback
+                newMapping[field.key] = fullFieldName // fallback
             }
         }
 
