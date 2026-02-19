@@ -296,9 +296,9 @@ const router = useRouter()
               </p>
           </div>
 
-          <div class="grid md:grid-cols-2 gap-12 items-center">
+          <div class="grid md:grid-cols-2 gap-12 items-start">
              <!-- Mockup: Split -->
-             <div class="border rounded-xl shadow-xl bg-white overflow-hidden max-w-sm mx-auto md:mx-0 w-full">
+             <div class="border rounded-xl shadow-xl bg-white overflow-hidden w-full">
                   <div class="p-4 bg-orange-50 border-b border-orange-100">
                       <h3 class="font-bold text-orange-800 flex items-center gap-2">
                            <span>✂️</span> Разделение (Split)
