@@ -9,8 +9,8 @@ const router = useRouter()
 </script>
 
 <template>
-  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen w-full">
-    <div class="w-full">
+  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen w-full flex-1 min-w-0">
+    <div class="w-full max-w-full">
       <!-- Header -->
       <div class="mb-8">
         <B24Button label="Назад к отчетам" color="link" @click="router.push('/')" class="mb-4 pl-0" />

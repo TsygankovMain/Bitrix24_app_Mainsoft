@@ -793,11 +793,7 @@ async function deleteItem() {
                 <span class="text-[10px] uppercase font-bold text-blue-600 tracking-wider">Сумма для клиента</span>
                 <span class="font-bold text-lg text-slate-900 mt-1">{{ totalClientAmount }} руб.</span>
             </div>
-            <div class="h-8 w-px bg-slate-300"></div>
-            <button @click="openHelp" class="flex flex-col items-center justify-center text-slate-400 hover:text-blue-600 transition-colors px-2" title="Инструкция">
-                 <span class="material-symbols-outlined text-2xl">help</span>
-                 <span class="text-[10px] uppercase font-bold mt-1">Help</span>
-            </button>
+
         </div>
     </header>
 

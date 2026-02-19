@@ -21,8 +21,8 @@ function goBack() {
 </script>
 
 <template>
-  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen w-full">
-    <div class="max-w-4xl mx-auto">
+  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen w-full flex-1 min-w-0">
+    <div class="max-w-4xl mx-auto w-full">
       <!-- Header -->
       <div class="mb-8">
         <B24Button 
