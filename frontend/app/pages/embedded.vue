@@ -87,13 +87,12 @@ const usersList = computed(() => Object.values(usersMap.value))
 
 // --- INITIALIZATION ---
 onMounted(async () => {
+
     // Diagnostics
     const isInIframe = window.self !== window.top
     const hasBX24 = typeof (window as any).BX24 !== 'undefined'
-    // @ts-ignore
-    const hasParentBX = !!(window.parent && window.parent.BX)
     
-    console.info('[Diagnostics] Env:', { isInIframe, hasBX24, hasParentBX })
+    console.info('[Diagnostics] Env:', { isInIframe, hasBX24 })
     
     // Check if we can open native slider
     // @ts-ignore
