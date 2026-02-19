@@ -366,17 +366,16 @@ onMounted(async () => {
                       </select>
                   </div>
 
-                  <div>
-                      <label class="block text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Стоимость часа (по умолчанию)</label>
-                      <div class="relative rounded-md shadow-sm max-w-xs">
-                          <input 
-                            type="number" 
-                            v-model.number="config.hourly_rate" 
-                            class="focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md" 
-                            placeholder="0.00"
-                          />
-                      </div>
-                      <p class="mt-1 text-xs text-gray-500">Это значение будет использоваться, если ставка не задана индивидуально.</p>
+                  <div class="rate-field">
+                      <label for="hour-rate" class="rate-field__label">Стоимость часа (по умолчанию)</label>
+                      <input 
+                        id="hour-rate"
+                        type="number" 
+                        v-model.number="config.hourly_rate" 
+                        class="rate-field__input" 
+                        placeholder="Например: 1500"
+                      />
+                      <p class="mt-1 text-xs text-gray-500">Без ставки расчёт будет неточным. Применяется для новых записей.</p>
                   </div>
 
                   <div class="flex flex-col gap-2 mt-3">
@@ -478,3 +477,51 @@ onMounted(async () => {
       </div>
   </div>
 </template>
+
+<style scoped>
+.rate-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+  width: 100%;
+}
+
+.rate-field__label {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #1f2937;
+}
+.dark .rate-field__label {
+  color: #e5e7eb;
+}
+
+.rate-field__input {
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid #c7ced8;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.rate-field__input:focus {
+  outline: none;
+  border-color: #2f6fed;
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.18);
+}
+
+@media (max-width: 768px) {
+  .rate-field {
+    max-width: 100%;
+  }
+
+  .rate-field__input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+}
+</style>

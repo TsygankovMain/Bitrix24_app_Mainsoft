@@ -509,13 +509,12 @@ async function handleTransferToReport() {
     <!-- MODAL EDIT -->
     <Teleport to="body">
     <div v-if="editingItem" class="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-
-        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in">
-            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+        <div class="modal bg-white shadow-xl animate-fade-in">
+            <div class="modal__header bg-slate-50/50 flex justify-between items-center border-b border-slate-100">
                 <h3 class="font-bold text-slate-800">Редактирование</h3>
                 <button @click="editingItem = null" class="text-slate-400 hover:text-slate-600"><span class="material-symbols-outlined">close</span></button>
             </div>
-            <div class="p-6 space-y-4">
+            <div class="modal__body space-y-4">
                  <div>
                     <label class="block text-sm font-medium text-slate-700 mb-1">Сотрудник</label>
                     <select v-model="editingItem.employeeId" class="w-full border-slate-300 rounded-lg p-2 border text-sm">
@@ -543,7 +542,7 @@ async function handleTransferToReport() {
                     <textarea v-model="editingItem.description" class="w-full border-slate-300 rounded-lg p-2 border text-sm h-24"></textarea>
                 </div>
             </div>
-            <div class="px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+            <div class="modal__footer border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
                 <button @click="editingItem = null" class="px-4 py-2 border rounded-lg text-slate-600 hover:bg-white bg-white">Отмена</button>
                 <button @click="handleSaveItem(editingItem)" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Сохранить</button>
             </div>
@@ -554,11 +553,13 @@ async function handleTransferToReport() {
      <!-- MODAL REPORT -->
     <Teleport to="body">
         <div v-if="isReportModalOpen" class="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-        <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-fade-in text-center p-6">
-            <span class="material-symbols-outlined text-4xl text-blue-500 mb-4">cloud_upload</span>
-            <h3 class="font-bold text-lg mb-2">Отправить в отчет?</h3>
-            <p class="text-sm text-slate-500 mb-6">Все "Учтенные" часы будут добавлены в задачи Битрикс24 как отработанное время.</p>
-            <div class="flex justify-center gap-3">
+        <div class="modal bg-white shadow-xl animate-fade-in text-center">
+            <div class="modal__body">
+                <span class="material-symbols-outlined text-4xl text-blue-500 mb-4">cloud_upload</span>
+                <h3 class="font-bold text-lg mb-2">Отправить в отчет?</h3>
+                <p class="text-sm text-slate-500 mb-6">Все "Учтенные" часы будут добавлены в задачи Битрикс24 как отработанное время.</p>
+            </div>
+            <div class="modal__footer flex justify-center gap-3">
                  <button @click="isReportModalOpen = false" class="px-4 py-2 border rounded-lg text-slate-600 hover:bg-slate-50">Отмена</button>
                  <button @click="handleTransferToReport" :disabled="isReporting" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2">
                     <span v-if="isReporting" class="material-symbols-outlined animate-spin text-sm">progress_activity</span>
@@ -573,6 +574,40 @@ async function handleTransferToReport() {
 </template>
 
 <style scoped>
+/* Modal Adaptive Styles */
+.modal {
+  width: min(92vw, 720px);
+  max-height: 85vh;
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal__header,
+.modal__footer {
+  padding: 16px 20px;
+}
+
+.modal__body {
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .modal {
+    width: 94vw;
+    max-height: 90vh;
+    border-radius: 12px;
+  }
+
+  .modal__header,
+  .modal__body,
+  .modal__footer {
+    padding: 12px 14px;
+  }
+}
+
 /* Basic Animations */
 .animate-fade-in { animation: fadeIn 0.2s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
