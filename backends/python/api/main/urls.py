@@ -29,6 +29,8 @@ urlpatterns = [
     path('api/configuration/save', views.save_configuration, name='save_configuration'),
     path('api/smart-processes', views.get_smart_processes, name='get_smart_processes'),
     path('api/smart-processes/fields', views.get_sp_fields, name='get_sp_fields'),
+    path('api/smart-processes/create', views.create_smart_process, name='create_smart_process'),
+    path('api/smart-processes/create-fields', views.create_fields, name='create_fields'),
     
     # Logs
     path('api/logs/requests', views.get_request_logs, name='get_request_logs'),

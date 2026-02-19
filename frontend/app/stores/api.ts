@@ -218,6 +218,21 @@ export const useApiStore = defineStore(
       })
     }
 
+    const createSmartProcess = async (): Promise<{ status: string; config: any }> => {
+      return await $api('/api/smart-processes/create', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const createFields = async (entityTypeId: number): Promise<{ status: string; config: any }> => {
+      return await $api('/api/smart-processes/create-fields', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: JSON.stringify({ entityTypeId })
+      })
+    }
+
     const getRequestLogs = async (page: number = 1, limit: number = 50): Promise<any> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
@@ -255,7 +270,9 @@ export const useApiStore = defineStore(
       getSmartProcesses,
       getSpFields,
       getRequestLogs,
-      getSystemLogs
+      getSystemLogs,
+      createSmartProcess,
+      createFields
     }
   }
 )

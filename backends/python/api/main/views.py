@@ -38,6 +38,8 @@ __all__ = [
     "get_sp_fields",
     "get_request_logs",
     "get_system_logs",
+    "create_smart_process",
+    "create_fields",
 ]
 
 config = load_config()
@@ -489,6 +491,46 @@ def get_sp_fields(request: AuthorizedRequest):
          return JsonResponse({"fields": []})
     
     return JsonResponse({"fields": service.get_sp_fields_sync(int(entity_type_id))})
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("create_smart_process")
+@auth_required
+def create_smart_process(request: AuthorizedRequest):
+    """Create a new Smart Process from settings page."""
+    try:
+        service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
+        config = service.create_smart_process_only()
+        return JsonResponse({"status": "success", "config": config})
+    except InstallationError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("create_fields")
+@auth_required
+def create_fields(request: AuthorizedRequest):
+    """Create all required fields in the selected Smart Process."""
+    import json as json_module
+    try:
+        body = json_module.loads(request.body)
+        sp_id = body.get('entityTypeId')
+        if not sp_id:
+            return JsonResponse({"error": "Не указан ID смарт-процесса"}, status=400)
+
+        service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
+        config = service.create_fields_only(int(sp_id))
+        return JsonResponse({"status": "success", "config": config})
+    except InstallationError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 
 
 @xframe_options_exempt

@@ -20,6 +20,9 @@ let $b24: null | B24Frame = null
 const isLoading = ref(false)
 const isSaving = ref(false)
 const isInit = ref(false)
+const isCreatingSP = ref(false)
+const isCreatingFields = ref(false)
+const statusMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 
 // Data
 const smartProcesses = ref<any[]>([])
@@ -40,6 +43,9 @@ const APP_FIELDS = [
   { key: 'data', label: 'Дата', type: 'date', desc: 'Дата, за которую списано время' },
   { key: 'id_zadach_ierarhiya', label: 'Иерархия ID', type: 'string (JSON)', desc: 'JSON массив ID родительских задач' },
   { key: 'title_zadach_ierarhiya', label: 'Иерархия Названий', type: 'string (JSON)', desc: 'JSON массив названий родительских задач' },
+  { key: 'task_name', label: 'Название задачи', type: 'string', desc: 'Название текущей задачи' },
+  { key: 'our_inn', label: 'Наш ИНН', type: 'string', desc: 'ИНН вашей компании (из задачи)' },
+  { key: 'client_inn', label: 'ИНН клиента', type: 'string', desc: 'ИНН клиента (из задачи)' },
 ]
 
 // Mapping State: AppFieldKey -> BitrixFieldID
@@ -106,12 +112,55 @@ async function handleSave() {
 }
 
 function getFieldOptions(appFieldType: string) {
-    // Filter available fields by type? 
-    // For now allow all, but maybe highlight matching types.
     return spFields.value.map(f => ({
         label: `${f.title} (${f.type})`,
         value: f.id
     }))
+}
+
+function showStatus(type: 'success' | 'error', text: string) {
+    statusMessage.value = { type, text }
+    setTimeout(() => { statusMessage.value = null }, 5000)
+}
+
+async function handleCreateSmartProcess() {
+    isCreatingSP.value = true
+    statusMessage.value = null
+    try {
+        const result = await apiStore.createSmartProcess()
+        const newConfig = result.config
+        config.value = newConfig
+        selectedSpId.value = newConfig.sp_entity_type_id
+        // Reload SP list
+        const spRes = await apiStore.getSmartProcesses()
+        smartProcesses.value = spRes.types || []
+        showStatus('success', `Смарт-процесс создан (ID: ${newConfig.sp_entity_type_id})`)
+    } catch (e: any) {
+        const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
+        showStatus('error', `Ошибка: ${errMsg}`)
+    } finally {
+        isCreatingSP.value = false
+    }
+}
+
+async function handleCreateFields() {
+    if (!selectedSpId.value) return
+    isCreatingFields.value = true
+    statusMessage.value = null
+    try {
+        const result = await apiStore.createFields(selectedSpId.value)
+        const newConfig = result.config
+        config.value = newConfig
+        mapping.value = { ...newConfig.fields_mapping }
+        // Reload fields list
+        await loadSpFields(selectedSpId.value!)
+        showStatus('success', `Создано ${Object.keys(newConfig.fields_mapping).length} полей. Маппинг заполнен автоматически.`)
+    } catch (e: any) {
+        const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
+        showStatus('error', `Ошибка: ${errMsg}`)
+    } finally {
+        isCreatingFields.value = false
+    }
 }
 
 onMounted(async () => {
@@ -143,6 +192,11 @@ onMounted(async () => {
       <div v-else class="flex flex-col gap-6">
           <!-- SP Selector -->
           <B24Card title="Выбор Смарт-Процесса">
+              <!-- Status Message -->
+              <div v-if="statusMessage" class="mb-4 p-3 rounded-md text-sm font-medium" :class="statusMessage.type === 'success' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'">
+                  {{ statusMessage.text }}
+              </div>
+
               <div class="w-full">
                   <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Смарт-процесс</label>
                   <select 
@@ -154,16 +208,35 @@ onMounted(async () => {
                           {{ sp.title }} (ID: {{ sp.entityTypeId }})
                       </option>
                   </select>
-                  <div class="flex flex-col gap-2 mt-2">
-                        <B24Button 
-                            label="Подгрузить поля" 
-                            color="primary" 
-                            size="sm"
-                            @click="() => { if (selectedSpId) loadSpFields(selectedSpId) }" 
-                            :disabled="!selectedSpId || isLoading"
-                        />
+                  <div class="flex flex-col gap-2 mt-3">
+                        <div class="flex flex-wrap gap-2">
+                            <B24Button 
+                                label="Подгрузить поля" 
+                                color="primary" 
+                                size="sm"
+                                @click="() => { if (selectedSpId) loadSpFields(selectedSpId) }" 
+                                :disabled="!selectedSpId || isLoading"
+                            />
+                            <B24Button 
+                                label="Создать смарт-процесс" 
+                                color="warning" 
+                                size="sm"
+                                @click="handleCreateSmartProcess" 
+                                :loading="isCreatingSP"
+                                :disabled="(!!selectedSpId && selectedSpId !== 0) || isCreatingSP"
+                            />
+                            <B24Button 
+                                label="Создать все поля" 
+                                color="danger" 
+                                size="sm"
+                                @click="handleCreateFields" 
+                                :loading="isCreatingFields"
+                                :disabled="!selectedSpId || isCreatingFields"
+                            />
+                        </div>
                         <p class="text-sm text-gray-500">
                             Выберите процесс и нажмите "Подгрузить", чтобы получить список полей.
+                            Или создайте новый процесс и поля кнопками выше.
                         </p>
                   </div>
               </div>

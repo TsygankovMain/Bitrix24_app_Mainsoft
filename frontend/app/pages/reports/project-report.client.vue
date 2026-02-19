@@ -1,17 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import type { B24Frame } from '@bitrix24/b24jssdk'
+import { ref, onMounted, computed } from 'vue'
 
-// --- CONSTANTS ---
-const HOURS_FIELD_CODE = 'ufCrm87_1761919617'
-const IS_CONSIDERED_FIELD_CODE = 'ufCrm87_1763717129'
-const PROJECT_ID_FIELD_CODE = 'ufCrm87_1764265626'
-const PROJECT_NAME_FIELD_CODE = 'ufCrm87_1764265641'
-const TASK_NAME_FIELD_CODE = 'ufCrm87_1764361585'
-const REFLECTION_DATE_FIELD_CODE = 'ufCrm87_1764446274'
-const EMPLOYEE_FIELD_CODE = 'ufCrm87_1761919601'
-const DESCRIPTION_FIELD_CODE = 'ufCrm87_1762026149771'
-const TASK_HIERARCHY_ID_FIELD_CODE = 'ufCrm87_1764191110'
-const TASK_HIERARCHY_TITLE_FIELD_CODE = 'ufCrm87_1764191133'
+const { $logger, initApp, processErrorGlobal } = useAppInit('ProjectReport')
+const { $initializeB24Frame } = useNuxtApp()
+const { t, locales: localesI18n, setLocale } = useI18n()
+
+let $b24: null | B24Frame = null
+const fieldConfigStore = useFieldConfigStore()
 
 // --- STATE ---
 const isLoading = ref(true)
@@ -20,20 +16,13 @@ const items = ref<any[]>([])
 const users = ref<Record<string, string>>({})
 const currentGroupId = ref<string | null>(null)
 const currentUserId = ref<string | null>(null)
-const smartProcessId = ref<number>(1164) // Default, ideally from config
 
 const isModalOpen = ref(false)
 const modalError = ref<string | null>(null)
 const isSaving = ref(false)
 
 useHead({
-  script: [
-    {
-      src: 'https://api.bitrix24.com/api/v1/',
-      async: true,
-      defer: true
-    }
-  ]
+  title: 'Отчет по проекту'
 })
 
 const formData = ref({
@@ -44,210 +33,186 @@ const formData = ref({
     employeeId: ''
 })
 
+// Dynamic field accessors (from config store)
+const FIELDS = computed(() => fieldConfigStore.fields)
+const entityTypeId = computed(() => fieldConfigStore.entityTypeId)
+
 // --- LIFECYCLE ---
 onMounted(async () => {
-    // Wait for BX24
-    let attempts = 0;
-    while (typeof (window as any).BX24 === 'undefined' && attempts < 50) {
-        await new Promise(r => setTimeout(r, 100));
-        attempts++;
-    }
+    try {
+        $b24 = await $initializeB24Frame()
+        await initApp($b24, localesI18n, setLocale)
 
-    // @ts-ignore
-    const BX24 = window.BX24;
-    
-    if (!BX24) {
-        error.value = "Не удалось загрузить API Bitrix24. Попробуйте обновить страницу.";
-        isLoading.value = false;
-        return;
-    }
-    
-    // Check context (Placement)
-    const placement = BX24.placement.info();
-    // For Project placement, usually options.GROUP_ID or options.ID depending on placement
-    // Typical placement for Group App: 'SONET_GROUP_DETAIL_TAB'
-    if (placement && placement.options && placement.options.GROUP_ID) {
-        currentGroupId.value = placement.options.GROUP_ID;
-    } else {
-        // Fallback for dev/testing or if opened directly?
-        // Maybe try to see if ID is passed
-        // For now, if no Group ID, show error or maybe allow selection (but requirement said "embedding")
-        // error.value = "Не удалось определить ID проекта (группы). Откройте приложение из группы Bitrix24."
-        // return;
-        
-        // DEV MODE: Hardcode or allow empty
-        // currentGroupId.value = '15'; // Dev test
-    }
+        // Load config
+        await fieldConfigStore.loadFromB24($b24!)
+        if (!fieldConfigStore.isConfigured) {
+            error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Зайдите в Настройки → Маппинг.'
+            isLoading.value = false
+            return
+        }
 
-    if (!currentGroupId.value) {
-        error.value = "Запустите приложение из группы Bitrix24"
-        isLoading.value = false;
-        return;
-    }
+        // Get placement context (Group ID)
+        let options = ($b24 as any).placement?.options || (($b24 as any).placement?.info && ($b24 as any).placement.info.options)
 
-    await loadUser();
-    await fetchData();
+        if (!options && typeof (window as any).BX24 !== 'undefined') {
+            try {
+                const rawInfo = (window as any).BX24.placement.info()
+                if (rawInfo) options = rawInfo.options
+            } catch(e) { console.warn('BX24.placement.info failed', e) }
+        }
+
+        const groupId = options?.GROUP_ID || options?.groupId
+        if (!groupId) {
+            error.value = "Запустите приложение из группы Bitrix24"
+            isLoading.value = false
+            return
+        }
+        currentGroupId.value = groupId
+
+        await loadUser()
+        await fetchData()
+
+    } catch (e: any) {
+        processErrorGlobal(e)
+        error.value = e.message
+        isLoading.value = false
+    }
 })
 
 // --- METHODS ---
-const callMethodPromise = (method: string, params: any = {}): Promise<any> => {
-    return new Promise((resolve, reject) => {
-        // @ts-ignore
-        const BX24 = window.BX24;
-        BX24.callMethod(method, params, (result: any) => {
-            if (result.error()) {
-                reject(result.error());
-            } else {
-                resolve(result.data());
-            }
-        });
-    });
-};
-
-const callBatchPromise = (calls: any): Promise<any> => {
-    return new Promise((resolve, reject) => {
-        // @ts-ignore
-        const BX24 = window.BX24;
-        BX24.callBatch(calls, (result: any) => {
-             resolve(result); // Batch doesn't error globally usually
-        });
-    });
-};
-
 async function loadUser() {
     try {
-        const res = await callMethodPromise('user.current');
+        // @ts-ignore
+        const result = await $b24!.callMethod('user.current', {})
+        const res = result.getData()?.result
         if (res) {
-            currentUserId.value = res.ID;
-            formData.value.employeeId = res.ID;
+            currentUserId.value = res.ID
+            formData.value.employeeId = res.ID
         }
     } catch (e) {
-        console.error("User load error", e);
+        console.error("User load error", e)
     }
 }
 
 async function fetchData() {
-    isLoading.value = true;
-    error.value = null;
-    items.value = [];
-    
+    isLoading.value = true
+    error.value = null
+    items.value = []
+
+    const F = FIELDS.value
+
     try {
         // 1. Fetch Items filtered by PROJECT_ID
-        const listRes = await callMethodPromise('crm.item.list', {
-            entityTypeId: smartProcessId.value,
-            filter: { ['=' + PROJECT_ID_FIELD_CODE]: currentGroupId.value },
+        // @ts-ignore
+        const result = await $b24!.callMethod('crm.item.list', {
+            entityTypeId: entityTypeId.value,
+            filter: { ['=' + F.PROJECT_ID]: currentGroupId.value },
             select: [
-                'id', 'title', 'createdTime', 
-                HOURS_FIELD_CODE, IS_CONSIDERED_FIELD_CODE, 
-                EMPLOYEE_FIELD_CODE, DESCRIPTION_FIELD_CODE,
-                PROJECT_NAME_FIELD_CODE, TASK_NAME_FIELD_CODE,
-                REFLECTION_DATE_FIELD_CODE
+                'id', 'title', 'createdTime',
+                F.HOURS, F.IS_CONSIDERED,
+                F.EMPLOYEE, F.DESCRIPTION,
+                F.PROJECT_TITLE, F.TASK_NAME,
+                F.DATE
             ],
-            order: { [REFLECTION_DATE_FIELD_CODE]: 'DESC' }
-        });
+            order: F.DATE ? { [F.DATE]: 'DESC' } : { 'id': 'DESC' }
+        })
         
-        const rawItems = listRes.items || [];
-        items.value = rawItems;
-        
+        const rawItems = result.getData()?.result?.items || []
+        items.value = rawItems
+
         // 2. Fetch Users
-        const userIds = [...new Set(rawItems.map((i: any) => i[EMPLOYEE_FIELD_CODE]).filter((id: any) => id))];
+        const userIds = [...new Set(rawItems.map((i: any) => i[F.EMPLOYEE]).filter((id: any) => id))]
         if (userIds.length > 0) {
-            const userBatch = userIds.reduce((acc: any, id: unknown) => ({...acc, [`user_${id}`]: ['user.get', { ID: id }]}), {});
-            const userResults: any = await callBatchPromise(userBatch);
-            const usersData: Record<string, string> = {};
+            const batchCalls: Record<string, any> = {}
             userIds.forEach((id: unknown) => {
-                const res = userResults[`user_${id}`];
-                if (res && !res.error() && res.data() && res.data()[0]) {
-                   const u = res.data()[0];
-                   usersData[String(id)] = `${u.NAME} ${u.LAST_NAME}`.trim();
+                batchCalls[`user_${id}`] = { method: 'user.get', params: { ID: id } }
+            })
+            // @ts-ignore
+            const userResults = await $b24!.callBatch(batchCalls)
+            const userData = userResults.getData()
+            const usersData: Record<string, string> = {}
+            userIds.forEach((id: unknown) => {
+                const res = userData[`user_${id}`]
+                if (res && !res.error && res.data && res.data[0]) {
+                    const u = res.data[0]
+                    usersData[String(id)] = `${u.NAME} ${u.LAST_NAME}`.trim()
                 }
-            });
-            users.value = usersData;
+            })
+            users.value = usersData
         }
 
     } catch (e: any) {
-        error.value = "Ошибка загрузки данных: " + e.message;
+        error.value = "Ошибка загрузки данных: " + e.message
     } finally {
-        isLoading.value = false;
+        isLoading.value = false
     }
 }
 
 const openModal = () => {
-    isModalOpen.value = true;
-    // Reset form
+    isModalOpen.value = true
     formData.value = {
         hours: '',
         description: 'Встреча',
         date: new Date().toISOString().split('T')[0],
         isConsidered: true,
         employeeId: currentUserId.value || ''
-    };
-    modalError.value = null;
+    }
+    modalError.value = null
 }
 
 const closeModal = () => {
-    isModalOpen.value = false;
+    isModalOpen.value = false
 }
 
 const handleSaveMeeting = async () => {
-    modalError.value = null;
+    modalError.value = null
     if (!formData.value.hours || parseFloat(formData.value.hours) <= 0) {
-        modalError.value = "Введите корректное время";
-        return;
+        modalError.value = "Введите корректное время"
+        return
     }
     if (!formData.value.description) {
-        modalError.value = "Введите описание";
-        return;
+        modalError.value = "Введите описание"
+        return
     }
-    
-    isSaving.value = true;
-    
+
+    isSaving.value = true
+    const F = FIELDS.value
+
     try {
-        // We need Project Name. 
-        // Can optionally fetch it or just save ID. 
-        // Ideally we should have it.
-        // Let's rely on backend or ID. 
-        // Or fetch it once on mount.
-        let groupName = '';
+        // Get group name
+        let groupName = ''
         if (currentGroupId.value) {
-             const gRes = await callMethodPromise('sonet_group.get', { ID: currentGroupId.value });
-             // sonet_group.get returns array in data usually for list, but for get?
-             // Actually sonet_group.get takes ID.
-             if (Array.isArray(gRes) && gRes[0]) groupName = gRes[0].NAME;
-             else if (gRes && gRes.NAME) groupName = gRes.NAME;
+            // @ts-ignore
+            const gRes = await $b24!.callMethod('sonet_group.get', { ID: currentGroupId.value })
+            const gData = gRes.getData()?.result
+            if (Array.isArray(gData) && gData[0]) groupName = gData[0].NAME
+            else if (gData && gData.NAME) groupName = gData.NAME
         }
 
         // @ts-ignore
-        const BX24 = window.BX24;
-        BX24.callMethod('crm.item.add', {
-            entityTypeId: smartProcessId.value,
+        await $b24!.callMethod('crm.item.add', {
+            entityTypeId: entityTypeId.value,
             fields: {
                 title: formData.value.description.substring(0, 255),
-                [HOURS_FIELD_CODE]: parseFloat(formData.value.hours),
-                [IS_CONSIDERED_FIELD_CODE]: formData.value.isConsidered ? 'Y' : 'N',
-                [EMPLOYEE_FIELD_CODE]: formData.value.employeeId,
+                [F.HOURS]: parseFloat(formData.value.hours),
+                [F.IS_CONSIDERED]: formData.value.isConsidered ? 'Y' : 'N',
+                [F.EMPLOYEE]: formData.value.employeeId,
                 assignedById: formData.value.employeeId,
-                [DESCRIPTION_FIELD_CODE]: formData.value.description,
+                [F.DESCRIPTION]: formData.value.description,
                 createdTime: formData.value.date + 'T00:00:00',
-                [PROJECT_ID_FIELD_CODE]: currentGroupId.value,
-                [PROJECT_NAME_FIELD_CODE]: groupName,
-                [REFLECTION_DATE_FIELD_CODE]: formData.value.date + 'T00:00:00',
-                // No Task ID
-                [TASK_NAME_FIELD_CODE]: 'Встреча/Без задачи'
+                [F.PROJECT_ID]: currentGroupId.value,
+                [F.PROJECT_TITLE]: groupName,
+                [F.DATE]: formData.value.date + 'T00:00:00',
+                [F.TASK_NAME]: 'Встреча/Без задачи'
             }
-        }, (result: any) => {
-            isSaving.value = false;
-            if (result.error()) {
-                modalError.value = result.error().toString();
-            } else {
-                closeModal();
-                fetchData();
-            }
-        });
-        
+        })
+
+        closeModal()
+        await fetchData()
     } catch (e: any) {
-        isSaving.value = false;
-        modalError.value = e.message;
+        modalError.value = e.message
+    } finally {
+        isSaving.value = false
     }
 }
 </script>
@@ -287,7 +252,7 @@ const handleSaveMeeting = async () => {
                         <div class="bg-white px-4 py-3 rounded-xl shadow-sm border border-slate-100">
                             <div class="text-xs text-slate-400 uppercase tracking-wider font-medium mb-1">Всего часов</div>
                             <div class="text-2xl font-bold text-slate-700">
-                                {{ items.reduce((sum, i) => sum + (parseFloat(i[HOURS_FIELD_CODE]) || 0), 0).toFixed(2) }}
+                                {{ items.reduce((sum, i) => sum + (parseFloat(i[FIELDS.HOURS]) || 0), 0).toFixed(2) }}
                             </div>
                         </div>
                     </div>
@@ -311,29 +276,29 @@ const handleSaveMeeting = async () => {
                         <tbody class="divide-y divide-slate-100">
                             <tr v-for="item in items" :key="item.id" class="hover:bg-slate-50 transition-colors">
                                 <td class="px-6 py-4 whitespace-nowrap text-slate-600">
-                                    {{ item[REFLECTION_DATE_FIELD_CODE] ? new Date(item[REFLECTION_DATE_FIELD_CODE]).toLocaleDateString() : (item.createdTime ? new Date(item.createdTime).toLocaleDateString() : '-') }}
+                                    {{ item[FIELDS.DATE] ? new Date(item[FIELDS.DATE]).toLocaleDateString() : (item.createdTime ? new Date(item.createdTime).toLocaleDateString() : '-') }}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap font-medium text-slate-700">
                                     <div class="flex items-center gap-2">
                                         <div class="w-6 h-6 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center text-[10px] font-bold">
-                                            {{ (users[item[EMPLOYEE_FIELD_CODE]] || '?')[0] }}
+                                            {{ (users[item[FIELDS.EMPLOYEE]] || '?')[0] }}
                                         </div>
-                                        {{ users[item[EMPLOYEE_FIELD_CODE]] || 'Неизвестный' }}
+                                        {{ users[item[FIELDS.EMPLOYEE]] || 'Неизвестный' }}
                                     </div>
                                 </td>
                                 <td class="px-6 py-4">
-                                     <div class="font-medium text-slate-800">{{ item[TASK_NAME_FIELD_CODE] || 'Без задачи' }}</div>
+                                     <div class="font-medium text-slate-800">{{ item[FIELDS.TASK_NAME] || 'Без задачи' }}</div>
                                      <div class="text-xs text-slate-500 mt-1 line-clamp-1">{{ item.title }}</div>
                                 </td>
                                 <td class="px-6 py-4 text-right font-bold text-slate-700">
-                                    {{ parseFloat(item[HOURS_FIELD_CODE] || 0).toFixed(2) }}
+                                    {{ parseFloat(item[FIELDS.HOURS] || 0).toFixed(2) }}
                                 </td>
                                 <td class="px-6 py-4 text-center">
                                      <span 
-                                        :class="(item[IS_CONSIDERED_FIELD_CODE] === 'Y' || item[IS_CONSIDERED_FIELD_CODE] === true) ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'"
+                                        :class="(item[FIELDS.IS_CONSIDERED] === 'Y' || item[FIELDS.IS_CONSIDERED] === true) ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'"
                                         class="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider"
                                      >
-                                        {{ (item[IS_CONSIDERED_FIELD_CODE] === 'Y' || item[IS_CONSIDERED_FIELD_CODE] === true) ? 'Да' : 'Нет' }}
+                                        {{ (item[FIELDS.IS_CONSIDERED] === 'Y' || item[FIELDS.IS_CONSIDERED] === true) ? 'Да' : 'Нет' }}
                                      </span>
                                 </td>
                             </tr>

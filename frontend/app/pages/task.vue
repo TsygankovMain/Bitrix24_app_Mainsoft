@@ -33,17 +33,8 @@ const isReporting = ref(false)
 // Users Map
 const usersMap = ref<Record<string, any>>({})
 
-// --- CONFIG CONSTANTS (Fallbacks) ---
-const BACKEND_MAPPING = {
-    'id_zadachi': 'TASK_ID',
-    'sotrudnik': 'EMPLOYEE',
-    'kolichestvo_chasov': 'HOURS',
-    'uchitivaem': 'IS_CONSIDERED',
-    'opisanie': 'DESCRIPTION',
-    'id_zadach_ierarhiya': 'TASK_HIERARCHY',
-    'title_zadach_ierarhiya': 'TITLE_HIERARCHY',
-    'data': 'DATE'
-}
+// --- CONFIG CONSTANTS (now in stores/fieldConfig.ts) ---
+const fieldConfigStore = useFieldConfigStore()
 
 // --- INIT LOGIC ---
 
@@ -100,7 +91,6 @@ async function loadConfigAndUsers() {
     // @ts-ignore
     const result = await $b24.callBatch({
         users: { method: 'user.get', params: { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' } },
-        appParam: { method: 'app.option.get' }
     })
 
     console.log('loadConfigAndUsers: result =', result)
@@ -125,43 +115,14 @@ async function loadConfigAndUsers() {
         console.warn('No users data or error:', data.users)
     }
 
-    // Config - with safe checks
-    if (data.appParam && !data.appParam.error) {
-        try {
-            const resultData = data.appParam.data
-            console.log('loadConfigAndUsers: appParam.data =', resultData)
-            
-            if (resultData && resultData.timestamp_config) {
-                const rawConfig = JSON.parse(resultData.timestamp_config)
-                
-                const spId = rawConfig.sp_entity_type_id
-                const backendFields = rawConfig.fields_mapping || {}
-                
-                const fields: any = {}
-                Object.entries(BACKEND_MAPPING).forEach(([backendKey, frontendKey]) => {
-                    if (backendFields[backendKey]) {
-                        fields[frontendKey] = backendFields[backendKey]
-                    }
-                })
-
-                if (!spId || !fields.TASK_ID || !fields.HOURS) {
-                    throw new Error("Неполная конфигурация.")
-                }
-
-                config.value = {
-                    DEFAULT_SMART_PROCESS_ID: spId,
-                    FIELDS: fields
-                }
-            } else {
-                throw new Error("Конфигурация не найдена. Переустановите приложение.")
-            }
-        } catch (e: any) {
-            console.error("Config Error:", e)
-            initError.value = e.message
-        }
+    // Config - via fieldConfigStore
+    await fieldConfigStore.loadFromB24($b24!)
+    
+    if (fieldConfigStore.isConfigured) {
+        config.value = fieldConfigStore.configObject
     } else {
-        console.error('appParam error or missing:', data.appParam)
-        initError.value = "Ошибка получения настроек приложения."
+        console.error('Config Error:', fieldConfigStore.loadError)
+        initError.value = fieldConfigStore.loadError || 'Конфигурация не найдена.'
     }
 }
 

@@ -7,6 +7,7 @@ const { $initializeB24Frame } = useNuxtApp()
 const { t, locales: localesI18n, setLocale } = useI18n()
 
 let $b24: null | B24Frame = null
+const fieldConfigStore = useFieldConfigStore()
 
 // --- STATE ---
 const isLoading = ref(true)
@@ -19,18 +20,9 @@ const usersMap = ref<Record<string, any>>({})
 const clientHourRate = ref(3000)
 const currentEditingId = ref<string | null>(null)
 const editingItem = ref<any>(null)
+const currentUserId = ref<string | null>(null)
 
-// Config mapping
-const BACKEND_MAPPING = {
-    'id_zadachi': 'TASK_ID',
-    'sotrudnik': 'EMPLOYEE',
-    'kolichestvo_chasov': 'HOURS',
-    'uchitivaem': 'IS_CONSIDERED',
-    'opisanie': 'DESCRIPTION',
-    'id_zadach_ierarhiya': 'TASK_HIERARCHY',
-    'title_zadach_ierarhiya': 'TITLE_HIERARCHY',
-    'data': 'DATE'
-}
+// Config mapping is now in stores/fieldConfig.ts
 
 // Computed properties
 const usersList = computed(() => Object.values(usersMap.value))
@@ -73,7 +65,8 @@ onMounted(async () => {
 
 async function loadConfigAndUsers() {
     const result = await ($b24 as any).callBatch({
-        users: { method: 'user.get', params: { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' } }
+        users: { method: 'user.get', params: { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' } },
+        profile: { method: 'profile' }
     })
 
     const data = result.getData()
@@ -99,33 +92,26 @@ async function loadConfigAndUsers() {
         console.error('❌ [Embedded] Error loading users:', data.users?.error)
     }
 
-    // HARDCODED Config (from Application_Documentation.md)
-    console.log('⚙️ [Embedded] Using HARDCODED configuration')
-    config.value = {
-        DEFAULT_SMART_PROCESS_ID: 1164,
-        FIELDS: {
-            TASK_ID: 'ufCrm87_1761919581',
-            EMPLOYEE: 'ufCrm87_1761919601',
-            HOURS: 'ufCrm87_1761919617',
-            IS_CONSIDERED: 'ufCrm87_1763717129',
-            DESCRIPTION: 'ufCrm87_1762026149771',
-            TASK_HIERARCHY: 'ufCrm87_1764191110',
-            TITLE_HIERARCHY: 'ufCrm87_1764191133',
-            PROJECT_ID: 'ufCrm87_1764265626',
-            PROJECT_TITLE: 'ufCrm87_1764265641',
-            DATE: 'ufCrm87_1764446274',
-            TASK_NAME: 'ufCrm87_1764361585'
-        },
-        TASK_FIELDS: {
-            OUR_INN: 'UF_TASKS_TASK_1758105743485',
-            CLIENT_INN: 'UF_TASKS_TASK_1758026758173'
-        },
-        SPA_FIELDS: {
-            OUR_INN: 'ufCrm87_1769624604091',
-            CLIENT_INN: 'ufCrm87_1769624613999'
+    // Profile - get current user ID
+    if (data.profile && !data.profile.error) {
+        const profileData = data.profile.result || data.profile.data || data.profile
+        if (profileData && profileData.ID) {
+            currentUserId.value = String(profileData.ID)
+            console.log('✅ [Embedded] Current user ID:', currentUserId.value)
         }
     }
-    console.log('✅ [Embedded] Config loaded (hardcoded)', config.value)
+
+    // HARDCODED Config (from Application_Documentation.md)
+    // NOW: Dynamic config from app.option.get via fieldConfigStore
+    await fieldConfigStore.loadFromB24($b24!)
+    
+    if (fieldConfigStore.isConfigured) {
+        config.value = fieldConfigStore.configObject
+        console.log('✅ [Embedded] Config loaded from app.option', config.value)
+    } else {
+        console.error('❌ [Embedded] Config not found or incomplete:', fieldConfigStore.loadError)
+        error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Зайдите в Настройки → Маппинг и настройте поля.'
+    }
 }
 
 async function loadData(taskId: string) {
@@ -513,7 +499,7 @@ function createNewEntry() {
         id: null, // null means it's a new entry
         taskId: rootTaskId.value,
         description: '',
-        employeeId: usersList.value[0]?.ID || '',
+        employeeId: currentUserId.value || usersList.value[0]?.ID || '',
         date: new Date().toISOString().split('T')[0],
         hours: 1,
         isConsidered: true,
@@ -533,7 +519,7 @@ function createEntryForTask(taskId: string) {
         id: null,
         taskId: taskId,
         description: '',
-        employeeId: usersList.value[0]?.ID || '',
+        employeeId: currentUserId.value || usersList.value[0]?.ID || '',
         date: new Date().toISOString().split('T')[0],
         hours: 1,
         isConsidered: true,

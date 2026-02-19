@@ -30,50 +30,85 @@ class InstallationService:
     def install_app_sync(self) -> Dict[str, Any]:
         """
         Orchestrates the installation process synchronously.
+        Now only registers the app and installs placements.
+        SP and fields creation is done via settings page buttons.
         """
         logger.info("Starting installation...")
         try:
             # 1. Load current configuration
             config = self.config_service.get_configuration_sync()
-            sp_id = config.get('sp_entity_type_id', 0)
-            fields_mapping = config.get('fields_mapping', {})
-            
-            # 2. Check/Create Smart Process
-            if not sp_id or sp_id == 0:
-                logger.info("No Smart Process configured. Creating new one...")
-                sp_id = self._create_smart_process_sync()
-                self.rollback_stack.append(('delete_sp', sp_id))
-            else:
-                logger.info(f"Using configured Smart Process ID: {sp_id}")
 
-            # 3. Check/Create Fields
-            # If mapping is incomplete, we should create missing fields? 
-            # For now, if default fields are missing, we create them.
-            if not fields_mapping:
-                 fields_mapping = self._create_default_fields_sync(sp_id)
-                 self.rollback_stack.append(('delete_fields', fields_mapping))
-            
-            # 4. Save Configuration
-            # We save what we created/confirmed
-            new_config = {
-                'sp_entity_type_id': sp_id,
-                'fields_mapping': fields_mapping,
-                'is_configured': True,
-                'is_auto_installed': True
-            }
-            self.config_service.save_configuration_sync(new_config)
-            self.rollback_stack.append(('delete_config', None)) # Mark that we saved config
-
-            # 5. Install Placements
+            # 2. Install Placements
             self._install_placements_sync()
             self.rollback_stack.append(('delete_placement', None))
 
-            return new_config
+            return config
 
         except Exception as e:
             logger.error(f"Installation failed: {e}")
             self._rollback_sync()
             raise InstallationError(f"Installation failed: {e}")
+
+    def create_smart_process_only(self) -> Dict[str, Any]:
+        """
+        Creates a Smart Process and saves its ID to configuration.
+        Called from Settings page button.
+        """
+        logger.info("Creating Smart Process from settings...")
+        try:
+            config = self.config_service.get_configuration_sync()
+            existing_sp = config.get('sp_entity_type_id', 0)
+
+            if existing_sp and existing_sp != 0:
+                raise InstallationError(f"Смарт-процесс уже существует (ID: {existing_sp}). Удалите его вручную перед созданием нового.")
+
+            sp_id = self._create_smart_process_sync()
+
+            new_config = {
+                **config,
+                'sp_entity_type_id': sp_id,
+                'is_configured': False,
+            }
+            self.config_service.save_configuration_sync(new_config)
+
+            logger.info(f"Smart Process created: {sp_id}")
+            return new_config
+
+        except InstallationError:
+            raise
+        except Exception as e:
+            logger.error(f"SP creation failed: {e}")
+            raise InstallationError(f"Ошибка создания смарт-процесса: {e}")
+
+    def create_fields_only(self, sp_id: int) -> Dict[str, Any]:
+        """
+        Creates all required fields in the specified Smart Process.
+        Called from Settings page button.
+        """
+        logger.info(f"Creating fields for SP {sp_id} from settings...")
+        try:
+            if not sp_id or sp_id == 0:
+                raise InstallationError("Сначала выберите или создайте смарт-процесс.")
+
+            config = self.config_service.get_configuration_sync()
+            fields_mapping = self._create_default_fields_sync(sp_id)
+
+            new_config = {
+                **config,
+                'sp_entity_type_id': sp_id,
+                'fields_mapping': fields_mapping,
+                'is_configured': True,
+            }
+            self.config_service.save_configuration_sync(new_config)
+
+            logger.info(f"Fields created: {len(fields_mapping)} fields")
+            return new_config
+
+        except InstallationError:
+            raise
+        except Exception as e:
+            logger.error(f"Fields creation failed: {e}")
+            raise InstallationError(f"Ошибка создания полей: {e}")
 
     def _create_smart_process_sync(self) -> int:
         """Creates a new Smart Process Type and returns its entityTypeId"""
@@ -118,7 +153,10 @@ class InstallationService:
             'project_id': ('B24APP_PROJECT_ID', 'ID Проекта', 'integer'),
             'data': ('B24APP_DATE', 'Дата отражения', 'date'),
             'id_zadach_ierarhiya': ('B24APP_TASK_HIERARCHY_IDS', 'Иерархия ID', 'string'), # JSON string
-            'title_zadach_ierarhiya': ('B24APP_TASK_HIERARCHY_ITLES', 'Иерархия Названий', 'string') # JSON string
+            'title_zadach_ierarhiya': ('B24APP_TASK_HIERARCHY_ITLES', 'Иерархия Названий', 'string'), # JSON string
+            'task_name': ('B24APP_TASK_NAME', 'Название задачи', 'string'),
+            'our_inn': ('B24APP_OUR_INN', 'Наш ИНН', 'string'),
+            'client_inn': ('B24APP_CLIENT_INN', 'ИНН клиента', 'string'),
         }
         
         mapping = {}
