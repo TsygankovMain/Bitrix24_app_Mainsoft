@@ -260,7 +260,8 @@ onMounted(async () => {
       </div>
 
       <!-- Modal -->
-      <div v-if="showModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50" @click.self="closeModal">
+      <Teleport to="body">
+          <div v-if="showModal" class="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black bg-opacity-50" @click.self="closeModal">
           <div class="bg-white rounded-lg shadow-xl w-3/4 max-h-[90vh] flex flex-col">
               <div class="p-4 border-b flex justify-between items-center">
                   <h3 class="text-lg font-bold text-gray-900">
@@ -301,7 +302,8 @@ onMounted(async () => {
                   <B24Button label="Закрыть" color="default" @click="closeModal" />
               </div>
           </div>
-      </div>
+          </div>
+      </Teleport>
   </div>
 </template>
 

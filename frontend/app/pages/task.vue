@@ -533,7 +533,8 @@ async function handleTransferToReport() {
     </div>
     
      <!-- MODAL REPORT -->
-    <div v-if="isReportModalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+    <Teleport to="body">
+        <div v-if="isReportModalOpen" class="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
         <div class="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-fade-in text-center p-6">
             <span class="material-symbols-outlined text-4xl text-blue-500 mb-4">cloud_upload</span>
             <h3 class="font-bold text-lg mb-2">Отправить в отчет?</h3>
@@ -546,7 +547,8 @@ async function handleTransferToReport() {
                  </button>
             </div>
         </div>
-    </div>
+        </div>
+    </Teleport>
 
 </div>
 </template>

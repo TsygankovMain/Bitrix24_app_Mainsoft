@@ -13,7 +13,8 @@ function close() {
 </script>
 
 <template>
-  <div v-if="modelValue" class="fixed inset-0 z-50 overflow-hidden" aria-labelledby="slide-over-title" role="dialog" aria-modal="true">
+  <Teleport to="body">
+    <div v-if="modelValue" class="fixed inset-0 z-[9999] overflow-hidden" aria-labelledby="slide-over-title" role="dialog" aria-modal="true">
     <div class="absolute inset-0 overflow-hidden">
       <!-- Background overlay -->
       <div 
@@ -124,4 +125,5 @@ function close() {
       </div>
     </div>
   </div>
+  </Teleport>
 </template>

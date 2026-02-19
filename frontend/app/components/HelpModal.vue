@@ -9,7 +9,8 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div v-if="open" class="relative z-50" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+  <Teleport to="body">
+    <div v-if="open" class="relative z-[9999]" aria-labelledby="modal-title" role="dialog" aria-modal="true">
     <!-- Backdrop -->
     <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="emit('close')"></div>
 
@@ -68,5 +69,5 @@ const emit = defineEmits<{
         </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 </template>
