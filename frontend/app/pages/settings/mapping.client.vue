@@ -126,8 +126,10 @@ function showStatus(type: 'success' | 'error', text: string) {
 async function handleCreateSmartProcess() {
     isCreatingSP.value = true
     statusMessage.value = null
+    console.log('🔧 [CreateSP] Starting...')
     try {
         const result = await apiStore.createSmartProcess()
+        console.log('✅ [CreateSP] Response:', JSON.stringify(result, null, 2))
         const newConfig = result.config
         config.value = newConfig
         selectedSpId.value = newConfig.sp_entity_type_id
@@ -136,6 +138,12 @@ async function handleCreateSmartProcess() {
         smartProcesses.value = spRes.types || []
         showStatus('success', `Смарт-процесс создан (ID: ${newConfig.sp_entity_type_id})`)
     } catch (e: any) {
+        console.error('❌ [CreateSP] Error:', e)
+        console.error('❌ [CreateSP] e.data:', e?.data)
+        console.error('❌ [CreateSP] e.message:', e?.message)
+        console.error('❌ [CreateSP] e.statusCode:', e?.statusCode)
+        console.error('❌ [CreateSP] e.statusMessage:', e?.statusMessage)
+        console.error('❌ [CreateSP] e.response:', e?.response)
         const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
         showStatus('error', `Ошибка: ${errMsg}`)
     } finally {
@@ -144,18 +152,30 @@ async function handleCreateSmartProcess() {
 }
 
 async function handleCreateFields() {
-    if (!selectedSpId.value) return
+    if (!selectedSpId.value) {
+        console.warn('⚠️ [CreateFields] No SP selected!')
+        return
+    }
     isCreatingFields.value = true
     statusMessage.value = null
+    console.log('🔧 [CreateFields] Starting for SP ID:', selectedSpId.value)
     try {
         const result = await apiStore.createFields(selectedSpId.value)
+        console.log('✅ [CreateFields] Full response:', JSON.stringify(result, null, 2))
         const newConfig = result.config
+        console.log('✅ [CreateFields] fields_mapping:', JSON.stringify(newConfig.fields_mapping, null, 2))
         config.value = newConfig
         mapping.value = { ...newConfig.fields_mapping }
         // Reload fields list
         await loadSpFields(selectedSpId.value!)
         showStatus('success', `Создано ${Object.keys(newConfig.fields_mapping).length} полей. Маппинг заполнен автоматически.`)
     } catch (e: any) {
+        console.error('❌ [CreateFields] Error:', e)
+        console.error('❌ [CreateFields] e.data:', e?.data)
+        console.error('❌ [CreateFields] e.message:', e?.message)
+        console.error('❌ [CreateFields] e.statusCode:', e?.statusCode)
+        console.error('❌ [CreateFields] e.statusMessage:', e?.statusMessage)
+        console.error('❌ [CreateFields] e.response:', e?.response)
         const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
         showStatus('error', `Ошибка: ${errMsg}`)
     } finally {

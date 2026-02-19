@@ -219,25 +219,49 @@ export const useApiStore = defineStore(
     }
 
     const createSmartProcess = async (): Promise<{ status: string; config: any }> => {
-      return await $api('/api/smart-processes/create', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({})
-      })
+      console.log('📡 [API] createSmartProcess: calling POST /api/smart-processes/create')
+      console.log('📡 [API] Token present:', !!tokenJWT.value, 'Token length:', tokenJWT.value?.length)
+      try {
+        const result = await $api('/api/smart-processes/create', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${tokenJWT.value}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({})
+        })
+        console.log('📡 [API] createSmartProcess result:', result)
+        return result as { status: string; config: any }
+      } catch (err: any) {
+        console.error('📡 [API] createSmartProcess FAILED:', err)
+        console.error('📡 [API] err.data:', err?.data)
+        console.error('📡 [API] err.status:', err?.status, err?.statusCode)
+        throw err
+      }
     }
 
     const createFields = async (entityTypeId: number): Promise<{ status: string; config: any }> => {
-      return await $api('/api/smart-processes/create-fields', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ entityTypeId })
-      })
+      console.log('📡 [API] createFields: calling POST /api/smart-processes/create-fields')
+      console.log('📡 [API] entityTypeId:', entityTypeId)
+      console.log('📡 [API] Token present:', !!tokenJWT.value, 'Token length:', tokenJWT.value?.length)
+      console.log('📡 [API] Request body:', JSON.stringify({ entityTypeId }))
+      try {
+        const result = await $api('/api/smart-processes/create-fields', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${tokenJWT.value}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ entityTypeId })
+        })
+        console.log('📡 [API] createFields result:', result)
+        return result as { status: string; config: any }
+      } catch (err: any) {
+        console.error('📡 [API] createFields FAILED:', err)
+        console.error('📡 [API] err.data:', err?.data)
+        console.error('📡 [API] err.status:', err?.status, err?.statusCode)
+        throw err
+      }
     }
 
     const getRequestLogs = async (page: number = 1, limit: number = 50): Promise<any> => {
