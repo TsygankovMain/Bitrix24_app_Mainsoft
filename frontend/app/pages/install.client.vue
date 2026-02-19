@@ -261,7 +261,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="mx-auto px-6 max-w-2xl w-full flex flex-col items-center justify-center gap-1 h-dvh">
+  <div class="mx-auto px-6 w-full flex flex-col items-center justify-center gap-1 h-dvh">
     <Logo
       class="size-[208px]"
       :class="[
@@ -273,7 +273,7 @@ onMounted(async () => {
       size="xs"
       animation="elastic"
       :color="progressColor"
-      class="w-3/4 sm:w-2/3"
+      class="w-full"
     />
     <div class="mt-6 flex flex-col items-center justify-center gap-2">
       <ProseH1 class="text-nowrap mb-0">
