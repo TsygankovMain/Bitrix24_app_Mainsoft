@@ -73,8 +73,8 @@ const router = useRouter()
                   <span class="absolute flex items-center justify-center w-8 h-8 bg-blue-100 rounded-full -left-4 ring-8 ring-white dark:ring-gray-900 dark:bg-blue-900">
                       <span class="font-bold text-blue-800 dark:text-blue-300">2</span>
                   </span>
-                  <h3 class="mb-1 text-lg font-semibold text-gray-900 dark:text-white">Найдите вкладку "Учёт часов"</h3>
-                  <p class="text-base font-normal text-gray-500 dark:text-gray-400">В верхнем меню задачи (рядом с "Комментарии", "Пинг" и т.д.) кликните на <strong>"Учёт часов"</strong>.</p>
+                  <h3 class="mb-1 text-lg font-semibold text-gray-900 dark:text-white">Найдите блок "Учёт трудозатрат"</h3>
+                  <p class="text-base font-normal text-gray-500 dark:text-gray-400">В карточке задачи (среди полей или вкладок) найдите блок <strong>«Учет трудозатрат»</strong>.</p>
               </li>
               <li class="mb-10 ml-6">
                   <span class="absolute flex items-center justify-center w-8 h-8 bg-blue-100 rounded-full -left-4 ring-8 ring-white dark:ring-gray-900 dark:bg-blue-900">
