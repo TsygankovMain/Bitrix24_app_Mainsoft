@@ -3,14 +3,18 @@ import { useFieldConfigStore } from '@/stores/fieldConfig'
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 
+import HelpSidePanel from '@/components/HelpSidePanel.vue'
+
 const { $logger, initApp, processErrorGlobal } = useAppInit('EmbeddedPage')
 const { $initializeB24Frame } = useNuxtApp()
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
 
+// --- STATE ---
+const isHelpOpen = ref(false)
+
 function openHelp() {
-    // Open in current tab/frame
-    router.push({ path: '/guide/reflection', query: { from: 'embedded' } })
+    isHelpOpen.value = true
 }
 
 let $b24: null | B24Frame = null
@@ -19,12 +23,18 @@ const fieldConfigStore = useFieldConfigStore()
 // --- STATE ---
 const isLoading = ref(true)
 const error = ref<string | null>(null)
-const config = ref<any>(null)
+
+// Computed config from store
+const config = computed(() => fieldConfigStore.configObject)
+
 const rootTaskId = ref<string | null>(null)
 const taskTree = ref<any[]>([])
 const expandedTasks = ref<Set<string>>(new Set())
 const usersMap = ref<Record<string, any>>({})
-const clientHourRate = ref(3000)
+
+// Global hourly rate from store
+const clientHourRate = computed(() => fieldConfigStore.hourlyRate)
+
 const currentEditingId = ref<string | null>(null)
 const editingItem = ref<any>(null)
 const currentUserId = ref<string | null>(null)
@@ -113,7 +123,7 @@ async function loadConfigAndUsers() {
     await fieldConfigStore.loadFromB24($b24!)
     
     if (fieldConfigStore.isConfigured) {
-        config.value = fieldConfigStore.configObject
+        // config is computed now
         console.log('✅ [Embedded] Config loaded from app.option', config.value)
     } else {
         console.error('❌ [Embedded] Config not found or incomplete:', fieldConfigStore.loadError)

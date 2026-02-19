@@ -352,17 +352,33 @@ onMounted(async () => {
                   {{ statusMessage.text }}
               </div>
 
-              <div class="w-full">
-                  <label class="block text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Смарт-процесс</label>
-                  <select 
-                    v-model="selectedSpId" 
-                    class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                  >
-                      <option :value="null">-- Не выбрано --</option>
-                      <option v-for="sp in smartProcesses" :key="sp.id" :value="sp.entityTypeId">
-                          {{ sp.title }} (ID: {{ sp.entityTypeId }})
-                      </option>
-                  </select>
+              <div class="w-full space-y-4">
+                  <div>
+                      <label class="block text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Смарт-процесс</label>
+                      <select 
+                        v-model="selectedSpId" 
+                        class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                      >
+                          <option :value="null">-- Не выбрано --</option>
+                          <option v-for="sp in smartProcesses" :key="sp.id" :value="sp.entityTypeId">
+                              {{ sp.title }} (ID: {{ sp.entityTypeId }})
+                          </option>
+                      </select>
+                  </div>
+
+                  <div>
+                      <label class="block text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Стоимость часа (по умолчанию)</label>
+                      <div class="relative rounded-md shadow-sm max-w-xs">
+                          <input 
+                            type="number" 
+                            v-model.number="config.hourly_rate" 
+                            class="focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md" 
+                            placeholder="0.00"
+                          />
+                      </div>
+                      <p class="mt-1 text-xs text-gray-500">Это значение будет использоваться, если ставка не задана индивидуально.</p>
+                  </div>
+
                   <div class="flex flex-col gap-2 mt-3">
                         <div class="flex flex-wrap gap-2">
                             <B24Button 

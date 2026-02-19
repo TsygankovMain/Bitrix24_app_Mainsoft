@@ -35,6 +35,7 @@ export interface FieldConfigState {
     fields: Record<string, string>  // e.g. { TASK_ID: 'ufCrm87_xxx', HOURS: 'ufCrm87_yyy', ... }
     taskFields: Record<string, string>  // e.g. { OUR_INN: 'UF_TASKS_TASK_xxx' }
     spaFields: Record<string, string>   // e.g. { OUR_INN: 'ufCrm87_xxx' }
+    hourlyRate: number
 }
 
 export const useFieldConfigStore = defineStore(
@@ -44,6 +45,7 @@ export const useFieldConfigStore = defineStore(
         const fields = ref<Record<string, string>>({})
         const taskFields = ref<Record<string, string>>({})
         const spaFields = ref<Record<string, string>>({})
+        const hourlyRate = ref(0)
         const isLoaded = ref(false)
         const loadError = ref<string | null>(null)
 
@@ -115,12 +117,14 @@ export const useFieldConfigStore = defineStore(
             // These map to UF_TASKS_TASK_xxx and ufCrmXX_xxx respectively
             taskFields.value = rawConfig.task_fields || {}
             spaFields.value = rawConfig.spa_fields || {}
+            hourlyRate.value = rawConfig.hourly_rate ? Number(rawConfig.hourly_rate) : 0
 
             console.log('[FieldConfig] Config applied:', {
                 entityTypeId: entityTypeId.value,
                 fields: Object.keys(fields.value).length,
                 taskFields: Object.keys(taskFields.value).length,
                 spaFields: Object.keys(spaFields.value).length,
+                hourlyRate: hourlyRate.value,
             })
         }
 
@@ -133,6 +137,7 @@ export const useFieldConfigStore = defineStore(
             FIELDS: fields.value,
             TASK_FIELDS: taskFields.value,
             SPA_FIELDS: spaFields.value,
+            HOURLY_RATE: hourlyRate.value,
         }))
 
         return {
@@ -140,6 +145,7 @@ export const useFieldConfigStore = defineStore(
             fields,
             taskFields,
             spaFields,
+            hourlyRate,
             isLoaded,
             isConfigured,
             loadError,
