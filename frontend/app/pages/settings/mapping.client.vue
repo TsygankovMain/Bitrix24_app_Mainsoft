@@ -191,12 +191,24 @@ async function handleCreateFields() {
         { key: 'project_title', suffix: 'PROJECT', label: 'Проект', type: 'string' },
         { key: 'project_id', suffix: 'PROJECT_ID', label: 'ID Проекта', type: 'integer' },
         { key: 'data', suffix: 'DATE', label: 'Дата отражения', type: 'date' },
-        { key: 'id_zadach_ierarhiya', suffix: 'HIER_IDS', label: 'Иерархия ID', type: 'string' },
-        { key: 'title_zadach_ierarhiya', suffix: 'HIER_TITLES', label: 'Иерархия Названий', type: 'string' },
+        { key: 'id_zadach_ierarhiya', suffix: 'HIER_IDS', label: 'Иерархия ID', type: 'string', multiple: true },
+        { key: 'title_zadach_ierarhiya', suffix: 'HIER_TITLES', label: 'Иерархия Названий', type: 'string', multiple: true },
         { key: 'task_name', suffix: 'TASK_NAME', label: 'Название задачи', type: 'string' },
         { key: 'our_inn', suffix: 'OUR_INN', label: 'Наш ИНН', type: 'string' },
         { key: 'client_inn', suffix: 'CLIENT_INN', label: 'ИНН клиента', type: 'string' },
     ]
+
+    // Convert UF_CRM_10_TASK_ID → ufCrm10TaskId (camelCase for REST API)
+    function ufToCamelCase(ufName: string): string {
+        // UF_CRM_10_TASK_ID → split by _ → ['UF', 'CRM', '10', 'TASK', 'ID']
+        const parts = ufName.split('_')
+        return parts.map((part, i) => {
+            if (i === 0) return part.toLowerCase() // 'uf'
+            // Capitalize first letter, rest lowercase
+            return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
+        }).join('')
+        // Result: ufCrm10TaskId
+    }
 
     const newMapping: Record<string, string> = {}
     const errors: string[] = []
@@ -209,33 +221,48 @@ async function handleCreateFields() {
         const fullFieldName = `UF_CRM_${spaOrdinalId}_${field.suffix}`
 
         try {
-            console.log(`📝 [CreateFields] Creating: ${field.key} -> fieldName=${fullFieldName}, type=${field.type}, entityId=CRM_${spaOrdinalId}`)
+            console.log(`📝 [CreateFields] Creating: ${field.key} -> fieldName=${fullFieldName}, type=${field.type}, entityId=CRM_${spaOrdinalId}, multiple=${!!field.multiple}`)
+
+            // Build field params
+            const fieldParams: Record<string, any> = {
+                entityId: `CRM_${spaOrdinalId}`,
+                fieldName: fullFieldName,
+                userTypeId: field.type,
+                editFormLabel: { ru: field.label, en: field.label },
+                listColumnLabel: { ru: field.label, en: field.label },
+                filterLabel: { ru: field.label, en: field.label },
+            }
+            if (field.multiple) {
+                fieldParams.multiple = 'Y'
+            }
 
             // @ts-ignore - callMethod typing
             const result = await $b24!.callMethod('userfieldconfig.add', {
                 moduleId: 'crm',
-                field: {
-                    entityId: `CRM_${spaOrdinalId}`,
-                    fieldName: fullFieldName,
-                    userTypeId: field.type,
-                    editFormLabel: { ru: field.label, en: field.label },
-                    listColumnLabel: { ru: field.label, en: field.label },
-                    filterLabel: { ru: field.label, en: field.label },
-                }
+                field: fieldParams,
             })
 
             // Extract created field name from response
             const data = result.getData()
-            console.log(`✅ [CreateFields] ${field.key} response:`, JSON.stringify(data))
+            console.log(`✅ [CreateFields] ${field.key} raw response:`, JSON.stringify(data))
 
-            const createdFieldName = data?.result?.field?.fieldName || data?.field?.fieldName
+            // Try all possible response structures from b24jssdk
+            const createdFieldName = data?.result?.field?.fieldName 
+                || data?.field?.fieldName 
+                || data?.fieldName
+                || (typeof data === 'object' && data !== null ? Object.values(data)?.[0]?.fieldName : null)
+
             if (createdFieldName) {
-                newMapping[field.key] = createdFieldName
-                console.log(`✅ [CreateFields] ${field.key} -> ${createdFieldName}`)
+                // Convert to camelCase for REST API: UF_CRM_10_TASK_ID → ufCrm10TaskId
+                const camelName = ufToCamelCase(createdFieldName)
+                newMapping[field.key] = camelName
+                console.log(`✅ [CreateFields] ${field.key}: ${createdFieldName} → ${camelName}`)
             } else {
-                // Try to find fieldName in any structure
-                console.warn(`⚠️ [CreateFields] ${field.key}: unexpected response structure:`, data)
-                newMapping[field.key] = fullFieldName // fallback
+                // Fallback: convert our fullFieldName to camelCase
+                const camelName = ufToCamelCase(fullFieldName)
+                console.warn(`⚠️ [CreateFields] ${field.key}: fieldName not in response, using fallback: ${fullFieldName} → ${camelName}`)
+                console.warn(`⚠️ [CreateFields] Full data keys:`, data ? Object.keys(data) : 'null')
+                newMapping[field.key] = camelName
                 errors.push(`${field.label}: создано, но нет fieldName в ответе`)
             }
             created++
@@ -248,12 +275,12 @@ async function handleCreateFields() {
             // Check if field already exists
             if (errMsg.includes('already') || errMsg.includes('exist') || errMsg.includes('уже')) {
                 console.log(`ℹ️ [CreateFields] ${field.key} already exists, skipping`)
-                newMapping[field.key] = fullFieldName
+                newMapping[field.key] = ufToCamelCase(fullFieldName)
                 errors.push(`${field.label}: уже существует`)
                 created++
             } else {
                 errors.push(`${field.label}: ${errMsg}`)
-                newMapping[field.key] = fullFieldName // fallback
+                newMapping[field.key] = ufToCamelCase(fullFieldName) // fallback
             }
         }
 
