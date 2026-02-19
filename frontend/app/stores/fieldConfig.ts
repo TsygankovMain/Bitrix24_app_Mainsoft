@@ -58,25 +58,32 @@ export const useFieldConfigStore = defineStore(
         async function loadFromB24($b24: B24Frame) {
             loadError.value = null
             try {
-                // @ts-ignore - callBatch typing
-                const result = await $b24.callBatch({
-                    appParam: { method: 'app.option.get' }
-                })
-
-                // @ts-ignore
+                // @ts-ignore - callMethod typing
+                const result = await $b24.callMethod('app.option.get', {})
                 const data = result.getData()
+                console.log('[FieldConfig] Raw app.option.get response:', JSON.stringify(data))
 
-                if (data.appParam && !data.appParam.error) {
-                    const resultData = data.appParam.data
+                // Try multiple paths to find timestamp_config
+                let rawConfigStr: string | null = null
 
-                    if (resultData && resultData.timestamp_config) {
-                        const rawConfig = JSON.parse(resultData.timestamp_config)
-                        applyRawConfig(rawConfig)
-                    } else {
-                        loadError.value = 'Конфигурация не найдена. Зайдите в Настройки → Маппинг и настройте поля.'
-                    }
+                if (typeof data === 'object' && data !== null) {
+                    // Path 1: data.result.timestamp_config (if getData returns whole response)
+                    rawConfigStr = data?.result?.timestamp_config
+                    // Path 2: data.timestamp_config (if getData returns result directly)
+                    if (!rawConfigStr) rawConfigStr = data?.timestamp_config
+                    // Path 3: data is the config string itself
+                    if (!rawConfigStr && typeof data === 'string') rawConfigStr = data
+                }
+
+                console.log('[FieldConfig] Found timestamp_config:', rawConfigStr ? rawConfigStr.substring(0, 100) + '...' : 'null')
+
+                if (rawConfigStr) {
+                    const rawConfig = JSON.parse(rawConfigStr)
+                    console.log('[FieldConfig] Parsed config:', JSON.stringify(rawConfig).substring(0, 200))
+                    applyRawConfig(rawConfig)
                 } else {
-                    loadError.value = 'Ошибка получения настроек приложения.'
+                    console.warn('[FieldConfig] No timestamp_config found in response. Data keys:', data ? Object.keys(data) : 'null')
+                    loadError.value = 'Конфигурация не найдена. Зайдите в Настройки → Маппинг и настройте поля.'
                 }
             } catch (e: any) {
                 console.error('[FieldConfig] Load error:', e)
