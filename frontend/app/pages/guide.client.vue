@@ -19,6 +19,7 @@ const fields = [
   { key: 'data', label: 'Дата', type: 'date', desc: 'Дата, за которую внесено время.' },
   { key: 'id_zadach_ierarhiya', label: 'Иерархия ID', type: 'string (JSON)', desc: 'Полный путь ID задач от корневой до текущей.' },
   { key: 'title_zadach_ierarhiya', label: 'Иерархия Названий', type: 'string (JSON)', desc: 'Полный путь названий задач от корневой до текущей.' },
+  { key: 'nazvanie_zadachi', label: 'Название задачи', type: 'string', desc: 'Название задачи (из иерархии).' },
 ]
 </script>
 
@@ -85,7 +86,7 @@ const fields = [
         <!-- Section 3: Reports -->
         <section>
           <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 border-b pb-2">2. Доступные Отчеты</h2>
-          <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div class="grid md:grid-cols-2 lg:grid-cols-2 gap-6">
             
             <!-- Employee Report -->
             <div class="border rounded-xl p-6 hover:shadow-lg transition-shadow bg-white dark:bg-gray-800">
@@ -132,6 +133,23 @@ const fields = [
                     Идеально подходит для контроля заполнения таймшетов и выявления пропусков.
                 </p>
                 <B24Button label="Перейти" size="sm" color="primary" variant="outline" @click="router.push('/reports/daily')" />
+            </div>
+
+            <!-- Project-Task Report (NEW) -->
+            <div class="border rounded-xl p-6 hover:shadow-lg transition-shadow bg-white dark:bg-gray-800">
+                <div class="flex items-center gap-3 mb-3">
+                    <div class="w-3 h-3 rounded-full bg-teal-500"></div>
+                    <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100">Учет по проектам/задачам</h3>
+                </div>
+                <p class="text-gray-600 dark:text-gray-400 mb-4">
+                    Детальная разбивка трудозатрат по проектам и задачам с группировкой по сотрудникам внутри каждой задачи.
+                </p>
+                <ul class="list-disc list-inside text-sm text-gray-500 mb-4 space-y-1">
+                    <li>Группировка: Проект -> Задача -> Сотрудник -> Метки</li>
+                    <li>Фильтр по сотрудникам и проектам</li>
+                    <li>Экспорт в Excel</li>
+                </ul>
+                <B24Button label="Перейти" size="sm" color="primary" variant="outline" @click="router.push('/reports/project-task')" />
             </div>
           </div>
         </section>

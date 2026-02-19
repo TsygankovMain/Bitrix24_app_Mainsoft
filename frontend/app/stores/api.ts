@@ -221,14 +221,21 @@ export const useApiStore = defineStore(
     const createSmartProcess = async (): Promise<{ status: string; config: any }> => {
       return await $api('/api/smart-processes/create', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
       })
     }
 
     const createFields = async (entityTypeId: number): Promise<{ status: string; config: any }> => {
       return await $api('/api/smart-processes/create-fields', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({ entityTypeId })
       })
     }
