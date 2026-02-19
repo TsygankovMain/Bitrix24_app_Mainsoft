@@ -126,7 +126,7 @@ class InstallationService:
             }
         }
         
-        response = self.bitrix24_account.call_method('crm.type.add', params)
+        response = self.client._bitrix_token.call_method('crm.type.add', params)
         result = response.get('result', {})
         sp_id = result.get('type', {}).get('entityTypeId')
         
@@ -181,7 +181,7 @@ class InstallationService:
             
             try:
                 logger.info(f"Creating field {key}: entityId={entity_id}, fieldName={field_suffix}, type={type_}")
-                response = self.bitrix24_account.call_method('userfieldconfig.add', field_config)
+                response = self.client._bitrix_token.call_method('userfieldconfig.add', field_config)
                 logger.info(f"Response for {key}: {response}")
                 
                 # Check response structure
@@ -233,7 +233,7 @@ class InstallationService:
         # Ensure we unbind before bind to avoid duplicates?
         # placement.unbind is safe
         try:
-             self.bitrix24_account.call_method('placement.unbind', {
+             self.client._bitrix_token.call_method('placement.unbind', {
                  'PLACEMENT': 'TASK_VIEW_TAB',
                  'HANDLER': handler_url
              })
@@ -244,7 +244,7 @@ class InstallationService:
 
         # Install Project/Group Tab Placement
         try:
-             self.bitrix24_account.call_method('placement.unbind', {
+             self.client._bitrix_token.call_method('placement.unbind', {
                  'PLACEMENT': 'SONET_GROUP_DETAIL_TAB',
                  'HANDLER': handler_url
              })
@@ -255,7 +255,7 @@ class InstallationService:
 
         # 3. Bind Placements
         try:
-             # self.bitrix24_account.call_method('placement.bind', {
+             # self.client._bitrix_token.call_method('placement.bind', {
              #     'PLACEMENT': 'TASK_VIEW_TAB',
              #     'HANDLER': handler_url,
              #     'TITLE': 'Учет времени',
@@ -266,7 +266,7 @@ class InstallationService:
              logger.error(f"Failed to bind TASK_VIEW_TAB: {e}")
 
         try:
-             self.bitrix24_account.call_method('placement.bind', {
+             self.client._bitrix_token.call_method('placement.bind', {
                  'PLACEMENT': 'SONET_GROUP_DETAIL_TAB',
                  'HANDLER': handler_url,
                  'TITLE': 'Учет времени',
@@ -282,17 +282,17 @@ class InstallationService:
         for action, data in reversed(self.rollback_stack):
             try:
                 if action == 'delete_sp':
-                    self.bitrix24_account.call_method('crm.type.delete', {'id': data})
+                    self.client._bitrix_token.call_method('crm.type.delete', {'id': data})
                 
                 elif action == 'delete_fields':
                     # Need to implement field deletion if critical
                     pass
                 
                 elif action == 'delete_placement':
-                    self.bitrix24_account.call_method('placement.unbind', {'PLACEMENT': 'TASK_VIEW_TAB'})
+                    self.client._bitrix_token.call_method('placement.unbind', {'PLACEMENT': 'TASK_VIEW_TAB'})
                 
                 elif action == 'delete_config':
-                    self.bitrix24_account.call_method('app.option.set', {'options': {'timestamp_config': ''}})
+                    self.client._bitrix_token.call_method('app.option.set', {'options': {'timestamp_config': ''}})
 
             except Exception as e:
                 logger.error(f"Rollback failed for {action}: {e}")
