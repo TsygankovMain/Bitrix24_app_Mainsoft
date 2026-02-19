@@ -21,7 +21,7 @@ function goBack() {
 </script>
 
 <template>
-  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen">
+  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen w-full">
     <div class="max-w-4xl mx-auto">
       <!-- Header -->
       <div class="mb-8">

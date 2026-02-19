@@ -9,7 +9,7 @@ const router = useRouter()
 </script>
 
 <template>
-  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen">
+  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen w-full">
     <div class="w-full">
       <!-- Header -->
       <div class="mb-8">
