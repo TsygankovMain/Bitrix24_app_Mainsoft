@@ -33,9 +33,7 @@ const router = useRouter()
         <!-- 1. Введение -->
         <section class="space-y-6 w-full">
           <div class="w-full">
-            <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-4">1. Введение</h2>
-            <p class="lead text-lg text-gray-700 w-full">
-              Добро пожаловать в систему учёта часов! Это приложение создано для того, чтобы сделать процесс фиксации рабочего времени простым, прозрачным и полезным для каждого сотрудника и руководителя.
+
             </p>
             <div class="grid md:grid-cols-3 gap-6 mt-8 w-full">
                 <div class="p-6 bg-blue-50 rounded-xl border border-blue-100">
@@ -105,11 +103,7 @@ const router = useRouter()
           </p>
 
           <!-- Mockup: Main Interface -->
-          <div class="border rounded-xl shadow-2xl bg-white overflow-hidden ring-1 ring-slate-900/5">
-              <!-- Fake Header -->
-              <div class="bg-slate-50 px-6 py-4 border-b flex items-center justify-between">
-                  <div class="font-bold text-slate-700 text-lg">Учет часов: [Проект X]</div>
-                  <div class="flex gap-6 text-sm">
+
                       <div class="flex flex-col items-end">
                           <span class="text-xs text-slate-400 uppercase">План по проекту</span>
                           <span class="font-bold text-slate-700">120 ч.</span>
