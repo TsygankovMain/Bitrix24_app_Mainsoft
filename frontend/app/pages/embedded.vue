@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useFieldConfigStore } from '@/stores/fieldConfig'
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 
@@ -8,8 +9,8 @@ const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
 
 function openHelp() {
-    const route = router.resolve('/guide/reflection')
-    window.open(route.href, '_blank')
+    // Open in current tab/frame
+    router.push({ path: '/guide/reflection', query: { from: 'embedded' } })
 }
 
 let $b24: null | B24Frame = null
