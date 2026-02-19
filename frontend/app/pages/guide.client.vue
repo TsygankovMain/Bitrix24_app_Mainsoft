@@ -339,37 +339,6 @@ const router = useRouter()
           </div>
         </section>
 
-        <!-- 6. FAQ и Решение проблем -->
-        <section class="space-y-8 bg-gray-50 dark:bg-gray-800/50 p-8 rounded-3xl">
-           <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-8 text-center">Часто задаваемые вопросы</h2>
-           
-           <div class="grid md:grid-cols-2 gap-6">
-               <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
-                   <h3 class="font-bold text-lg mb-3 text-blue-600">? Я не вижу вкладку "Учёт часов"</h3>
-                   <p class="text-gray-600 dark:text-gray-400 text-sm">
-                       Вероятно, приложение не установлено в этой задаче. Попробуйте обновить страницу. Если не помогло — обратитесь к администратору портала, возможно, у вас нет прав на просмотр приложения.
-                   </p>
-               </div>
-                <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
-                   <h3 class="font-bold text-lg mb-3 text-blue-600">? Можно ли удалить запись?</h3>
-                   <p class="text-gray-600 dark:text-gray-400 text-sm">
-                       Да. Кликните на запись в списке, затем в правом нижнем углу формы нажмите маленькую красную иконку корзины. Будьте осторожны, это действие нельзя отменить.
-                   </p>
-               </div>
-               <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
-                   <h3 class="font-bold text-lg mb-3 text-blue-600">? Почему "План" отображается серым?</h3>
-                   <p class="text-gray-600 dark:text-gray-400 text-sm">
-                       "План" задается руководителем проекта в настройках Смарт-процесса. Если он серый или равен 00:00, значит, для этой задачи лимит времени не был установлен.
-                   </p>
-               </div>
-               <div class="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
-                   <h3 class="font-bold text-lg mb-3 text-blue-600">? Как изменить часовую ставку?</h3>
-                   <p class="text-gray-600 dark:text-gray-400 text-sm">
-                       Ставка берется из настроек по умолчанию или из профиля сотрудника. Изменить её конкретно для одной записи можно, если у вас есть права администратора администратора в режиме редактирования записи.
-                   </p>
-               </div>
-           </div>
-        </section>
         
         <!-- Footer Info -->
         <div class="text-center text-gray-400 text-sm py-12 border-t mt-12">
