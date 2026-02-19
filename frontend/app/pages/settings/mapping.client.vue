@@ -156,31 +156,122 @@ async function handleCreateFields() {
         console.warn('⚠️ [CreateFields] No SP selected!')
         return
     }
+    if (!$b24) {
+        showStatus('error', 'B24 SDK не инициализирован. Обновите страницу.')
+        return
+    }
+
     isCreatingFields.value = true
     statusMessage.value = null
-    console.log('🔧 [CreateFields] Starting for SP ID:', selectedSpId.value)
-    try {
-        const result = await apiStore.createFields(selectedSpId.value)
-        console.log('✅ [CreateFields] Full response:', JSON.stringify(result, null, 2))
-        const newConfig = result.config
-        console.log('✅ [CreateFields] fields_mapping:', JSON.stringify(newConfig.fields_mapping, null, 2))
-        config.value = newConfig
-        mapping.value = { ...newConfig.fields_mapping }
-        // Reload fields list
-        await loadSpFields(selectedSpId.value!)
-        showStatus('success', `Создано ${Object.keys(newConfig.fields_mapping).length} полей. Маппинг заполнен автоматически.`)
-    } catch (e: any) {
-        console.error('❌ [CreateFields] Error:', e)
-        console.error('❌ [CreateFields] e.data:', e?.data)
-        console.error('❌ [CreateFields] e.message:', e?.message)
-        console.error('❌ [CreateFields] e.statusCode:', e?.statusCode)
-        console.error('❌ [CreateFields] e.statusMessage:', e?.statusMessage)
-        console.error('❌ [CreateFields] e.response:', e?.response)
-        const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
-        showStatus('error', `Ошибка: ${errMsg}`)
-    } finally {
-        isCreatingFields.value = false
+    const spId = selectedSpId.value
+    console.log('🔧 [CreateFields] Starting for SP ID:', spId)
+
+    // Fields to create, with Bitrix24 API types
+    const FIELDS_TO_CREATE = [
+        { key: 'id_zadachi', name: 'B24APP_TASK_ID', label: 'ID Задачи', type: 'integer' },
+        { key: 'sotrudnik', name: 'B24APP_EMPLOYEE', label: 'Сотрудник', type: 'employee' },
+        { key: 'kolichestvo_chasov', name: 'B24APP_HOURS', label: 'Количество часов', type: 'double' },
+        { key: 'uchitivaem', name: 'B24APP_IS_BILLABLE', label: 'Учитываем?', type: 'boolean' },
+        { key: 'ne_uchitivaemie_chasi', name: 'B24APP_NON_BILLABLE', label: 'Неучитываемые часы', type: 'double' },
+        { key: 'opisanie', name: 'B24APP_DESCRIPTION', label: 'Описание', type: 'string' },
+        { key: 'project_title', name: 'B24APP_PROJECT', label: 'Проект', type: 'string' },
+        { key: 'project_id', name: 'B24APP_PROJECT_ID', label: 'ID Проекта', type: 'integer' },
+        { key: 'data', name: 'B24APP_DATE', label: 'Дата отражения', type: 'date' },
+        { key: 'id_zadach_ierarhiya', name: 'B24APP_HIER_IDS', label: 'Иерархия ID', type: 'string' },
+        { key: 'title_zadach_ierarhiya', name: 'B24APP_HIER_TITLES', label: 'Иерархия Названий', type: 'string' },
+        { key: 'task_name', name: 'B24APP_TASK_NAME', label: 'Название задачи', type: 'string' },
+        { key: 'our_inn', name: 'B24APP_OUR_INN', label: 'Наш ИНН', type: 'string' },
+        { key: 'client_inn', name: 'B24APP_CLIENT_INN', label: 'ИНН клиента', type: 'string' },
+    ]
+
+    const newMapping: Record<string, string> = {}
+    const errors: string[] = []
+    let created = 0
+
+    for (const field of FIELDS_TO_CREATE) {
+        showStatus('success', `Создание поля ${created + 1}/${FIELDS_TO_CREATE.length}: ${field.label}...`)
+
+        try {
+            console.log(`📝 [CreateFields] Creating: ${field.key} (${field.name}, type=${field.type}, entityId=CRM_${spId})`)
+
+            // @ts-ignore - callMethod typing
+            const result = await $b24!.callMethod('userfieldconfig.add', {
+                moduleId: 'crm',
+                field: {
+                    entityId: `CRM_${spId}`,
+                    fieldName: field.name,
+                    userTypeId: field.type,
+                    editFormLabel: { ru: field.label, en: field.label },
+                    listColumnLabel: { ru: field.label, en: field.label },
+                    filterLabel: { ru: field.label, en: field.label },
+                }
+            })
+
+            // Extract created field name from response
+            const data = result.getData()
+            console.log(`✅ [CreateFields] ${field.key} response:`, JSON.stringify(data))
+
+            const createdFieldName = data?.result?.field?.fieldName || data?.field?.fieldName
+            if (createdFieldName) {
+                newMapping[field.key] = createdFieldName
+                console.log(`✅ [CreateFields] ${field.key} -> ${createdFieldName}`)
+            } else {
+                // Try to find fieldName in any structure
+                console.warn(`⚠️ [CreateFields] ${field.key}: unexpected response structure:`, data)
+                newMapping[field.key] = field.name // fallback
+                errors.push(`${field.label}: создано, но нет fieldName в ответе`)
+            }
+            created++
+
+        } catch (e: any) {
+            const errMsg = e?.message || e?.toString() || 'Unknown error'
+            console.error(`❌ [CreateFields] ${field.key} FAILED:`, e)
+            console.error(`❌ [CreateFields] Error details:`, JSON.stringify(e, null, 2))
+
+            // Check if field already exists
+            if (errMsg.includes('already') || errMsg.includes('exist') || errMsg.includes('уже')) {
+                console.log(`ℹ️ [CreateFields] ${field.key} already exists, skipping`)
+                newMapping[field.key] = field.name
+                errors.push(`${field.label}: уже существует`)
+                created++
+            } else {
+                errors.push(`${field.label}: ${errMsg}`)
+                newMapping[field.key] = field.name // fallback
+            }
+        }
+
+        // Small delay between API calls to avoid rate limiting
+        await new Promise(r => setTimeout(r, 300))
     }
+
+    // Save mapping to config
+    try {
+        console.log('💾 [CreateFields] Saving mapping:', newMapping)
+        const newConfig = {
+            ...config.value,
+            sp_entity_type_id: spId,
+            fields_mapping: newMapping,
+            is_configured: true,
+        }
+        await apiStore.saveConfiguration(newConfig)
+        config.value = newConfig
+        mapping.value = { ...newMapping }
+
+        // Reload fields list
+        await loadSpFields(spId)
+
+        if (errors.length === 0) {
+            showStatus('success', `✅ Создано ${created} из ${FIELDS_TO_CREATE.length} полей. Маппинг сохранён.`)
+        } else {
+            showStatus('error', `Создано ${created}/${FIELDS_TO_CREATE.length}. Предупреждения: ${errors.join('; ')}`)
+        }
+        console.log('✅ [CreateFields] Done! Mapping saved to config.')
+    } catch (saveErr: any) {
+        console.error('❌ [CreateFields] Failed to save config:', saveErr)
+        showStatus('error', `Поля созданы, но не удалось сохранить маппинг: ${saveErr?.message}`)
+    }
+
+    isCreatingFields.value = false
 }
 
 onMounted(async () => {
