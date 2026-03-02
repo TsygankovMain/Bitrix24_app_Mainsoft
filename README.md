@@ -748,3 +748,4 @@ const myMethod = async (): Promise<MyType> => {
 ## 📄 Лицензия
 
 Этот проект распространяется под лицензией MIT. См. файл [LICENSE](./LICENSE) для подробностей.
+# deploy trigger 1772461460
