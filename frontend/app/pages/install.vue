@@ -1,5 +1,55 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
+
 definePageMeta({ layout: false })
+
+onMounted(() => {
+    (window as any).doInstall = function() {
+        const btn = document.getElementById('install-btn') as HTMLButtonElement | null
+        const content = document.getElementById('install-content')
+        const success = document.getElementById('install-success')
+        const errorDiv = document.getElementById('install-error')
+        const errorText = document.getElementById('error-text')
+
+        if (btn) {
+            btn.disabled = true
+            btn.textContent = 'Установка...'
+        }
+        if (errorDiv) errorDiv.style.display = 'none'
+
+        if (typeof (window as any).BX24 === 'undefined') {
+            if (errorDiv) errorDiv.style.display = 'block'
+            if (errorText) errorText.textContent = 'BX24 SDK не загружен. Откройте приложение из Битрикс24.'
+            if (btn) { btn.disabled = false; btn.textContent = 'Установить встройку' }
+            return
+        }
+
+        ;(window as any).BX24.init(function() {
+            const currentUrl = window.location.href
+            const baseUrl = currentUrl.substring(0, currentUrl.lastIndexOf('/'))
+            const handlerUrl = baseUrl + '/embedded'
+
+            ;(window as any).BX24.callMethod('placement.bind', {
+                PLACEMENT: 'TASK_VIEW_TAB',
+                HANDLER: handlerUrl,
+                TITLE: 'Учет трудозатрат',
+                DESCRIPTION: 'Встройка для учета времени по задачам'
+            }, function(result: any) {
+                if (result.error()) {
+                    if (errorDiv) errorDiv.style.display = 'block'
+                    if (errorText) errorText.textContent = 'Ошибка: ' + result.error().ex.error_description
+                    if (btn) { btn.disabled = false; btn.textContent = 'Установить встройку' }
+                } else {
+                    if (content) content.style.display = 'none'
+                    if (success) success.style.display = 'block'
+                    setTimeout(function() {
+                        ;(window as any).BX24.installFinish()
+                    }, 2000)
+                }
+            })
+        })
+    }
+})
 </script>
 
 <template>
@@ -227,52 +277,4 @@ definePageMeta({ layout: false })
 .retry-btn:hover { background: #fef2f2; }
 </style>
 
-<script>
-if (typeof window !== 'undefined') {
-    window.doInstall = function() {
-        var btn = document.getElementById('install-btn');
-        var content = document.getElementById('install-content');
-        var success = document.getElementById('install-success');
-        var errorDiv = document.getElementById('install-error');
-        var errorText = document.getElementById('error-text');
 
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = 'Установка...';
-        }
-        if (errorDiv) errorDiv.style.display = 'none';
-
-        if (typeof BX24 === 'undefined') {
-            if (errorDiv) errorDiv.style.display = 'block';
-            if (errorText) errorText.textContent = 'BX24 SDK не загружен. Откройте приложение из Битрикс24.';
-            if (btn) { btn.disabled = false; btn.textContent = 'Установить встройку'; }
-            return;
-        }
-
-        BX24.init(function() {
-            var currentUrl = window.location.href;
-            var baseUrl = currentUrl.substring(0, currentUrl.lastIndexOf('/'));
-            var handlerUrl = baseUrl + '/embedded';
-
-            BX24.callMethod('placement.bind', {
-                PLACEMENT: 'TASK_VIEW_TAB',
-                HANDLER: handlerUrl,
-                TITLE: 'Учет трудозатрат',
-                DESCRIPTION: 'Встройка для учета времени по задачам'
-            }, function(result) {
-                if (result.error()) {
-                    if (errorDiv) errorDiv.style.display = 'block';
-                    if (errorText) errorText.textContent = 'Ошибка: ' + result.error().ex.error_description;
-                    if (btn) { btn.disabled = false; btn.textContent = 'Установить встройку'; }
-                } else {
-                    if (content) content.style.display = 'none';
-                    if (success) success.style.display = 'block';
-                    setTimeout(function() {
-                        BX24.installFinish();
-                    }, 2000);
-                }
-            });
-        });
-    };
-}
-</script>
