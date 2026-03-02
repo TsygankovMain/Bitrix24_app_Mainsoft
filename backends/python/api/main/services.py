@@ -663,11 +663,45 @@ class TimesheetSyncService:
         self.entity_type_id = config.get('sp_entity_type_id')
         self.processing_service = DataProcessingService(config.get('fields_mapping', {}))
 
+    # Rate limit retry settings
+    MAX_RETRIES = 5
+    BASE_RETRY_DELAY = 2.0  # seconds
+    THROTTLE_DELAY = 0.5    # seconds between successful requests
+
+    def _call_with_retry(self, method: str, params: dict) -> dict:
+        """
+        Call Bitrix24 API method with retry on rate limit errors.
+        Uses exponential backoff: 2s, 4s, 8s, 16s, 32s
+        """
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                return self.client._bitrix_token.call_method(method, params)
+            except Exception as e:
+                error_str = str(e).lower()
+                is_rate_limit = (
+                    'too many requests' in error_str
+                    or 'querylimitexceeded' in error_str
+                    or '503' in error_str
+                    or '429' in error_str
+                    or 'service temporarily unavailable' in error_str
+                )
+
+                if is_rate_limit and attempt < self.MAX_RETRIES - 1:
+                    delay = self.BASE_RETRY_DELAY * (2 ** attempt)
+                    logger.warning(
+                        f"Rate limit hit (attempt {attempt + 1}/{self.MAX_RETRIES}). "
+                        f"Waiting {delay}s before retry... Error: {e}"
+                    )
+                    time.sleep(delay)
+                else:
+                    raise
+
     def sync_all(self):
         """
         Fetches all items from Bitrix24 and saves them to the database.
         Uses batching to handle 3000+ items.
         Deletes local records that no longer exist in Bitrix24.
+        Includes retry with exponential backoff for rate limit errors.
         """
         logger.info(f"Starting sync for account {self.account.pk}")
         
@@ -682,9 +716,9 @@ class TimesheetSyncService:
 
         while True:
             try:
-                # 1. Fetch Batch
+                # 1. Fetch Batch (with retry on rate limit)
                 logger.info(f"Fetching batch start={start} for SPA {self.entity_type_id}")
-                response = self.client._bitrix_token.call_method(
+                response = self._call_with_retry(
                     "crm.item.list",
                     {
                         "entityTypeId": self.entity_type_id,
@@ -723,8 +757,8 @@ class TimesheetSyncService:
                 if count < limit:
                     break
                 
-                # Throttle
-                time.sleep(0.1)
+                # Throttle to respect Bitrix24 rate limits (~2 req/sec)
+                time.sleep(self.THROTTLE_DELAY)
                 
             except Exception as e:
                 logger.error(f"Sync error at start={start}: {e}")
