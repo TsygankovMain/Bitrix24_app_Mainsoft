@@ -1,6 +1,5 @@
 <template>
-  <B24SidebarLayout :use-light-content="false">
-    <!-- Content -->
+  <div class="w-full min-h-screen">
     <slot />
-  </B24SidebarLayout>
+  </div>
 </template>
