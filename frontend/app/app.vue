@@ -22,3 +22,19 @@ useHead({
     </B24DashboardGroup>
   </B24App>
 </template>
+
+<style>
+/* Force fluid layout — override B24 UI library width constraints */
+.b24-dashboard-group,
+[class*="b24-dashboard"],
+[class*="b24-sidebar-layout"] {
+  max-width: 100% !important;
+  width: 100% !important;
+}
+
+.b24-sidebar-layout__content,
+[class*="sidebar-layout__content"] {
+  max-width: 100% !important;
+  width: 100% !important;
+}
+</style>

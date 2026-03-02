@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
+definePageMeta({ layout: false })
+
 const { $initializeB24Frame } = useNuxtApp()
 let $b24: any = null
 
