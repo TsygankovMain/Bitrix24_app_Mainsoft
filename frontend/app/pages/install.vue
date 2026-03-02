@@ -3,6 +3,10 @@ import { onMounted } from 'vue'
 
 definePageMeta({ layout: false })
 
+useHead({
+    script: [{ src: 'https://api.bitrix24.com/api/v1/', async: true }]
+})
+
 onMounted(() => {
     (window as any).doInstall = function() {
         const btn = document.getElementById('install-btn') as HTMLButtonElement | null
