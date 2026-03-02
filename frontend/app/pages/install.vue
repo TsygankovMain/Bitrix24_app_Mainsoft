@@ -1,142 +1,278 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-
 definePageMeta({ layout: false })
-
-const { $initializeB24Frame } = useNuxtApp()
-let $b24: any = null
-
-const isInstalling = ref(false)
-const installStatus = ref('')
-const installError = ref<string | null>(null)
-
-onMounted(async () => {
-    try {
-        $b24 = await $initializeB24Frame()
-    } catch (e: any) {
-        installError.value = 'Ошибка инициализации: ' + e.message
-    }
-})
-
-async function installPlacement() {
-    if (!$b24) {
-        installError.value = 'Битрикс24 не инициализирован'
-        return
-    }
-
-    isInstalling.value = true
-    installStatus.value = 'Регистрация встройки...'
-    installError.value = null
-
-    try {
-        // Get current app URL and construct handler URL
-        const currentUrl = window.location.href
-        const baseUrl = currentUrl.substring(0, currentUrl.lastIndexOf('/'))
-        const handlerUrl = baseUrl + '/embedded'
-
-        // Register placement
-        const result = await $b24.callMethod('placement.bind', {
-            PLACEMENT: 'TASK_VIEW_TAB',
-            HANDLER: handlerUrl,
-            TITLE: 'Учет трудозатрат',
-            DESCRIPTION: 'Встройка для учета времени по задачам'
-        })
-
-        installStatus.value = '✅ Установка завершена успешно!'
-        
-        // Wait a bit then call installFinish
-        setTimeout(() => {
-            if (typeof $b24.installFinish === 'function') {
-                $b24.installFinish()
-            }
-        }, 1500)
-
-    } catch (e: any) {
-        installError.value = 'Ошибка установки: ' + (e.message || e.toString())
-        installStatus.value = ''
-    } finally {
-        isInstalling.value = false
-    }
-}
 </script>
 
 <template>
-<div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-6">
-    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8">
-        <div class="text-center mb-8">
-            <div class="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span class="material-symbols-outlined text-white text-5xl">schedule</span>
+<div class="install-page">
+    <div class="install-card">
+        <div class="install-header">
+            <div class="install-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                </svg>
             </div>
-            <h1 class="text-3xl font-bold text-slate-900 mb-2">Учет трудозатрат</h1>
-            <p class="text-slate-600">Установка встройки в карточку задачи</p>
+            <h1 class="install-title">Учет трудозатрат</h1>
+            <p class="install-subtitle">Установка встройки в карточку задачи</p>
         </div>
 
-        <div v-if="!installStatus && !installError" class="space-y-6">
-            <div class="bg-blue-50 border border-blue-200 rounded-lg p-6">
-                <h2 class="font-bold text-blue-900 mb-3 flex items-center gap-2">
-                    <span class="material-symbols-outlined">info</span>
+        <div id="install-content">
+            <div class="info-box">
+                <h2 class="info-title">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
                     Что будет установлено?
                 </h2>
-                <ul class="space-y-2 text-sm text-blue-800">
-                    <li class="flex items-start gap-2">
-                        <span class="material-symbols-outlined text-base mt-0.5">check_circle</span>
-                        <span>Вкладка "Учет трудозатрат" в карточке каждой задачи</span>
+                <ul class="info-list">
+                    <li>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        <span>Вкладка «Учет трудозатрат» в карточке каждой задачи</span>
                     </li>
-                    <li class="flex items-start gap-2">
-                        <span class="material-symbols-outlined text-base mt-0.5">check_circle</span>
+                    <li>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                         <span>Иерархическое отображение задач и подзадач</span>
                     </li>
-                    <li class="flex items-start gap-2">
-                        <span class="material-symbols-outlined text-base mt-0.5">check_circle</span>
+                    <li>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                         <span>Возможность редактировать записи времени без попапов</span>
                     </li>
-                    <li class="flex items-start gap-2">
-                        <span class="material-symbols-outlined text-base mt-0.5">check_circle</span>
+                    <li>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                         <span>Функционал разделения записей и расчета стоимости</span>
                     </li>
                 </ul>
             </div>
 
-            <button 
-                @click="installPlacement" 
-                :disabled="isInstalling"
-                class="w-full py-4 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-all text-lg shadow-lg shadow-blue-200 flex items-center justify-center gap-3"
-            >
-                <span v-if="isInstalling" class="material-symbols-outlined animate-spin">progress_activity</span>
-                <span v-else class="material-symbols-outlined">download</span>
-                <span>{{ isInstalling ? 'Установка...' : 'Установить встройку' }}</span>
+            <button id="install-btn" class="install-btn" onclick="doInstall()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Установить встройку
             </button>
         </div>
 
-        <div v-if="installStatus" class="text-center py-8">
-            <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span class="material-symbols-outlined text-green-600 text-4xl">check_circle</span>
+        <div id="install-success" style="display:none;">
+            <div class="success-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
             </div>
-            <h2 class="text-xl font-bold text-slate-900 mb-2">{{ installStatus }}</h2>
-            <p class="text-slate-600 text-sm">Теперь вы можете открыть любую задачу и увидеть новую вкладку</p>
+            <h2 class="success-title">Установка завершена!</h2>
+            <p class="success-text">Теперь вы можете открыть любую задачу и увидеть новую вкладку</p>
         </div>
 
-        <div v-if="installError" class="bg-red-50 border border-red-200 rounded-lg p-6">
-            <div class="flex items-start gap-3">
-                <span class="material-symbols-outlined text-red-600 text-2xl">error</span>
-                <div class="flex-1">
-                    <h3 class="font-bold text-red-900 mb-1">Ошибка</h3>
-                    <p class="text-red-700 text-sm">{{ installError }}</p>
-                </div>
+        <div id="install-error" style="display:none;">
+            <div class="error-box">
+                <h3 class="error-title">Ошибка</h3>
+                <p id="error-text" class="error-text"></p>
+                <button class="retry-btn" onclick="doInstall()">Попробовать снова</button>
             </div>
-            <button 
-                @click="installError = null; installPlacement()" 
-                class="mt-4 w-full py-2 bg-white border border-red-300 text-red-700 font-medium rounded-lg hover:bg-red-50"
-            >
-                Попробовать снова
-            </button>
         </div>
     </div>
 </div>
 </template>
 
 <style scoped>
-.material-symbols-outlined {
-    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+.install-page {
+    width: 100%;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
+
+.install-card {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.1), 0 1px 3px rgba(0,0,0,.06);
+    max-width: 560px;
+    width: 100%;
+    padding: 40px;
+}
+
+.install-header {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.install-icon {
+    width: 72px;
+    height: 72px;
+    background: #2563eb;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+}
+
+.install-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 6px;
+}
+
+.install-subtitle {
+    font-size: 15px;
+    color: #64748b;
+}
+
+.info-box {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+}
+
+.info-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1e3a5f;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.info-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.info-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 14px;
+    color: #1e40af;
+    line-height: 1.5;
+}
+
+.info-list li svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.install-btn {
+    width: 100%;
+    padding: 16px;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    font-size: 17px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: background .2s;
+    box-shadow: 0 4px 14px rgba(37,99,235,.3);
+}
+
+.install-btn:hover { background: #1d4ed8; }
+.install-btn:disabled {
+    background: #94a3b8;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.success-icon { text-align: center; margin-bottom: 16px; }
+.success-title {
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 8px;
+}
+.success-text {
+    text-align: center;
+    font-size: 14px;
+    color: #64748b;
+}
+
+.error-box {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 12px;
+    padding: 24px;
+}
+.error-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #991b1b;
+    margin-bottom: 8px;
+}
+.error-text {
+    font-size: 14px;
+    color: #b91c1c;
+    margin-bottom: 16px;
+}
+.retry-btn {
+    width: 100%;
+    padding: 10px;
+    background: #fff;
+    border: 1px solid #fca5a5;
+    color: #b91c1c;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.retry-btn:hover { background: #fef2f2; }
 </style>
+
+<script>
+if (typeof window !== 'undefined') {
+    window.doInstall = function() {
+        var btn = document.getElementById('install-btn');
+        var content = document.getElementById('install-content');
+        var success = document.getElementById('install-success');
+        var errorDiv = document.getElementById('install-error');
+        var errorText = document.getElementById('error-text');
+
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Установка...';
+        }
+        if (errorDiv) errorDiv.style.display = 'none';
+
+        if (typeof BX24 === 'undefined') {
+            if (errorDiv) errorDiv.style.display = 'block';
+            if (errorText) errorText.textContent = 'BX24 SDK не загружен. Откройте приложение из Битрикс24.';
+            if (btn) { btn.disabled = false; btn.textContent = 'Установить встройку'; }
+            return;
+        }
+
+        BX24.init(function() {
+            var currentUrl = window.location.href;
+            var baseUrl = currentUrl.substring(0, currentUrl.lastIndexOf('/'));
+            var handlerUrl = baseUrl + '/embedded';
+
+            BX24.callMethod('placement.bind', {
+                PLACEMENT: 'TASK_VIEW_TAB',
+                HANDLER: handlerUrl,
+                TITLE: 'Учет трудозатрат',
+                DESCRIPTION: 'Встройка для учета времени по задачам'
+            }, function(result) {
+                if (result.error()) {
+                    if (errorDiv) errorDiv.style.display = 'block';
+                    if (errorText) errorText.textContent = 'Ошибка: ' + result.error().ex.error_description;
+                    if (btn) { btn.disabled = false; btn.textContent = 'Установить встройку'; }
+                } else {
+                    if (content) content.style.display = 'none';
+                    if (success) success.style.display = 'block';
+                    setTimeout(function() {
+                        BX24.installFinish();
+                    }, 2000);
+                }
+            });
+        });
+    };
+}
+</script>
