@@ -142,10 +142,12 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getTimesheetsList = async (page: number = 1, limit: number = 50): Promise<any> => {
+    const getTimesheetsList = async (page: number = 1, limit: number = 50, createdFrom?: string, createdTo?: string): Promise<any> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
       params.append('limit', limit.toString())
+      if (createdFrom) params.append('created_from', createdFrom)
+      if (createdTo) params.append('created_to', createdTo)
 
       return await $api(`/api/timesheets?${params.toString()}`, {
         headers: {

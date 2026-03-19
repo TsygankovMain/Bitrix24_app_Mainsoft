@@ -34,9 +34,18 @@ const itemsTotal = ref(0)
 const itemsPages = ref(0)
 const itemsLimit = 50
 
+// Filter state
+const filterCreatedFrom = ref('')
+const filterCreatedTo = ref('')
+
 async function fetchTimesheetList(page = 1) {
     try {
-         const result = await apiStore.getTimesheetsList(page, itemsLimit)
+         const result = await apiStore.getTimesheetsList(
+           page,
+           itemsLimit,
+           filterCreatedFrom.value || undefined,
+           filterCreatedTo.value || undefined
+         )
          timesheetItems.value = result.items
          itemsTotal.value = result.total
          itemsPage.value = result.page
@@ -124,6 +133,31 @@ const handleExport = async () => {
     }
 }
 
+async function applyFilter() {
+    isLoading.value = true
+    try {
+        await fetchTimesheetList(1)
+    } catch(e) {
+        processErrorGlobal(e)
+    } finally {
+        isLoading.value = false
+    }
+}
+
+async function resetFilter() {
+    filterCreatedFrom.value = ''
+    filterCreatedTo.value = ''
+    isLoading.value = true
+    try {
+        await fetchTimesheetList(1)
+    } catch(e) {
+        processErrorGlobal(e)
+    } finally {
+        isLoading.value = false
+    }
+}
+
+
 async function handleSync() {
     isSyncing.value = true
     try {
@@ -193,6 +227,30 @@ onMounted(async () => {
                 </div>
             </div>
           </template>
+
+          <!-- Filter by creation date -->
+          <div class="flex flex-wrap gap-3 items-end mb-4 p-3 bg-gray-50 rounded-lg border">
+              <div class="flex flex-col gap-1">
+                  <label class="text-xs font-medium text-gray-500">Дата создания — с</label>
+                  <input
+                    type="date"
+                    v-model="filterCreatedFrom"
+                    class="border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+              </div>
+              <div class="flex flex-col gap-1">
+                  <label class="text-xs font-medium text-gray-500">Дата создания — по</label>
+                  <input
+                    type="date"
+                    v-model="filterCreatedTo"
+                    class="border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+              </div>
+              <div class="flex gap-2">
+                  <B24Button label="Применить" @click="applyFilter" color="primary" size="sm" />
+                  <B24Button label="Сбросить" @click="resetFilter" color="link" size="sm" />
+              </div>
+          </div>
 
           <div v-if="isLoading" class="flex justify-center py-8">
               <span class="text-gray-500">Загрузка...</span>

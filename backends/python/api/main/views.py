@@ -417,11 +417,19 @@ def timesheet_sync(request: AuthorizedRequest):
 @log_errors("timesheet_list")
 @auth_required
 def timesheet_list(request: AuthorizedRequest):
-    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-date_reflection', '-bitrix_id')
-    
+    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-created_at', '-bitrix_id')
+
+    # Filter by record creation date (created_at)
+    created_from = request.GET.get('created_from')
+    created_to = request.GET.get('created_to')
+    if created_from:
+        queryset = queryset.filter(created_at__date__gte=created_from)
+    if created_to:
+        queryset = queryset.filter(created_at__date__lte=created_to)
+
     page_number = request.GET.get('page', 1)
     page_size = request.GET.get('limit', 50)
-    
+
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
     
