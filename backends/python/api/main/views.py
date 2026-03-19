@@ -12,6 +12,10 @@ from .utils.decorators import auth_required, log_errors
 from .utils import AuthorizedRequest
 from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog
 
+import json
+import openpyxl
+from openpyxl.styles import Font, Alignment
+
 from config import load_config
 from .services import BitrixDataService, ReportService, TimesheetSyncService, ConfigurationService
 from .installation_service import InstallationService, InstallationError
@@ -40,6 +44,7 @@ __all__ = [
     "get_system_logs",
     "create_smart_process",
     "create_fields",
+    "export_raw_data",
 ]
 
 config = load_config()

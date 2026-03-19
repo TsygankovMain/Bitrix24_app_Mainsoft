@@ -46,6 +46,84 @@ async function fetchTimesheetList(page = 1) {
     }
 }
 
+// Export State
+const dateType = ref('reflection')
+const dateFrom = ref('')
+const dateTo = ref('')
+const spFields = ref<any[]>([])
+const selectedFields = ref<string[]>([])
+const isExporting = ref(false)
+
+const loadSpFields = async () => {
+    try {
+        const configResp = await apiStore.getConfiguration()
+        const config = configResp.config || {}
+        if (config.sp_entity_type_id) {
+            const fieldsResp = await apiStore.getSpFields(config.sp_entity_type_id)
+            if (fieldsResp && fieldsResp.fields) {
+                // fieldsResp.fields might be object or array, depending on Bitrix API.
+                // It's usually a dictionary { FIELD_NAME: { title: "...", type: "..." } }
+                if (typeof fieldsResp.fields === 'object' && !Array.isArray(fieldsResp.fields)) {
+                    const flds: any = fieldsResp.fields
+                    spFields.value = Object.keys(flds).map(k => ({
+                        id: k,
+                        title: flds[k].listLabel || flds[k].formLabel || flds[k].title || k
+                    }))
+                } else if (Array.isArray(fieldsResp.fields)) {
+                    spFields.value = fieldsResp.fields
+                }
+                
+                // default select basic 
+                selectAllFields()
+            }
+        }
+    } catch (e) {
+         console.warn("Could not load SP fields for export", e)
+    }
+}
+
+const toggleSelectAll = (select: boolean) => {
+    if (select) {
+        selectAllFields()
+    } else {
+        selectedFields.value = []
+    }
+}
+
+const selectAllFields = () => {
+    selectedFields.value = spFields.value.map(f => f.id)
+}
+
+const handleExport = async () => {
+    if (!dateFrom.value || !dateTo.value) {
+        alert("Пожалуйста, выберите начальную и конечную даты")
+        return
+    }
+    if (selectedFields.value.length === 0) {
+        alert("Выберите хотя бы одно поле для выгрузки")
+        return
+    }
+    
+    isExporting.value = true
+    try {
+        const blob = await apiStore.exportRawData(dateFrom.value, dateTo.value, dateType.value, selectedFields.value)
+        
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `raw_data_export_${dateFrom.value}_${dateTo.value}.xlsx`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(url)
+        
+    } catch (e: any) {
+        processErrorGlobal(e)
+    } finally {
+        isExporting.value = false
+    }
+}
+
 async function handleSync() {
     isSyncing.value = true
     try {
@@ -82,6 +160,14 @@ onMounted(async () => {
     
     // Initial fetch
     await fetchTimesheetList()
+    
+    // Default dates (current month)
+    const today = new Date()
+    dateFrom.value = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0] || ''
+    dateTo.value = today.toISOString().split('T')[0] || ''
+    
+    // Load fields for export options
+    await loadSpFields()
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -112,7 +198,67 @@ onMounted(async () => {
               <span class="text-gray-500">Загрузка...</span>
           </div>
           <div v-else>
-              <div class="mb-2 text-sm text-gray-500">Всего записей: {{ itemsTotal }}</div>
+              <!-- Блок Экспорта -->
+              <div class="mb-8 bg-blue-50/30 border border-blue-100 rounded-lg p-6">
+                  <h3 class="text-md font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                     </svg>
+                     Настройки динамической выгрузки (Excel)
+                  </h3>
+                  
+                  <!-- Dates -->
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                      <div>
+                          <label class="block text-sm text-gray-600 mb-1">Тип даты</label>
+                          <select v-model="dateType" class="w-full border-gray-300 border rounded-md shadow-sm py-2 px-3 focus:outline-none focus:border-blue-300 bg-white">
+                              <option value="reflection">По дате отражения (data)</option>
+                              <option value="creation">По дате создания (createdTime)</option>
+                          </select>
+                      </div>
+                      <div>
+                          <label class="block text-sm text-gray-600 mb-1">Период: с</label>
+                          <input type="date" v-model="dateFrom" class="w-full border-gray-300 border rounded-md shadow-sm py-2 px-3 focus:outline-none focus:border-blue-300 bg-white">
+                      </div>
+                      <div>
+                          <label class="block text-sm text-gray-600 mb-1">по</label>
+                          <input type="date" v-model="dateTo" class="w-full border-gray-300 border rounded-md shadow-sm py-2 px-3 focus:outline-none focus:border-blue-300 bg-white">
+                      </div>
+                  </div>
+
+                  <!-- Fields -->
+                  <div class="mb-4">
+                      <div class="flex justify-between items-center mb-2">
+                          <span class="text-sm font-medium text-gray-700">Поля для экспорта в Excel:</span>
+                          <span class="text-xs text-gray-500">Выбрано: {{ selectedFields.length }} из {{ spFields.length }}</span>
+                      </div>
+                      <div class="mb-3 space-x-4">
+                          <button @click="toggleSelectAll(true)" class="text-sm text-blue-600 hover:text-blue-800 font-medium cursor-pointer">Выбрать все</button>
+                          <button @click="toggleSelectAll(false)" class="text-sm text-gray-500 hover:text-gray-700 font-medium cursor-pointer">Снять все</button>
+                      </div>
+                      
+                      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-y-3 gap-x-6 bg-white p-4 border border-gray-200 rounded-lg max-h-64 overflow-y-auto shadow-inner">
+                          <label v-for="f in spFields" :key="f.id" class="flex items-start gap-2 cursor-pointer group">
+                              <!-- custom styling matching mockup -->
+                              <input type="checkbox" :value="f.id" v-model="selectedFields" class="mt-1 appearance-none w-4 h-4 border border-gray-300 rounded bg-white checked:bg-blue-600 checked:border-blue-600 focus:ring-1 focus:ring-blue-500 transition-colors bg-center bg-no-repeat 
+                              checked:bg-[url('data:image/svg+xml;utf8,%3Csvg%20viewBox=%220%200%2016%2016%22%20fill=%22white%22%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath%20d=%22M12.207%204.793a1%201%200%20010%201.414l-5%205a1%201%200%2001-1.414%200l-2-2a1%201%200%20011.414-1.414L6.5%209.086l4.293-4.293a1%201%200%20011.414%200z%22/%3E%3C/svg%3E')]">
+                              <div class="flex flex-col overflow-hidden">
+                                  <span class="text-sm font-medium text-gray-800 group-hover:text-blue-600 transition-colors truncate" :title="f.title">{{ f.title }}</span>
+                                  <span class="text-xs text-gray-400 truncate" :title="f.id">{{ f.id }}</span>
+                              </div>
+                          </label>
+                      </div>
+                  </div>
+                  
+                  <div class="flex justify-between items-center mt-6 pt-4 border-t border-blue-200">
+                       <span class="text-sm text-gray-500 italic">Скачивание происходит напрямую из Bitrix24 (в обход локальной БД)</span>
+                       <B24Button label="Скачать Excel" @click="handleExport" :loading="isExporting" color="primary" />
+                  </div>
+              </div>
+
+              <!-- Превью закешированных записей -->
+              <h3 class="text-lg font-bold text-gray-800 mb-2 mt-8">Превью закешированных записей (БД)</h3>
+              <div class="mb-2 text-sm text-gray-500">Всего записей локально: {{ itemsTotal }}</div>
               <div class="overflow-x-auto">
                 <table class="min-w-full divide-y divide-gray-200 border">
                     <thead class="bg-gray-50">

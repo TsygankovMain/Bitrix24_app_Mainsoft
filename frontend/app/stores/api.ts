@@ -154,6 +154,23 @@ export const useApiStore = defineStore(
       })
     }
 
+    const exportRawData = async (dateFrom: string, dateTo: string, dateType: string, fields: string[]): Promise<Blob> => {
+      return await $api('/api/export-raw-data', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`,
+          'Content-Type': 'application/json'
+        },
+        body: {
+            date_from: dateFrom,
+            date_to: dateTo,
+            date_type: dateType,
+            fields: fields
+        },
+        responseType: 'blob'
+      })
+    }
+
     const init = async (b24: B24Frame) => {
       $b24 = b24
       await reinitToken()
@@ -295,6 +312,7 @@ export const useApiStore = defineStore(
       syncTimesheets,
       getTimesheetsList,
       getFilterOptions,
+      exportRawData,
 
       getConfiguration,
       saveConfiguration,
