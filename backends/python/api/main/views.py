@@ -678,7 +678,9 @@ def get_system_logs(request: AuthorizedRequest):
 def export_raw_data(request: AuthorizedRequest):
     """
     Export raw CRM items from Bitrix24 Smart Process to Excel.
-    Accepts JSON body with: date_from, date_to, date_type ('created' or 'reflection'), fields (list of field IDs).
+    Accepts JSON body with: date_from, date_to, date_type ('creation' or 'reflection'), fields (list of field IDs).
+    - Employee fields are resolved to "Lastname Firstname" format.
+    - All values are written as strings (number_format='@') to prevent type coercion.
     """
     try:
         body = json.loads(request.body)
@@ -687,7 +689,7 @@ def export_raw_data(request: AuthorizedRequest):
 
     date_from = body.get("date_from", "")
     date_to = body.get("date_to", "")
-    date_type = body.get("date_type", "reflection")  # 'created' or 'reflection'
+    date_type = body.get("date_type", "reflection")  # 'creation' or 'reflection'
     selected_fields = body.get("fields", [])
 
     # Load configuration to get entity_type_id and field mapping
@@ -698,9 +700,12 @@ def export_raw_data(request: AuthorizedRequest):
     if not entity_type_id:
         return JsonResponse({"error": "Смарт-процесс не настроен. Перейдите в Настройки и выберите смарт-процесс."}, status=400)
 
-    # Get field definitions for header names
+    # Get field definitions for header names and type info
     fields_meta = config_service.get_sp_fields_sync(int(entity_type_id))
     field_labels = {f["id"]: f["title"] for f in fields_meta}
+
+    # Identify employee-type fields so we can resolve IDs to names later
+    employee_field_ids = {f["id"] for f in fields_meta if f.get("type") == "employee"}
 
     # If no specific fields requested, take all available
     if not selected_fields:
@@ -708,13 +713,14 @@ def export_raw_data(request: AuthorizedRequest):
 
     # Build Bitrix24 filter based on date_type
     crm_filter = {}
-    if date_type == "created":
+    # FIX: frontend sends "creation", not "created"
+    if date_type == "creation":
         date_field_from = ">=CREATED_TIME"
         date_field_to = "<=CREATED_TIME"
     else:
-        # Map to the configured reflection date field from config
+        # FIX: the reflection date field key in config is "data", not "date_reflection"
         fields_mapping = config.get("fields_mapping", {})
-        reflection_field = fields_mapping.get("date_reflection", "CREATED_TIME")
+        reflection_field = fields_mapping.get("data", "CREATED_TIME")
         date_field_from = f">={reflection_field}"
         date_field_to = f"<={reflection_field}"
 
@@ -751,7 +757,55 @@ def export_raw_data(request: AuthorizedRequest):
             import traceback
             return JsonResponse({"error": f"Ошибка при получении данных из Bitrix24: {str(e)}", "trace": traceback.format_exc()}, status=500)
 
-    # Build Excel workbook
+    # --- Resolve employee IDs to names ---
+    user_map = {}  # {str(user_id): "Фамилия Имя"}
+
+    # Collect unique user IDs only from employee fields that were selected
+    selected_employee_fields = [fid for fid in selected_fields if fid in employee_field_ids]
+    user_ids_to_fetch = set()
+    for item in all_items:
+        for fid in selected_employee_fields:
+            val = item.get(fid)
+            if isinstance(val, list):
+                for v in val:
+                    if v:
+                        user_ids_to_fetch.add(str(v))
+            elif val:
+                user_ids_to_fetch.add(str(val))
+
+    # Fetch user names in batches of 50
+    if user_ids_to_fetch:
+        uid_list = list(user_ids_to_fetch)
+        BATCH_SIZE = 50
+        for i in range(0, len(uid_list), BATCH_SIZE):
+            chunk = uid_list[i:i + BATCH_SIZE]
+            try:
+                user_response = request.bitrix24_account.client._bitrix_token.call_method(
+                    "user.get",
+                    {"filter": {"ID": chunk}, "select": ["ID", "NAME", "LAST_NAME"]}
+                )
+                users = user_response.get("result", [])
+                for u in users:
+                    uid = str(u.get("ID", ""))
+                    # Format: "Фамилия Имя" (without patronymic, as per product spec)
+                    parts = [u.get("LAST_NAME", ""), u.get("NAME", "")]
+                    name = " ".join(p for p in parts if p).strip()
+                    if uid:
+                        user_map[uid] = name if name else uid
+            except Exception:
+                # Non-critical: fall back to showing raw IDs
+                pass
+
+    def resolve_employee(val) -> str:
+        """Convert employee field value to human-readable name string."""
+        if isinstance(val, list):
+            names = [user_map.get(str(v), str(v)) for v in val if v is not None]
+            return "; ".join(names)
+        elif val is not None:
+            return user_map.get(str(val), str(val))
+        return ""
+
+    # --- Build Excel workbook ---
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Сырые данные"
@@ -762,18 +816,28 @@ def export_raw_data(request: AuthorizedRequest):
     # Write headers
     headers = [field_labels.get(fid, fid) for fid in selected_fields]
     for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell = ws.cell(row=1, column=col_idx, value=str(header))
         cell.font = header_font
         cell.alignment = header_alignment
 
-    # Write data rows
+    # Write data rows — all values as strings, employee fields resolved to names
     for row_idx, item in enumerate(all_items, start=2):
         for col_idx, fid in enumerate(selected_fields, start=1):
-            value = item.get(fid, "")
-            # Flatten lists/dicts to string for Excel compatibility
-            if isinstance(value, (list, dict)):
-                value = json.dumps(value, ensure_ascii=False)
-            ws.cell(row=row_idx, column=col_idx, value=value)
+            raw_value = item.get(fid, "")
+
+            # Resolve employee fields to names
+            if fid in employee_field_ids:
+                str_value = resolve_employee(raw_value)
+            elif isinstance(raw_value, (list, dict)):
+                str_value = json.dumps(raw_value, ensure_ascii=False)
+            elif raw_value is None:
+                str_value = ""
+            else:
+                str_value = str(raw_value)
+
+            cell = ws.cell(row=row_idx, column=col_idx, value=str_value)
+            # Force Excel to treat the cell as text (prevents large numbers → scientific notation)
+            cell.number_format = '@'
 
     # Auto-adjust column widths
     for col in ws.columns:
