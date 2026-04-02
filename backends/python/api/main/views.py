@@ -745,13 +745,17 @@ def export_raw_data(request: AuthorizedRequest):
                     "start": start,
                 }
             )
+            # BUG FIX #3: Bitrix24 returns 'total' at the TOP level of the response,
+            # not inside 'result'. Must read from raw response before it's unpacked.
             result = response.get("result", {})
             items = result.get("items", [])
             all_items.extend(items)
 
-            total = result.get("total", 0)
+            # total is at root level for crm.item.list
+            total = response.get("total", result.get("total", 0))
             start += page_size
-            if start >= total or not items:
+            # BUG FIX #4: also stop if we got fewer items than page_size (last page)
+            if not items or len(items) < page_size or start >= total:
                 break
         except Exception as e:
             import traceback
@@ -773,25 +777,39 @@ def export_raw_data(request: AuthorizedRequest):
             elif val:
                 user_ids_to_fetch.add(str(val))
 
-    # Fetch user names in batches of 50
+    # Fetch user names using batch API (user.get doesn't reliably accept array in filter)
+    # BUG FIX #2: user.get does not support array filter by ID — use batch instead
     if user_ids_to_fetch:
         uid_list = list(user_ids_to_fetch)
         BATCH_SIZE = 50
         for i in range(0, len(uid_list), BATCH_SIZE):
             chunk = uid_list[i:i + BATCH_SIZE]
             try:
-                user_response = request.bitrix24_account.client._bitrix_token.call_method(
-                    "user.get",
-                    {"filter": {"ID": chunk}, "select": ["ID", "NAME", "LAST_NAME"]}
+                # Build a batch: one user.get call per user ID
+                batch_commands = {
+                    f"user_{uid}": {
+                        "method": "user.get",
+                        "params": {"ID": uid, "select": ["ID", "NAME", "LAST_NAME"]}
+                    }
+                    for uid in chunk
+                }
+                batch_response = request.bitrix24_account.client._bitrix_token.call_method(
+                    "batch",
+                    {"halt": 0, "cmd": {k: f"{v['method']}?" + "&".join(f"{pk}={pv}" for pk, pv in v['params'].items()) for k, v in batch_commands.items()}}
                 )
-                users = user_response.get("result", [])
-                for u in users:
-                    uid = str(u.get("ID", ""))
-                    # Format: "Фамилия Имя" (without patronymic, as per product spec)
-                    parts = [u.get("LAST_NAME", ""), u.get("NAME", "")]
-                    name = " ".join(p for p in parts if p).strip()
-                    if uid:
-                        user_map[uid] = name if name else uid
+                batch_result = batch_response.get("result", {}).get("result", {})
+                for key, user_list in batch_result.items():
+                    # user.get returns a list even for single ID
+                    users = user_list if isinstance(user_list, list) else [user_list]
+                    for u in users:
+                        if not u or not isinstance(u, dict):
+                            continue
+                        uid = str(u.get("ID", ""))
+                        # Format: "Фамилия Имя" (without patronymic, as per product spec)
+                        parts = [u.get("LAST_NAME", ""), u.get("NAME", "")]
+                        name = " ".join(p for p in parts if p).strip()
+                        if uid:
+                            user_map[uid] = name if name else uid
             except Exception:
                 # Non-critical: fall back to showing raw IDs
                 pass

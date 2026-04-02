@@ -66,25 +66,28 @@ const isExporting = ref(false)
 const loadSpFields = async () => {
     try {
         const configResp = await apiStore.getConfiguration()
-        const config = configResp.config || {}
+        // getConfiguration() returns the config object directly (not wrapped in {config: ...})
+        const config = configResp || {}
         if (config.sp_entity_type_id) {
             const fieldsResp = await apiStore.getSpFields(config.sp_entity_type_id)
             if (fieldsResp && fieldsResp.fields) {
                 // fieldsResp.fields might be object or array, depending on Bitrix API.
-                // It's usually a dictionary { FIELD_NAME: { title: "...", type: "..." } }
-                if (typeof fieldsResp.fields === 'object' && !Array.isArray(fieldsResp.fields)) {
+                // It's usually an array from our backend: [{id, title, type}, ...]
+                if (Array.isArray(fieldsResp.fields)) {
+                    spFields.value = fieldsResp.fields
+                } else if (typeof fieldsResp.fields === 'object') {
                     const flds: any = fieldsResp.fields
                     spFields.value = Object.keys(flds).map(k => ({
                         id: k,
                         title: flds[k].listLabel || flds[k].formLabel || flds[k].title || k
                     }))
-                } else if (Array.isArray(fieldsResp.fields)) {
-                    spFields.value = fieldsResp.fields
                 }
                 
-                // default select basic 
+                // default: select all fields
                 selectAllFields()
             }
+        } else {
+            console.warn('[RawData] Smart Process not configured — cannot load fields')
         }
     } catch (e) {
          console.warn("Could not load SP fields for export", e)
