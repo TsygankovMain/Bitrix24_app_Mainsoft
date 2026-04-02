@@ -62,8 +62,23 @@ const dateTo = ref('')
 const spFields = ref<any[]>([])
 const selectedFields = ref<string[]>([])
 const isExporting = ref(false)
+const isLoadingFields = ref(false)
+
+// Status bar: tracks all loading states with descriptive messages
+const isAnyLoading = computed(() =>
+  isLoading.value || isSyncing.value || isExporting.value || isLoadingFields.value
+)
+
+const statusMessage = computed(() => {
+  if (isSyncing.value)      return 'Синхронизация с Битрикс24... Это может занять некоторое время'
+  if (isExporting.value)    return 'Формируется Excel: получение данных и имён сотрудников из Битрикс24...'
+  if (isLoadingFields.value) return 'Загрузка полей смарт-процесса...'
+  if (isLoading.value)      return 'Загрузка данных...'
+  return ''
+})
 
 const loadSpFields = async () => {
+    isLoadingFields.value = true
     try {
         const configResp = await apiStore.getConfiguration()
         // getConfiguration() returns the config object directly (not wrapped in {config: ...})
@@ -91,6 +106,8 @@ const loadSpFields = async () => {
         }
     } catch (e) {
          console.warn("Could not load SP fields for export", e)
+    } finally {
+        isLoadingFields.value = false
     }
 }
 
@@ -216,6 +233,25 @@ onMounted(async () => {
 
 <template>
   <div class="flex flex-col gap-4 p-4 min-h-screen">
+
+      <!-- ===== GLOBAL STATUS BAR ===== -->
+      <Transition name="status-slide">
+        <div v-if="isAnyLoading" class="status-bar">
+          <!-- animated progress fill -->
+          <div class="status-bar-track">
+            <div class="status-bar-fill" />
+          </div>
+          <!-- status message -->
+          <div class="status-bar-message">
+            <svg class="status-bar-spinner" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-linecap="round"
+                stroke-dasharray="31.4 31.4" />
+            </svg>
+            <span>{{ statusMessage }}</span>
+          </div>
+        </div>
+      </Transition>
+
       <div class="mb-4">
           <B24Button label="Назад в настройки" color="link" @click="$router.push('/settings')" />
       </div>
@@ -255,8 +291,10 @@ onMounted(async () => {
               </div>
           </div>
 
-          <div v-if="isLoading" class="flex justify-center py-8">
-              <span class="text-gray-500">Загрузка...</span>
+          <!-- Inline loader for table refresh -->
+          <div v-if="isLoading" class="table-loading-overlay">
+            <div class="table-loading-spinner" />
+            <span class="table-loading-text">Загружаем данные из базы...</span>
           </div>
           <div v-else>
               <!-- Блок Экспорта -->
@@ -383,3 +421,98 @@ onMounted(async () => {
       </B24Card>
   </div>
 </template>
+
+<style scoped>
+/* ===== STATUS BAR ===== */
+.status-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.status-bar-track {
+  height: 3px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.status-bar-fill {
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, #3b82f6, #6366f1, #3b82f6);
+  background-size: 200% 100%;
+  animation: status-slide-progress 1.5s ease-in-out infinite;
+  border-radius: 0 2px 2px 0;
+}
+
+@keyframes status-slide-progress {
+  0%   { transform: translateX(-100%); background-position: 0% 0; }
+  50%  { background-position: 100% 0; }
+  100% { transform: translateX(350%); background-position: 0% 0; }
+}
+
+.status-bar-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.status-bar-spinner {
+  width: 16px;
+  height: 16px;
+  color: #3b82f6;
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Transition: slide down on appear, slide up on leave */
+.status-slide-enter-active,
+.status-slide-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.status-slide-enter-from,
+.status-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* ===== INLINE TABLE LOADER ===== */
+.table-loading-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.table-loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.table-loading-text {
+  font-weight: 500;
+}
+</style>
