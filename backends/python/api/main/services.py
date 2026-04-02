@@ -42,25 +42,59 @@ class BitrixDataService:
 
     def fetch_users(self, user_ids: List[str]) -> Dict[str, str]:
         """
-        Fetches users by ID and returns a map {id: "Last First"}
+        Fetches users by ID and returns a map {id: "Last First"}.
+        Handles Bitrix24 employee field quirk: values can be stored as "[12]" (stringified list).
+        Builds a dual-key map so BOTH "12" and "[12]" formats resolve to the name.
         """
         if not user_ids:
             return {}
 
+        # --- Normalize IDs ---
+        # Bitrix24 employee fields return lists: [12]. After str() they become "[12]".
+        # We need to extract the actual numeric ID and remember the original key.
+        numeric_to_original: Dict[str, str] = {}  # {"12": "[12]"}  or  {"12": "12"}
+        for uid in user_ids:
+            if not uid:
+                continue
+            uid_str = str(uid).strip()
+            # Pattern "[12]" or "[12, 15]" — take the first element
+            if uid_str.startswith('['):
+                try:
+                    import json as _json
+                    parsed = _json.loads(uid_str)
+                    if isinstance(parsed, list) and parsed:
+                        numeric = str(parsed[0])
+                        numeric_to_original[numeric] = uid_str
+                        continue
+                except Exception:
+                    pass  # Not a valid JSON list — skip
+                continue  # Unrecognisable "[...]" format — skip it
+            # Normal numeric string
+            if uid_str and uid_str.lstrip('-').isdigit():
+                numeric_to_original[uid_str] = uid_str
+            # else: skip garbage strings
+
+        if not numeric_to_original:
+            return {}
+
         try:
-            # Bitrix user.get supports filter by ID
             response = self.client._bitrix_token.call_method(
                 "user.get",
-                {"FILTER": {"ID": user_ids}}
+                {"FILTER": {"ID": list(numeric_to_original.keys())}}
             )
             users = response.get('result', [])
-            user_map = {}
+            user_map: Dict[str, str] = {}
             for u in users:
-                # Construct name
+                numeric_id = str(u.get('ID', ''))
                 name = f"{u.get('LAST_NAME', '')} {u.get('NAME', '')}".strip()
                 if not name:
-                    name = u.get('EMAIL') or f"User {u.get('ID')}"
-                user_map[str(u.get('ID'))] = name
+                    name = u.get('EMAIL') or f"User {numeric_id}"
+                # Key by numeric ID (for new data: "12")
+                user_map[numeric_id] = name
+                # Also key by original format (for old data in DB: "[12]")
+                original = numeric_to_original.get(numeric_id)
+                if original and original != numeric_id:
+                    user_map[original] = name
             return user_map
         except Exception as e:
             logger.error(f"Error fetching users: {e}")
@@ -173,10 +207,20 @@ class DataProcessingService:
             hours = float(item.get(field_hours) or 0)
             non_billable = float(item.get(field_non_billable) or 0)
 
+            # Employee field in Bitrix24 CRM returns a LIST even for single-select: [12] or [12, 15]
+            # str([12]) would produce "[12]" which is NOT a valid user ID for user.get
+            emp_raw = item.get(field_employee)
+            if isinstance(emp_raw, list):
+                emp_id = str(emp_raw[0]) if emp_raw else ""
+            elif emp_raw is not None:
+                emp_id = str(emp_raw).strip()
+            else:
+                emp_id = ""
+
             normalized_item = {
                 "id_elem": str(item.get('id')),
                 "id_zadachi": str(item.get(field_task_id)),
-                "sotrudnik_id": str(item.get(field_employee)),
+                "sotrudnik_id": emp_id,
                 "kolichestvo_chasov": hours,
                 "uchitivaem": is_billable,
                 "ne_uchitivaemie_chasi": non_billable,
