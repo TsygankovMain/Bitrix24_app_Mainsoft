@@ -12,9 +12,15 @@ node_modules
 
 # Logs
 *.log
+logs/
 
 # Python compiled files
 *.pyc
+__pycache__/
+
+# Python virtual environment
+.venv/
+venv/
 
 # Misc
 .DS_Store

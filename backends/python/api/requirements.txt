@@ -5,3 +5,4 @@ PyJWT
 gunicorn
 environs
 b24pysdk==0.2.3a1
+openpyxl

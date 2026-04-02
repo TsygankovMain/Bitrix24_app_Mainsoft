@@ -672,6 +672,133 @@ def get_system_logs(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @csrf_exempt
+@require_POST
+@log_errors("export_raw_data")
+@auth_required
+def export_raw_data(request: AuthorizedRequest):
+    """
+    Export raw CRM items from Bitrix24 Smart Process to Excel.
+    Accepts JSON body with: date_from, date_to, date_type ('created' or 'reflection'), fields (list of field IDs).
+    """
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, Exception):
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    date_from = body.get("date_from", "")
+    date_to = body.get("date_to", "")
+    date_type = body.get("date_type", "reflection")  # 'created' or 'reflection'
+    selected_fields = body.get("fields", [])
+
+    # Load configuration to get entity_type_id and field mapping
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+
+    entity_type_id = config.get("sp_entity_type_id", 0)
+    if not entity_type_id:
+        return JsonResponse({"error": "Смарт-процесс не настроен. Перейдите в Настройки и выберите смарт-процесс."}, status=400)
+
+    # Get field definitions for header names
+    fields_meta = config_service.get_sp_fields_sync(int(entity_type_id))
+    field_labels = {f["id"]: f["title"] for f in fields_meta}
+
+    # If no specific fields requested, take all available
+    if not selected_fields:
+        selected_fields = [f["id"] for f in fields_meta]
+
+    # Build Bitrix24 filter based on date_type
+    crm_filter = {}
+    if date_type == "created":
+        date_field_from = ">=CREATED_TIME"
+        date_field_to = "<=CREATED_TIME"
+    else:
+        # Map to the configured reflection date field from config
+        fields_mapping = config.get("fields_mapping", {})
+        reflection_field = fields_mapping.get("date_reflection", "CREATED_TIME")
+        date_field_from = f">={reflection_field}"
+        date_field_to = f"<={reflection_field}"
+
+    if date_from:
+        crm_filter[date_field_from] = date_from
+    if date_to:
+        crm_filter[date_field_to] = date_to
+
+    # Fetch all items with pagination
+    all_items = []
+    start = 0
+    page_size = 50
+
+    while True:
+        try:
+            response = request.bitrix24_account.client._bitrix_token.call_method(
+                "crm.item.list",
+                {
+                    "entityTypeId": int(entity_type_id),
+                    "filter": crm_filter,
+                    "select": selected_fields if selected_fields else ["*"],
+                    "start": start,
+                }
+            )
+            result = response.get("result", {})
+            items = result.get("items", [])
+            all_items.extend(items)
+
+            total = result.get("total", 0)
+            start += page_size
+            if start >= total or not items:
+                break
+        except Exception as e:
+            import traceback
+            return JsonResponse({"error": f"Ошибка при получении данных из Bitrix24: {str(e)}", "trace": traceback.format_exc()}, status=500)
+
+    # Build Excel workbook
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Сырые данные"
+
+    header_font = Font(bold=True)
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    # Write headers
+    headers = [field_labels.get(fid, fid) for fid in selected_fields]
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.alignment = header_alignment
+
+    # Write data rows
+    for row_idx, item in enumerate(all_items, start=2):
+        for col_idx, fid in enumerate(selected_fields, start=1):
+            value = item.get(fid, "")
+            # Flatten lists/dicts to string for Excel compatibility
+            if isinstance(value, (list, dict)):
+                value = json.dumps(value, ensure_ascii=False)
+            ws.cell(row=row_idx, column=col_idx, value=value)
+
+    # Auto-adjust column widths
+    for col in ws.columns:
+        max_len: int = 0
+        for cell in col:
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col[0].column_letter].width = min(int(max_len) + 4, 50)
+
+    # Return as HTTP response with Excel content type
+    import io
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = "attachment; filename=raw_data_export.xlsx"
+    return response
+
+
+@xframe_options_exempt
+@csrf_exempt
 def serve_spa(request):
     """
     Serve index.html for any route (GET or POST) to support Bitrix24 iframe loading and SPA navigation.
