@@ -271,21 +271,13 @@ onMounted(async () => {
           <div class="flex flex-wrap gap-3 items-end mb-4 p-3 bg-gray-50 rounded-lg border">
               <div class="flex flex-col gap-1">
                   <label class="text-xs font-medium text-gray-500">Дата создания — с</label>
-                  <input
-                    type="date"
-                    v-model="filterCreatedFrom"
-                    class="border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
+                  <UiDatePickerInput v-model="filterCreatedFrom" placeholder="Выберите дату" />
               </div>
               <div class="flex flex-col gap-1">
                   <label class="text-xs font-medium text-gray-500">Дата создания — по</label>
-                  <input
-                    type="date"
-                    v-model="filterCreatedTo"
-                    class="border rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
+                  <UiDatePickerInput v-model="filterCreatedTo" placeholder="Выберите дату" />
               </div>
-              <div class="flex gap-2">
+              <div class="flex gap-2 items-end">
                   <B24Button label="Применить" @click="applyFilter" color="primary" size="sm" />
                   <B24Button label="Сбросить" @click="resetFilter" color="link" size="sm" />
               </div>
@@ -315,14 +307,14 @@ onMounted(async () => {
                               <option value="creation">По дате создания (createdTime)</option>
                           </select>
                       </div>
-                      <div>
-                          <label class="block text-sm text-gray-600 mb-1">Период: с</label>
-                          <input type="date" v-model="dateFrom" class="w-full border-gray-300 border rounded-md shadow-sm py-2 px-3 focus:outline-none focus:border-blue-300 bg-white">
-                      </div>
-                      <div>
-                          <label class="block text-sm text-gray-600 mb-1">по</label>
-                          <input type="date" v-model="dateTo" class="w-full border-gray-300 border rounded-md shadow-sm py-2 px-3 focus:outline-none focus:border-blue-300 bg-white">
-                      </div>
+                       <div>
+                           <label class="block text-sm text-gray-600 mb-1">Период: с</label>
+                           <UiDatePickerInput v-model="dateFrom" placeholder="Начало периода" />
+                       </div>
+                       <div>
+                           <label class="block text-sm text-gray-600 mb-1">по</label>
+                           <UiDatePickerInput v-model="dateTo" placeholder="Конец периода" />
+                       </div>
                   </div>
 
                   <!-- Fields -->
