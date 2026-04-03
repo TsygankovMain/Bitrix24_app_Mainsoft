@@ -359,11 +359,14 @@ async function loadData(taskId: string) {
         }
         console.log(`📦 [Embedded] Total CRM items loaded: ${allItems.length}`)
 
-        // 4. Build Tree
+        // 4. Build Tree — all IDs normalized to string
         const nodesMap: Record<string, any> = {}
+        const knownTaskIds = new Set<string>()
         allTasks.forEach(t => {
-            nodesMap[t.id] = {
-                taskId: t.id,
+            const key = String(t.id)
+            knownTaskIds.add(key)
+            nodesMap[key] = {
+                taskId: key,
                 taskTitle: t.title,
                 parentId: t.parentId,
                 children: [],
@@ -375,14 +378,26 @@ async function loadData(taskId: string) {
             }
         })
 
-        allItems.forEach(item => {
-            const tid = item[FIELDS.TASK_ID]
-            if (nodesMap[tid]) {
+        console.log('🗂️ [DEBUG] Known task IDs in tree:', [...knownTaskIds].sort())
+        console.log('🗂️ [DEBUG] FIELDS.TASK_ID field name:', FIELDS.TASK_ID)
+
+        // Track items that don't match any task (orphans)
+        const orphanItems: any[] = []
+        let matchedCount = 0
+
+        allItems.forEach((item, idx) => {
+            const rawTid = item[FIELDS.TASK_ID]
+            const tid = String(rawTid ?? '')
+
+            // Detailed log for each item
+            console.log(`📋 [DEBUG] Item #${idx} id=${item.id} | rawTID=${rawTid} (type=${typeof rawTid}) | normalizedTID="${tid}" | inMap=${!!nodesMap[tid]}`)
+
+            if (tid && nodesMap[tid]) {
+                matchedCount++
                 const hours = parseFloat(item[FIELDS.HOURS]) || 0
                 const isConsidered = item[FIELDS.IS_CONSIDERED] === 'Y' || item[FIELDS.IS_CONSIDERED] === true
                 const empId = item[FIELDS.EMPLOYEE]
                 
-                // Force string comparison for user lookup
                 const u = usersMap.value[String(empId)]
                 const empName = u ? `${u.NAME} ${u.LAST_NAME}` : `User ${empId}`
 
@@ -405,8 +420,21 @@ async function loadData(taskId: string) {
                 
                 if (isConsidered) nodesMap[tid].totalConsidered += hours
                 else nodesMap[tid].totalUnconsidered += hours
+            } else {
+                orphanItems.push({ idx, itemId: item.id, rawTid, tid })
             }
         })
+
+        // Summary diagnostics
+        console.log('✅ [DEBUG] Items matched to tasks:', matchedCount)
+        console.log('❌ [DEBUG] Orphan items (no matching task):', orphanItems.length)
+        if (orphanItems.length > 0) {
+            console.warn('❌ [DEBUG] Orphan items list:', orphanItems)
+            console.warn('❌ [DEBUG] Orphan task IDs (unique):', [...new Set(orphanItems.map(o => o.tid))])
+            console.warn('❌ [DEBUG] Are orphan task IDs known?', 
+                [...new Set(orphanItems.map(o => o.tid))].map(tid => ({ tid, inTree: knownTaskIds.has(tid) }))
+            )
+        }
 
         console.log('🌳 [Embedded] All tasks loaded:', allTasks.length)
         console.log('🌳 [Embedded] All items loaded:', allItems.length)
