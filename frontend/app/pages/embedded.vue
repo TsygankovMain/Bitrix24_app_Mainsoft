@@ -275,7 +275,9 @@ async function loadData(taskId: string) {
             iterations++
         }
 
-        // 3. Load Items (with full pagination to bypass 50-item limit)
+        // 3. Load Items (with full pagination + deduplication)
+        // Bitrix24 crm.item.list wraps-around when start > total (returns page 0 again)
+        // instead of returning empty. We detect this by tracking seen item IDs.
         const allTaskIds = allTasks.map(t => t.id)
         console.log(`⏱️ [Embedded] Loading time entries for ${allTaskIds.length} tasks:`, allTaskIds)
         console.log(`⏱️ [Embedded] Using entityTypeId: ${SMART_PROCESS_ID}, TASK_ID field: ${FIELDS.TASK_ID}`)
@@ -283,17 +285,18 @@ async function loadData(taskId: string) {
         const CHUNK_SIZE = 50
         const PAGE_SIZE = 50
         let allItems: any[] = []
+        // Global deduplication tracker — prevents counting items twice across all pages
+        const seenItemIds = new Set<string>()
 
         for (let i = 0; i < allTaskIds.length; i += CHUNK_SIZE) {
             const chunk = allTaskIds.slice(i, i + CHUNK_SIZE)
             const batchCmds: any = {}
             
-        chunk.forEach(tid => {
+            chunk.forEach(tid => {
                 batchCmds[`items_${tid}`] = {
                     method: 'crm.item.list',
                     params: { 
                         entityTypeId: SMART_PROCESS_ID,
-                        // Bitrix24 UF-fields store task IDs as integers — pass Number, not string
                         filter: { [FIELDS.TASK_ID]: Number(tid) },
                         select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
                         start: 0,
@@ -305,9 +308,6 @@ async function loadData(taskId: string) {
             const chunkResult = await ($b24 as any).callBatch(batchCmds)
             const chunkData = chunkResult.getData()
 
-            // NOTE: Bitrix24 batch API stores per-command totals in result_total (not in result[key]),
-            // so we cannot read total from res. Instead we use "fetch until empty" strategy:
-            // if a command returned exactly PAGE_SIZE items → there may be more pages.
             const tasksNeedingMore: string[] = []
 
             Object.entries(chunkData).forEach(([key, res]: [string, any]) => {
@@ -315,30 +315,35 @@ async function loadData(taskId: string) {
                     const result = res.result || res.data || res
                     const items = result?.items || []
                     console.log(`📋 [Embedded] Batch key ${key}: got ${items.length} items`)
-                    allItems.push(...items)
+                    
+                    // Add first-page items to tracker and allItems
+                    items.forEach((item: any) => {
+                        const itemId = String(item.id)
+                        if (!seenItemIds.has(itemId)) {
+                            seenItemIds.add(itemId)
+                            allItems.push(item)
+                        }
+                    })
 
-                    // If we got a full page — there might be more
+                    // If we got a full page — there might be more (check with dedup)
                     if (items.length >= PAGE_SIZE) {
                         const tid = key.replace('items_', '')
                         tasksNeedingMore.push(tid)
-                        console.log(`📄 [Embedded] Task ${tid} returned full page (${items.length}), will fetch more`)
+                        console.log(`📄 [Embedded] Task ${tid}: full first page, will check for more`)
                     }
                 } else {
                     console.error(`❌ [Embedded] Error in CRM batch response for ${key}:`, res.error)
                 }
             })
 
-            // Sequentially fetch remaining pages for tasks that had full first pages
-            // MAX_PAGES safety limit prevents infinite loops if filter is ever broken
-            const MAX_PAGES = 20
+            // Fetch additional pages; stop when we see a duplicate (Bitrix24 wrap-around)
             for (const tid of tasksNeedingMore) {
                 let start = PAGE_SIZE
                 let pageCount = 0
-                while (pageCount < MAX_PAGES) {
+                while (pageCount < 50) {  // Hard upper bound (50 * 50 = 2500 max items per task)
                     console.log(`📄 [Embedded] Fetching extra page for task ${tid}, start=${start}`)
                     const extraRes = await ($b24 as any).callMethod('crm.item.list', {
                         entityTypeId: SMART_PROCESS_ID,
-                        // Must be Number — Bitrix24 UF fields store task IDs as integers
                         filter: { [FIELDS.TASK_ID]: Number(tid) },
                         select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
                         start,
@@ -346,18 +351,32 @@ async function loadData(taskId: string) {
                     })
                     const extraData = extraRes.getData()
                     const extraItems = extraData?.result?.items || extraData?.items || []
-                    console.log(`📄 [Embedded] Extra page start=${start}: got ${extraItems.length} items`)
-                    allItems.push(...extraItems)
+                    
+                    // Deduplicate: add only new items, stop on first duplicate (API wrap-around)
+                    let newCount = 0
+                    let foundDuplicate = false
+                    for (const item of extraItems) {
+                        const itemId = String(item.id)
+                        if (seenItemIds.has(itemId)) {
+                            foundDuplicate = true
+                            break
+                        }
+                        seenItemIds.add(itemId)
+                        allItems.push(item)
+                        newCount++
+                    }
+                    
+                    console.log(`📄 [Embedded] Extra page start=${start}: got ${extraItems.length} raw, ${newCount} new${foundDuplicate ? ' (WRAP-AROUND detected, stopping)' : ''}`)
+                    
                     pageCount++
-                    if (extraItems.length < PAGE_SIZE) break
+                    // Stop if: API wrapped around (duplicate found), or last page (< PAGE_SIZE results)
+                    if (foundDuplicate || extraItems.length < PAGE_SIZE) break
                     start += PAGE_SIZE
-                }
-                if (pageCount >= MAX_PAGES) {
-                    console.warn(`⚠️ [Embedded] Task ${tid} hit MAX_PAGES limit (${MAX_PAGES}). Possible filter issue.`)
                 }
             }
         }
-        console.log(`📦 [Embedded] Total CRM items loaded: ${allItems.length}`)
+        console.log(`📦 [Embedded] Total CRM items loaded: ${allItems.length} unique items`)
+
 
 
         // 4. Build Tree — all IDs normalized to string
