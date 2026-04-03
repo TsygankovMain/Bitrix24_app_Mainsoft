@@ -288,12 +288,13 @@ async function loadData(taskId: string) {
             const chunk = allTaskIds.slice(i, i + CHUNK_SIZE)
             const batchCmds: any = {}
             
-            chunk.forEach(tid => {
+        chunk.forEach(tid => {
                 batchCmds[`items_${tid}`] = {
                     method: 'crm.item.list',
                     params: { 
                         entityTypeId: SMART_PROCESS_ID,
-                        filter: { [FIELDS.TASK_ID]: tid },
+                        // Bitrix24 UF-fields store task IDs as integers — pass Number, not string
+                        filter: { [FIELDS.TASK_ID]: Number(tid) },
                         select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
                         start: 0,
                         limit: PAGE_SIZE
@@ -328,13 +329,17 @@ async function loadData(taskId: string) {
             })
 
             // Sequentially fetch remaining pages for tasks that had full first pages
+            // MAX_PAGES safety limit prevents infinite loops if filter is ever broken
+            const MAX_PAGES = 20
             for (const tid of tasksNeedingMore) {
                 let start = PAGE_SIZE
-                while (true) {
+                let pageCount = 0
+                while (pageCount < MAX_PAGES) {
                     console.log(`📄 [Embedded] Fetching extra page for task ${tid}, start=${start}`)
                     const extraRes = await ($b24 as any).callMethod('crm.item.list', {
                         entityTypeId: SMART_PROCESS_ID,
-                        filter: { [FIELDS.TASK_ID]: tid },
+                        // Must be Number — Bitrix24 UF fields store task IDs as integers
+                        filter: { [FIELDS.TASK_ID]: Number(tid) },
                         select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
                         start,
                         limit: PAGE_SIZE
@@ -343,8 +348,12 @@ async function loadData(taskId: string) {
                     const extraItems = extraData?.result?.items || extraData?.items || []
                     console.log(`📄 [Embedded] Extra page start=${start}: got ${extraItems.length} items`)
                     allItems.push(...extraItems)
+                    pageCount++
                     if (extraItems.length < PAGE_SIZE) break
                     start += PAGE_SIZE
+                }
+                if (pageCount >= MAX_PAGES) {
+                    console.warn(`⚠️ [Embedded] Task ${tid} hit MAX_PAGES limit (${MAX_PAGES}). Possible filter issue.`)
                 }
             }
         }
