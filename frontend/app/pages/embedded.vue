@@ -304,60 +304,52 @@ async function loadData(taskId: string) {
             const chunkResult = await ($b24 as any).callBatch(batchCmds)
             const chunkData = chunkResult.getData()
 
-            // Collect tasks that need more pages (total > PAGE_SIZE)
-            const needMorePages: Array<{ tid: string, start: number, total: number }> = []
+            // NOTE: Bitrix24 batch API stores per-command totals in result_total (not in result[key]),
+            // so we cannot read total from res. Instead we use "fetch until empty" strategy:
+            // if a command returned exactly PAGE_SIZE items → there may be more pages.
+            const tasksNeedingMore: string[] = []
 
             Object.entries(chunkData).forEach(([key, res]: [string, any]) => {
                 if (!res.error) {
                     const result = res.result || res.data || res
                     const items = result?.items || []
-                    const total = result?.total ?? res.total ?? items.length
-
+                    console.log(`📋 [Embedded] Batch key ${key}: got ${items.length} items`)
                     allItems.push(...items)
 
-                    // If there are more pages, queue them
-                    if (total > PAGE_SIZE && items.length >= PAGE_SIZE) {
+                    // If we got a full page — there might be more
+                    if (items.length >= PAGE_SIZE) {
                         const tid = key.replace('items_', '')
-                        for (let start = PAGE_SIZE; start < total; start += PAGE_SIZE) {
-                            needMorePages.push({ tid, start, total })
-                        }
-                        console.log(`📄 [Embedded] Task ${tid} has ${total} items, queuing extra pages`)
+                        tasksNeedingMore.push(tid)
+                        console.log(`📄 [Embedded] Task ${tid} returned full page (${items.length}), will fetch more`)
                     }
                 } else {
                     console.error(`❌ [Embedded] Error in CRM batch response for ${key}:`, res.error)
                 }
             })
 
-            // Fetch additional pages in batches of CHUNK_SIZE
-            for (let p = 0; p < needMorePages.length; p += CHUNK_SIZE) {
-                const pageChunk = needMorePages.slice(p, p + CHUNK_SIZE)
-                const pageBatch: any = {}
-                pageChunk.forEach(({ tid, start }) => {
-                    pageBatch[`items_${tid}_s${start}`] = {
-                        method: 'crm.item.list',
-                        params: {
-                            entityTypeId: SMART_PROCESS_ID,
-                            filter: { [FIELDS.TASK_ID]: tid },
-                            select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
-                            start,
-                            limit: PAGE_SIZE
-                        }
-                    }
-                })
-
-                const pageResult = await ($b24 as any).callBatch(pageBatch)
-                const pageData = pageResult.getData()
-
-                Object.values(pageData).forEach((res: any) => {
-                    if (!res.error) {
-                        const result = res.result || res.data || res
-                        const items = result?.items || []
-                        allItems.push(...items)
-                    }
-                })
+            // Sequentially fetch remaining pages for tasks that had full first pages
+            for (const tid of tasksNeedingMore) {
+                let start = PAGE_SIZE
+                while (true) {
+                    console.log(`📄 [Embedded] Fetching extra page for task ${tid}, start=${start}`)
+                    const extraRes = await ($b24 as any).callMethod('crm.item.list', {
+                        entityTypeId: SMART_PROCESS_ID,
+                        filter: { [FIELDS.TASK_ID]: tid },
+                        select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
+                        start,
+                        limit: PAGE_SIZE
+                    })
+                    const extraData = extraRes.getData()
+                    const extraItems = extraData?.result?.items || extraData?.items || []
+                    console.log(`📄 [Embedded] Extra page start=${start}: got ${extraItems.length} items`)
+                    allItems.push(...extraItems)
+                    if (extraItems.length < PAGE_SIZE) break
+                    start += PAGE_SIZE
+                }
             }
         }
         console.log(`📦 [Embedded] Total CRM items loaded: ${allItems.length}`)
+
 
         // 4. Build Tree — all IDs normalized to string
         const nodesMap: Record<string, any> = {}
