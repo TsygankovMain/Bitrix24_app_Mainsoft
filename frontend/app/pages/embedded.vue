@@ -80,6 +80,11 @@ const currentEditingId = ref<string | null>(null)
 const editingItem = ref<any>(null)
 const currentUserId = ref<string | null>(null)
 
+// --- FILTER STATE ---
+const filterEmployeeId = ref<string>('')
+const filterDateFrom = ref<string>('')
+const filterDateTo = ref<string>('')
+
 // Config mapping is now in stores/fieldConfig.ts
 
 // Computed properties
@@ -270,12 +275,13 @@ async function loadData(taskId: string) {
             iterations++
         }
 
-        // 3. Load Items
+        // 3. Load Items (with full pagination to bypass 50-item limit)
         const allTaskIds = allTasks.map(t => t.id)
         console.log(`⏱️ [Embedded] Loading time entries for ${allTaskIds.length} tasks:`, allTaskIds)
         console.log(`⏱️ [Embedded] Using entityTypeId: ${SMART_PROCESS_ID}, TASK_ID field: ${FIELDS.TASK_ID}`)
         
         const CHUNK_SIZE = 50
+        const PAGE_SIZE = 50
         let allItems: any[] = []
 
         for (let i = 0; i < allTaskIds.length; i += CHUNK_SIZE) {
@@ -288,35 +294,70 @@ async function loadData(taskId: string) {
                     params: { 
                         entityTypeId: SMART_PROCESS_ID,
                         filter: { [FIELDS.TASK_ID]: tid },
-                        select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE]
+                        select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
+                        start: 0,
+                        limit: PAGE_SIZE
                     }
                 }
             })
             
-            console.log(`⏱️ [Embedded] Batch commands for CRM items:`, batchCmds)
             const chunkResult = await ($b24 as any).callBatch(batchCmds)
             const chunkData = chunkResult.getData()
-            console.log(`📦 [Embedded] CRM items batch response:`, chunkData)
+
+            // Collect tasks that need more pages (total > PAGE_SIZE)
+            const needMorePages: Array<{ tid: string, start: number, total: number }> = []
 
             Object.entries(chunkData).forEach(([key, res]: [string, any]) => {
-                console.log(`🔍 [Embedded] Processing CRM batch key: ${key}`)
-                console.log(`📋 [Embedded] CRM response for ${key}:`, res)
-                
-                if(!res.error) {
-                    // API can return: { result: { items: [...] } } OR { items: [...] } directly
-                    const items = res.result?.items || res.data?.items || res.items || []
-                    console.log(`📋 [Embedded] Found ${items.length} items in response`)
-                    
-                    if (items.length > 0) {
-                        console.log(`📋 [Embedded] First item structure:`, items[0])
-                    }
-                    
+                if (!res.error) {
+                    const result = res.result || res.data || res
+                    const items = result?.items || []
+                    const total = result?.total ?? res.total ?? items.length
+
                     allItems.push(...items)
+
+                    // If there are more pages, queue them
+                    if (total > PAGE_SIZE && items.length >= PAGE_SIZE) {
+                        const tid = key.replace('items_', '')
+                        for (let start = PAGE_SIZE; start < total; start += PAGE_SIZE) {
+                            needMorePages.push({ tid, start, total })
+                        }
+                        console.log(`📄 [Embedded] Task ${tid} has ${total} items, queuing extra pages`)
+                    }
                 } else {
                     console.error(`❌ [Embedded] Error in CRM batch response for ${key}:`, res.error)
                 }
             })
+
+            // Fetch additional pages in batches of CHUNK_SIZE
+            for (let p = 0; p < needMorePages.length; p += CHUNK_SIZE) {
+                const pageChunk = needMorePages.slice(p, p + CHUNK_SIZE)
+                const pageBatch: any = {}
+                pageChunk.forEach(({ tid, start }) => {
+                    pageBatch[`items_${tid}_s${start}`] = {
+                        method: 'crm.item.list',
+                        params: {
+                            entityTypeId: SMART_PROCESS_ID,
+                            filter: { [FIELDS.TASK_ID]: tid },
+                            select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
+                            start,
+                            limit: PAGE_SIZE
+                        }
+                    }
+                })
+
+                const pageResult = await ($b24 as any).callBatch(pageBatch)
+                const pageData = pageResult.getData()
+
+                Object.values(pageData).forEach((res: any) => {
+                    if (!res.error) {
+                        const result = res.result || res.data || res
+                        const items = result?.items || []
+                        allItems.push(...items)
+                    }
+                })
+            }
         }
+        console.log(`📦 [Embedded] Total CRM items loaded: ${allItems.length}`)
 
         // 4. Build Tree
         const nodesMap: Record<string, any> = {}
@@ -412,6 +453,57 @@ async function loadData(taskId: string) {
 }
 
 // --- COMPUTED ---
+
+/**
+ * Recursively filter task tree by employee and date.
+ * Returns a copy of the tree with only matching items.
+ * Tasks with no matching items (and no matching children) are kept but with empty items.
+ */
+function filterNode(node: any): any {
+    const empId = filterEmployeeId.value
+    const dateFrom = filterDateFrom.value
+    const dateTo = filterDateTo.value
+
+    const filteredItems = node.items.filter((item: any) => {
+        if (empId && String(item.employeeId) !== String(empId)) return false
+        if (dateFrom || dateTo) {
+            const itemDate = item.date || item.createdTime
+            if (!itemDate) return !dateFrom && !dateTo
+            const d = itemDate.split('T')[0]
+            if (dateFrom && d < dateFrom) return false
+            if (dateTo && d > dateTo) return false
+        }
+        return true
+    })
+
+    const filteredChildren = node.children.map(filterNode)
+
+    // Recalculate totals for filtered node
+    const totalConsidered = filteredItems.filter((i: any) => i.isConsidered).reduce((s: number, i: any) => s + i.hours, 0)
+    const totalUnconsidered = filteredItems.filter((i: any) => !i.isConsidered).reduce((s: number, i: any) => s + i.hours, 0)
+    const childCons = filteredChildren.reduce((s: number, c: any) => s + c.cumulativeConsidered, 0)
+    const childUncons = filteredChildren.reduce((s: number, c: any) => s + c.cumulativeUnconsidered, 0)
+
+    return {
+        ...node,
+        items: filteredItems,
+        children: filteredChildren,
+        totalConsidered,
+        totalUnconsidered,
+        cumulativeConsidered: totalConsidered + childCons,
+        cumulativeUnconsidered: totalUnconsidered + childUncons,
+    }
+}
+
+const isFilterActive = computed(() =>
+    !!filterEmployeeId.value || !!filterDateFrom.value || !!filterDateTo.value
+)
+
+const filteredTaskTree = computed(() => {
+    if (!isFilterActive.value) return taskTree.value
+    return taskTree.value.map(filterNode)
+})
+
 const totalClientAmount = computed(() => {
     let total = 0
     const getAllItems = (nodes: any[]): any[] => {
@@ -422,10 +514,16 @@ const totalClientAmount = computed(() => {
         })
         return result
     }
-    const allItems = getAllItems(taskTree.value)
+    const allItems = getAllItems(filteredTaskTree.value)
     total = allItems.filter(i => i.isConsidered).reduce((sum, i) => sum + i.hours, 0)
     return (total * clientHourRate.value).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 })
+
+function resetFilter() {
+    filterEmployeeId.value = ''
+    filterDateFrom.value = ''
+    filterDateTo.value = ''
+}
 
 // --- ACTIONS ---
 
@@ -817,11 +915,54 @@ async function deleteItem() {
     <!-- MAIN SPLIT -->
     <div v-else class="flex-1 flex overflow-hidden">
         
-        <!-- LEFT: TREE -->
+    <!-- LEFT: TREE -->
         <div class="w-[70%] flex flex-col bg-white">
+
+            <!-- FILTER PANEL -->
+            <div class="px-4 py-2.5 border-b border-slate-200 bg-slate-50 flex flex-wrap items-end gap-3">
+                <div class="flex flex-col gap-1 min-w-[160px] flex-1">
+                    <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Сотрудник</label>
+                    <select
+                        v-model="filterEmployeeId"
+                        class="text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+                    >
+                        <option value="">Все сотрудники</option>
+                        <option v-for="u in usersList" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
+                    </select>
+                </div>
+                <div class="flex flex-col gap-1">
+                    <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Дата от</label>
+                    <input
+                        type="date"
+                        v-model="filterDateFrom"
+                        class="text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+                    >
+                </div>
+                <div class="flex flex-col gap-1">
+                    <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Дата до</label>
+                    <input
+                        type="date"
+                        v-model="filterDateTo"
+                        class="text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+                    >
+                </div>
+                <button
+                    v-if="isFilterActive"
+                    @click="resetFilter"
+                    class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-red-50 hover:border-red-300 hover:text-red-600 transition-colors"
+                >
+                    <span class="material-symbols-outlined text-base">filter_alt_off</span>
+                    Сбросить
+                </button>
+                <div v-if="isFilterActive" class="text-xs text-blue-600 font-medium flex items-center gap-1 ml-auto">
+                    <span class="material-symbols-outlined text-sm">filter_alt</span>
+                    Фильтр активен
+                </div>
+            </div>
+
             <div class="flex-1 overflow-y-auto p-4">
                 <TaskGroupComponent 
-                    v-for="task in taskTree" 
+                    v-for="task in filteredTaskTree" 
                     :key="task.taskId"
                     :task="task"
                     :level="0"

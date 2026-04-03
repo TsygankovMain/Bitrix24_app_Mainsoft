@@ -80,41 +80,49 @@ function createForTask() {
 
         <!-- ITEMS & CHILDREN -->
         <div v-if="isExpanded">
-            <!-- Items -->
-            <div 
-                v-for="item in task.items" 
+            <!-- Items (compact rows) -->
+            <div
+                v-for="item in task.items"
                 :key="item.id"
                 @click="selectItem(item)"
-                class="p-3 border-t transition-colors cursor-pointer hover:bg-blue-50"
-                :class="{ 'bg-blue-50 border-l-4 border-blue-500': currentEditingId === item.id }"
+                class="flex items-center gap-2 px-3 border-t border-slate-100 transition-colors cursor-pointer hover:bg-blue-50 group"
+                :class="currentEditingId === item.id ? 'bg-blue-50 border-l-2 border-blue-500' : ''"
+                style="min-height: 34px;"
             >
-                <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-2">
-                    <div class="flex-1 min-w-0">
-                        <p class="font-semibold text-slate-800 truncate">{{ item.description }}</p>
-                        <div class="flex items-center text-xs text-slate-500 mt-2 gap-3">
-                            <div class="flex items-center">
-                                <span class="material-symbols-outlined text-sm mr-1">person</span>
-                                {{ item.employeeName }}
-                            </div>
-                            <div class="flex items-center">
-                                <span class="material-symbols-outlined text-sm mr-1">calendar_today</span>
-                                {{ new Date(item.date || item.createdTime).toLocaleDateString('ru-RU') }}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="flex md:flex-col items-center md:items-end justify-between mt-2 md:mt-0 gap-2">
-                        <div class="flex items-center gap-2 text-sm font-bold">
-                            <span :class="item.isConsidered ? 'text-green-600' : 'text-red-600'">
-                                {{ item.hours.toFixed(2) }}ч
-                            </span>
-                        </div>
-                        <div class="flex gap-2">
-                            <button @click.stop="selectItem(item)" class="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800 hover:bg-blue-200">
-                                <span class="material-symbols-outlined text-sm">edit</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <!-- Indicator dot -->
+                <span
+                    class="w-2 h-2 rounded-full shrink-0"
+                    :class="item.isConsidered ? 'bg-emerald-500' : 'bg-rose-400'"
+                ></span>
+
+                <!-- Description -->
+                <span class="flex-1 text-sm text-slate-700 truncate" :title="item.description || ''">
+                    {{ item.description || '—' }}
+                </span>
+
+                <!-- Employee + Date (muted, compact) -->
+                <span class="hidden md:flex items-center gap-1.5 text-xs text-slate-400 shrink-0 w-48">
+                    <span class="truncate max-w-[110px]">{{ item.employeeName }}</span>
+                    <span class="text-slate-300">·</span>
+                    <span class="whitespace-nowrap">{{ new Date(item.date || item.createdTime).toLocaleDateString('ru-RU') }}</span>
+                </span>
+
+                <!-- Hours -->
+                <span
+                    class="text-sm font-bold w-14 text-right shrink-0"
+                    :class="item.isConsidered ? 'text-emerald-600' : 'text-slate-400'"
+                >
+                    {{ item.hours.toFixed(2) }}ч
+                </span>
+
+                <!-- Edit button (hover only) -->
+                <button
+                    @click.stop="selectItem(item)"
+                    class="p-1 rounded text-slate-300 hover:text-blue-600 hover:bg-blue-100 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                    title="Редактировать"
+                >
+                    <span class="material-symbols-outlined text-base leading-none">edit</span>
+                </button>
             </div>
 
             <!-- Children -->
