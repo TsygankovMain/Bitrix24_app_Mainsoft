@@ -11,6 +11,7 @@ const emit = defineEmits<{
     toggle: [taskId: string]
     select: [item: any]
     createForTask: [taskId: string]
+    delete: [item: any]
 }>()
 
 const isExpanded = computed(() => props.expandedTasks.has(props.task.taskId))
@@ -32,6 +33,10 @@ function selectItem(item: any) {
 
 function createForTask() {
     emit('createForTask', props.task.taskId)
+}
+
+function deleteItem(item: any) {
+    emit('delete', item)
 }
 </script>
 
@@ -123,6 +128,15 @@ function createForTask() {
                 >
                     <span class="material-symbols-outlined text-base leading-none">edit</span>
                 </button>
+
+                <!-- Delete button (hover only) -->
+                <button
+                    @click.stop="deleteItem(item)"
+                    class="p-1 rounded text-slate-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                    title="Удалить запись"
+                >
+                    <span class="material-symbols-outlined text-base leading-none">delete</span>
+                </button>
             </div>
 
             <!-- Children -->
@@ -138,6 +152,7 @@ function createForTask() {
                     @toggle="(id) => emit('toggle', id)"
                     @select="(item) => emit('select', item)"
                     @createForTask="(taskId) => emit('createForTask', taskId)"
+                    @delete="(item) => emit('delete', item)"
                 />
             </div>
         </div>

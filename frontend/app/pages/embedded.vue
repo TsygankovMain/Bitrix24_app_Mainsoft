@@ -920,6 +920,26 @@ async function deleteItem() {
     }
 }
 
+async function deleteItemDirect(item: any) {
+    if (!config.value || !item?.id) return
+    const label = item.description ? `«${item.description.substring(0, 60)}»` : `#${item.id}`
+    if (!confirm(`Удалить запись ${label}?`)) return
+
+    isLoading.value = true
+    try {
+        await ($b24 as any).callMethod('crm.item.delete', {
+            entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
+            id: item.id
+        })
+        // If this item was open in the editor — close it
+        if (currentEditingId.value === item.id) closeEditor()
+        if (rootTaskId.value) await loadData(rootTaskId.value)
+    } catch (e: any) {
+        alert("Ошибка удаления: " + e.message)
+        isLoading.value = false
+    }
+}
+
 </script>
 
 <template>
@@ -1033,6 +1053,7 @@ async function deleteItem() {
                     @toggle="toggleTask"
                     @select="selectItem"
                     @createForTask="createEntryForTask"
+                    @delete="deleteItemDirect"
                 />
             </div>
         </div>
