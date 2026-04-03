@@ -336,21 +336,32 @@ async function loadData(taskId: string) {
                 }
             })
 
-            // Fetch additional pages; stop when we see a duplicate (Bitrix24 wrap-around)
+            // Fetch additional pages using callBatch — callMethod ignores `start` in b24jssdk,
+            // but batch params are passed through correctly.
             for (const tid of tasksNeedingMore) {
                 let start = PAGE_SIZE
                 let pageCount = 0
-                while (pageCount < 50) {  // Hard upper bound (50 * 50 = 2500 max items per task)
+                while (pageCount < 50) {  // Hard upper bound (50 pages * 50 items = 2500 max)
                     console.log(`📄 [Embedded] Fetching extra page for task ${tid}, start=${start}`)
-                    const extraRes = await ($b24 as any).callMethod('crm.item.list', {
-                        entityTypeId: SMART_PROCESS_ID,
-                        filter: { [FIELDS.TASK_ID]: Number(tid) },
-                        select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
-                        start,
-                        limit: PAGE_SIZE
-                    })
-                    const extraData = extraRes.getData()
-                    const extraItems = extraData?.result?.items || extraData?.items || []
+                    
+                    // Use callBatch (not callMethod) — batch API correctly passes `start`
+                    const extraBatch: any = {
+                        [`extra_${tid}_${start}`]: {
+                            method: 'crm.item.list',
+                            params: {
+                                entityTypeId: SMART_PROCESS_ID,
+                                filter: { [FIELDS.TASK_ID]: Number(tid) },
+                                select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
+                                start,
+                                limit: PAGE_SIZE
+                            }
+                        }
+                    }
+                    const extraBatchRes = await ($b24 as any).callBatch(extraBatch)
+                    const extraBatchData = extraBatchRes.getData()
+                    const extraKey = `extra_${tid}_${start}`
+                    const extraResult = extraBatchData[extraKey]
+                    const extraItems = extraResult?.result?.items || extraResult?.data?.items || extraResult?.items || []
                     
                     // Deduplicate: add only new items, stop on first duplicate (API wrap-around)
                     let newCount = 0
@@ -366,7 +377,9 @@ async function loadData(taskId: string) {
                         newCount++
                     }
                     
-                    console.log(`📄 [Embedded] Extra page start=${start}: got ${extraItems.length} raw, ${newCount} new${foundDuplicate ? ' (WRAP-AROUND detected, stopping)' : ''}`)
+                    console.log(`📄 [Embedded] Extra page start=${start}: got ${extraItems.length} raw, ${newCount} new${foundDuplicate ? ' (WRAP-AROUND, stopping)' : ''}`)
+                    
+
                     
                     pageCount++
                     // Stop if: API wrapped around (duplicate found), or last page (< PAGE_SIZE results)
