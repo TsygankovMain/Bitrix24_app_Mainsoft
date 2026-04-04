@@ -4,6 +4,7 @@ import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
+import { getCurrentMonthRange } from '~/utils/reportDateRange'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -34,6 +35,7 @@ const reportData = ref<{ header_days: any[], rows: any[] } | null>(null)
 const dateFrom = ref('')
 const dateTo = ref('')
 const isInit = ref(false)
+const hasGenerated = ref(false)
 const domain = ref('') // Store domain for links
 
 // Filters
@@ -63,6 +65,7 @@ async function fetchReport() {
             selectedEmployees.value as string[], 
             selectedProjects.value as string[]
         )
+        hasGenerated.value = true
     } catch (e) {
         processErrorGlobal(e)
     } finally {
@@ -158,11 +161,9 @@ onMounted(async () => {
     await fetchFilterOptions()
     
     // Default range: Current Month
-    const now = new Date()
-    dateFrom.value = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0] ?? ''
-    dateTo.value = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0] ?? ''
-
-    await fetchReport()
+    const range = getCurrentMonthRange()
+    dateFrom.value = range.dateFrom
+    dateTo.value = range.dateTo
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -184,7 +185,7 @@ onMounted(async () => {
                  <h2 class="text-xl font-bold text-gray-900">Ежедневная нагрузка</h2>
                  <div class="flex gap-2">
                     <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-                    <B24Button label="Обновить" @click="fetchReport" loading-auto />
+                    <B24Button label="Сформировать" @click="fetchReport" loading-auto />
                  </div>
              </div>
              
@@ -192,19 +193,16 @@ onMounted(async () => {
                  <DateRangeFilter 
                      v-model:dateFrom="dateFrom" 
                      v-model:dateTo="dateTo" 
-                     @change="fetchReport"
                  />
                  <MultiSelectFilter 
                      label="Сотрудники" 
                      :options="filterOptions.employees" 
                      v-model="selectedEmployees" 
-                     @update:modelValue="fetchReport"
                  />
                  <MultiSelectFilter 
                      label="Проекты" 
                      :options="filterOptions.projects" 
                      v-model="selectedProjects" 
-                     @update:modelValue="fetchReport"
                  />
              </div>
          </div>
@@ -253,6 +251,9 @@ onMounted(async () => {
          </div>
          <div v-else-if="isLoading" class="text-center py-10 text-gray-500">
              Загрузка данных...
+         </div>
+         <div v-else-if="!hasGenerated" class="text-center py-10 text-gray-500">
+             Выберите фильтры и нажмите «Сформировать»
          </div>
          <div v-else class="text-center py-10 text-gray-500">
              Нет данных

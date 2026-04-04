@@ -5,6 +5,7 @@ import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import { openCrmItemCard } from '~/utils/openCrmItem'
+import { getCurrentMonthRange } from '~/utils/reportDateRange'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -37,6 +38,7 @@ const reportData = ref<any[]>([])
 const dateFrom = ref('')
 const dateTo = ref('')
 const isInit = ref(false)
+const hasGenerated = ref(false)
 const expandedNodes = ref<Set<string>>(new Set())
 const entityTypeId = ref<string | number>(0)
 
@@ -74,6 +76,7 @@ async function fetchReport() {
         )
         // All groups collapsed by default
         expandedNodes.value = new Set()
+        hasGenerated.value = true
     } catch (e) {
         processErrorGlobal(e)
     } finally {
@@ -212,11 +215,9 @@ onMounted(async () => {
     }
     
     // Set default range (current month)
-    const now = new Date()
-    dateFrom.value = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0] ?? ''
-    dateTo.value = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0] ?? ''
-
-    await fetchReport()
+    const range = getCurrentMonthRange()
+    dateFrom.value = range.dateFrom
+    dateTo.value = range.dateTo
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -239,7 +240,7 @@ onMounted(async () => {
                     <ProseH2>Учет по проектам/задачам</ProseH2>
                     <div class="flex gap-2">
                         <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-                        <B24Button label="Обновить" @click="fetchReport" loading-auto />
+                        <B24Button label="Сформировать" @click="fetchReport" loading-auto />
                     </div>
                 </div>
                 <p class="text-xs text-gray-500">Группировка: Проект → Задача → Сотрудник → Метки времени</p>
@@ -249,21 +250,18 @@ onMounted(async () => {
                     <DateRangeFilter 
                         v-model:dateFrom="dateFrom" 
                         v-model:dateTo="dateTo" 
-                        @change="fetchReport"
                     />
                     
                     <MultiSelectFilter 
                         label="Сотрудники" 
                         :options="filterOptions.employees" 
                         v-model="selectedEmployees" 
-                        @update:modelValue="fetchReport"
                     />
                     
                     <MultiSelectFilter 
                         label="Проекты" 
                         :options="filterOptions.projects" 
                         v-model="selectedProjects" 
-                        @update:modelValue="fetchReport"
                     />
                 </div>
             </div>
@@ -272,7 +270,7 @@ onMounted(async () => {
           <div v-if="isLoading" class="flex justify-center py-8">
               <span class="text-gray-500">Загрузка...</span>
           </div>
-          <div v-else>
+          <div v-else-if="hasGenerated && reportData.length > 0">
               <!-- Table Header -->
               <div class="flex items-center px-4 py-3 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   <div class="flex-1">Название</div>
@@ -422,6 +420,12 @@ onMounted(async () => {
                   <div class="w-24 text-right text-emerald-700">{{ formatHours(reportData.reduce((s: number, p: any) => s + p.billable_hours, 0)) }}</div>
                   <div class="w-24 text-right text-rose-600">{{ formatHours(reportData.reduce((s: number, p: any) => s + p.non_billable_hours, 0)) }}</div>
               </div>
+          </div>
+          <div v-else-if="hasGenerated" class="py-8 text-center text-gray-500">
+              Нет данных
+          </div>
+          <div v-else class="py-8 text-center text-gray-500">
+              Выберите фильтры и нажмите «Сформировать»
           </div>
       </B24Card>
   </div>

@@ -5,6 +5,7 @@ import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import EmployeeProjectTable from '../../components/reports/EmployeeProjectTable.vue'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
+import { getCurrentMonthRange } from '~/utils/reportDateRange'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -37,6 +38,7 @@ const reportData = ref<any[]>([])
 const dateFrom = ref('') // YYYY-MM-DD
 const dateTo = ref('')   // YYYY-MM-DD
 const isInit = ref(false)
+const hasGenerated = ref(false)
 const entityTypeId = ref<string | number>(0)
 
 const clickableLabelsEnabled = computed(() => userSettings.configSettings.clickableLabelsEnabled ?? false)
@@ -65,6 +67,7 @@ async function fetchReport() {
             selectedEmployees.value as string[], 
             selectedProjects.value as string[]
         )
+        hasGenerated.value = true
     } catch (e) {
         processErrorGlobal(e)
     } finally {
@@ -143,12 +146,9 @@ onMounted(async () => {
     }
     
     // Set default range (current month)
-    const now = new Date()
-    dateFrom.value = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0] ?? ''
-    dateTo.value = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0] ?? ''
-
-    // Initial fetch
-    await fetchReport()
+    const range = getCurrentMonthRange()
+    dateFrom.value = range.dateFrom
+    dateTo.value = range.dateTo
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -171,7 +171,7 @@ onMounted(async () => {
                     <ProseH2>Отчет по сотрудникам</ProseH2>
                     <div class="flex gap-2">
                         <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-                        <B24Button label="Обновить" @click="fetchReport" loading-auto />
+                        <B24Button label="Сформировать" @click="fetchReport" loading-auto />
                     </div>
                 </div>
                 
@@ -180,21 +180,18 @@ onMounted(async () => {
                     <DateRangeFilter 
                         v-model:dateFrom="dateFrom" 
                         v-model:dateTo="dateTo" 
-                        @change="fetchReport"
                     />
                     
                     <MultiSelectFilter 
                         label="Сотрудники" 
                         :options="filterOptions.employees" 
                         v-model="selectedEmployees" 
-                        @update:modelValue="fetchReport"
                     />
                     
                     <MultiSelectFilter 
                         label="Проекты" 
                         :options="filterOptions.projects" 
                         v-model="selectedProjects" 
-                        @update:modelValue="fetchReport"
                     />
                 </div>
             </div>
@@ -203,8 +200,14 @@ onMounted(async () => {
           <div v-if="isLoading" class="flex justify-center py-8">
               <span class="text-gray-500">Загрузка...</span>
           </div>
-          <div v-else>
+          <div v-else-if="hasGenerated && reportData.length > 0">
               <EmployeeProjectTable :data="reportData" :clickable-labels="clickableLabelsEnabled" :entity-type-id="entityTypeId" />
+          </div>
+          <div v-else-if="hasGenerated" class="py-8 text-center text-gray-500">
+              Нет данных
+          </div>
+          <div v-else class="py-8 text-center text-gray-500">
+              Выберите фильтры и нажмите «Сформировать»
           </div>
       </B24Card>
   </div>
