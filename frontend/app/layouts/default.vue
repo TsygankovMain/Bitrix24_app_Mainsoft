@@ -70,12 +70,12 @@ onBeforeUnmount(() => {
   <B24SidebarLayout
     :use-light-content="false"
     :b24ui="{
-      root: 'min-h-full',
-      contentWrapper: 'flex-1 min-h-0 flex flex-col',
-      pageWrapper: 'min-h-full pb-6',
-      container: 'mt-0 h-auto min-h-full',
-      containerWrapper: 'h-auto min-h-full',
-      containerWrapperInner: 'h-auto min-h-full'
+      root: 'h-dvh min-h-0 overflow-hidden',
+      contentWrapper: 'flex-1 min-h-0 flex flex-col overflow-hidden',
+      pageWrapper: 'min-h-0 flex-1 overflow-y-auto pb-6 scrollbar-thin scrollbar-transparent',
+      container: 'mt-0 h-auto min-h-0 flex flex-col',
+      containerWrapper: 'h-auto min-h-0 grow',
+      containerWrapperInner: 'h-auto min-h-0'
     }"
   >
     <div ref="contentRef" class="min-h-full w-full">
