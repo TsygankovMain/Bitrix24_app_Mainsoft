@@ -64,6 +64,27 @@ const tiles = [
         color: 'bg-teal-50 text-teal-600'
     },
     {
+        icon: ActivityIcon,
+        title: 'Потери выручки',
+        description: 'Где копятся неучтенные часы',
+        action: () => router.push('/reports/revenue-leakage'),
+        color: 'bg-red-50 text-red-600'
+    },
+    {
+        icon: BugIcon,
+        title: 'Дисциплина времени',
+        description: 'Насколько быстро вносятся записи',
+        action: () => router.push('/reports/time-discipline'),
+        color: 'bg-amber-50 text-amber-700'
+    },
+    {
+        icon: BookOpen1Icon,
+        title: 'Фокус и распыление',
+        description: 'Распределение часов по проектам',
+        action: () => router.push('/reports/focus-analysis'),
+        color: 'bg-cyan-50 text-cyan-700'
+    },
+    {
         icon: SettingsIcon,
         title: 'Настройки',
         description: 'Настройки приложения',

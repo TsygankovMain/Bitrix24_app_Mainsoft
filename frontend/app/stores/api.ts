@@ -133,6 +133,48 @@ export const useApiStore = defineStore(
       })
     }
 
+    const getReportRevenueLeakage = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+      if (dateTo) params.append('date_to', dateTo)
+      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
+      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+
+      return await $api(`/api/report-revenue-leakage?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const getReportTimeEntryDiscipline = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+      if (dateTo) params.append('date_to', dateTo)
+      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
+      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+
+      return await $api(`/api/report-time-entry-discipline?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const getReportFocusAnalysis = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+      if (dateTo) params.append('date_to', dateTo)
+      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
+      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+
+      return await $api(`/api/report-focus-analysis?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
     const syncTimesheets = async (): Promise<{ status: string; count: number }> => {
       return await $api('/api/sync-timesheets', {
         method: 'POST',
@@ -311,6 +353,9 @@ export const useApiStore = defineStore(
       getReportProjectEmployee,
       getReportProjectTaskEmployee,
       getReportDailyWorkload,
+      getReportRevenueLeakage,
+      getReportTimeEntryDiscipline,
+      getReportFocusAnalysis,
       syncTimesheets,
       getTimesheetsList,
       getFilterOptions,

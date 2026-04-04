@@ -34,6 +34,9 @@ __all__ = [
     "report_project_employee",
     "report_daily_workload",
     "report_project_task_employee",
+    "report_revenue_leakage",
+    "report_time_entry_discipline",
+    "report_focus_analysis",
     "timesheet_sync",
     "timesheet_list",
     "get_configuration",
@@ -48,6 +51,36 @@ __all__ = [
 ]
 
 config = load_config()
+
+
+def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
+    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
+
+    date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+    emp_ids = request.GET.getlist('employee_ids[]')
+    proj_ids = request.GET.getlist('project_ids[]')
+
+    if date_from:
+        queryset = queryset.filter(date_reflection__date__gte=date_from)
+    if date_to:
+        queryset = queryset.filter(date_reflection__date__lte=date_to)
+    if emp_ids:
+        queryset = queryset.filter(employee_id__in=emp_ids)
+    if proj_ids:
+        queryset = queryset.filter(Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids))
+
+    return queryset
+
+
+def _get_user_map(request: AuthorizedRequest, user_ids):
+    if not user_ids:
+        return {}
+
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    data_service = BitrixDataService(request.bitrix24_account.client, config)
+    return data_service.fetch_users(list(user_ids))
 
 
 @xframe_options_exempt
@@ -396,6 +429,90 @@ def report_project_task_employee(request: AuthorizedRequest):
     report = report_service.generate_project_task_employees(items, user_map)
 
     return JsonResponse(report, safe=False)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_revenue_leakage")
+@auth_required
+def report_revenue_leakage(request: AuthorizedRequest):
+    queryset = _get_filtered_timesheet_queryset(request)
+    rows = list(queryset.values(
+        'employee_id',
+        'project_title',
+        'hours',
+        'is_billable',
+    ))
+
+    user_ids = {row['employee_id'] for row in rows if row.get('employee_id')}
+    user_map = _get_user_map(request, user_ids)
+
+    items = [{
+        "sotrudnik_id": row["employee_id"],
+        "project_name": row["project_title"],
+        "kolichestvo_chasov": row["hours"],
+        "uchitivaem": row["is_billable"],
+    } for row in rows]
+
+    report_service = ReportService()
+    report = report_service.generate_revenue_leakage(items, user_map)
+    return JsonResponse(report)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_time_entry_discipline")
+@auth_required
+def report_time_entry_discipline(request: AuthorizedRequest):
+    queryset = _get_filtered_timesheet_queryset(request)
+    rows = list(queryset.values(
+        'employee_id',
+        'date_reflection',
+        'source_created_at',
+        'created_at',
+    ))
+
+    user_ids = {row['employee_id'] for row in rows if row.get('employee_id')}
+    user_map = _get_user_map(request, user_ids)
+
+    items = [{
+        "sotrudnik_id": row["employee_id"],
+        "date_reflection": row["date_reflection"],
+        "source_created_at": row["source_created_at"],
+        "created_at": row["created_at"],
+    } for row in rows]
+
+    report_service = ReportService()
+    report = report_service.generate_time_entry_discipline(items, user_map)
+    return JsonResponse(report)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_focus_analysis")
+@auth_required
+def report_focus_analysis(request: AuthorizedRequest):
+    queryset = _get_filtered_timesheet_queryset(request)
+    rows = list(queryset.values(
+        'employee_id',
+        'project_title',
+        'task_id',
+        'hours',
+    ))
+
+    user_ids = {row['employee_id'] for row in rows if row.get('employee_id')}
+    user_map = _get_user_map(request, user_ids)
+
+    items = [{
+        "sotrudnik_id": row["employee_id"],
+        "project_name": row["project_title"],
+        "task_id": row["task_id"],
+        "kolichestvo_chasov": row["hours"],
+    } for row in rows]
+
+    report_service = ReportService()
+    report = report_service.generate_focus_analysis(items, user_map)
+    return JsonResponse(report)
 
 
 @xframe_options_exempt

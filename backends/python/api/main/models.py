@@ -163,6 +163,7 @@ class TimesheetItem(models.Model):
     task_hierarchy_ids = models.JSONField(default=list)
     task_hierarchy_titles = models.JSONField(default=list)
     date_reflection = models.DateTimeField()
+    source_created_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
