@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 // Simple implementation of multi-select with checkboxes
 // Props: options: {id, name}[], modelValue: string[] (ids)
 
@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits(['update:modelValue', 'update:mode'])
 
+const rootRef = ref<HTMLElement | null>(null)
 const isOpen = ref(false)
 const currentMode = computed(() => props.mode === 'exclude' ? 'exclude' : 'include')
 
@@ -62,13 +63,48 @@ function deselectAll() {
 function setMode(mode: 'include' | 'exclude') {
     emit('update:mode', mode)
 }
+
+function closeDropdown() {
+    isOpen.value = false
+}
+
+function toggleDropdown() {
+    isOpen.value = !isOpen.value
+}
+
+function handlePointerDown(event: MouseEvent | TouchEvent) {
+    if (!isOpen.value) return
+
+    const target = event.target as Node | null
+    if (rootRef.value && target && !rootRef.value.contains(target)) {
+        closeDropdown()
+    }
+}
+
+function handleEscape(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+        closeDropdown()
+    }
+}
+
+onMounted(() => {
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('touchstart', handlePointerDown, { passive: true })
+    document.addEventListener('keydown', handleEscape)
+})
+
+onBeforeUnmount(() => {
+    document.removeEventListener('mousedown', handlePointerDown)
+    document.removeEventListener('touchstart', handlePointerDown)
+    document.removeEventListener('keydown', handleEscape)
+})
 </script>
 
 <template>
-    <div class="relative inline-block text-left w-64">
+    <div ref="rootRef" class="relative inline-block text-left w-64">
         <label class="block text-sm font-medium text-gray-700 mb-1">{{ label }}</label>
         <button 
-            @click="isOpen = !isOpen" 
+            @click="toggleDropdown"
             type="button" 
             class="inline-flex justify-between w-full rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none"
         >
@@ -125,8 +161,5 @@ function setMode(mode: 'include' | 'exclude') {
                 </div>
             </div>
         </div>
-        
-        <!-- Overlay to close -->
-        <div v-if="isOpen" @click="isOpen = false" class="fixed inset-0 z-40 bg-transparent cursor-default"></div>
     </div>
 </template>
