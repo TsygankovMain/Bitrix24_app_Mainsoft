@@ -30,6 +30,8 @@ __all__ = [
     "install",
     "get_token",
     "get_filter_options",
+    "get_filter_employees",
+    "get_filter_projects",
     "report_employee_project",
     "report_project_employee",
     "report_daily_workload",
@@ -60,15 +62,24 @@ def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
     date_to = request.GET.get('date_to')
     emp_ids = request.GET.getlist('employee_ids[]')
     proj_ids = request.GET.getlist('project_ids[]')
+    employee_mode = request.GET.get('employee_mode', 'include')
+    project_mode = request.GET.get('project_mode', 'include')
 
     if date_from:
         queryset = queryset.filter(date_reflection__date__gte=date_from)
     if date_to:
         queryset = queryset.filter(date_reflection__date__lte=date_to)
     if emp_ids:
-        queryset = queryset.filter(employee_id__in=emp_ids)
+        if employee_mode == 'exclude':
+            queryset = queryset.exclude(employee_id__in=emp_ids)
+        else:
+            queryset = queryset.filter(employee_id__in=emp_ids)
     if proj_ids:
-        queryset = queryset.filter(Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids))
+        project_q = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
+        if project_mode == 'exclude':
+            queryset = queryset.exclude(project_q)
+        else:
+            queryset = queryset.filter(project_q)
 
     return queryset
 
@@ -81,6 +92,43 @@ def _get_user_map(request: AuthorizedRequest, user_ids):
     config = config_service.get_configuration_sync()
     data_service = BitrixDataService(request.bitrix24_account.client, config)
     return data_service.fetch_users(list(user_ids))
+
+
+def _get_data_service(request: AuthorizedRequest):
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    return BitrixDataService(request.bitrix24_account.client, config)
+
+
+def _build_employee_filter_options(request: AuthorizedRequest):
+    data_service = _get_data_service(request)
+    return data_service.fetch_active_users()
+
+
+def _build_project_filter_options(request: AuthorizedRequest):
+    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
+    projs = queryset.values('project_id', 'project_title').distinct()
+    projects = []
+    seen_ids = set()
+
+    for project in projs:
+        project_id = project['project_id']
+        project_title = project['project_title']
+
+        if not project_id and not project_title:
+            continue
+
+        final_id = str(project_id) if project_id else str(project_title)
+        if final_id in seen_ids:
+            continue
+
+        projects.append({
+            "id": final_id,
+            "name": project_title or "Без названия"
+        })
+        seen_ids.add(final_id)
+
+    return sorted(projects, key=lambda item: item["name"])
 
 
 @xframe_options_exempt
@@ -208,59 +256,26 @@ def get_filter_options(request: AuthorizedRequest):
     """
     Returns unique employees and projects for filtering.
     """
-    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
-    
-    # 1. Unique Employees
-    emp_ids = list(queryset.values_list('employee_id', flat=True).distinct())
-    
-    # Init services with config
-    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
-    config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config)
-    
-    # Fetch Names
-    user_map = data_service.fetch_users(emp_ids)
-    
-    employees = []
-    for uid in emp_ids:
-        # Avoid empty users if data is inconsistent
-        if not uid: continue
-            
-        employees.append({
-            "id": str(uid),
-            "name": user_map.get(str(uid), f"User {uid}")
-        })
-    
-    # 2. Unique Projects
-    projs = queryset.values('project_id', 'project_title').distinct()
-    projects = []
-    seen_ids = set()
-    
-    for p in projs:
-        pid = p['project_id']
-        ptitle = p['project_title']
-        
-        # Determine strict ID for frontend
-        if not pid and not ptitle:
-            continue
-            
-        # Preference: Use project_id. 
-        # Fallback: project_title.
-        # This ID is what will be sent back in filter params.
-        final_id = str(pid) if pid else str(ptitle)
-        
-        if final_id not in seen_ids:
-            Title = ptitle or "Без названия"
-            projects.append({
-                "id": final_id,
-                "name": Title
-            })
-            seen_ids.add(final_id)
-
     return JsonResponse({
-        "employees": sorted(employees, key=lambda x: x['name']),
-        "projects": sorted(projects, key=lambda x: x['name'])
+        "employees": _build_employee_filter_options(request),
+        "projects": _build_project_filter_options(request)
     })
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_filter_employees")
+@auth_required
+def get_filter_employees(request: AuthorizedRequest):
+    return JsonResponse({"employees": _build_employee_filter_options(request)})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_filter_projects")
+@auth_required
+def get_filter_projects(request: AuthorizedRequest):
+    return JsonResponse({"projects": _build_project_filter_options(request)})
 
 
 @xframe_options_exempt
@@ -268,29 +283,7 @@ def get_filter_options(request: AuthorizedRequest):
 @log_errors("report_employee_project")
 @auth_required
 def report_employee_project(request: AuthorizedRequest):
-    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
-    
-    # Filters
-    date_from = request.GET.get('date_from')
-    date_to = request.GET.get('date_to')
-    emp_ids = request.GET.getlist('employee_ids[]')
-    proj_ids = request.GET.getlist('project_ids[]')
-    
-    # Date Filtering
-    if date_from:
-        queryset = queryset.filter(date_reflection__date__gte=date_from)
-    if date_to:
-        queryset = queryset.filter(date_reflection__date__lte=date_to)
-        
-    # Employee Filtering
-    if emp_ids:
-        queryset = queryset.filter(employee_id__in=emp_ids)
-        
-    # Project Filtering
-    # Handles both ID-based and Title-based IDs (backward compatibility)
-    if proj_ids:
-        q_obj = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
-        queryset = queryset.filter(q_obj)
+    queryset = _get_filtered_timesheet_queryset(request)
 
     items = []
     user_ids = set()
@@ -329,24 +322,7 @@ def report_employee_project(request: AuthorizedRequest):
 @log_errors("report_project_employee")
 @auth_required
 def report_project_employee(request: AuthorizedRequest):
-    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
-
-    date_from = request.GET.get('date_from')
-    date_to = request.GET.get('date_to')
-    emp_ids = request.GET.getlist('employee_ids[]') 
-    proj_ids = request.GET.getlist('project_ids[]')
-
-    if date_from:
-        queryset = queryset.filter(date_reflection__date__gte=date_from)
-    if date_to:
-        queryset = queryset.filter(date_reflection__date__lte=date_to)
-        
-    if emp_ids:
-        queryset = queryset.filter(employee_id__in=emp_ids)
-        
-    if proj_ids:
-        q_obj = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
-        queryset = queryset.filter(q_obj)
+    queryset = _get_filtered_timesheet_queryset(request)
 
     items = []
     user_ids = set()
@@ -382,24 +358,7 @@ def report_project_employee(request: AuthorizedRequest):
 @auth_required
 def report_project_task_employee(request: AuthorizedRequest):
     """Report: Project -> Task Hierarchy -> Employee -> Items"""
-    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
-
-    date_from = request.GET.get('date_from')
-    date_to = request.GET.get('date_to')
-    emp_ids = request.GET.getlist('employee_ids[]')
-    proj_ids = request.GET.getlist('project_ids[]')
-
-    if date_from:
-        queryset = queryset.filter(date_reflection__date__gte=date_from)
-    if date_to:
-        queryset = queryset.filter(date_reflection__date__lte=date_to)
-
-    if emp_ids:
-        queryset = queryset.filter(employee_id__in=emp_ids)
-
-    if proj_ids:
-        q_obj = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
-        queryset = queryset.filter(q_obj)
+    queryset = _get_filtered_timesheet_queryset(request)
 
     items = []
     user_ids = set()
@@ -668,15 +627,11 @@ def create_fields(request: AuthorizedRequest):
 @log_errors("report_daily_workload")
 @auth_required
 def report_daily_workload(request: AuthorizedRequest):
-    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
-
     date_from = request.GET.get('date_from')
     date_to = request.GET.get('date_to')
-    emp_ids = request.GET.getlist('employee_ids[]') 
-    proj_ids = request.GET.getlist('project_ids[]')
 
     # Defaults for date if missing (current month)
-    from datetime import date, timedelta
+    from datetime import date
     if not date_from:
         today = date.today()
         date_from = date(today.year, today.month, 1).isoformat()
@@ -684,17 +639,8 @@ def report_daily_workload(request: AuthorizedRequest):
         today = date.today()
         date_to = today.isoformat()
 
-    if date_from:
-        queryset = queryset.filter(date_reflection__date__gte=date_from)
-    if date_to:
-        queryset = queryset.filter(date_reflection__date__lte=date_to)
-        
-    if emp_ids:
-        queryset = queryset.filter(employee_id__in=emp_ids)
-        
-    if proj_ids:
-        q_obj = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
-        queryset = queryset.filter(q_obj)
+    queryset = _get_filtered_timesheet_queryset(request)
+    queryset = queryset.filter(date_reflection__date__gte=date_from, date_reflection__date__lte=date_to)
 
     items = []
     user_ids = set()

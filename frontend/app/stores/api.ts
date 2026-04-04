@@ -1,6 +1,12 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { withoutTrailingSlash } from 'ufo'
 
+type FilterMode = 'include' | 'exclude'
+type FilterValue = {
+  ids?: Array<string | number>
+  mode?: FilterMode
+}
+
 export const useApiStore = defineStore(
   'api',
   () => {
@@ -70,19 +76,79 @@ export const useApiStore = defineStore(
     }
 
     const getFilterOptions = async (): Promise<{ employees: any[], projects: any[] }> => {
-      return await $api('/api/get-filter-options', {
+      const [employees, projects] = await Promise.all([
+        getFilterEmployees(),
+        getFilterProjects()
+      ])
+
+      return {
+        employees,
+        projects
+      }
+    }
+
+    const getFilterEmployees = async (): Promise<any[]> => {
+      const response = await $api('/api/get-filter-employees', {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
       })
+
+      return response.employees || []
     }
 
-    const getReportEmployeeProject = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+    const getFilterProjects = async (): Promise<any[]> => {
+      const response = await $api('/api/get-filter-projects', {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+
+      return response.projects || []
+    }
+
+    const normalizeFilterValue = (value?: FilterValue | string[]): { ids: string[], mode: FilterMode } => {
+      if (Array.isArray(value)) {
+        return {
+          ids: value.map(id => String(id)),
+          mode: 'include'
+        }
+      }
+
+      return {
+        ids: (value?.ids || []).map(id => String(id)),
+        mode: value?.mode === 'exclude' ? 'exclude' : 'include'
+      }
+    }
+
+    const appendReportFilters = (
+      params: URLSearchParams,
+      employeeFilter?: FilterValue | string[],
+      projectFilter?: FilterValue | string[]
+    ) => {
+      const normalizedEmployees = normalizeFilterValue(employeeFilter)
+      const normalizedProjects = normalizeFilterValue(projectFilter)
+
+      if (normalizedEmployees.ids.length) {
+        normalizedEmployees.ids.forEach(id => params.append('employee_ids[]', id))
+      }
+      if (normalizedEmployees.mode === 'exclude') {
+        params.append('employee_mode', 'exclude')
+      }
+
+      if (normalizedProjects.ids.length) {
+        normalizedProjects.ids.forEach(id => params.append('project_ids[]', id))
+      }
+      if (normalizedProjects.mode === 'exclude') {
+        params.append('project_mode', 'exclude')
+      }
+    }
+
+    const getReportEmployeeProject = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
       const params = new URLSearchParams()
       if (dateFrom) params.append('date_from', dateFrom)
       if (dateTo) params.append('date_to', dateTo)
-      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
-      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+      appendReportFilters(params, empIds, projIds)
 
       return await $api(`/api/report-employee-project?${params.toString()}`, {
         headers: {
@@ -91,12 +157,11 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getReportProjectEmployee = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+    const getReportProjectEmployee = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
       const params = new URLSearchParams()
       if (dateFrom) params.append('date_from', dateFrom)
       if (dateTo) params.append('date_to', dateTo)
-      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
-      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+      appendReportFilters(params, empIds, projIds)
 
       return await $api(`/api/report-project-employee?${params.toString()}`, {
         headers: {
@@ -105,12 +170,11 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getReportDailyWorkload = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+    const getReportDailyWorkload = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
       const params = new URLSearchParams()
       if (dateFrom) params.append('date_from', dateFrom)
       if (dateTo) params.append('date_to', dateTo)
-      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
-      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+      appendReportFilters(params, empIds, projIds)
 
       return await $api(`/api/report-daily-workload?${params.toString()}`, {
         headers: {
@@ -119,12 +183,11 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getReportProjectTaskEmployee = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+    const getReportProjectTaskEmployee = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
       const params = new URLSearchParams()
       if (dateFrom) params.append('date_from', dateFrom)
       if (dateTo) params.append('date_to', dateTo)
-      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
-      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+      appendReportFilters(params, empIds, projIds)
 
       return await $api(`/api/report-project-task-employee?${params.toString()}`, {
         headers: {
@@ -133,12 +196,11 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getReportRevenueLeakage = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+    const getReportRevenueLeakage = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
       const params = new URLSearchParams()
       if (dateFrom) params.append('date_from', dateFrom)
       if (dateTo) params.append('date_to', dateTo)
-      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
-      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+      appendReportFilters(params, empIds, projIds)
 
       return await $api(`/api/report-revenue-leakage?${params.toString()}`, {
         headers: {
@@ -147,12 +209,11 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getReportTimeEntryDiscipline = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+    const getReportTimeEntryDiscipline = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
       const params = new URLSearchParams()
       if (dateFrom) params.append('date_from', dateFrom)
       if (dateTo) params.append('date_to', dateTo)
-      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
-      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+      appendReportFilters(params, empIds, projIds)
 
       return await $api(`/api/report-time-entry-discipline?${params.toString()}`, {
         headers: {
@@ -161,12 +222,11 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getReportFocusAnalysis = async (dateFrom?: string, dateTo?: string, empIds?: string[], projIds?: string[]): Promise<any> => {
+    const getReportFocusAnalysis = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
       const params = new URLSearchParams()
       if (dateFrom) params.append('date_from', dateFrom)
       if (dateTo) params.append('date_to', dateTo)
-      if (empIds && empIds.length) empIds.forEach(id => params.append('employee_ids[]', id))
-      if (projIds && projIds.length) projIds.forEach(id => params.append('project_ids[]', id))
+      appendReportFilters(params, empIds, projIds)
 
       return await $api(`/api/report-focus-analysis?${params.toString()}`, {
         headers: {
@@ -359,6 +419,8 @@ export const useApiStore = defineStore(
       syncTimesheets,
       getTimesheetsList,
       getFilterOptions,
+      getFilterEmployees,
+      getFilterProjects,
       exportRawData,
 
       getConfiguration,

@@ -42,6 +42,8 @@ const domain = ref('') // Store domain for links
 const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
 const selectedEmployees = ref<(string|number)[]>([])
 const selectedProjects = ref<(string|number)[]>([])
+const employeeFilterMode = ref<'include' | 'exclude'>('include')
+const projectFilterMode = ref<'include' | 'exclude'>('include')
 
 // Modal State
 const showModal = ref(false)
@@ -49,7 +51,11 @@ const modalData = ref<any>(null) // { employeeName, date, items: [] }
 
 async function fetchFilterOptions() {
     try {
-        filterOptions.value = await apiStore.getFilterOptions()
+        const [employees, projects] = await Promise.all([
+            apiStore.getFilterEmployees(),
+            apiStore.getFilterProjects()
+        ])
+        filterOptions.value = { employees, projects }
     } catch (e) {
         processErrorGlobal(e)
     }
@@ -62,8 +68,8 @@ async function fetchReport() {
         reportData.value = await apiStore.getReportDailyWorkload(
             dateFrom.value, 
             dateTo.value, 
-            selectedEmployees.value as string[], 
-            selectedProjects.value as string[]
+            { ids: selectedEmployees.value, mode: employeeFilterMode.value },
+            { ids: selectedProjects.value, mode: projectFilterMode.value }
         )
         hasGenerated.value = true
     } catch (e) {
@@ -198,11 +204,13 @@ onMounted(async () => {
                      label="Сотрудники" 
                      :options="filterOptions.employees" 
                      v-model="selectedEmployees" 
+                     v-model:mode="employeeFilterMode"
                  />
                  <MultiSelectFilter 
                      label="Проекты" 
                      :options="filterOptions.projects" 
                      v-model="selectedProjects" 
+                     v-model:mode="projectFilterMode"
                  />
              </div>
          </div>

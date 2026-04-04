@@ -47,14 +47,30 @@ const clickableLabelsEnabled = computed(() => userSettings.configSettings.clicka
 const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
 const selectedEmployees = ref<(string|number)[]>([])
 const selectedProjects = ref<(string|number)[]>([])
+const employeeFilterMode = ref<'include' | 'exclude'>('include')
+const projectFilterMode = ref<'include' | 'exclude'>('include')
 
-async function fetchFilterOptions() {
+async function fetchEmployeeOptions() {
     try {
-        const res = await apiStore.getFilterOptions()
-        filterOptions.value = res
+        filterOptions.value.employees = await apiStore.getFilterEmployees()
     } catch (e) {
         processErrorGlobal(e)
     }
+}
+
+async function fetchProjectOptions() {
+    try {
+        filterOptions.value.projects = await apiStore.getFilterProjects()
+    } catch (e) {
+        processErrorGlobal(e)
+    }
+}
+
+async function fetchFilterOptions() {
+    await Promise.all([
+        fetchEmployeeOptions(),
+        fetchProjectOptions()
+    ])
 }
 
 async function fetchReport() {
@@ -64,8 +80,8 @@ async function fetchReport() {
         reportData.value = await apiStore.getReportProjectEmployee(
             dateFrom.value, 
             dateTo.value, 
-            selectedEmployees.value as string[], 
-            selectedProjects.value as string[]
+            { ids: selectedEmployees.value, mode: employeeFilterMode.value },
+            { ids: selectedProjects.value, mode: projectFilterMode.value }
         )
         hasGenerated.value = true
     } catch (e) {
@@ -187,12 +203,14 @@ onMounted(async () => {
                         label="Сотрудники" 
                         :options="filterOptions.employees" 
                         v-model="selectedEmployees" 
+                        v-model:mode="employeeFilterMode"
                     />
                     
                     <MultiSelectFilter 
                         label="Проекты" 
                         :options="filterOptions.projects" 
                         v-model="selectedProjects" 
+                        v-model:mode="projectFilterMode"
                     />
                 </div>
             </div>

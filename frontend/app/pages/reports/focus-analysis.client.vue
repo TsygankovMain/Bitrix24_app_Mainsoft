@@ -40,6 +40,8 @@ const dateTo = ref('')
 const filterOptions = ref<{ employees: any[]; projects: any[] }>({ employees: [], projects: [] })
 const selectedEmployees = ref<(string | number)[]>([])
 const selectedProjects = ref<(string | number)[]>([])
+const employeeFilterMode = ref<'include' | 'exclude'>('include')
+const projectFilterMode = ref<'include' | 'exclude'>('include')
 
 const maxProjectCount = computed(() =>
   Math.max(...(reportData.value?.employee_rows || []).map((row: any) => row.project_count || 0), 1)
@@ -86,7 +88,11 @@ function getBubbleStyle(row: any) {
 
 async function fetchFilterOptions() {
   try {
-    filterOptions.value = await apiStore.getFilterOptions()
+    const [employees, projects] = await Promise.all([
+      apiStore.getFilterEmployees(),
+      apiStore.getFilterProjects()
+    ])
+    filterOptions.value = { employees, projects }
   } catch (error) {
     processErrorGlobal(error)
   }
@@ -99,8 +105,8 @@ async function fetchReport() {
     reportData.value = await apiStore.getReportFocusAnalysis(
       dateFrom.value,
       dateTo.value,
-      selectedEmployees.value as string[],
-      selectedProjects.value as string[]
+      { ids: selectedEmployees.value, mode: employeeFilterMode.value },
+      { ids: selectedProjects.value, mode: projectFilterMode.value }
     )
     hasGenerated.value = true
   } catch (error) {
@@ -182,12 +188,14 @@ onMounted(async () => {
               label="Сотрудники"
               :options="filterOptions.employees"
               v-model="selectedEmployees"
+              v-model:mode="employeeFilterMode"
             />
 
             <MultiSelectFilter
               label="Проекты"
               :options="filterOptions.projects"
               v-model="selectedProjects"
+              v-model:mode="projectFilterMode"
             />
           </div>
         </div>

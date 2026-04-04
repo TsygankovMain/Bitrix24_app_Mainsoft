@@ -6,15 +6,28 @@ import { ref, computed } from 'vue'
 const props = defineProps<{
     options: { id: string | number, name: string | number }[],
     modelValue: (string | number)[],
-    label: string
+    label: string,
+    mode?: 'include' | 'exclude'
 }>()
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'update:mode'])
 
 const isOpen = ref(false)
+const currentMode = computed(() => props.mode === 'exclude' ? 'exclude' : 'include')
 
 const selectedCount = computed(() => props.modelValue.length)
 const displayLabel = computed(() => {
+    if (currentMode.value === 'exclude') {
+        if (selectedCount.value === 0) return 'Без исключений'
+        if (selectedCount.value === props.options.length) return 'Исключены все'
+        if (selectedCount.value === 1) {
+            const item = props.options.find(o => o.id === props.modelValue[0])
+            return item ? `Кроме ${item.name}` : 'Кроме 1'
+        }
+
+        return `Кроме ${selectedCount.value}`
+    }
+
     if (selectedCount.value === 0) return 'Все'
     if (selectedCount.value === props.options.length) return 'Все'
     if (selectedCount.value === 1) {
@@ -23,6 +36,9 @@ const displayLabel = computed(() => {
     }
     return `${selectedCount.value} выбрано`
 })
+
+const selectAllLabel = computed(() => currentMode.value === 'exclude' ? 'Исключить все' : 'Выбрать все')
+const clearLabel = computed(() => currentMode.value === 'exclude' ? 'Без исключений' : 'Сбросить')
 
 function toggleOption(id: string | number) {
     const newSelected = [...props.modelValue]
@@ -42,6 +58,10 @@ function selectAll() {
 function deselectAll() {
     emit('update:modelValue', [])
 }
+
+function setMode(mode: 'include' | 'exclude') {
+    emit('update:mode', mode)
+}
 </script>
 
 <template>
@@ -59,9 +79,33 @@ function deselectAll() {
         </button>
 
         <div v-if="isOpen" class="origin-top-right absolute right-0 mt-2 w-64 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-50">
-            <div class="p-2 border-b flex justify-between">
-                <button @click="selectAll" class="text-xs text-blue-600 hover:text-blue-800">Выбрать все</button>
-                <button @click="deselectAll" class="text-xs text-gray-500 hover:text-gray-700">Сбросить</button>
+            <div class="p-2 border-b space-y-2">
+                <div class="grid grid-cols-2 gap-1 rounded-md bg-gray-100 p-1">
+                    <button
+                        type="button"
+                        @click="setMode('include')"
+                        :class="[
+                            'rounded px-2 py-1 text-xs font-medium transition-colors',
+                            currentMode === 'include' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                        ]"
+                    >
+                        Включить
+                    </button>
+                    <button
+                        type="button"
+                        @click="setMode('exclude')"
+                        :class="[
+                            'rounded px-2 py-1 text-xs font-medium transition-colors',
+                            currentMode === 'exclude' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                        ]"
+                    >
+                        Кроме
+                    </button>
+                </div>
+                <div class="flex justify-between">
+                    <button @click="selectAll" class="text-xs text-blue-600 hover:text-blue-800">{{ selectAllLabel }}</button>
+                    <button @click="deselectAll" class="text-xs text-gray-500 hover:text-gray-700">{{ clearLabel }}</button>
+                </div>
             </div>
             <div class="py-1 max-h-60 overflow-y-auto">
                 <div 

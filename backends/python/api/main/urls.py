@@ -15,6 +15,8 @@ urlpatterns = [
 
     # Filters & Reports
     path('api/get-filter-options', views.get_filter_options, name='get_filter_options'),
+    path('api/get-filter-employees', views.get_filter_employees, name='get_filter_employees'),
+    path('api/get-filter-projects', views.get_filter_projects, name='get_filter_projects'),
     path('api/report-employee-project', views.report_employee_project, name='report_employee_project'),
     path('api/report-project-employee', views.report_project_employee, name='report_project_employee'),
     path('api/report-daily-workload', views.report_daily_workload, name='report_daily_workload'),

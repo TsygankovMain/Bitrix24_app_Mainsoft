@@ -54,11 +54,16 @@ function handleLabelClick(itemIdElem: string | number) {
 const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
 const selectedEmployees = ref<(string|number)[]>([])
 const selectedProjects = ref<(string|number)[]>([])
+const employeeFilterMode = ref<'include' | 'exclude'>('include')
+const projectFilterMode = ref<'include' | 'exclude'>('include')
 
 async function fetchFilterOptions() {
     try {
-        const res = await apiStore.getFilterOptions()
-        filterOptions.value = res
+        const [employees, projects] = await Promise.all([
+            apiStore.getFilterEmployees(),
+            apiStore.getFilterProjects()
+        ])
+        filterOptions.value = { employees, projects }
     } catch (e) {
         processErrorGlobal(e)
     }
@@ -71,8 +76,8 @@ async function fetchReport() {
         reportData.value = await apiStore.getReportProjectTaskEmployee(
             dateFrom.value, 
             dateTo.value, 
-            selectedEmployees.value as string[], 
-            selectedProjects.value as string[]
+            { ids: selectedEmployees.value, mode: employeeFilterMode.value },
+            { ids: selectedProjects.value, mode: projectFilterMode.value }
         )
         // All groups collapsed by default
         expandedNodes.value = new Set()
@@ -256,12 +261,14 @@ onMounted(async () => {
                         label="Сотрудники" 
                         :options="filterOptions.employees" 
                         v-model="selectedEmployees" 
+                        v-model:mode="employeeFilterMode"
                     />
                     
                     <MultiSelectFilter 
                         label="Проекты" 
                         :options="filterOptions.projects" 
                         v-model="selectedProjects" 
+                        v-model:mode="projectFilterMode"
                     />
                 </div>
             </div>

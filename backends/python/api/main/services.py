@@ -100,6 +100,39 @@ class BitrixDataService:
             logger.error(f"Error fetching users: {e}")
             return {}
 
+    def fetch_active_users(self) -> List[Dict[str, str]]:
+        """Fetch all active Bitrix24 users for report filters."""
+        try:
+            response = self.client._bitrix_token.call_method(
+                "user.get",
+                {
+                    "FILTER": {"ACTIVE": "Y"},
+                    "sort": "LAST_NAME",
+                    "order": "ASC",
+                }
+            )
+            users = response.get('result', [])
+            result: List[Dict[str, str]] = []
+
+            for user in users:
+                user_id = str(user.get('ID', '')).strip()
+                if not user_id:
+                    continue
+
+                name = f"{user.get('LAST_NAME', '')} {user.get('NAME', '')}".strip()
+                if not name:
+                    name = user.get('EMAIL') or f"User {user_id}"
+
+                result.append({
+                    "id": user_id,
+                    "name": name,
+                })
+
+            return sorted(result, key=lambda item: item["name"])
+        except Exception as e:
+            logger.error(f"Error fetching active users: {e}")
+            return []
+
     def fetch_all_items(self, extra_filter: Optional[Dict] = None) -> List[Dict[str, Any]]:
         """
         Fetches items from Smart Process
