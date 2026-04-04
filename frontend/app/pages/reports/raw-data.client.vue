@@ -80,12 +80,18 @@ const statusMessage = computed(() => {
 const loadSpFields = async () => {
     isLoadingFields.value = true
     try {
+        console.log('[RawData] loadSpFields: calling getConfiguration()')
         const configResp = await apiStore.getConfiguration()
+        console.log('[RawData] loadSpFields: configResp =', configResp)
         // getConfiguration() returns the config object directly (not wrapped in {config: ...})
         const config = configResp || {}
+        console.log('[RawData] loadSpFields: sp_entity_type_id =', config.sp_entity_type_id)
         if (config.sp_entity_type_id) {
+            console.log('[RawData] loadSpFields: calling getSpFields(', config.sp_entity_type_id, ')')
             const fieldsResp = await apiStore.getSpFields(config.sp_entity_type_id)
+            console.log('[RawData] loadSpFields: fieldsResp =', fieldsResp)
             if (fieldsResp && fieldsResp.fields) {
+                console.log('[RawData] loadSpFields: fields count =', fieldsResp.fields.length ?? Object.keys(fieldsResp.fields).length)
                 // fieldsResp.fields might be object or array, depending on Bitrix API.
                 // It's usually an array from our backend: [{id, title, type}, ...]
                 if (Array.isArray(fieldsResp.fields)) {
@@ -99,17 +105,22 @@ const loadSpFields = async () => {
                 }
                 
                 // default: select all fields
+                console.log('[RawData] loadSpFields: spFields loaded =', spFields.value.length)
                 selectAllFields()
+            } else {
+                console.warn('[RawData] loadSpFields: fieldsResp.fields is missing or empty!', fieldsResp)
             }
         } else {
-            console.warn('[RawData] Smart Process not configured — cannot load fields')
+            console.warn('[RawData] Smart Process not configured — cannot load fields. sp_entity_type_id =', config.sp_entity_type_id)
         }
     } catch (e) {
+         console.error('[RawData] loadSpFields ERROR:', e)
          console.warn("Could not load SP fields for export", e)
     } finally {
         isLoadingFields.value = false
     }
 }
+
 
 const toggleSelectAll = (select: boolean) => {
     if (select) {
