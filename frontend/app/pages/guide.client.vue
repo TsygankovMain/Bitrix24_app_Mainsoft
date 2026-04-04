@@ -6,364 +6,315 @@ useHead({
 })
 
 const router = useRouter()
+
+const quickStartSteps = [
+  {
+    title: 'Откройте приложение из Битрикс24',
+    text: 'Главное меню приложения содержит отчеты, настройки и ссылку на это руководство.'
+  },
+  {
+    title: 'Проверьте настройки при первом запуске',
+    text: 'Если приложение только что установлено, откройте "Настройки -> Настройка полей (Маппинг)", выберите смарт-процесс и сохраните конфигурацию.'
+  },
+  {
+    title: 'Фиксируйте время прямо в задаче',
+    text: 'Во вкладке приложения в карточке задачи можно добавить, изменить, разделить или удалить запись времени.'
+  },
+  {
+    title: 'Формируйте отчеты вручную',
+    text: 'В отчетах сначала выберите период и фильтры, затем нажмите "Сформировать".'
+  },
+  {
+    title: 'Выгружайте данные в Excel',
+    text: 'Большинство отчетов и страница сырых данных поддерживают выгрузку в Excel для дальнейшей обработки.'
+  }
+]
+
+const taskActions = [
+  {
+    title: 'Добавление записи',
+    text: 'Нажмите "Отразить" у нужной задачи, заполните описание, часы, дату и сохраните запись.'
+  },
+  {
+    title: 'Учитываемые и неучитываемые часы',
+    text: 'Если запись отмечена как учитываемая, она попадает в основные финансовые и управленческие показатели. Неучитываемые часы остаются в истории, но считаются отдельно.'
+  },
+  {
+    title: 'Редактирование',
+    text: 'Любую существующую запись можно открыть повторно и изменить без перехода в другой раздел.'
+  },
+  {
+    title: 'Разделение записи',
+    text: 'Если одну запись нужно разбить на две части, используйте функцию разделения. Это удобно, когда часть времени должна учитываться, а часть нет.'
+  },
+  {
+    title: 'Удаление',
+    text: 'Удаление доступно из формы записи. Перед удалением приложение запрашивает подтверждение.'
+  },
+  {
+    title: 'Стоимость часа',
+    text: 'В задаче отображается ставка часа из настроек. Она используется для расчета суммы по учитываемым часам.'
+  }
+]
+
+const reports = [
+  {
+    title: 'Отчет по сотрудникам',
+    text: 'Показывает, как распределились часы по сотрудникам, проектам, задачам и отдельным меткам времени.'
+  },
+  {
+    title: 'Отчет по проектам',
+    text: 'Нужен для оценки загрузки и затрат в разрезе проектов и исполнителей.'
+  },
+  {
+    title: 'Ежедневная нагрузка',
+    text: 'Матрица по дням помогает быстро увидеть загруженность сотрудников и отклонения по дням.'
+  },
+  {
+    title: 'Учет по проектам и задачам',
+    text: 'Самый детальный отчет для разбора структуры проекта до уровня задач, сотрудников и отдельных записей.'
+  },
+  {
+    title: 'Потери выручки',
+    text: 'Показывает, где накапливаются неучтенные часы и какие проекты или связки сотрудников требуют внимания.'
+  },
+  {
+    title: 'Дисциплина внесения времени',
+    text: 'Помогает понять, насколько оперативно сотрудники вносят время в систему.'
+  },
+  {
+    title: 'Фокус и распыление',
+    text: 'Показывает, насколько концентрированно команда работает по проектам и где начинается распыление.'
+  }
+]
+
+const filterRules = [
+  'Период можно задать вручную или через быстрые пресеты: текущая неделя, предыдущая неделя, текущий месяц и предыдущий месяц.',
+  'Фильтры по сотрудникам и проектам работают независимо от построения отчета: сначала настройка, затем кнопка "Сформировать".',
+  'В фильтрах сотрудников и проектов есть два режима: обычный выбор и режим "Кроме", когда удобнее исключить несколько значений из общей выборки.',
+  'Если в отчете уже есть данные, изменение фильтров само по себе не перестраивает отчет, пока вы снова не нажмете "Сформировать".',
+  'Кнопка "Скачать Excel" выгружает текущую выборку отчета.'
+]
+
+const settingsSections = [
+  {
+    title: 'Настройка полей (Маппинг)',
+    text: 'Основной экран первичной настройки. Здесь выбирается смарт-процесс, создаются поля, задается ставка часа и сохраняется маппинг.'
+  },
+  {
+    title: 'Сырые данные (БД)',
+    text: 'Технический раздел для просмотра локально сохраненных записей, ручной синхронизации с Битрикс24 и динамической выгрузки данных в Excel.'
+  },
+  {
+    title: 'Кликабельные метки',
+    text: 'В настройках можно включить ссылки на карточки элементов Битрикс24 прямо из детализированных отчетов.'
+  },
+  {
+    title: 'Панель отладки',
+    text: 'Раздел для диагностики запросов и системных событий. Обычно нужен администраторам и разработчикам.'
+  }
+]
+
+const faqItems = [
+  {
+    title: 'Отчет пустой',
+    text: 'Проверьте период, сотрудников и проекты в фильтрах, затем нажмите "Сформировать". Если приложение только настроено, убедитесь, что в системе уже есть записи времени.'
+  },
+  {
+    title: 'Не вижу нужный смарт-процесс или поля',
+    text: 'Откройте раздел маппинга, подгрузите список процессов и при необходимости создайте смарт-процесс и поля прямо из приложения.'
+  },
+  {
+    title: 'Вкладка в задаче не работает',
+    text: 'Приложение должно открываться внутри карточки задачи Битрикс24. Если открывать встроенную страницу напрямую, часть функций будет недоступна.'
+  },
+  {
+    title: 'Excel нужен не по отчету, а по исходным данным',
+    text: 'Используйте раздел "Сырые данные (БД)". Там можно выбрать тип даты, период и набор полей для выгрузки.'
+  }
+]
 </script>
 
 <template>
-  <div class="p-4 sm:p-8 bg-white dark:bg-gray-900 min-h-screen w-full flex-1 min-w-0 text-left">
-    <div class="w-full space-y-24">
-      
-      <!-- Header -->
-      <div class="mb-12 border-b pb-8">
+  <div class="min-h-screen bg-white px-4 py-6 sm:px-8">
+    <div class="mx-auto max-w-6xl space-y-10">
+      <section class="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 px-6 py-8 shadow-sm">
         <B24Button label="Назад к меню" color="link" @click="router.push('/')" class="mb-4 pl-0" />
-        <div class="flex items-center gap-4">
-            <div class="p-4 bg-purple-100 rounded-2xl text-purple-600 shadow-sm">
-                <BookOpen1Icon class="w-10 h-10" />
+
+        <div class="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+          <div class="flex items-start gap-4">
+            <div class="rounded-2xl bg-blue-100 p-4 text-blue-700">
+              <BookOpen1Icon class="h-8 w-8" />
             </div>
-            <div>
-                <h1 class="text-4xl font-extrabold text-gray-900 dark:text-gray-100 tracking-tight">Руководство пользователя</h1>
-                <p class="mt-2 text-xl text-gray-600 dark:text-gray-400">
-                  Полная энциклопедия по работе с системой учёта трудозатрат и финансовой аналитики в Битрикс24.
-                </p>
-            </div>
-        </div>
-      </div>
-
-      <div class="space-y-24 w-full">
-
-        <!-- 1. Введение -->
-        <section class="space-y-6 w-full">
-          <div class="w-full">
-            <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-4">1. Введение</h2>
-            <p class="lead text-lg text-gray-700 w-full">
-              Добро пожаловать в систему «Учет трудозатрат»! Это приложение создано для того, чтобы сделать процесс фиксации рабочего времени простым, прозрачным и полезным для каждого сотрудника и руководителя.
-            </p>
-            <div class="grid md:grid-cols-3 gap-6 mt-8 w-full">
-                <div class="p-6 bg-blue-50 rounded-xl border border-blue-100">
-                    <h3 class="font-bold text-blue-900 mb-2">🎯 Точность</h3>
-                    <p class="text-sm text-blue-800">Фиксируйте время именно там, где работаете — прямо внутри задач Битрикс24. Никаких сторонних таблиц.</p>
-                </div>
-                <div class="p-6 bg-green-50 rounded-xl border border-green-100">
-                    <h3 class="font-bold text-green-900 mb-2">💰 Прозрачность</h3>
-                    <p class="text-sm text-green-800">Видите, как ваши часы превращаются в деньги. Понятная система ставок и отчетов.</p>
-                </div>
-                <div class="p-6 bg-purple-50 rounded-xl border border-purple-100">
-                    <h3 class="font-bold text-purple-900 mb-2">📊 Аналитика</h3>
-                    <p class="text-sm text-purple-800">Мощные инструменты для анализа эффективности проектов и распределения ресурсов.</p>
-                </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- 2. Быстрый старт -->
-        <section class="space-y-6">
-           <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100 border-b pb-4">2. Быстрый старт</h2>
-           <p class="text-gray-700 dark:text-gray-300">
-             Если у вас мало времени, вот всё, что нужно знать, чтобы начать работу прямо сейчас:
-           </p>
-           
-           <ol class="relative border-l border-gray-200 dark:border-gray-700 ml-4 space-y-10 mt-8">                  
-              <li class="mb-10 ml-6">            
-                  <span class="absolute flex items-center justify-center w-8 h-8 bg-blue-100 rounded-full -left-4 ring-8 ring-white dark:ring-gray-900 dark:bg-blue-900">
-                      <span class="font-bold text-blue-800 dark:text-blue-300">1</span>
-                  </span>
-                  <h3 class="flex items-center mb-1 text-lg font-semibold text-gray-900 dark:text-white">Откройте задачу</h3>
-                  <p class="mb-4 text-base font-normal text-gray-500 dark:text-gray-400">Перейдите в любую задачу в Битрикс24, над которой вы работаете.</p>
-              </li>
-              <li class="mb-10 ml-6">
-                  <span class="absolute flex items-center justify-center w-8 h-8 bg-blue-100 rounded-full -left-4 ring-8 ring-white dark:ring-gray-900 dark:bg-blue-900">
-                      <span class="font-bold text-blue-800 dark:text-blue-300">2</span>
-                  </span>
-                  <h3 class="mb-1 text-lg font-semibold text-gray-900 dark:text-white">Найдите блок "Учёт трудозатрат"</h3>
-                  <p class="text-base font-normal text-gray-500 dark:text-gray-400">В карточке задачи (среди полей или вкладок) найдите блок <strong>«Учет трудозатрат»</strong>.</p>
-              </li>
-              <li class="mb-10 ml-6">
-                  <span class="absolute flex items-center justify-center w-8 h-8 bg-blue-100 rounded-full -left-4 ring-8 ring-white dark:ring-gray-900 dark:bg-blue-900">
-                      <span class="font-bold text-blue-800 dark:text-blue-300">3</span>
-                  </span>
-                  <h3 class="mb-1 text-lg font-semibold text-gray-900 dark:text-white">Нажмите "Отразить"</h3>
-                  <p class="text-base font-normal text-gray-500 dark:text-gray-400">В появившейся таблице напротив нужной подзадачи нажмите синюю кнопку <strong>+ Отразить</strong>.</p>
-              </li>
-              <li class="ml-6">
-                  <span class="absolute flex items-center justify-center w-8 h-8 bg-blue-100 rounded-full -left-4 ring-8 ring-white dark:ring-gray-900 dark:bg-blue-900">
-                      <span class="font-bold text-blue-800 dark:text-blue-300">4</span>
-                  </span>
-                  <h3 class="mb-1 text-lg font-semibold text-gray-900 dark:text-white">Сохраните время</h3>
-                  <p class="text-base font-normal text-gray-500 dark:text-gray-400">Введите описание (что сделали) и количество часов. Нажмите <strong>Сохранить</strong>.</p>
-              </li>
-          </ol>
-        </section>
-
-        <!-- 3. Подробный обзор интерфейса -->
-        <section class="space-y-8">
-          <div class="flex items-end justify-between border-b pb-4">
-               <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100">3. Интерфейс детально</h2>
-               <span class="text-sm text-gray-500 uppercase tracking-wider font-medium">Модуль в задаче</span>
-          </div>
-
-          <p class="text-gray-700 dark:text-gray-300 mb-6">
-            Главный экран приложения — это "Дерево задач". Оно отображает иерархию проекта: от текущей задачи вниз к подзадачам.
-          </p>
-
-          <!-- Mockup: Main Interface -->
-
-          <div class="border rounded-xl shadow-2xl bg-white overflow-hidden ring-1 ring-slate-900/5">
-              <!-- Fake Header -->
-              <div class="bg-slate-50 px-6 py-4 border-b flex items-center justify-between">
-                  <div>
-                      <div class="font-bold text-slate-700 text-lg flex items-center gap-2">
-                          <span class="text-blue-500">📦</span> Учет трудозатрат
-                      </div>
-                      <div class="text-xs text-slate-400 mt-1">Встройка для учета времени по задачам</div>
-                  </div>
-                  <div class="flex gap-6 text-sm">
-                      <div class="flex flex-col items-end">
-                          <span class="text-xs text-slate-400 uppercase">План по проекту</span>
-                          <span class="font-bold text-slate-700">120 ч.</span>
-                      </div>
-                      <div class="flex flex-col items-end">
-                          <span class="text-xs text-slate-400 uppercase">Факт (Всего)</span>
-                          <span class="font-bold text-blue-600">45 ч.</span>
-                      </div>
-                  </div>
-              </div>
-              <!-- Fake Tree Table -->
-              <div class="p-0 overflow-x-auto">
-                  <table class="w-full text-sm text-left">
-                      <thead class="text-xs text-slate-500 uppercase bg-slate-50/50 border-b">
-                          <tr>
-                              <th class="px-6 py-4 font-semibold">Структура задачи</th>
-                              <th class="px-6 py-4 w-40 text-center font-semibold text-blue-600">Факт</th>
-                              <th class="px-6 py-4 w-40 text-center font-semibold text-gray-500">План</th>
-                              <th class="px-6 py-4 w-40">Действие</th>
-                          </tr>
-                      </thead>
-                      <tbody class="divide-y divide-slate-100">
-                          <tr class="bg-blue-50/30 hover:bg-blue-50/50 transition-colors">
-                              <td class="px-6 py-4 font-bold text-slate-900 text-base">
-                                  <span class="mr-2 text-slate-400">▼</span> Главная задача (Разработка)
-                              </td>
-                              <td class="px-6 py-4 text-center font-bold text-blue-700 text-base">5:00</td>
-                              <td class="px-6 py-4 text-center text-gray-500">20:00</td>
-                              <td class="px-6 py-4"></td>
-                          </tr>
-                          <tr class="hover:bg-gray-50 transition-colors group">
-                              <td class="px-6 py-4 pl-12 text-slate-700 flex items-center gap-2">
-                                  <span class="w-1 h-8 bg-gray-200 rounded-full"></span>
-                                  <div>
-                                      <div class="font-medium">Верстка макетов</div>
-                                      <div class="text-xs text-gray-400">Отвественный: Иван И.</div>
-                                  </div>
-                              </td>
-                              <td class="px-6 py-4 text-center font-medium">3:00</td>
-                              <td class="px-6 py-4 text-center text-gray-400">10:00</td>
-                              <td class="px-6 py-4 text-right">
-                                  <button class="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 text-xs font-bold shadow-sm active:scale-95 transform">+ Отразить</button>
-                              </td>
-                          </tr>
-                          <tr class="hover:bg-gray-50 transition-colors group">
-                              <td class="px-6 py-4 pl-12 text-slate-700 flex items-center gap-2">
-                                   <span class="w-1 h-8 bg-gray-200 rounded-full"></span>
-                                   <div>
-                                      <div class="font-medium">Написание API</div>
-                                      <div class="text-xs text-gray-400">Отвественный: Петр С.</div>
-                                  </div>
-                              </td>
-                              <td class="px-6 py-4 text-center font-medium">2:00</td>
-                              <td class="px-6 py-4 text-center text-gray-400">10:00</td>
-                              <td class="px-6 py-4 text-right">
-                                  <button class="opacity-0 group-hover:opacity-100 transition-opacity px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 text-xs font-bold shadow-sm active:scale-95 transform">+ Отразить</button>
-                              </td>
-                          </tr>
-                      </tbody>
-                      <tfoot class="bg-gray-50 border-t">
-                          <tr>
-                              <td class="px-6 py-4 font-extrabold text-slate-900 text-right uppercase tracking-wider text-xs">Всего по дереву:</td>
-                              <td class="px-6 py-4 font-extrabold text-center text-blue-700 text-lg">5:00</td>
-                              <td class="px-6 py-4 text-center font-bold text-gray-500">40:00</td>
-                              <td></td>
-                          </tr>
-                      </tfoot>
-                  </table>
-              </div>
-          </div>
-          
-          <div class="grid md:grid-cols-2 gap-8 mt-6">
+            <div class="space-y-3">
               <div>
-                  <h4 class="font-bold text-lg mb-2">Основные элементы:</h4>
-                  <ul class="list-disc list-inside space-y-2 text-gray-700">
-                      <li><strong>Дерево (Слева):</strong> Показывает вложенность задач. Вы можете "сворачивать" и "разворачивать" ветки кликом на стрелку.</li>
-                      <li><strong>Факт (Центр):</strong> Фактически затраченное и залогированное время. Жирным выделяется, если есть записи.</li>
-                      <li><strong>Кнопка "+ Отразить":</strong> Появляется при наведении. Это единственная точка входа для добавления времени.</li>
-                  </ul>
-              </div>
-              <div class="bg-yellow-50 p-6 rounded-xl border border-yellow-200">
-                  <h4 class="font-bold text-yellow-800 mb-2 flex items-center gap-2">
-                      <span class="text-xl">💡</span>
-                      Важно знать
-                  </h4>
-                  <p class="text-sm text-yellow-800 leading-relaxed">
-                      Приложение автоматически суммирует время "снизу вверх". Если вы добавили 2 часа в подзадачу, они автоматически приплюсуются к родительской задаче в её графе "Факт".
-                  </p>
-              </div>
-          </div>
-        </section>
-
-        <!-- 4. Сценарий: Добавление времени (Форма) -->
-        <section class="space-y-8">
-           <div class="flex items-end justify-between border-b pb-4">
-               <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100">4. Форма добавления времени</h2>
-          </div>
-
-           <div class="flex flex-col lg:flex-row gap-12">
-               <!-- Left: Explanation -->
-               <div class="flex-1 space-y-6">
-                   <p class="text-lg text-gray-700">
-                       После нажатия на кнопку <strong>"+ Отразить"</strong> справа выезжает панель. Это ваш основной инструмент для превращения работы в данные.
-                   </p>
-                   
-                   <div class="space-y-4">
-                       <div class="flex items-start gap-4">
-                           <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center font-bold text-slate-600 mt-1">1</div>
-                           <div>
-                               <h4 class="font-bold text-gray-900">Описание (Обязательно)</h4>
-                               <p class="text-sm text-gray-600">
-                                   Пишите подробно. Вместо "Работа" пишите "Верстка компонента Header". Это поможет при формировании актов для клиента.
-                               </p>
-                           </div>
-                       </div>
-
-                       <div class="flex items-start gap-4">
-                           <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center font-bold text-slate-600 mt-1">2</div>
-                           <div>
-                               <h4 class="font-bold text-gray-900">Часы и Дата</h4>
-                               <p class="text-sm text-gray-600">
-                                   Укажите затраченное время в часах (например, 1.5). Дату можно выбрать, если вносите время за вчера.
-                               </p>
-                           </div>
-                       </div>
-                       
-                        <div class="flex items-start gap-4">
-                           <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center font-bold text-slate-600 mt-1">3</div>
-                           <div>
-                               <h4 class="font-bold text-gray-900">Учитывать в отчете (Checkbox)</h4>
-                               <p class="text-sm text-gray-600">
-                                   Галочка <strong>"Учитывать"</strong> означает, что это оплачиваемое (или полезное) время. Если галочку снять, время сохранится, но не пойдет в финансовые отчеты.
-                               </p>
-                           </div>
-                       </div>
-                   </div>
-               </div>
-
-               <!-- Right: Mockup -->
-               <div class="w-full lg:w-[400px]">
-                  <div class="border rounded-xl shadow-2xl bg-white overflow-hidden transform rotate-1 hover:rotate-0 transition-transform duration-500">
-                      <div class="p-4 border-b bg-slate-50 flex justify-between items-center bg-gradient-to-r from-blue-50 to-indigo-50">
-                          <h3 class="font-bold text-slate-800">Новая запись #123</h3>
-                          <span class="text-slate-400 cursor-pointer hover:text-red-500">✕</span>
-                      </div>
-                      <div class="p-6 space-y-6">
-                          <div>
-                              <label class="text-xs font-bold text-slate-500 uppercase tracking-wide">Описание работы</label>
-                              <textarea class="w-full border-2 border-slate-200 focus:border-blue-500 rounded-lg p-3 text-sm mt-2 outline-none transition-colors" rows="3" placeholder="Что вы сделали?">Разработка компонента списка задач</textarea>
-                          </div>
-                          <div class="flex gap-4">
-                              <div class="w-1/2">
-                                  <label class="text-xs font-bold text-slate-500 uppercase tracking-wide">Часы</label>
-                                  <input type="number" class="w-full border-2 border-slate-200 focus:border-blue-500 rounded-lg p-3 text-sm mt-2 text-center font-bold text-lg outline-none" value="2.0">
-                              </div>
-                              <div class="w-1/2">
-                                   <label class="text-xs font-bold text-slate-500 uppercase tracking-wide">Дата</label>
-                                   <input type="date" class="w-full border-2 border-slate-200 focus:border-blue-500 rounded-lg p-3 text-sm mt-2 outline-none">
-                              </div>
-                          </div>
-                          <div class="bg-slate-50 p-4 rounded-lg border border-slate-100 flex items-center gap-3">
-                              <div class="relative flex items-center">
-                                <input type="checkbox" checked class="w-5 h-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500">
-                              </div>
-                              <label class="text-sm font-medium text-slate-700 select-none">Учитывать в отчете</label>
-                          </div>
-                          <div class="pt-2">
-                              <button class="w-full py-3 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-95">Сохранить запись</button>
-                          </div>
-                      </div>
-                  </div>
-               </div>
-           </div>
-        </section>
-
-        <!-- 5. Продвинутые функции: Split -->
-        <section class="space-y-8">
-          <div class="flex items-end justify-between border-b pb-4">
-               <h2 class="text-3xl font-bold text-gray-900 dark:text-gray-100">5. Разделение времени (Split)</h2>
-               <span class="text-sm text-gray-500 uppercase tracking-wider font-medium">Для профи</span>
-          </div>
-          
-          <div class="bg-orange-50 border-l-4 border-orange-400 p-6 rounded-r-xl">
-              <h3 class="font-bold text-orange-900 text-lg mb-2">Зачем это нужно?</h3>
-              <p class="text-orange-800">
-                  Представьте: вы работали 5 часов. Из них 3 часа — это полезная работа по задаче, а 2 часа — это внутренние обсуждения, которые клиент не оплачивает.
-                  Вместо того чтобы удалять и создавать две разные записи, используйте <strong>Split</strong>.
-              </p>
-          </div>
-
-          <div class="grid md:grid-cols-2 gap-12 items-start">
-             <!-- Mockup: Split -->
-             <div class="border rounded-xl shadow-xl bg-white overflow-hidden w-full">
-                  <div class="p-4 bg-orange-50 border-b border-orange-100">
-                      <h3 class="font-bold text-orange-800 flex items-center gap-2">
-                           <span>✂️</span> Разделение (Split)
-                      </h3>
-                  </div>
-                  <div class="p-6 space-y-6">
-                       <div class="text-sm text-slate-600 bg-slate-50 p-3 rounded border">
-                          Текущая запись: <strong>5:00</strong>
-                       </div>
-                       
-                       <div>
-                           <label class="text-xs font-bold text-slate-500 uppercase">Сколько отделить?</label>
-                           <div class="flex gap-2 mt-2">
-                               <input type="text" class="w-24 border-2 border-orange-200 focus:border-orange-500 rounded-lg p-2 text-center font-bold" value="2.0">
-                               <button class="flex-1 bg-orange-500 text-white rounded-lg font-semibold text-sm hover:bg-orange-600 shadow-md">Разделить</button>
-                           </div>
-                       </div>
-                       
-                       <div class="flex items-center gap-2">
-                          <input type="checkbox" class="w-4 h-4 text-orange-500 rounded border-gray-300">
-                          <label class="text-sm text-slate-600">Учитывать новую запись?</label>
-                      </div>
-                  </div>
-              </div>
-
-              <!-- Steps -->
-              <div class="space-y-6">
-                <ol class="list-decimal list-inside space-y-4 text-gray-700 text-lg">
-                    <li>Откройте существующую запись кликом по ней в дереве.</li>
-                    <li>Прокрутите форму вниз до оранжевого блока <strong>Split</strong>.</li>
-                    <li>Введите количество часов, которое нужно "откусить" от текущей записи.</li>
-                    <li>Нажмите "Разделить".</li>
-                </ol>
-                <p class="text-sm text-gray-500 p-4 bg-gray-50 rounded-lg border">
-                    <strong>Результат:</strong> Исходная запись уменьшится (было 5, станет 3). Появится новая запись на 2 часа. Сумма останется прежней.
+                <h1 class="text-3xl font-bold text-slate-900 sm:text-4xl">Руководство пользователя</h1>
+                <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">
+                  Это краткий и актуальный справочник по основным сценариям работы с приложением:
+                  фиксация времени в задачах, формирование отчетов, выгрузка Excel и настройка данных.
                 </p>
               </div>
-          </div>
-        </section>
 
-        
-        <!-- Footer Info -->
-        <div class="text-center text-gray-400 text-sm py-12 border-t mt-12">
-            <p>Версия Юзергайда: 2.0 (Massive Edition)</p>
-            <p>Приложение "Учет часов и финансов" для Битрикс24.</p>
+              <div class="grid gap-3 sm:grid-cols-3">
+                <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Основной сценарий</div>
+                  <div class="mt-1 text-sm font-medium text-slate-900">Учесть время в задаче</div>
+                </div>
+                <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Аналитика</div>
+                  <div class="mt-1 text-sm font-medium text-slate-900">7 отчетов и Excel</div>
+                </div>
+                <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Администрирование</div>
+                  <div class="mt-1 text-sm font-medium text-slate-900">Маппинг, сырые данные, отладка</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Быстрый старт</h2>
+          <p class="mt-2 text-sm text-slate-600">
+            Если вы открыли приложение впервые, достаточно пройти эти шаги.
+          </p>
         </div>
 
-      </div>
+        <div class="grid gap-4 lg:grid-cols-5">
+          <div
+            v-for="(step, index) in quickStartSteps"
+            :key="step.title"
+            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
+            <div class="mb-4 flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+              {{ index + 1 }}
+            </div>
+            <h3 class="text-base font-semibold text-slate-900">{{ step.title }}</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-600">{{ step.text }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <div class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div class="mb-5">
+            <h2 class="text-2xl font-bold text-slate-900">Работа внутри задачи</h2>
+            <p class="mt-2 text-sm text-slate-600">
+              Основной рабочий сценарий начинается во вкладке приложения в карточке задачи Битрикс24.
+            </p>
+          </div>
+
+          <div class="space-y-4">
+            <div
+              v-for="item in taskActions"
+              :key="item.title"
+              class="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4"
+            >
+              <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-900">{{ item.title }}</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-600">{{ item.text }}</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-3xl border border-blue-200 bg-blue-50 p-6 shadow-sm">
+          <h2 class="text-2xl font-bold text-slate-900">Что важно помнить</h2>
+          <div class="mt-5 space-y-4 text-sm leading-6 text-slate-700">
+            <p>
+              Записи времени вносятся в связанный смарт-процесс Битрикс24 и потом используются в отчетах приложения.
+            </p>
+            <p>
+              Отчетность опирается на период, сотрудников и проекты, поэтому при разборе данных в первую очередь проверяйте фильтры.
+            </p>
+            <p>
+              Учитываемые и неучитываемые часы всегда разделяются в аналитике, поэтому статус записи влияет на итоговые показатели.
+            </p>
+            <p>
+              Встроенная справка и настройки доступны без выхода из приложения, поэтому базовые вопросы обычно решаются внутри интерфейса.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Отчеты</h2>
+          <p class="mt-2 text-sm text-slate-600">
+            В приложении доступны как базовые управленческие отчеты, так и более аналитические экраны для контроля качества учета.
+          </p>
+        </div>
+
+        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div
+            v-for="report in reports"
+            :key="report.title"
+            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
+            <h3 class="text-lg font-semibold text-slate-900">{{ report.title }}</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-600">{{ report.text }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="rounded-3xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
+        <div class="max-w-3xl">
+          <h2 class="text-2xl font-bold text-slate-900">Как работают фильтры и формирование отчетов</h2>
+          <p class="mt-2 text-sm text-slate-600">
+            Это одна из самых важных частей интерфейса, потому что все отчеты теперь строятся по одинаковой логике.
+          </p>
+        </div>
+
+        <div class="mt-6 grid gap-4 md:grid-cols-2">
+          <div
+            v-for="rule in filterRules"
+            :key="rule"
+            class="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm leading-6 text-slate-600"
+          >
+            {{ rule }}
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Настройки и администрирование</h2>
+          <p class="mt-2 text-sm text-slate-600">
+            Эти разделы обычно нужны при первом запуске, изменении конфигурации или диагностике данных.
+          </p>
+        </div>
+
+        <div class="grid gap-4 md:grid-cols-2">
+          <div
+            v-for="section in settingsSections"
+            :key="section.title"
+            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
+            <h3 class="text-lg font-semibold text-slate-900">{{ section.title }}</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-600">{{ section.text }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5 pb-8">
+        <div>
+          <h2 class="text-2xl font-bold text-slate-900">Частые вопросы</h2>
+          <p class="mt-2 text-sm text-slate-600">
+            Короткие ответы на типовые вопросы пользователей и администраторов.
+          </p>
+        </div>
+
+        <div class="space-y-4">
+          <div
+            v-for="item in faqItems"
+            :key="item.title"
+            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
+            <h3 class="text-base font-semibold text-slate-900">{{ item.title }}</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-600">{{ item.text }}</p>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 </template>
-
-<style scoped>
-/* Дополнительные стили для красоты текста */
-.lead {
-    line-height: 1.6;
-}
-</style>

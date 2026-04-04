@@ -1,276 +1,371 @@
-# Техническая документация TimeTracker Pro
+# Техническая документация приложения «Учёт трудозатрат»
 
-## Оглавление
-1. [Архитектура](#1-архитектура)
-2. [Стек технологий](#2-стек-технологий)
-3. [Структура проекта](#3-структура-проекта)
-4. [Бэкенд (Python/Django)](#4-бэкенд)
-5. [Фронтенд (Nuxt 3)](#5-фронтенд)
-6. [Конфигурация и маппинг](#6-конфигурация-и-маппинг)
-7. [Модель данных](#7-модель-данных)
-8. [API эндпоинты](#8-api-эндпоинты)
-9. [Деплой](#9-деплой)
+## 1. Назначение
 
----
+Приложение предназначено для учета времени в задачах Bitrix24 и последующего анализа этих данных через набор отчетов и административных экранов.
 
-## 1. Архитектура
+Текущая рабочая связка проекта:
 
-```
-┌─────────────────────┐      ┌─────────────────────────┐
-│   Битрикс24 Cloud   │◀────▶│   Frontend (Nuxt 3)     │
-│   (Смарт-процесс)   │      │   - Виджет (embedded)   │
-│                     │      │   - Отчёты              │
-│                     │      │   - Настройки           │
-└─────────────────────┘      └────────┬────────────────┘
-                                      │ REST API
-                              ┌───────▼────────────────┐
-                              │  Backend (Django)       │
-                              │  - Синхронизация        │
-                              │  - Агрегация отчётов    │
-                              │  - Конфигурация         │
-                              └───────┬────────────────┘
-                                      │
-                              ┌───────▼────────────────┐
-                              │  PostgreSQL             │
-                              │  (TimesheetItem,        │
-                              │   Bitrix24Account)      │
-                              └────────────────────────┘
-```
+- frontend: `Nuxt 3`
+- backend: `Django`
+- database: `PostgreSQL`
+- интеграция с Bitrix24: `@bitrix24/b24jssdk` и `b24pysdk`
 
-**Два режима работы фронтенда:**
-- **Standalone** (главная, отчёты, настройки) — работает через бэкенд Django
-- **Embedded** (виджет задачи) — работает напрямую с Bitrix24 API через JSSDK (без бэкенда)
+## 2. Архитектура
 
----
-
-## 2. Стек технологий
-
-| Слой | Технология |
-|------|-----------|
-| Frontend | Nuxt 3, Vue 3, TypeScript |
-| UI Library | @bitrix24/b24ui-nuxt, Tailwind CSS |
-| B24 SDK | @bitrix24/b24jssdk |
-| Backend | Python 3.11+, Django 4.x |
-| B24 SDK (Python) | b24pysdk |
-| Database | PostgreSQL |
-| Server | uvicorn (ASGI) |
-| Container | Docker |
-| Export | SheetJS (xlsx) |
-
----
-
-## 3. Структура проекта
-
-```
-dev_pyton_app/
-├── backends/python/api/main/
-│   ├── configuration_service.py  — Конфигурация через app.option
-│   ├── models.py                 — Django модели (TimesheetItem, Bitrix24Account)
-│   ├── services.py               — BitrixDataService, ReportService
-│   ├── views.py                  — API эндпоинты (отчёты, синхронизация)
-│   └── urls.py                   — URL routing
-├── frontend/app/
-│   ├── pages/
-│   │   ├── index.client.vue      — Дашборд (плитки отчётов)
-│   │   ├── embedded.vue          — Виджет в задаче (TASK_VIEW_TAB)
-│   │   ├── task.vue              — Полная страница задачи
-│   │   ├── guide.client.vue      — Юзергайд
-│   │   ├── install.client.vue    — Установщик
-│   │   ├── reports/
-│   │   │   ├── employee.client.vue       — Отчёт по сотрудникам
-│   │   │   ├── project.client.vue        — Отчёт по проектам  
-│   │   │   ├── project-task.client.vue   — Отчёт по проектам/задачам (НОВЫЙ)
-│   │   │   ├── project-report.client.vue — Прямой отчёт (без бэкенда)
-│   │   │   └── daily.client.vue          — Ежедневная нагрузка
-│   │   └── settings/
-│   │       ├── index.client.vue  — Главная настроек
-│   │       └── mapping.client.vue — Маппинг полей
-│   ├── components/
-│   │   ├── TaskGroupComponent.vue — Группа задач в дереве
-│   │   └── TaskItemRow.vue        — Строка метки времени
-│   └── stores/
-│       └── api.ts                — API store (запросы к бэкенду)
-├── docs/                         — Документация
-│   ├── MARKETPLACE_DESCRIPTION.md — Описание для Маркетплейса
-│   ├── LOGO_PROMPT.md            — Промт для логотипа
-│   └── ...
-├── Dockerfile
-├── docker-compose.yml
-└── DEPLOY_README.md
-
----
-
-## 4. Бэкенд
-
-### Ключевые сервисы
-
-**`ConfigurationService`** — управление конфигурацией:
-- `get_configuration_sync()` — загрузка из `app.option` (JSON в поле `timestamp_config`)
-- `save_configuration_sync()` — сохранение
-- `get_smart_processes_sync()` — список доступных Смарт-процессов
-- `get_sp_fields_sync()` — поля конкретного Смарт-процесса
-
-**`BitrixDataService`** — загрузка данных:
-- `fetch_all_items()` — пакетная загрузка всех меток из CRM (batches по 50, до 2500 за цикл)
-- `fetch_users()` — загрузка пользователей
-
-**`DataProcessingService`** — нормализация:
-- `normalize_items()` — парсинг иерархий, вычисление проектов, валидация
-
-**`ReportService`** — агрегация отчётов:
-- `generate_employee_projects()` — Сотрудник → Проект → Задача
-- `generate_project_employees()` — Проект → Сотрудник → Задача
-- `generate_project_task_employees()` — Проект → Задача → Сотрудник
-- `generate_daily_workload()` — Табель (матрица)
-
-### Модели Django
-
-**`Bitrix24Account`** — авторизация портала:
-- `member_id`, `domain`, `auth_id`, `refresh_id`, `app_sid`
-
-**`TimesheetItem`** — запись метки времени (кэш данных из Б24):
-- `item_id_bitrix`, `task_id`, `employee_id`, `hours`
-- `is_considered`, `description`, `date_reflection`
-- `project_name`, `task_hierarchy_ids`, `task_hierarchy_titles`
-
----
-
-## 5. Фронтенд
-
-### Виджет (embedded.vue)
-
-Встраивается в **блок задачи** (через placement `TASK_VIEW_TAB` или как Embedded Application).
-
-**Особенности интеграции (SidePanel):**
-- Приложение определяет контекст запуска (iframe в слайдере или iframe на странице).
-- Использует **Native SidePanel API** (`BX24.openPath`) для открытия вспомогательных окон (Юзергайд, Настройки) внутри слайдера Битрикс24, сохраняя контекст задачи.
-- Реализован **Fallback механизм** изменения размера окна (через `postMessage`) для корректного отображения модалок (Report Modal, Help Modal).
-
-**Алгоритм работы:**
-1. Получает `taskId` из placement options
-2. BFS-обход подзадач (`tasks.task.list`)
-3. Загрузка меток для всех задач (`crm.item.list`)
-4. Построение дерева с кумулятивными итогами
-5. CRUD операции напрямую через B24 API
-
-**Ключевые функции:**
-- `loadData()` — полная загрузка дерева задач + меток
-- `saveCurrentItem()` — сохранение/создание метки (с иерархией)
-- `splitItem()` — разделение записи с сохранением привязок
-- `getTaskHierarchy()` — сбор полной иерархии задач до корня
-- `findTaskIdForItem()` — поиск taskId по itemId в дереве
-
-### UX/UI Особенности (Fast Adaptive Patch)
-- **Адаптивность**: Полная поддержка мобильных устройств (flebox, wrapping).
-- **Центрированные модалки**: Компоненты (`HelpSidePanel`, `ReportModal`) используют `Teleport` и центрирование для корректного отображения поверх iframe.
-- **HTML-First Mockups**: Юзергайд использует не скриншоты, а верстку (Tailwind) для отображения интерфейса, что гарантирует актуальность и четкость.
-
-### Отчёты
-
-Отчёты `employee`, `project`, `project-task`, `daily` используют бэкенд API через `api.ts`:
-- Загрузка данных: POST-запрос с фильтрами
-- Синхронизация: вызов `/sync/` перед генерацией отчёта
-- Экспорт: клиентская генерация XLSX через SheetJS
-
-Отчёт `project-report` работает **напрямую** через B24 API (без бэкенда).
-
-### Навигация
-
-```
-/                          — Дашборд
-/reports/employee          — Отчёт по сотрудникам
-/reports/project           — Отчёт по проектам
-/reports/project-task      — Отчёт по проектам/задачам
-/reports/daily             — Ежедневная нагрузка
-/reports/project-report    — Прямой отчёт (без бэкенда)
-/settings                  — Настройки
-/settings/mapping          — Маппинг полей
-/guide                     — Юзергайд
-/embedded                  — Виджет задачи (TASK_VIEW_TAB)
-/install                   — Установщик
+```text
+Bitrix24
+  ├── задачи
+  ├── смарт-процесс с записями времени
+  └── iframe / placement приложения
+           │
+           ▼
+Frontend (Nuxt 3)
+  ├── embedded-вкладка в задаче
+  ├── отчеты
+  ├── настройки
+  └── guide
+           │
+           ▼
+Backend (Django)
+  ├── аутентификация по JWT
+  ├── конфигурация приложения
+  ├── синхронизация данных из Bitrix24
+  ├── построение отчетов
+  └── экспорт и диагностика
+           │
+           ▼
+PostgreSQL
+  ├── bitrix24account
+  ├── timesheet_item
+  ├── request_log
+  └── system_log
 ```
 
----
+## 3. Режимы работы frontend
 
-## 6. Конфигурация и маппинг
+Во frontend есть два основных режима:
 
-### Бэкенд
-Конфигурация хранится в `app.option` ключ `timestamp_config` (JSON):
-```json
-{
-  "sp_entity_type_id": 1040,
-  "fields_mapping": {
-    "id_zadachi": "ufCrm10TaskId",
-    "sotrudnik": "ufCrm10Employee",
-    ...
-  },
-  "is_configured": true
-}
+### Embedded
+
+Файл: `frontend/app/pages/embedded.vue`
+
+Используется во вкладке задачи Bitrix24. Работает напрямую через Bitrix24 JSSDK:
+
+- получает контекст задачи;
+- читает дерево подзадач;
+- создает и обновляет записи времени;
+- удаляет и разделяет записи;
+- использует конфигурацию полей из `app.option.get`.
+
+### Standalone
+
+Основные страницы:
+
+- `frontend/app/pages/index.client.vue`
+- `frontend/app/pages/reports/*.vue`
+- `frontend/app/pages/settings/*.vue`
+- `frontend/app/pages/guide.client.vue`
+
+Этот режим использует backend API через store `frontend/app/stores/api.ts`.
+
+## 4. Основные пользовательские модули
+
+### 4.1. Вкладка в задаче
+
+Ключевые сценарии:
+
+- добавление записи времени;
+- редактирование записи;
+- удаление записи;
+- разделение записи;
+- отображение дерева задач и накопительных итогов;
+- расчет суммы по ставке часа.
+
+Связанные файлы:
+
+- `frontend/app/pages/embedded.vue`
+- `frontend/app/components/TaskGroupComponent.vue`
+- `frontend/app/components/TaskItemRow.vue`
+
+### 4.2. Отчеты
+
+Текущий набор отчетов:
+
+- `employee.client.vue`
+- `project.client.vue`
+- `daily.client.vue`
+- `project-task.client.vue`
+- `revenue-leakage.client.vue`
+- `time-discipline.client.vue`
+- `focus-analysis.client.vue`
+- `raw-data.client.vue`
+
+Общий сценарий для основных отчетов:
+
+1. загрузить фильтры;
+2. выбрать период и параметры;
+3. нажать `Сформировать`;
+4. получить агрегированные данные от backend;
+5. при необходимости выгрузить текущую выборку в Excel.
+
+### 4.3. Настройки
+
+Основные страницы:
+
+- `settings/index.client.vue`
+- `settings/mapping.client.vue`
+- `settings/debug.client.vue`
+
+Что настраивается:
+
+- маппинг полей смарт-процесса;
+- ставка часа;
+- кликабельные метки в отчетах;
+- доступ к сырым данным и служебным логам.
+
+## 5. Backend: основные компоненты
+
+### 5.1. Маршруты
+
+Файл: `backends/python/api/main/urls.py`
+
+Ключевые группы маршрутов:
+
+- install/auth:
+  - `/api/install`
+  - `/api/getToken`
+- filters/reports:
+  - `/api/get-filter-employees`
+  - `/api/get-filter-projects`
+  - `/api/report-employee-project`
+  - `/api/report-project-employee`
+  - `/api/report-daily-workload`
+  - `/api/report-project-task-employee`
+  - `/api/report-revenue-leakage`
+  - `/api/report-time-entry-discipline`
+  - `/api/report-focus-analysis`
+- timesheets:
+  - `/api/sync-timesheets`
+  - `/api/timesheets`
+  - `/api/export-raw-data`
+- configuration:
+  - `/api/configuration`
+  - `/api/configuration/save`
+  - `/api/smart-processes`
+  - `/api/smart-processes/fields`
+  - `/api/smart-processes/create`
+  - `/api/smart-processes/create-fields`
+- logs:
+  - `/api/logs/requests`
+  - `/api/logs/system`
+
+### 5.2. Сервисы
+
+Файл: `backends/python/api/main/services.py`
+
+Ключевые сервисы:
+
+- `BitrixDataService`
+  - загрузка пользователей;
+  - загрузка активных пользователей для фильтров;
+  - загрузка элементов смарт-процесса;
+- `DataProcessingService`
+  - нормализация сырых данных из Bitrix24;
+  - сбор иерархии задач и проектных полей;
+- `ReportService`
+  - построение структурированных и аналитических отчетов;
+- `TimesheetSyncService`
+  - пакетная синхронизация записей из Bitrix24 в локальную БД.
+
+### 5.3. Особенности синхронизации
+
+Синхронизация:
+
+- читает данные батчами из `crm.item.list`;
+- нормализует значения полей;
+- сохраняет записи в `timesheet_item`;
+- удаляет локальные записи, которых больше нет в Bitrix24;
+- использует retry/backoff для rate limit.
+
+Сохранение сейчас идет через `update_or_create`, что удобно для консистентности, но дорого по производительности на больших объемах.
+
+## 6. Модель данных
+
+Файл: `backends/python/api/main/models.py`
+
+### `Bitrix24Account`
+
+Хранит установку приложения и OAuth-данные портала:
+
+- домен портала;
+- access/refresh token;
+- статус установки;
+- scope и версию приложения;
+- JWT-логику для frontend/backend обмена.
+
+### `TimesheetItem`
+
+Основной локальный кэш записи времени:
+
+| Поле | Назначение |
+|---|---|
+| `bitrix_id` | ID элемента в Bitrix24 |
+| `task_id` | ID задачи |
+| `employee_id` | ID сотрудника |
+| `hours` | часы |
+| `is_billable` | учитываемая запись или нет |
+| `non_billable_hours` | отдельное числовое поле неучитываемых часов |
+| `description` | описание работы |
+| `project_id` | ID проекта |
+| `project_title` | название проекта |
+| `task_hierarchy_ids` | иерархия ID задач |
+| `task_hierarchy_titles` | иерархия названий задач |
+| `date_reflection` | дата отражения |
+| `source_created_at` | оригинальная дата создания записи в Bitrix24 |
+
+### Служебные таблицы
+
+- `RequestLog` — журнал HTTP-запросов;
+- `SystemLog` — системные события и ошибки.
+
+## 7. Конфигурация полей
+
+В приложении есть два уровня конфигурации:
+
+### Backend configuration
+
+Backend хранит конфигурацию через `app.option` и работает с:
+
+- `sp_entity_type_id`
+- `fields_mapping`
+- `hourly_rate`
+- дополнительными task/spa fields
+
+### Frontend configuration
+
+Файл: `frontend/app/stores/fieldConfig.ts`
+
+Store:
+
+- читает конфиг через `app.option.get`;
+- преобразует backend-ключи в frontend-константы;
+- отдает объект `configObject` для `embedded.vue` и `task.vue`.
+
+## 8. Frontend stores и утилиты
+
+### `frontend/app/stores/api.ts`
+
+Центральная точка работы с backend API:
+
+- healthcheck;
+- получение JWT;
+- фильтры;
+- все report endpoints;
+- синхронизация;
+- работа с сырыми данными;
+- конфигурация и журналы.
+
+### `frontend/app/stores/fieldConfig.ts`
+
+Отвечает за:
+
+- загрузку конфигурации из Bitrix24;
+- хранение entity type id;
+- хранение mappings и ставки часа;
+- backward-compatible объект конфигурации для embedded-страниц.
+
+### Полезные утилиты
+
+- `reportDateRange.ts` — пресеты периодов;
+- `exportXlsx.ts` — выгрузка в Excel;
+- `iframe-resizer.ts` — работа с высотой iframe внутри Bitrix24;
+- `openCrmItem.ts` — открытие карточек элементов.
+
+## 9. Логика фильтров
+
+Фильтры отчетов разделены на два типа:
+
+- сотрудники;
+- проекты.
+
+Источники данных:
+
+- сотрудники загружаются отдельно через `user.get`;
+- проекты формируются отдельно из локального кэша.
+
+Поддерживаются два режима:
+
+- `include`
+- `exclude`
+
+На frontend это реализовано через `MultiSelectFilter.vue`, а на backend через параметры:
+
+- `employee_ids[]`
+- `employee_mode`
+- `project_ids[]`
+- `project_mode`
+
+## 10. Экспорт
+
+В проекте есть два разных сценария Excel:
+
+### Экспорт отчетов
+
+Используется в основных аналитических страницах и выгружает текущую выборку отчета.
+
+### Экспорт сырых данных
+
+Файл: `frontend/app/pages/reports/raw-data.client.vue`
+
+Позволяет:
+
+- выбрать тип даты;
+- задать период;
+- выбрать набор полей;
+- скачать Excel напрямую по данным из Bitrix24.
+
+## 11. Локальная разработка
+
+Базовый сценарий:
+
+```bash
+cp .env.example .env
+make dev-python
 ```
-Бэкенд загружает конфигурацию через `ConfigurationService.get_configuration_sync()` при каждом API-запросе.
 
-### Фронтенд
-- Используется `stores/fieldConfig.ts` (Pinia) для загрузки конфигурации при старте приложения.
-- **Виджет (`embedded.vue`)** и все отчеты используют этот стор для получения ID полей.
-- **Маппинг** и создание полей происходят на странице настроек (`settings/mapping.client.vue`) через прямой вызов Bitrix API (`userfieldconfig.add`).
+Дополнительные команды:
 
----
-
-## 7. Модель данных
-
-### Основные поля (динамические ID)
-
-Поля создаются автоматически с префиксом `UF_CRM_{id}_`. Маппинг хранит связь между внутренним ключом и реальным кодом поля в Битрикс24.
-
-| Ключ | Назначение | Тип |
-|------|------------|-----|
-| `id_zadachi` | ID задачи | integer |
-| `sotrudnik` | Сотрудник | employee |
-| `kolichestvo_chasov` | Часы | double |
-| `uchitivaem` | Учитываем? | boolean |
-| `ne_uchitivaemie_chasi` | Не учтено | double |
-| `opisanie` | Описание | string |
-| `project_title` | Название проекта | string |
-| `project_id` | ID проекта | integer |
-| `data` | Дата | date |
-| `task_name` | Название задачи | string |
-| `our_inn` | Наш ИНН | string |
-| `client_inn` | ИНН клиента | string |
-
-### Иерархические поля
-
-Поля `id_zadach_ierarhiya` / `title_zadach_ierarhiya` — **множественные** строковые поля, хранящие путь от корневой задачи:
-
-```
-Задача «Разработка» (ID: 901) → «Backend» (ID: 905)
-id_zadach_ierarhiya:    ["901", "905"]
-title_zadach_ierarhiya: ["Разработка", "Backend"]
+```bash
+make down
+make logs
+make queue-up
+make queue-down
 ```
 
----
+Основной compose-файл локальной разработки: `local-dev.yaml`.
 
-## 8. API эндпоинты
+## 12. Production и деплой
 
-| Метод | URL | Описание |
-|-------|-----|----------|
-| POST | `/api/sync/` | Синхронизация данных из Б24 |
-| POST | `/api/report/...` | Генерация отчетов (employee, project, daily) |
-| POST | `/api/smart-processes/create` | Создание Смарт-процесса (backend fallback) |
-| POST | `/api/smart-processes/create-fields` | Создание полей (backend fallback) |
-| POST | `/api/configuration/save` | Сохранение конфига (`app.option.set`) |
-| GET | `/api/configuration` | Чтение конфига |
+Production-сборка выполняется через корневой `Dockerfile`:
 
-Все эндпоинты ожидают `AUTH_ID` в теле запроса для авторизации.
+- на первом этапе собирается frontend;
+- на втором запускается Python image с backend;
+- frontend build копируется в backend image и раздается из него.
 
----
+Отдельная инструкция:
 
-## 9. Деплой
+- [DEPLOY_README.md](../DEPLOY_README.md)
 
-Подробная инструкция: [DEPLOY_README.md](../DEPLOY_README.md)
+## 13. Основные ограничения и известные особенности
 
-**Кратко:**
-1. Docker-образ собирается из корневого `Dockerfile`
-2. Порт: 8000 (uvicorn)
-3. Внешний PostgreSQL
-4. Переменные окружения: `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `SECRET_KEY`, `VIRTUAL_HOST`
-5. После деплоя: `python manage.py migrate`
+- отчеты работают по локальному кэшу backend, а не по прямому live-чтению Bitrix24;
+- часть аналитики зависит от качества маппинга полей;
+- производительность синхронизации упирается в модель хранения и `update_or_create`;
+- встраиваемые экраны зависят от поведения iframe и layout Bitrix24, поэтому UI-фиксы часто связаны с контейнерами, скроллом и высотой окна.
+
+## 14. Связанные документы
+
+- [README](../README.md)
+- [INSTALLATION_GUIDE.md](./INSTALLATION_GUIDE.md)
+- [Application_Documentation.md](../Application_Documentation.md)
