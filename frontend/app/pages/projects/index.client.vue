@@ -244,10 +244,12 @@ async function syncBoard(showToast = true) {
     await loadBoard()
 
     if (showToast) {
-      showStatus(
-        'success',
-        `Синхронизировано ${result.synced || 0} проектов. Новых: ${result.created || 0}, обновлено: ${result.updated || 0}.`
-      )
+      const baseMessage = `Синхронизировано ${result.synced || 0} проектов. Новых: ${result.created || 0}, обновлено: ${result.updated || 0}.`
+      if (result.warning) {
+        showStatus('warning', `${baseMessage} ${result.warning}`)
+      } else {
+        showStatus('success', baseMessage)
+      }
     }
   } catch (error) {
     try {

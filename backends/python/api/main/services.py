@@ -1639,7 +1639,18 @@ class ProjectSyncService:
         self.card_service = ProjectCardService(client, account)
 
     def sync(self) -> Dict[str, Any]:
-        groups = self.fetch_project_groups()
+        warning: Optional[str] = None
+
+        try:
+            groups = self.fetch_project_groups()
+        except Exception as exc:
+            logger.warning("Project sync Bitrix fetch failed, falling back to local timesheets: %s", exc)
+            groups = self.build_project_groups_from_timesheets()
+            warning = (
+                "Не удалось получить список проектов напрямую из Битрикс24. "
+                "Использован локальный список по уже загруженным списаниям."
+            )
+
         by_project_id, by_project_title = self.card_service.collect_writeoff_maps()
         owner_ids = {
             str(group.get("OWNER_ID") or group.get("ownerId") or "").strip()
@@ -1725,13 +1736,18 @@ class ProjectSyncService:
         self.card_service.refresh_writeoff_stats()
         daily_check = ProjectStageAutomationService(self.account).run_daily_check()
 
-        return {
+        result = {
             "status": "success",
             "synced": len(groups),
             "created": created,
             "updated": updated,
             **daily_check,
         }
+
+        if warning:
+            result["warning"] = warning
+
+        return result
 
     def fetch_project_groups(self) -> List[Dict[str, Any]]:
         errors: List[str] = []
@@ -1833,6 +1849,35 @@ class ProjectSyncService:
                 break
 
             start = int(next_value)
+
+        return items
+
+    def build_project_groups_from_timesheets(self) -> List[Dict[str, Any]]:
+        rows = (
+            TimesheetItem.objects.filter(bitrix24_account=self.account)
+            .exclude(project_id__isnull=True)
+            .exclude(project_id="")
+            .values("project_id", "project_title")
+            .distinct()
+        )
+
+        items: List[Dict[str, Any]] = []
+        seen_ids = set()
+
+        for row in rows:
+            project_id = self._get_first(row, "project_id")
+            project_name = self._get_first(row, "project_title") or (f"Проект {project_id}" if project_id else None)
+
+            if not project_id or project_id in seen_ids or not project_name:
+                continue
+
+            seen_ids.add(project_id)
+            items.append({
+                "ID": project_id,
+                "NAME": project_name,
+                "PROJECT": "Y",
+                "CLOSED": "N",
+            })
 
         return items
 
