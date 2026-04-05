@@ -1499,9 +1499,9 @@ class ProjectCardService:
     def get_meta(self) -> Dict[str, Any]:
         cache_key = build_account_cache_key(self.account, "project-board-meta")
         cached = cache.get(cache_key)
-        if cached and self._meta_has_options(cached):
+        if cached and self._meta_has_required_shape(cached) and self._meta_has_options(cached):
             return cached
-        if cached == {} or (cached is not None and not self._meta_has_options(cached)):
+        if cached is not None:
             cache.delete(cache_key)
 
         config = self._load_config()
@@ -1669,6 +1669,15 @@ class ProjectCardService:
             self._has_reference_options(meta.get(key))
             for key in ("employees", "companies")
         )
+
+    @staticmethod
+    def _meta_has_required_shape(meta: Optional[Dict[str, Any]]) -> bool:
+        if not isinstance(meta, dict):
+            return False
+
+        filters = meta.get("filters")
+        directories = meta.get("directories")
+        return isinstance(filters, dict) and isinstance(directories, dict)
 
     def _fetch_references_with_cache(
         self,

@@ -364,9 +364,9 @@ async function loadMeta(forceRefresh = false) {
   employeeDirectory.value = directories.employees || meta.employees || []
   companyDirectory.value = directories.companies || meta.companies || []
   legalEntityDirectory.value = directories.legal_entities || meta.legal_entities || []
-  curatorFilters.value = filters.curators || []
-  companyFilters.value = filters.companies || []
-  legalEntityFilters.value = filters.legal_entities || []
+  curatorFilters.value = filters.curators || directories.employees || meta.employees || []
+  companyFilters.value = filters.companies || directories.companies || meta.companies || []
+  legalEntityFilters.value = filters.legal_entities || directories.legal_entities || meta.legal_entities || []
   return meta
 }
 

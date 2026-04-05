@@ -100,9 +100,15 @@ export const useApiStore = defineStore(
         return false
       }
 
-      const directories = value.directories && typeof value.directories === 'object'
-        ? value.directories
-        : value
+      if (!value.filters || typeof value.filters !== 'object') {
+        return false
+      }
+
+      if (!value.directories || typeof value.directories !== 'object') {
+        return false
+      }
+
+      const directories = value.directories
 
       return hasItems(directories.employees) || hasItems(directories.companies)
     }
