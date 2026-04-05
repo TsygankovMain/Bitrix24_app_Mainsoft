@@ -57,6 +57,25 @@ const taskActions = [
   }
 ]
 
+const projectWorkspaceSections = [
+  {
+    title: 'Новая и старая главная',
+    text: 'В правом верхнем углу главной можно переключаться между старым плиточным экраном и новым проектным рабочим пространством.'
+  },
+  {
+    title: 'Карточка проекта',
+    text: 'Из новой главной и из project board карточка проекта открывается в правом выезжающем слайдере. Внутри можно редактировать куратора, компанию, наше юрлицо, даты, бюджет и ставку.'
+  },
+  {
+    title: 'Project Board',
+    text: 'Раздел "Управление проектами" показывает доску стадий, timeline и архив. Стадии меняются drag-and-drop, а автоматические сигналы зависят от последних списаний.'
+  },
+  {
+    title: 'Поиск по компаниям и юрлицам',
+    text: 'В выпадающих списках компаний и юрлиц работает поиск как по названию, так и по ИНН.'
+  }
+]
+
 const reports = [
   {
     title: 'Отчет по сотрудникам',
@@ -136,14 +155,14 @@ const faqItems = [
 </script>
 
 <template>
-  <div class="min-h-screen bg-white px-4 py-6 sm:px-8">
-    <div class="mx-auto max-w-6xl space-y-10">
-      <section class="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-blue-50 px-6 py-8 shadow-sm">
+  <div class="ms-page-shell">
+    <div class="ms-page-frame space-y-10">
+      <section class="ms-surface-hero px-6 py-8">
         <B24Button label="Назад к меню" color="link" @click="router.push('/')" class="mb-4 pl-0" />
 
         <div class="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
           <div class="flex items-start gap-4">
-            <div class="rounded-2xl bg-blue-100 p-4 text-blue-700">
+            <div class="rounded-2xl bg-lime-100 p-4 text-lime-700">
               <BookOpen1Icon class="h-8 w-8" />
             </div>
             <div class="space-y-3">
@@ -151,20 +170,24 @@ const faqItems = [
                 <h1 class="text-3xl font-bold text-slate-900 sm:text-4xl">Руководство пользователя</h1>
                 <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">
                   Это краткий и актуальный справочник по основным сценариям работы с приложением:
-                  фиксация времени в задачах, формирование отчетов, выгрузка Excel и настройка данных.
+                  фиксация времени в задачах, работа с проектами, формирование отчетов, Excel-выгрузка и настройка данных.
                 </p>
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-3">
-                <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <div class="ms-card-grid">
+                <div class="ms-stat-card">
                   <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Основной сценарий</div>
                   <div class="mt-1 text-sm font-medium text-slate-900">Учесть время в задаче</div>
                 </div>
-                <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <div class="ms-stat-card">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Проекты</div>
+                  <div class="mt-1 text-sm font-medium text-slate-900">Карточка, board и архив</div>
+                </div>
+                <div class="ms-stat-card">
                   <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Аналитика</div>
                   <div class="mt-1 text-sm font-medium text-slate-900">7 отчетов и Excel</div>
                 </div>
-                <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <div class="ms-stat-card">
                   <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Администрирование</div>
                   <div class="mt-1 text-sm font-medium text-slate-900">Маппинг, сырые данные, отладка</div>
                 </div>
@@ -186,7 +209,7 @@ const faqItems = [
           <div
             v-for="(step, index) in quickStartSteps"
             :key="step.title"
-            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+            class="ms-panel"
           >
             <div class="mb-4 flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
               {{ index + 1 }}
@@ -198,7 +221,7 @@ const faqItems = [
       </section>
 
       <section class="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-        <div class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div class="ms-surface p-6">
           <div class="mb-5">
             <h2 class="text-2xl font-bold text-slate-900">Работа внутри задачи</h2>
             <p class="mt-2 text-sm text-slate-600">
@@ -210,7 +233,7 @@ const faqItems = [
             <div
               v-for="item in taskActions"
               :key="item.title"
-              class="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4"
+              class="ms-panel-muted"
             >
               <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-900">{{ item.title }}</h3>
               <p class="mt-2 text-sm leading-6 text-slate-600">{{ item.text }}</p>
@@ -218,7 +241,7 @@ const faqItems = [
           </div>
         </div>
 
-        <div class="rounded-3xl border border-blue-200 bg-blue-50 p-6 shadow-sm">
+        <div class="ms-panel">
           <h2 class="text-2xl font-bold text-slate-900">Что важно помнить</h2>
           <div class="mt-5 space-y-4 text-sm leading-6 text-slate-700">
             <p>
@@ -239,6 +262,26 @@ const faqItems = [
 
       <section class="space-y-5">
         <div>
+          <h2 class="text-2xl font-bold text-slate-900">Проектное рабочее пространство</h2>
+          <p class="mt-2 text-sm text-slate-600">
+            Новый контур для проектов объединяет главную, project board и карточку проекта в одном сценарии.
+          </p>
+        </div>
+
+        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div
+            v-for="section in projectWorkspaceSections"
+            :key="section.title"
+            class="ms-panel"
+          >
+            <h3 class="text-base font-semibold text-slate-900">{{ section.title }}</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-600">{{ section.text }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-5">
+        <div>
           <h2 class="text-2xl font-bold text-slate-900">Отчеты</h2>
           <p class="mt-2 text-sm text-slate-600">
             В приложении доступны как базовые управленческие отчеты, так и более аналитические экраны для контроля качества учета.
@@ -249,7 +292,7 @@ const faqItems = [
           <div
             v-for="report in reports"
             :key="report.title"
-            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+            class="ms-panel"
           >
             <h3 class="text-lg font-semibold text-slate-900">{{ report.title }}</h3>
             <p class="mt-2 text-sm leading-6 text-slate-600">{{ report.text }}</p>
@@ -257,7 +300,7 @@ const faqItems = [
         </div>
       </section>
 
-      <section class="rounded-3xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
+      <section class="ms-surface-muted p-6">
         <div class="max-w-3xl">
           <h2 class="text-2xl font-bold text-slate-900">Как работают фильтры и формирование отчетов</h2>
           <p class="mt-2 text-sm text-slate-600">
@@ -269,7 +312,7 @@ const faqItems = [
           <div
             v-for="rule in filterRules"
             :key="rule"
-            class="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm leading-6 text-slate-600"
+            class="ms-panel text-sm leading-6 text-slate-600"
           >
             {{ rule }}
           </div>
@@ -288,7 +331,7 @@ const faqItems = [
           <div
             v-for="section in settingsSections"
             :key="section.title"
-            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+            class="ms-panel"
           >
             <h3 class="text-lg font-semibold text-slate-900">{{ section.title }}</h3>
             <p class="mt-2 text-sm leading-6 text-slate-600">{{ section.text }}</p>
@@ -308,7 +351,7 @@ const faqItems = [
           <div
             v-for="item in faqItems"
             :key="item.title"
-            class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+            class="ms-panel"
           >
             <h3 class="text-base font-semibold text-slate-900">{{ item.title }}</h3>
             <p class="mt-2 text-sm leading-6 text-slate-600">{{ item.text }}</p>

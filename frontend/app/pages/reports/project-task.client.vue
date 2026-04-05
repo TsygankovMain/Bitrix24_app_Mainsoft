@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import { getCurrentMonthRange } from '~/utils/reportDateRange'
+import { readProjectReportPreset } from '~/utils/reportNavigation'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -23,6 +24,7 @@ let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
 const userSettings = useUserSettingsStore()
+const route = useRoute()
 // endregion ////
 
 const { contextId, isLoading: isLoadingState, load } = useDashboard({ isLoading: ref(false), load: () => {} })
@@ -67,6 +69,36 @@ async function fetchFilterOptions() {
     } catch (e) {
         processErrorGlobal(e)
     }
+}
+
+function applyProjectPresetFromRoute() {
+    const preset = readProjectReportPreset(route.query as Record<string, unknown>)
+    if (!preset.projectIds.length) {
+        return false
+    }
+
+    selectedProjects.value = preset.projectIds
+    projectFilterMode.value = 'include'
+
+    if (preset.projectName && !filterOptions.value.projects.some(option => String(option.id) === preset.projectIds[0])) {
+        filterOptions.value.projects = [
+            { id: preset.projectIds[0], name: preset.projectName },
+            ...filterOptions.value.projects,
+        ]
+    }
+
+    return preset.autogenerate
+}
+
+async function syncWithRoutePreset() {
+    const shouldAutogenerate = applyProjectPresetFromRoute()
+    if (!shouldAutogenerate) {
+        return
+    }
+
+    hasGenerated.value = false
+    reportData.value = []
+    await fetchReport()
 }
 
 async function fetchReport() {
@@ -223,6 +255,8 @@ onMounted(async () => {
     const range = getCurrentMonthRange()
     dateFrom.value = range.dateFrom
     dateTo.value = range.dateTo
+
+    await syncWithRoutePreset()
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -230,6 +264,22 @@ onMounted(async () => {
   }
 })
 // endregion ////
+
+watch(
+  () => [
+    route.query.project_id,
+    route.query.project_ids,
+    route.query.project_name,
+    route.query.autogenerate
+  ],
+  async () => {
+    if (!isInit.value) {
+      return
+    }
+
+    await syncWithRoutePreset()
+  }
+)
 </script>
 
 <template>

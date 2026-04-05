@@ -7,7 +7,9 @@ import { ActivityIcon } from '@bitrix24/b24icons-vue/main'
 import { CrmLettersIcon } from '@bitrix24/b24icons-vue/crm'
 import { BookOpen1Icon } from '@bitrix24/b24icons-vue/main'
 import PortfolioHomeDashboard from '~/components/home/PortfolioHomeDashboard.vue'
+import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import { buildReportRouteLocation, type ReportRouteName, type ReportRoutePayload } from '~/utils/reportNavigation'
+import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -36,8 +38,13 @@ const isInit = ref(false)
 const isPortfolioLoading = ref(false)
 const portfolioData = ref<any | null>(null)
 const homePageMode = ref<'legacy' | 'portfolio'>('legacy')
-const isSupportLoading = ref(false)
-const supportStatus = ref<any | null>(null)
+const isHomeProjectDrawerOpen = ref(false)
+const selectedHomeProject = ref<ProjectBoardCardRecord | null>(null)
+const isHomeProjectSaving = ref(false)
+const isHomeProjectArchiving = ref(false)
+const homeEmployeeDirectory = ref<ProjectBoardDirectoryOption[]>([])
+const homeCompanyDirectory = ref<ProjectBoardDirectoryOption[]>([])
+const homeLegalEntityDirectory = ref<ProjectBoardDirectoryOption[]>([])
 
 
 // Tiles Configuration
@@ -119,19 +126,6 @@ const homeModeLabel = computed(() =>
   homePageMode.value === 'portfolio' ? 'Новый формат' : 'Старый формат'
 )
 
-const supportDotClass = computed(() => {
-  if (isSupportLoading.value) {
-    return 'bg-amber-400'
-  }
-  if (supportStatus.value?.status === 'connected') {
-    return 'bg-emerald-500'
-  }
-  if (supportStatus.value?.status === 'error') {
-    return 'bg-rose-500'
-  }
-  return 'bg-slate-300'
-})
-
 function openReport(target: ReportRouteName | ReportRoutePayload) {
   router.push(buildReportRouteLocation(target))
 }
@@ -142,55 +136,6 @@ function openSettings() {
 
 function openGuide() {
   router.push('/guide')
-}
-
-async function refreshSupportStatus(forceRefresh = false) {
-  try {
-    supportStatus.value = await apiStore.getSupportStatus(forceRefresh)
-  } catch (error) {
-    console.error('Failed to load support status:', error)
-  }
-}
-
-function openSupportMessenger(dialogId: string) {
-  const bx24Global = (window as any)?.BX24
-  if (!dialogId || !bx24Global?.im?.openMessenger) {
-    return false
-  }
-
-  bx24Global.im.openMessenger(`imol|${dialogId}`)
-  return true
-}
-
-async function openSupport() {
-  if (isSupportLoading.value) {
-    return
-  }
-
-  if (supportStatus.value?.dialog_id && openSupportMessenger(String(supportStatus.value.dialog_id))) {
-    return
-  }
-
-  if (supportStatus.value?.configured === false) {
-    router.push('/guide?support=1')
-    return
-  }
-
-  isSupportLoading.value = true
-  try {
-    const result = await apiStore.connectSupportLine()
-    supportStatus.value = result
-
-    if (!openSupportMessenger(String(result?.dialog_id || ''))) {
-      router.push('/guide?support=1')
-    }
-  } catch (error) {
-    console.error('Failed to open support:', error)
-    processErrorGlobal(error)
-    router.push('/guide?support=1')
-  } finally {
-    isSupportLoading.value = false
-  }
 }
 
 async function loadPortfolio(forceRefresh = false) {
@@ -221,6 +166,112 @@ async function setHomePageMode(mode: 'legacy' | 'portfolio') {
   if (mode === 'portfolio' && !portfolioData.value) {
     await loadPortfolio()
   }
+}
+
+async function ensureHomeProjectDirectories(forceRefresh = false) {
+  const needsLoad = forceRefresh
+    || !homeEmployeeDirectory.value.length
+    || !homeCompanyDirectory.value.length
+    || !homeLegalEntityDirectory.value.length
+
+  if (!needsLoad) {
+    return
+  }
+
+  const meta = await apiStore.getProjectBoardMeta(forceRefresh)
+  const directories = meta.directories || {}
+  homeEmployeeDirectory.value = directories.employees || meta.employees || []
+  homeCompanyDirectory.value = directories.companies || meta.companies || []
+  homeLegalEntityDirectory.value = directories.legal_entities || meta.legal_entities || []
+}
+
+function openHomeProjectCard(card: ProjectBoardCardRecord) {
+  selectedHomeProject.value = card
+  isHomeProjectDrawerOpen.value = true
+  void ensureHomeProjectDirectories()
+}
+
+function applyUpdatedHomeProjectCard(updatedCard: ProjectBoardCardRecord) {
+  if (selectedHomeProject.value?.project_id === updatedCard.project_id) {
+    selectedHomeProject.value = updatedCard
+  }
+
+  if (!portfolioData.value?.cards) {
+    return
+  }
+
+  portfolioData.value = {
+    ...portfolioData.value,
+    cards: portfolioData.value.cards.map((card: ProjectBoardCardRecord) =>
+      card.project_id === updatedCard.project_id ? updatedCard : card
+    ),
+    risk_cards: (portfolioData.value.risk_cards || []).map((card: ProjectBoardCardRecord) =>
+      card.project_id === updatedCard.project_id ? updatedCard : card
+    ),
+  }
+}
+
+async function refreshPortfolioAfterProjectChange(updatedCard?: ProjectBoardCardRecord | null) {
+  await loadPortfolio(true)
+
+  if (!updatedCard || !portfolioData.value?.cards?.length) {
+    return
+  }
+
+  const nextCard = portfolioData.value.cards.find((card: ProjectBoardCardRecord) => card.project_id === updatedCard.project_id)
+  if (nextCard) {
+    selectedHomeProject.value = nextCard
+  }
+}
+
+async function handleHomeProjectSave(payload: Record<string, any>) {
+  isHomeProjectSaving.value = true
+  try {
+    const response = await apiStore.updateProjectCard(payload)
+    if (response.card) {
+      applyUpdatedHomeProjectCard(response.card)
+      await refreshPortfolioAfterProjectChange(response.card)
+    }
+  } catch (error) {
+    processErrorGlobal(error)
+  } finally {
+    isHomeProjectSaving.value = false
+  }
+}
+
+async function handleHomeProjectArchive(nextArchivedState: boolean) {
+  if (!selectedHomeProject.value) {
+    return
+  }
+
+  isHomeProjectArchiving.value = true
+  try {
+    const response = await apiStore.archiveProject(selectedHomeProject.value.project_id, nextArchivedState)
+    if (response.card) {
+      applyUpdatedHomeProjectCard(response.card)
+      await refreshPortfolioAfterProjectChange(response.card)
+    } else {
+      await refreshPortfolioAfterProjectChange(selectedHomeProject.value)
+    }
+  } catch (error) {
+    processErrorGlobal(error)
+  } finally {
+    isHomeProjectArchiving.value = false
+  }
+}
+
+function openProjectTaskReport(card?: ProjectBoardCardRecord | null) {
+  const targetCard = card || selectedHomeProject.value
+  if (!targetCard) {
+    return
+  }
+
+  router.push(buildReportRouteLocation({
+    report: 'project-task',
+    projectId: targetCard.project_id,
+    projectName: targetCard.project_name,
+    autogenerate: true,
+  }))
 }
 
 
@@ -275,7 +326,6 @@ onMounted(async () => {
 
     homePageMode.value = userSettings.configSettings.homePageMode === 'portfolio' ? 'portfolio' : 'legacy'
     isInit.value = true
-    void refreshSupportStatus()
     if (homePageMode.value === 'portfolio') {
       await loadPortfolio()
     } else {
@@ -320,15 +370,6 @@ onMounted(async () => {
             >
               Юзергайд
             </button>
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-lime-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-70"
-              :disabled="isSupportLoading"
-              @click="openSupport"
-            >
-              <span :class="['h-2.5 w-2.5 rounded-full', supportDotClass]" />
-              {{ isSupportLoading ? 'Подключение...' : 'Поддержка' }}
-            </button>
           </div>
 
           <div class="ms-segmented">
@@ -360,6 +401,7 @@ onMounted(async () => {
         <PortfolioHomeDashboard
           :data="portfolioData"
           :loading="isPortfolioLoading"
+          @open-card="openHomeProjectCard"
           @open-board="router.push('/projects')"
           @open-report="openReport"
         />
@@ -402,6 +444,19 @@ onMounted(async () => {
           </div>
         </div>
       </div>
+
+      <ProjectBoardDrawer
+        v-model="isHomeProjectDrawerOpen"
+        :card="selectedHomeProject"
+        :employees="homeEmployeeDirectory"
+        :companies="homeCompanyDirectory"
+        :legal-entities="homeLegalEntityDirectory"
+        :is-saving="isHomeProjectSaving"
+        :is-archiving="isHomeProjectArchiving"
+        @save="handleHomeProjectSave"
+        @archive="handleHomeProjectArchive"
+        @open-report="openProjectTaskReport"
+      />
     </div>
   </div>
 </template>

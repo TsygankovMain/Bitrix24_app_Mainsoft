@@ -48,6 +48,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  (event: 'open-card', card: ProjectBoardCardRecord): void
   (event: 'open-board'): void
   (event: 'open-report', payload: string | ReportRoutePayload): void
 }>()
@@ -372,14 +373,15 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
           </div>
 
           <div class="mt-5 flex flex-wrap gap-2">
-            <B24Button label="Открыть карточку проекта" color="success" @click="emit('open-board')" />
+            <B24Button label="Открыть карточку проекта" color="success" @click="emit('open-card', selectedProject)" />
             <B24Button
-              label="Открыть проектный отчет"
+              label="Открыть проект"
               color="default"
               @click="emit('open-report', {
-                report: 'project',
+                report: 'project-task',
                 projectId: selectedProject.project_id,
                 projectName: selectedProject.project_name,
+                autogenerate: true,
               })"
             />
           </div>

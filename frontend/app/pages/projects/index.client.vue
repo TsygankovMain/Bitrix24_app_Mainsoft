@@ -466,9 +466,10 @@ function openProjectReport(card?: ProjectBoardCardRecord | null) {
   }
 
   router.push(buildReportRouteLocation({
-    report: 'project',
+    report: 'project-task',
     projectId: targetCard.project_id,
     projectName: targetCard.project_name,
+    autogenerate: true,
   }))
 }
 

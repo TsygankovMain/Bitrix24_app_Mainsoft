@@ -226,7 +226,7 @@ function handleSave() {
       <div class="border-t border-slate-200 px-5 py-4">
         <div class="flex flex-wrap gap-2">
           <B24Button label="Сохранить" color="success" :loading="isSaving" @click="handleSave" />
-          <B24Button label="Проектный отчет" color="default" @click="emit('open-report', card)" />
+          <B24Button label="Открыть проект" color="default" @click="emit('open-report', card)" />
           <B24Button
             :label="card.is_archived ? 'Вернуть из архива' : 'В архив'"
             color="default"

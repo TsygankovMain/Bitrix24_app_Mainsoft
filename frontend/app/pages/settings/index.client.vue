@@ -10,8 +10,6 @@
       </div>
 
       <div class="space-y-8">
-        <ThemeSwitcher />
-
         <div class="ms-panel">
           <h3 class="text-base font-semibold text-slate-900">Отчёты</h3>
           <div class="flex items-center justify-between">
@@ -59,8 +57,6 @@
 </template>
 
 <script setup lang="ts">
-import ThemeSwitcher from '~/components/ThemeSwitcher.vue'
-
 const router = useRouter()
 const userSettings = useUserSettingsStore()
 
