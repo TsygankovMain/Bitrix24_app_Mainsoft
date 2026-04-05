@@ -1522,9 +1522,9 @@ class ProjectCardService:
         )
         meta = {
             "filters": {
-                "curators": fallback_employees,
-                "companies": fallback_companies,
-                "legal_entities": fallback_legal_entities,
+                "curators": directory_employees,
+                "companies": directory_companies,
+                "legal_entities": directory_legal_entities,
             },
             "directories": {
                 "employees": directory_employees,
@@ -1583,7 +1583,7 @@ class ProjectCardService:
     def _load_config(self) -> Dict[str, Any]:
         return ConfigurationService(self.client, self.account).get_configuration_sync()
 
-    def _get_project_card_fallback_options(self, id_field: str, name_field: str) -> List[Dict[str, str]]:
+    def _get_project_card_fallback_options(self, id_field: str, name_field: str) -> List[Dict[str, Any]]:
         if not ensure_project_card_schema():
             return []
 
@@ -1596,7 +1596,7 @@ class ProjectCardService:
         )
 
         seen_ids = set()
-        result: List[Dict[str, str]] = []
+        result: List[Dict[str, Any]] = []
         for row in rows:
             option_id = self._clean_str(row.get(id_field))
             option_name = self._clean_str(row.get(name_field))
@@ -1606,13 +1606,14 @@ class ProjectCardService:
             result.append({
                 "id": option_id,
                 "name": option_name or option_id,
+                "search_text": " ".join(part for part in [option_name or option_id] if part).strip(),
             })
         return result
 
     @staticmethod
-    def _merge_reference_options(*option_groups: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
+    def _merge_reference_options(*option_groups: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         seen_ids = set()
-        merged: List[Dict[str, str]] = []
+        merged: List[Dict[str, Any]] = []
 
         for option_group in option_groups:
             if not option_group:
@@ -1625,10 +1626,27 @@ class ProjectCardService:
                     continue
 
                 seen_ids.add(option_id)
-                merged.append({
-                    "id": option_id,
-                    "name": option_name or option_id,
-                })
+                normalized_option = dict(option)
+                normalized_option["id"] = option_id
+                normalized_option["name"] = option_name or option_id
+
+                option_inn = ProjectCardService._clean_str(option.get("inn"))
+                if option_inn:
+                    normalized_option["inn"] = option_inn
+
+                if "is_my_company" in option:
+                    normalized_option["is_my_company"] = ProjectCardService._to_bool(option.get("is_my_company"), default=False)
+
+                normalized_option["search_text"] = " ".join(
+                    part for part in [
+                        normalized_option.get("name"),
+                        option_inn,
+                        ProjectCardService._clean_str(option.get("search_text")),
+                    ]
+                    if part
+                ).strip()
+
+                merged.append(normalized_option)
 
         return sorted(merged, key=lambda item: item["name"])
 
@@ -1656,9 +1674,9 @@ class ProjectCardService:
         self,
         cache_suffix: str,
         fetcher,
-        fallback: Optional[List[Dict[str, str]]] = None,
+        fallback: Optional[List[Dict[str, Any]]] = None,
         ttl: int = BITRIX_REFERENCE_CACHE_TTL,
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         cache_key = build_account_cache_key(self.account, cache_suffix)
         cached = cache.get(cache_key)
         if self._has_reference_options(cached):
@@ -1666,7 +1684,7 @@ class ProjectCardService:
         if cached == []:
             cache.delete(cache_key)
 
-        live_result: List[Dict[str, str]] = []
+        live_result: List[Dict[str, Any]] = []
         try:
             live_result = fetcher() or []
         except Exception as exc:
@@ -1679,22 +1697,27 @@ class ProjectCardService:
             cache.delete(cache_key)
         return merged
 
-    def get_companies(self) -> List[Dict[str, str]]:
+    def get_companies(self) -> List[Dict[str, Any]]:
         return self._fetch_references_with_cache(
             "project-board-companies",
             self._fetch_companies_live,
             fallback=self._get_project_card_fallback_options("company_id", "company_name"),
         )
 
-    def _fetch_companies_live(self) -> List[Dict[str, str]]:
+    def _fetch_companies_live(self, only_my_company: bool = False) -> List[Dict[str, Any]]:
+        inn_map = self._fetch_company_inn_map()
         methods = [
-            ("crm.item.list", {"entityTypeId": 4, "select": ["id", "title"], "order": {"title": "ASC"}}),
-            ("crm.company.list", {"select": ["ID", "TITLE"], "order": {"TITLE": "ASC"}}),
+            ("crm.item.list", {"entityTypeId": 4, "select": ["id", "title", "isMyCompany"], "order": {"title": "ASC"}}),
+            ("crm.company.list", {"select": ["ID", "TITLE", "IS_MY_COMPANY"], "order": {"TITLE": "ASC"}}),
         ]
 
         for method, params in methods:
-            companies = self._fetch_paginated(method, params)
-            normalized: List[Dict[str, str]] = []
+            try:
+                companies = self._fetch_paginated(method, params)
+            except Exception as exc:
+                logger.warning("Company fetch failed for %s: %s", method, exc)
+                continue
+            normalized: List[Dict[str, Any]] = []
             seen_ids = set()
 
             for company in companies:
@@ -1705,13 +1728,27 @@ class ProjectCardService:
                     or company.get("NAME")
                     or company.get("name")
                 )
+                is_my_company = self._to_bool(company.get("IS_MY_COMPANY") or company.get("isMyCompany"), default=False)
+                company_inn = self._clean_str(
+                    company.get("RQ_INN")
+                    or company.get("rqInn")
+                    or company.get("INN")
+                    or company.get("inn")
+                    or inn_map.get(company_id)
+                )
                 if not company_id or not company_name or company_id in seen_ids:
+                    continue
+
+                if only_my_company and not is_my_company:
                     continue
 
                 seen_ids.add(company_id)
                 normalized.append({
                     "id": company_id,
                     "name": company_name,
+                    "inn": company_inn,
+                    "is_my_company": is_my_company,
+                    "search_text": " ".join(part for part in [company_name, company_inn] if part).strip(),
                 })
 
             if normalized:
@@ -1719,23 +1756,35 @@ class ProjectCardService:
 
         return []
 
-    def get_legal_entities(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
-        config = config or self._load_config()
-        directory = config.get("legal_entity_directory") or {}
-        iblock_type_id = str(directory.get("iblock_type_id") or "lists").strip() or "lists"
-        iblock_id = directory.get("iblock_id")
-        iblock_code = self._clean_str(directory.get("iblock_code"))
-        socnet_group_id = directory.get("socnet_group_id")
-
-        if not iblock_id and not iblock_code:
-            return self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name")
-
-        suffix = f"project-board-legal-entities:{iblock_type_id}:{iblock_id or 0}:{iblock_code or '-'}:{socnet_group_id or 0}"
+    def get_legal_entities(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         return self._fetch_references_with_cache(
-            suffix,
-            lambda: self._fetch_legal_entities_live(iblock_type_id, iblock_id, iblock_code, socnet_group_id),
+            "project-board-legal-entities",
+            lambda: self._fetch_companies_live(only_my_company=True),
             fallback=self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name"),
         )
+
+    def _fetch_company_inn_map(self) -> Dict[str, str]:
+        try:
+            requisites = self._fetch_paginated(
+                "crm.requisite.list",
+                {
+                    "filter": {"ENTITY_TYPE_ID": 4},
+                    "select": ["ENTITY_ID", "RQ_INN"],
+                    "order": {"ID": "ASC"},
+                }
+            )
+        except Exception as exc:
+            logger.warning("Company requisites fetch failed: %s", exc)
+            return {}
+
+        inn_map: Dict[str, str] = {}
+        for requisite in requisites:
+            entity_id = self._clean_str(requisite.get("ENTITY_ID") or requisite.get("entityId"))
+            inn = self._clean_str(requisite.get("RQ_INN") or requisite.get("rqInn"))
+            if entity_id and inn and entity_id not in inn_map:
+                inn_map[entity_id] = inn
+
+        return inn_map
 
     def _fetch_legal_entities_live(
         self,

@@ -156,23 +156,27 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
 
 <template>
   <div class="space-y-6">
-    <section class="overflow-hidden rounded-[28px] border border-lime-100 bg-gradient-to-br from-lime-50 via-white to-slate-50 p-6 shadow-sm">
-      <div class="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-        <div class="min-w-0 max-w-3xl flex-1 xl:pr-8">
-          <div class="text-xs font-semibold uppercase tracking-[0.2em] text-lime-700">Portfolio Home</div>
-          <h2 class="mt-2 text-3xl font-semibold text-slate-900">Главная как центр управления портфелем проектов</h2>
-          <p class="mt-2 text-sm text-slate-500">
-            Быстрый вход в состояние проектов, сигналы по списаниям и маршруты в ключевые отчеты без тяжелой синхронизации на старте.
+    <section class="overflow-hidden rounded-[28px] border border-lime-100 bg-gradient-to-br from-lime-50 via-white to-slate-50 p-5 shadow-sm">
+      <div class="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_auto] xl:items-start">
+        <div class="min-w-0">
+          <div class="inline-flex rounded-full bg-lime-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-lime-700">
+            Portfolio Home
+          </div>
+          <h2 class="mt-3 max-w-3xl text-2xl font-semibold leading-tight text-slate-900">
+            Рабочее пространство для портфеля проектов
+          </h2>
+          <p class="mt-2 max-w-3xl text-sm text-slate-500">
+            Сигналы по списаниям, быстрый доступ к project board и маршруты в ключевые отчеты без тяжелой синхронизации на старте.
           </p>
           <div
             v-if="data?.warning"
-            class="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
+            class="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
           >
             {{ data.warning }}
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2 xl:flex-none xl:justify-end">
+        <div class="flex flex-wrap items-center gap-2 xl:justify-end">
           <div class="rounded-2xl bg-white p-1 shadow-sm">
             <button
               type="button"
@@ -200,7 +204,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
         </div>
       </div>
 
-      <div class="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <article class="rounded-2xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm">
           <div class="text-xs text-slate-400">Проектов в работе</div>
           <div class="mt-2 text-3xl font-semibold text-slate-900">{{ data?.summary.active_count || 0 }}</div>

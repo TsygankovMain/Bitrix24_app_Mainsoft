@@ -18,6 +18,14 @@ export const PROJECT_MANUAL_STAGES = [
 
 export type ProjectBoardStage = typeof PROJECT_STAGE_ORDER[number]
 
+export interface ProjectBoardDirectoryOption {
+  id: string | number
+  name: string | number
+  inn?: string | null
+  is_my_company?: boolean
+  search_text?: string | null
+}
+
 export interface ProjectBoardCardRecord {
   id: string
   project_id: string

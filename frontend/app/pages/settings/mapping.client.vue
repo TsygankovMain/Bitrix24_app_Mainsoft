@@ -26,7 +26,6 @@ const statusMessage = ref<{ type: 'success' | 'error'; text: string } | null>(nu
 
 // Data
 const smartProcesses = ref<any[]>([])
-const internalLists = ref<any[]>([])
 const selectedSpId = ref<number | null>(null)
 const spFields = ref<any[]>([]) // Fields of the selected SP
 const config = ref<any>({})
@@ -55,14 +54,12 @@ const mapping = ref<Record<string, string>>({})
 async function loadData() {
     isLoading.value = true
     try {
-        const [cfg, spRes, lists] = await Promise.all([
+        const [cfg, spRes] = await Promise.all([
             apiStore.getConfiguration(),
-            apiStore.getSmartProcesses(),
-            apiStore.getBitrixInternalLists('lists')
+            apiStore.getSmartProcesses()
         ])
         config.value = cfg
         smartProcesses.value = spRes.types || []
-        internalLists.value = lists || []
         
         // 3. Set Initial State
         if (cfg.sp_entity_type_id) {
@@ -75,18 +72,6 @@ async function loadData() {
     } finally {
         isLoading.value = false
         isInit.value = true
-    }
-}
-
-function handleLegalEntityListChange() {
-    const directory = config.value.legal_entity_directory || {}
-    const selected = internalLists.value.find((item: any) => String(item.id) === String(directory.iblock_id))
-
-    config.value.legal_entity_directory = {
-        iblock_type_id: selected?.iblock_type_id || 'lists',
-        iblock_id: selected ? Number(selected.id) : 0,
-        iblock_code: selected?.code || '',
-        socnet_group_id: directory.socnet_group_id || 0,
     }
 }
 
@@ -393,36 +378,11 @@ onMounted(async () => {
                   </div>
 
                   <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                      <div class="text-sm font-semibold text-gray-900">Внутренний справочник наших юрлиц</div>
+                      <div class="text-sm font-semibold text-gray-900">Источник поля «Наше юрлицо»</div>
                       <p class="mt-1 text-xs text-gray-500">
-                          Источник для поля «Наше юрлицо» в проектах. Используется Bitrix24 universal list по REST `lists.get` / `lists.element.get`.
+                          Поле в проектах заполняется автоматически из CRM-компаний, у которых `IS_MY_COMPANY = Y`.
+                          Для поиска доступны название компании и ИНН.
                       </p>
-
-                      <div class="mt-3 grid gap-3 md:grid-cols-2">
-                          <label class="grid gap-1 text-sm">
-                              <span class="font-medium text-gray-700">Список Bitrix24</span>
-                              <select
-                                v-model="config.legal_entity_directory.iblock_id"
-                                class="block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-                                @change="handleLegalEntityListChange"
-                              >
-                                  <option :value="0">-- Не выбрано --</option>
-                                  <option v-for="listItem in internalLists" :key="listItem.id" :value="Number(listItem.id)">
-                                      {{ listItem.name }} (ID: {{ listItem.id }})
-                                  </option>
-                              </select>
-                          </label>
-
-                          <label class="grid gap-1 text-sm">
-                              <span class="font-medium text-gray-700">Код списка</span>
-                              <input
-                                v-model="config.legal_entity_directory.iblock_code"
-                                type="text"
-                                class="block w-full rounded-md border-gray-300 py-2 pl-3 pr-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-blue-500"
-                                placeholder="Заполнится автоматически"
-                              />
-                          </label>
-                      </div>
                   </div>
 
                   <div class="flex flex-col gap-2 mt-3">

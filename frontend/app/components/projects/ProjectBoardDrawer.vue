@@ -1,22 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { ProjectBoardCardRecord } from '~/utils/projectBoard'
+import SearchableSelect from '~/components/common/SearchableSelect.vue'
+import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
 import {
   formatProjectDate,
   getStageBadgeClass
 } from '~/utils/projectBoard'
 
-type SelectOption = {
-  id: string | number
-  name: string | number
-}
-
 const props = defineProps<{
   modelValue: boolean
   card: ProjectBoardCardRecord | null
-  employees: SelectOption[]
-  companies: SelectOption[]
-  legalEntities: SelectOption[]
+  employees: ProjectBoardDirectoryOption[]
+  companies: ProjectBoardDirectoryOption[]
+  legalEntities: ProjectBoardDirectoryOption[]
   isSaving?: boolean
   isArchiving?: boolean
 }>()
@@ -61,18 +57,15 @@ function closeDrawer() {
   emit('update:modelValue', false)
 }
 
-function handleCompanyChange() {
-  const selected = props.companies.find(item => String(item.id) === String(draft.value.company_id))
+function handleCompanyChange(selected: ProjectBoardDirectoryOption | null) {
   draft.value.company_name = selected ? String(selected.name) : ''
 }
 
-function handleCuratorChange() {
-  const selected = props.employees.find(item => String(item.id) === String(draft.value.curator_user_id))
+function handleCuratorChange(selected: ProjectBoardDirectoryOption | null) {
   draft.value.curator_name = selected ? String(selected.name) : ''
 }
 
-function handleLegalEntityChange() {
-  const selected = props.legalEntities.find(item => String(item.id) === String(draft.value.our_legal_entity_id))
+function handleLegalEntityChange(selected: ProjectBoardDirectoryOption | null) {
   draft.value.our_legal_entity_name = selected ? String(selected.name) : ''
 }
 
@@ -166,59 +159,32 @@ function handleSave() {
             <B24Switch v-model="draft.is_support" />
           </label>
 
-          <label class="grid gap-1 text-sm">
-            <span class="font-medium text-gray-700">Куратор</span>
-            <select
-              v-model="draft.curator_user_id"
-              class="rounded-xl border border-gray-200 px-3 py-2 outline-none transition focus:border-lime-500"
-              @change="handleCuratorChange"
-            >
-              <option value="">Не назначен</option>
-              <option
-                v-for="employee in employees"
-                :key="employee.id"
-                :value="String(employee.id)"
-              >
-                {{ employee.name }}
-              </option>
-            </select>
-          </label>
+          <SearchableSelect
+            v-model="draft.curator_user_id"
+            label="Куратор"
+            empty-label="Не назначен"
+            search-placeholder="Поиск куратора"
+            :options="employees"
+            @update:selected="handleCuratorChange"
+          />
 
-          <label class="grid gap-1 text-sm">
-            <span class="font-medium text-gray-700">Компания</span>
-            <select
-              v-model="draft.company_id"
-              class="rounded-xl border border-gray-200 px-3 py-2 outline-none transition focus:border-lime-500"
-              @change="handleCompanyChange"
-            >
-              <option value="">Не выбрана</option>
-              <option
-                v-for="company in companies"
-                :key="company.id"
-                :value="String(company.id)"
-              >
-                {{ company.name }}
-              </option>
-            </select>
-          </label>
+          <SearchableSelect
+            v-model="draft.company_id"
+            label="Компания"
+            empty-label="Не выбрана"
+            search-placeholder="Поиск по названию или ИНН"
+            :options="companies"
+            @update:selected="handleCompanyChange"
+          />
 
-          <label class="grid gap-1 text-sm">
-            <span class="font-medium text-gray-700">Наше юрлицо</span>
-            <select
-              v-model="draft.our_legal_entity_id"
-              class="rounded-xl border border-gray-200 px-3 py-2 outline-none transition focus:border-lime-500"
-              @change="handleLegalEntityChange"
-            >
-              <option value="">Не выбрано</option>
-              <option
-                v-for="entity in legalEntities"
-                :key="entity.id"
-                :value="String(entity.id)"
-              >
-                {{ entity.name }}
-              </option>
-            </select>
-          </label>
+          <SearchableSelect
+            v-model="draft.our_legal_entity_id"
+            label="Наше юрлицо"
+            empty-label="Не выбрано"
+            search-placeholder="Поиск по названию или ИНН"
+            :options="legalEntities"
+            @update:selected="handleLegalEntityChange"
+          />
 
           <div class="grid grid-cols-2 gap-4">
             <label class="grid gap-1 text-sm">

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref } from 'vue'
+import SearchableSelect from '~/components/common/SearchableSelect.vue'
 import ProjectBoardColumn from '~/components/projects/ProjectBoardColumn.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import ProjectTimelineLane from '~/components/projects/ProjectTimelineLane.vue'
-import type { ProjectBoardCardRecord, ProjectBoardResponse } from '~/utils/projectBoard'
+import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption, ProjectBoardResponse } from '~/utils/projectBoard'
 import { formatProjectDate, getTimelineAnchor, parseProjectDateValue } from '~/utils/projectBoard'
 
 const router = useRouter()
@@ -32,12 +33,12 @@ const isSaving = ref(false)
 const isArchiving = ref(false)
 
 const boardData = ref<ProjectBoardResponse | null>(null)
-const employeeDirectory = ref<Array<{ id: string | number; name: string | number }>>([])
-const companyDirectory = ref<Array<{ id: string | number; name: string | number }>>([])
-const legalEntityDirectory = ref<Array<{ id: string | number; name: string | number }>>([])
-const curatorFilters = ref<Array<{ id: string | number; name: string | number }>>([])
-const companyFilters = ref<Array<{ id: string | number; name: string | number }>>([])
-const legalEntityFilters = ref<Array<{ id: string | number; name: string | number }>>([])
+const employeeDirectory = ref<ProjectBoardDirectoryOption[]>([])
+const companyDirectory = ref<ProjectBoardDirectoryOption[]>([])
+const legalEntityDirectory = ref<ProjectBoardDirectoryOption[]>([])
+const curatorFilters = ref<ProjectBoardDirectoryOption[]>([])
+const companyFilters = ref<ProjectBoardDirectoryOption[]>([])
+const legalEntityFilters = ref<ProjectBoardDirectoryOption[]>([])
 
 const activeView = ref<'board' | 'timeline' | 'archive'>('board')
 const searchQuery = ref('')
@@ -74,7 +75,7 @@ function buildOptionsFromCards(
   nameGetter: (card: ProjectBoardCardRecord) => string | null | undefined
 ) {
   const seenIds = new Set<string>()
-  const result: Array<{ id: string; name: string }> = []
+  const result: ProjectBoardDirectoryOption[] = []
 
   for (const card of allCards.value) {
     const optionId = String(idGetter(card) || '').trim()
@@ -86,7 +87,8 @@ function buildOptionsFromCards(
     seenIds.add(optionId)
     result.push({
       id: optionId,
-      name: optionName || optionId
+      name: optionName || optionId,
+      search_text: optionName || optionId,
     })
   }
 
@@ -94,10 +96,10 @@ function buildOptionsFromCards(
 }
 
 function mergeSelectOptions(
-  ...groups: Array<Array<{ id: string | number; name: string | number }>>
+  ...groups: Array<ProjectBoardDirectoryOption[]>
 ) {
   const seenIds = new Set<string>()
-  const result: Array<{ id: string; name: string }> = []
+  const result: ProjectBoardDirectoryOption[] = []
 
   for (const group of groups) {
     for (const option of group || []) {
@@ -109,13 +111,16 @@ function mergeSelectOptions(
 
       seenIds.add(optionId)
       result.push({
+        ...option,
         id: optionId,
-        name: optionName || optionId
+        name: optionName || optionId,
+        inn: option.inn || null,
+        search_text: [optionName || optionId, option.inn || '', option.search_text || ''].join(' ').trim()
       })
     }
   }
 
-  return result.sort((left, right) => left.name.localeCompare(right.name, 'ru'))
+  return result.sort((left, right) => String(left.name).localeCompare(String(right.name), 'ru'))
 }
 
 const drawerEmployeeOptions = computed(() =>
@@ -651,44 +656,29 @@ onMounted(async () => {
               </select>
             </label>
 
-            <label class="grid gap-1 text-sm">
-              <span class="font-medium text-gray-700">Куратор</span>
-              <select
-                v-model="curatorFilter"
-                class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
-              >
-                <option value="">Все</option>
-                <option v-for="employee in curatorFilterOptions" :key="employee.id" :value="String(employee.id)">
-                  {{ employee.name }}
-                </option>
-              </select>
-            </label>
+            <SearchableSelect
+              v-model="curatorFilter"
+              label="Куратор"
+              empty-label="Все"
+              search-placeholder="Поиск куратора"
+              :options="curatorFilterOptions"
+            />
 
-            <label class="grid gap-1 text-sm">
-              <span class="font-medium text-gray-700">Компания</span>
-              <select
-                v-model="companyFilter"
-                class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
-              >
-                <option value="">Все</option>
-                <option v-for="company in companyFilterOptions" :key="company.id" :value="String(company.id)">
-                  {{ company.name }}
-                </option>
-              </select>
-            </label>
+            <SearchableSelect
+              v-model="companyFilter"
+              label="Компания"
+              empty-label="Все"
+              search-placeholder="Поиск по названию или ИНН"
+              :options="companyFilterOptions"
+            />
 
-            <label class="grid gap-1 text-sm">
-              <span class="font-medium text-gray-700">Наше юрлицо</span>
-              <select
-                v-model="legalEntityFilter"
-                class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
-              >
-                <option value="">Все</option>
-                <option v-for="entity in legalEntityFilterOptions" :key="entity.id" :value="String(entity.id)">
-                  {{ entity.name }}
-                </option>
-              </select>
-            </label>
+            <SearchableSelect
+              v-model="legalEntityFilter"
+              label="Наше юрлицо"
+              empty-label="Все"
+              search-placeholder="Поиск по названию или ИНН"
+              :options="legalEntityFilterOptions"
+            />
           </div>
 
           <div
