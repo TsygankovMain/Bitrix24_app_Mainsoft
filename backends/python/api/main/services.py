@@ -225,9 +225,12 @@ class BitrixDataService:
     def fetch_active_users(self) -> List[Dict[str, str]]:
         """Fetch all active Bitrix24 users for report filters."""
         if self.account:
-            cached = cache.get(build_account_cache_key(self.account, "filter-employees"))
-            if cached is not None:
+            cache_key = build_account_cache_key(self.account, "filter-employees")
+            cached = cache.get(cache_key)
+            if cached:
                 return cached
+            if cached == []:
+                cache.delete(cache_key)
 
         try:
             response = self.client._bitrix_token.call_method(
@@ -257,7 +260,11 @@ class BitrixDataService:
 
             result = sorted(result, key=lambda item: item["name"])
             if self.account:
-                cache.set(build_account_cache_key(self.account, "filter-employees"), result, BITRIX_REFERENCE_CACHE_TTL)
+                cache_key = build_account_cache_key(self.account, "filter-employees")
+                if result:
+                    cache.set(cache_key, result, BITRIX_REFERENCE_CACHE_TTL)
+                else:
+                    cache.delete(cache_key)
             return result
         except Exception as e:
             logger.error(f"Error fetching active users: {e}")
@@ -1490,17 +1497,35 @@ class ProjectCardService:
         return payload
 
     def get_meta(self) -> Dict[str, Any]:
-        cached = cache.get(build_account_cache_key(self.account, "project-board-meta"))
-        if cached is not None:
+        cache_key = build_account_cache_key(self.account, "project-board-meta")
+        cached = cache.get(cache_key)
+        if cached and self._meta_has_options(cached):
             return cached
+        if cached == {} or (cached is not None and not self._meta_has_options(cached)):
+            cache.delete(cache_key)
 
         config = self._load_config()
+        fallback_employees = self._get_project_card_fallback_options("curator_user_id", "curator_name")
+        fallback_companies = self._get_project_card_fallback_options("company_id", "company_name")
+        fallback_legal_entities = self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name")
         meta = {
-            "employees": BitrixDataService(self.client, config, self.account).fetch_active_users(),
-            "companies": self.get_companies(),
-            "legal_entities": self.get_legal_entities(config),
+            "employees": self._merge_reference_options(
+                BitrixDataService(self.client, config, self.account).fetch_active_users(),
+                fallback_employees,
+            ),
+            "companies": self._merge_reference_options(
+                self.get_companies(),
+                fallback_companies,
+            ),
+            "legal_entities": self._merge_reference_options(
+                self.get_legal_entities(config),
+                fallback_legal_entities,
+            ),
         }
-        cache.set(build_account_cache_key(self.account, "project-board-meta"), meta, BITRIX_REFERENCE_CACHE_TTL)
+        if self._meta_has_options(meta):
+            cache.set(cache_key, meta, BITRIX_REFERENCE_CACHE_TTL)
+        else:
+            cache.delete(cache_key)
         return meta
 
     def get_homepage_snapshot(self) -> Dict[str, Any]:
@@ -1571,6 +1596,42 @@ class ProjectCardService:
             })
         return result
 
+    @staticmethod
+    def _merge_reference_options(*option_groups: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
+        seen_ids = set()
+        merged: List[Dict[str, str]] = []
+
+        for option_group in option_groups:
+            if not option_group:
+                continue
+
+            for option in option_group:
+                option_id = ProjectCardService._clean_str(option.get("id"))
+                option_name = ProjectCardService._clean_str(option.get("name"))
+                if not option_id or option_id in seen_ids:
+                    continue
+
+                seen_ids.add(option_id)
+                merged.append({
+                    "id": option_id,
+                    "name": option_name or option_id,
+                })
+
+        return sorted(merged, key=lambda item: item["name"])
+
+    @staticmethod
+    def _has_reference_options(options: Optional[List[Dict[str, str]]]) -> bool:
+        return bool(options and len(options) > 0)
+
+    def _meta_has_options(self, meta: Optional[Dict[str, Any]]) -> bool:
+        if not meta:
+            return False
+
+        return any(
+            self._has_reference_options(meta.get(key))
+            for key in ("employees", "companies")
+        )
+
     def _fetch_references_with_cache(
         self,
         cache_suffix: str,
@@ -1578,21 +1639,25 @@ class ProjectCardService:
         fallback: Optional[List[Dict[str, str]]] = None,
         ttl: int = BITRIX_REFERENCE_CACHE_TTL,
     ) -> List[Dict[str, str]]:
-        cached = cache.get(build_account_cache_key(self.account, cache_suffix))
-        if cached is not None:
+        cache_key = build_account_cache_key(self.account, cache_suffix)
+        cached = cache.get(cache_key)
+        if self._has_reference_options(cached):
             return cached
+        if cached == []:
+            cache.delete(cache_key)
 
+        live_result: List[Dict[str, str]] = []
         try:
-            result = fetcher()
-            if result:
-                cache.set(build_account_cache_key(self.account, cache_suffix), result, ttl)
-                return result
+            live_result = fetcher() or []
         except Exception as exc:
             logger.warning("Reference fetch failed for %s: %s", cache_suffix, exc)
 
-        fallback = fallback or []
-        cache.set(build_account_cache_key(self.account, cache_suffix), fallback, ttl)
-        return fallback
+        merged = self._merge_reference_options(live_result, fallback or [])
+        if merged:
+            cache.set(cache_key, merged, ttl)
+        else:
+            cache.delete(cache_key)
+        return merged
 
     def get_companies(self) -> List[Dict[str, str]]:
         return self._fetch_references_with_cache(

@@ -157,8 +157,8 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
 <template>
   <div class="space-y-6">
     <section class="overflow-hidden rounded-[28px] border border-lime-100 bg-gradient-to-br from-lime-50 via-white to-slate-50 p-6 shadow-sm">
-      <div class="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-        <div class="max-w-3xl">
+      <div class="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+        <div class="min-w-0 max-w-3xl flex-1 xl:pr-8">
           <div class="text-xs font-semibold uppercase tracking-[0.2em] text-lime-700">Portfolio Home</div>
           <h2 class="mt-2 text-3xl font-semibold text-slate-900">Главная как центр управления портфелем проектов</h2>
           <p class="mt-2 text-sm text-slate-500">
@@ -172,7 +172,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2 xl:flex-none xl:justify-end">
           <div class="rounded-2xl bg-white p-1 shadow-sm">
             <button
               type="button"

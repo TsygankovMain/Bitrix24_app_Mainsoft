@@ -27,6 +27,7 @@ const apiStore = useApiStore()
 const isInit = ref(false)
 const isLoading = ref(false)
 const isSyncing = ref(false)
+const isRefreshingMeta = ref(false)
 const isSaving = ref(false)
 const isArchiving = ref(false)
 
@@ -64,6 +65,85 @@ const messageClass = computed(() => {
 })
 
 const allCards = computed(() => boardData.value?.cards || [])
+
+function buildOptionsFromCards(
+  idGetter: (card: ProjectBoardCardRecord) => string | null | undefined,
+  nameGetter: (card: ProjectBoardCardRecord) => string | null | undefined
+) {
+  const seenIds = new Set<string>()
+  const result: Array<{ id: string; name: string }> = []
+
+  for (const card of allCards.value) {
+    const optionId = String(idGetter(card) || '').trim()
+    const optionName = String(nameGetter(card) || '').trim()
+    if (!optionId || seenIds.has(optionId)) {
+      continue
+    }
+
+    seenIds.add(optionId)
+    result.push({
+      id: optionId,
+      name: optionName || optionId
+    })
+  }
+
+  return result
+}
+
+function mergeSelectOptions(
+  ...groups: Array<Array<{ id: string | number; name: string | number }>>
+) {
+  const seenIds = new Set<string>()
+  const result: Array<{ id: string; name: string }> = []
+
+  for (const group of groups) {
+    for (const option of group || []) {
+      const optionId = String(option.id || '').trim()
+      const optionName = String(option.name || '').trim()
+      if (!optionId || seenIds.has(optionId)) {
+        continue
+      }
+
+      seenIds.add(optionId)
+      result.push({
+        id: optionId,
+        name: optionName || optionId
+      })
+    }
+  }
+
+  return result.sort((left, right) => left.name.localeCompare(right.name, 'ru'))
+}
+
+const employeeOptions = computed(() =>
+  mergeSelectOptions(
+    employees.value,
+    buildOptionsFromCards(
+      card => card.curator_user_id,
+      card => card.curator_name
+    )
+  )
+)
+
+const companyOptions = computed(() =>
+  mergeSelectOptions(
+    companies.value,
+    buildOptionsFromCards(
+      card => card.company_id,
+      card => card.company_name
+    )
+  )
+)
+
+const legalEntityOptions = computed(() =>
+  mergeSelectOptions(
+    legalEntities.value,
+    buildOptionsFromCards(
+      card => card.our_legal_entity_id,
+      card => card.our_legal_entity_name
+    )
+  )
+)
 
 const filteredCards = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
@@ -243,6 +323,35 @@ async function loadMeta(forceRefresh = false) {
   employees.value = meta.employees || []
   companies.value = meta.companies || []
   legalEntities.value = meta.legal_entities || []
+  return meta
+}
+
+function isMetaSparse(meta?: {
+  employees?: Array<unknown>
+  companies?: Array<unknown>
+}) {
+  return !meta?.employees?.length || !meta?.companies?.length
+}
+
+async function refreshReferenceOptions(showToast = true) {
+  isRefreshingMeta.value = true
+  try {
+    const meta = await loadMeta(true)
+    if (showToast) {
+      if (isMetaSparse(meta)) {
+        showStatus('warning', 'Справочники обновлены частично. Недостающие компании и кураторы показаны по уже сохраненным карточкам проектов.')
+      } else {
+        showStatus('success', 'Справочники компаний и кураторов обновлены.')
+      }
+    }
+  } catch (error) {
+    if (showToast) {
+      showStatus('error', 'Не удалось обновить справочники компаний и кураторов.')
+    }
+    processErrorGlobal(error)
+  } finally {
+    isRefreshingMeta.value = false
+  }
 }
 
 async function syncBoard(showToast = true) {
@@ -379,10 +488,14 @@ onMounted(async () => {
     await $b24.parent.setTitle('Управление проектами')
     isInit.value = true
 
-    await Promise.all([
+    const [meta] = await Promise.all([
       loadMeta(),
       loadBoard()
     ])
+
+    if (isMetaSparse(meta)) {
+      void refreshReferenceOptions(false)
+    }
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -410,6 +523,7 @@ onMounted(async () => {
 
             <div class="flex flex-wrap gap-2">
               <B24Button label="Синхронизировать проекты" color="success" :loading="isSyncing" @click="syncBoard()" />
+              <B24Button label="Обновить справочники" color="default" :loading="isRefreshingMeta" @click="refreshReferenceOptions()" />
               <B24Button label="Проверить статусы" color="default" :loading="isSyncing" @click="runDailyCheck" />
             </div>
           </div>
@@ -500,7 +614,7 @@ onMounted(async () => {
                 class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
               >
                 <option value="">Все</option>
-                <option v-for="employee in employees" :key="employee.id" :value="String(employee.id)">
+                <option v-for="employee in employeeOptions" :key="employee.id" :value="String(employee.id)">
                   {{ employee.name }}
                 </option>
               </select>
@@ -513,7 +627,7 @@ onMounted(async () => {
                 class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
               >
                 <option value="">Все</option>
-                <option v-for="company in companies" :key="company.id" :value="String(company.id)">
+                <option v-for="company in companyOptions" :key="company.id" :value="String(company.id)">
                   {{ company.name }}
                 </option>
               </select>
@@ -526,7 +640,7 @@ onMounted(async () => {
                 class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
               >
                 <option value="">Все</option>
-                <option v-for="entity in legalEntities" :key="entity.id" :value="String(entity.id)">
+                <option v-for="entity in legalEntityOptions" :key="entity.id" :value="String(entity.id)">
                   {{ entity.name }}
                 </option>
               </select>
@@ -621,9 +735,9 @@ onMounted(async () => {
     <ProjectBoardDrawer
       v-model="isDrawerOpen"
       :card="selectedCard"
-      :employees="employees"
-      :companies="companies"
-      :legal-entities="legalEntities"
+      :employees="employeeOptions"
+      :companies="companyOptions"
+      :legal-entities="legalEntityOptions"
       :is-saving="isSaving"
       :is-archiving="isArchiving"
       @save="handleSaveProject"

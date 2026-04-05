@@ -93,6 +93,16 @@ export const useApiStore = defineStore(
       }
     }
 
+    const hasItems = (value: unknown): value is Array<unknown> => Array.isArray(value) && value.length > 0
+
+    const hasProjectBoardMetaPayload = (value: any) => {
+      if (!value || typeof value !== 'object') {
+        return false
+      }
+
+      return hasItems(value.employees) || hasItems(value.companies)
+    }
+
     const withBrowserCache = async <T>(
       scope: string,
       ttlMs: number,
@@ -359,13 +369,29 @@ export const useApiStore = defineStore(
     }
 
     const getProjectBoardMeta = async (forceRefresh = false): Promise<any> => {
-      return await withBrowserCache('project-board-meta', browserCacheTtl.meta, async () => {
-        return await $api('/api/project-board/meta', {
-          headers: {
-            Authorization: `Bearer ${tokenJWT.value}`
-          }
-        })
-      }, forceRefresh)
+      const scope = 'project-board-meta'
+
+      if (!forceRefresh) {
+        const cached = readCache<any>(scope)
+        if (hasProjectBoardMetaPayload(cached)) {
+          return cached
+        }
+        clearCache(scope)
+      }
+
+      const value = await $api('/api/project-board/meta', {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+
+      if (hasProjectBoardMetaPayload(value)) {
+        writeCache(scope, value, browserCacheTtl.meta)
+      } else {
+        clearCache(scope)
+      }
+
+      return value
     }
 
     const getHomepagePortfolio = async (forceRefresh = false): Promise<any> => {
