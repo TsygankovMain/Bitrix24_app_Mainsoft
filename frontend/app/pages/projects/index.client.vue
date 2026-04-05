@@ -32,9 +32,12 @@ const isSaving = ref(false)
 const isArchiving = ref(false)
 
 const boardData = ref<ProjectBoardResponse | null>(null)
-const employees = ref<Array<{ id: string | number; name: string | number }>>([])
-const companies = ref<Array<{ id: string | number; name: string | number }>>([])
-const legalEntities = ref<Array<{ id: string | number; name: string | number }>>([])
+const employeeDirectory = ref<Array<{ id: string | number; name: string | number }>>([])
+const companyDirectory = ref<Array<{ id: string | number; name: string | number }>>([])
+const legalEntityDirectory = ref<Array<{ id: string | number; name: string | number }>>([])
+const curatorFilters = ref<Array<{ id: string | number; name: string | number }>>([])
+const companyFilters = ref<Array<{ id: string | number; name: string | number }>>([])
+const legalEntityFilters = ref<Array<{ id: string | number; name: string | number }>>([])
 
 const activeView = ref<'board' | 'timeline' | 'archive'>('board')
 const searchQuery = ref('')
@@ -115,9 +118,9 @@ function mergeSelectOptions(
   return result.sort((left, right) => left.name.localeCompare(right.name, 'ru'))
 }
 
-const employeeOptions = computed(() =>
+const drawerEmployeeOptions = computed(() =>
   mergeSelectOptions(
-    employees.value,
+    employeeDirectory.value,
     buildOptionsFromCards(
       card => card.curator_user_id,
       card => card.curator_name
@@ -125,9 +128,9 @@ const employeeOptions = computed(() =>
   )
 )
 
-const companyOptions = computed(() =>
+const drawerCompanyOptions = computed(() =>
   mergeSelectOptions(
-    companies.value,
+    companyDirectory.value,
     buildOptionsFromCards(
       card => card.company_id,
       card => card.company_name
@@ -135,9 +138,39 @@ const companyOptions = computed(() =>
   )
 )
 
-const legalEntityOptions = computed(() =>
+const drawerLegalEntityOptions = computed(() =>
   mergeSelectOptions(
-    legalEntities.value,
+    legalEntityDirectory.value,
+    buildOptionsFromCards(
+      card => card.our_legal_entity_id,
+      card => card.our_legal_entity_name
+    )
+  )
+)
+
+const curatorFilterOptions = computed(() =>
+  mergeSelectOptions(
+    curatorFilters.value,
+    buildOptionsFromCards(
+      card => card.curator_user_id,
+      card => card.curator_name
+    )
+  )
+)
+
+const companyFilterOptions = computed(() =>
+  mergeSelectOptions(
+    companyFilters.value,
+    buildOptionsFromCards(
+      card => card.company_id,
+      card => card.company_name
+    )
+  )
+)
+
+const legalEntityFilterOptions = computed(() =>
+  mergeSelectOptions(
+    legalEntityFilters.value,
     buildOptionsFromCards(
       card => card.our_legal_entity_id,
       card => card.our_legal_entity_name
@@ -320,17 +353,28 @@ async function loadBoard(forceRefresh = false) {
 
 async function loadMeta(forceRefresh = false) {
   const meta = await apiStore.getProjectBoardMeta(forceRefresh)
-  employees.value = meta.employees || []
-  companies.value = meta.companies || []
-  legalEntities.value = meta.legal_entities || []
+  const directories = meta.directories || {}
+  const filters = meta.filters || {}
+
+  employeeDirectory.value = directories.employees || meta.employees || []
+  companyDirectory.value = directories.companies || meta.companies || []
+  legalEntityDirectory.value = directories.legal_entities || meta.legal_entities || []
+  curatorFilters.value = filters.curators || []
+  companyFilters.value = filters.companies || []
+  legalEntityFilters.value = filters.legal_entities || []
   return meta
 }
 
 function isMetaSparse(meta?: {
   employees?: Array<unknown>
   companies?: Array<unknown>
+  directories?: {
+    employees?: Array<unknown>
+    companies?: Array<unknown>
+  }
 }) {
-  return !meta?.employees?.length || !meta?.companies?.length
+  const directories = meta?.directories || meta
+  return !directories?.employees?.length || !directories?.companies?.length
 }
 
 async function refreshReferenceOptions(showToast = true) {
@@ -614,7 +658,7 @@ onMounted(async () => {
                 class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
               >
                 <option value="">Все</option>
-                <option v-for="employee in employeeOptions" :key="employee.id" :value="String(employee.id)">
+                <option v-for="employee in curatorFilterOptions" :key="employee.id" :value="String(employee.id)">
                   {{ employee.name }}
                 </option>
               </select>
@@ -627,7 +671,7 @@ onMounted(async () => {
                 class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
               >
                 <option value="">Все</option>
-                <option v-for="company in companyOptions" :key="company.id" :value="String(company.id)">
+                <option v-for="company in companyFilterOptions" :key="company.id" :value="String(company.id)">
                   {{ company.name }}
                 </option>
               </select>
@@ -640,7 +684,7 @@ onMounted(async () => {
                 class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
               >
                 <option value="">Все</option>
-                <option v-for="entity in legalEntityOptions" :key="entity.id" :value="String(entity.id)">
+                <option v-for="entity in legalEntityFilterOptions" :key="entity.id" :value="String(entity.id)">
                   {{ entity.name }}
                 </option>
               </select>
@@ -735,9 +779,9 @@ onMounted(async () => {
     <ProjectBoardDrawer
       v-model="isDrawerOpen"
       :card="selectedCard"
-      :employees="employeeOptions"
-      :companies="companyOptions"
-      :legal-entities="legalEntityOptions"
+      :employees="drawerEmployeeOptions"
+      :companies="drawerCompanyOptions"
+      :legal-entities="drawerLegalEntityOptions"
       :is-saving="isSaving"
       :is-archiving="isArchiving"
       @save="handleSaveProject"

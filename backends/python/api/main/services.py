@@ -1508,19 +1508,32 @@ class ProjectCardService:
         fallback_employees = self._get_project_card_fallback_options("curator_user_id", "curator_name")
         fallback_companies = self._get_project_card_fallback_options("company_id", "company_name")
         fallback_legal_entities = self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name")
+        directory_employees = self._merge_reference_options(
+            BitrixDataService(self.client, config, self.account).fetch_active_users(),
+            fallback_employees,
+        )
+        directory_companies = self._merge_reference_options(
+            self.get_companies(),
+            fallback_companies,
+        )
+        directory_legal_entities = self._merge_reference_options(
+            self.get_legal_entities(config),
+            fallback_legal_entities,
+        )
         meta = {
-            "employees": self._merge_reference_options(
-                BitrixDataService(self.client, config, self.account).fetch_active_users(),
-                fallback_employees,
-            ),
-            "companies": self._merge_reference_options(
-                self.get_companies(),
-                fallback_companies,
-            ),
-            "legal_entities": self._merge_reference_options(
-                self.get_legal_entities(config),
-                fallback_legal_entities,
-            ),
+            "filters": {
+                "curators": fallback_employees,
+                "companies": fallback_companies,
+                "legal_entities": fallback_legal_entities,
+            },
+            "directories": {
+                "employees": directory_employees,
+                "companies": directory_companies,
+                "legal_entities": directory_legal_entities,
+            },
+            "employees": directory_employees,
+            "companies": directory_companies,
+            "legal_entities": directory_legal_entities,
         }
         if self._meta_has_options(meta):
             cache.set(cache_key, meta, BITRIX_REFERENCE_CACHE_TTL)
@@ -1626,6 +1639,13 @@ class ProjectCardService:
     def _meta_has_options(self, meta: Optional[Dict[str, Any]]) -> bool:
         if not meta:
             return False
+
+        directories = meta.get("directories") if isinstance(meta, dict) else None
+        if isinstance(directories, dict):
+            return any(
+                self._has_reference_options(directories.get(key))
+                for key in ("employees", "companies")
+            )
 
         return any(
             self._has_reference_options(meta.get(key))
@@ -1872,9 +1892,6 @@ class ProjectCardService:
 
         if next_project_name != card.project_name:
             bitrix_payload["NAME"] = next_project_name
-
-        if next_curator_user_id and next_curator_user_id != card.curator_user_id:
-            bitrix_payload["OWNER_ID"] = int(next_curator_user_id)
 
         if payload.get("project_start_date"):
             bitrix_payload["PROJECT_DATE_START"] = datetime.combine(next_start_date, datetime.min.time()).isoformat() if next_start_date else None

@@ -100,7 +100,11 @@ export const useApiStore = defineStore(
         return false
       }
 
-      return hasItems(value.employees) || hasItems(value.companies)
+      const directories = value.directories && typeof value.directories === 'object'
+        ? value.directories
+        : value
+
+      return hasItems(directories.employees) || hasItems(directories.companies)
     }
 
     const withBrowserCache = async <T>(
@@ -470,7 +474,7 @@ export const useApiStore = defineStore(
 
     const getCompaniesForProjectBinding = async (forceRefresh = false): Promise<any[]> => {
       const meta = await getProjectBoardMeta(forceRefresh)
-      return meta.companies || []
+      return meta.directories?.companies || meta.companies || []
     }
 
     const getBitrixInternalLists = async (iblockTypeId: string = 'lists', forceRefresh = false): Promise<any[]> => {
