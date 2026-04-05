@@ -60,6 +60,7 @@ watch(isHelpOpen, (newVal) => {
 
 let $b24: null | B24Frame = null
 const fieldConfigStore = useFieldConfigStore()
+const apiStore = useApiStore()
 
 // --- STATE ---
 const isLoading = ref(true)
@@ -89,6 +90,7 @@ const filterDateTo = ref<string>('')
 
 // Computed properties
 const usersList = computed(() => Object.values(usersMap.value))
+const projectCardCache = new Map<string, any>()
 
 // --- INITIALIZATION ---
 onMounted(async () => {
@@ -586,6 +588,114 @@ function resetFilter() {
     filterDateTo.value = ''
 }
 
+function assignMappedField(target: Record<string, any>, fieldCode: string | undefined, value: any) {
+    if (!fieldCode || value === undefined) {
+        return
+    }
+
+    target[fieldCode] = value
+}
+
+function findTaskNodeById(taskId: string | null | undefined, nodes: any[] = taskTree.value): any | null {
+    const normalizedTaskId = String(taskId || '').trim()
+    if (!normalizedTaskId) {
+        return null
+    }
+
+    for (const node of nodes) {
+        if (String(node.taskId) === normalizedTaskId) {
+            return node
+        }
+
+        const childNode = findTaskNodeById(normalizedTaskId, node.children || [])
+        if (childNode) {
+            return childNode
+        }
+    }
+
+    return null
+}
+
+function resolveTaskTitle(taskId: string | null | undefined, hierarchy?: { titlePath?: string[] | null } | null) {
+    const node = findTaskNodeById(taskId)
+    if (node?.taskTitle) {
+        return String(node.taskTitle)
+    }
+
+    const hierarchyTitles = hierarchy?.titlePath || []
+    if (hierarchyTitles.length > 0) {
+        return String(hierarchyTitles[hierarchyTitles.length - 1] || '')
+    }
+
+    return ''
+}
+
+async function getProjectCardByProjectId(projectId?: string | null) {
+    const normalizedProjectId = String(projectId || '').trim()
+    if (!normalizedProjectId) {
+        return null
+    }
+
+    if (projectCardCache.has(normalizedProjectId)) {
+        return projectCardCache.get(normalizedProjectId)
+    }
+
+    try {
+        const card = await apiStore.getProjectBoardCard(normalizedProjectId)
+        if (card) {
+            projectCardCache.set(normalizedProjectId, card)
+        }
+        return card
+    } catch (error) {
+        console.warn('[Embedded] Failed to load project card for timestamp binding:', normalizedProjectId, error)
+        return null
+    }
+}
+
+async function enrichFieldsWithProjectContext(
+    fields: Record<string, any>,
+    taskId: string | null | undefined,
+    hierarchy?: {
+        idPath?: string[]
+        titlePath?: string[]
+        projectId?: string | null
+        projectTitle?: string
+        ourInn?: string
+        clientInn?: string
+    } | null
+) {
+    if (!config.value) {
+        return
+    }
+
+    if (hierarchy) {
+        assignMappedField(fields, config.value.FIELDS.TASK_HIERARCHY, hierarchy.idPath)
+        assignMappedField(fields, config.value.FIELDS.TITLE_HIERARCHY, hierarchy.titlePath)
+
+        if (hierarchy.projectId) {
+            assignMappedField(fields, config.value.FIELDS.PROJECT_ID, hierarchy.projectId)
+            assignMappedField(fields, config.value.FIELDS.PROJECT_TITLE, hierarchy.projectTitle)
+        }
+
+        const resolvedTaskName = resolveTaskTitle(taskId, hierarchy)
+        assignMappedField(fields, config.value.FIELDS.TASK_NAME, resolvedTaskName)
+        assignMappedField(fields, config.value.SPA_FIELDS.OUR_INN, hierarchy.ourInn)
+        assignMappedField(fields, config.value.SPA_FIELDS.CLIENT_INN, hierarchy.clientInn)
+
+        if (hierarchy.projectId) {
+            const projectCard = await getProjectCardByProjectId(hierarchy.projectId)
+            const myCompanyId = String(projectCard?.our_legal_entity_id || '').trim()
+            if (myCompanyId) {
+                fields.mycompanyId = /^\d+$/.test(myCompanyId) ? Number(myCompanyId) : myCompanyId
+            }
+        }
+        return
+    }
+
+    const resolvedTaskName = resolveTaskTitle(taskId, hierarchy)
+    assignMappedField(fields, config.value.FIELDS.TASK_NAME, resolvedTaskName)
+}
+
 // --- ACTIONS ---
 
 async function getTaskHierarchy(taskId: string) {
@@ -785,20 +895,7 @@ async function saveCurrentItem() {
         // Always collect hierarchy (for both new and existing entries)
         if (taskIdToSave) {
             const hierarchy = await getTaskHierarchy(taskIdToSave)
-            if (hierarchy) {
-                fields[config.value.FIELDS.TASK_HIERARCHY] = hierarchy.idPath
-                fields[config.value.FIELDS.TITLE_HIERARCHY] = hierarchy.titlePath
-                if (hierarchy.projectId) {
-                    fields[config.value.FIELDS.PROJECT_ID] = hierarchy.projectId
-                    fields[config.value.FIELDS.PROJECT_TITLE] = hierarchy.projectTitle
-                }
-                // Task name from hierarchy (last element = current task title)
-                if (hierarchy.titlePath && hierarchy.titlePath.length > 0) {
-                    fields[config.value.FIELDS.TASK_NAME] = hierarchy.titlePath[hierarchy.titlePath.length - 1]
-                }
-                if (hierarchy.ourInn) fields[config.value.SPA_FIELDS.OUR_INN] = hierarchy.ourInn
-                if (hierarchy.clientInn) fields[config.value.SPA_FIELDS.CLIENT_INN] = hierarchy.clientInn
-            }
+            await enrichFieldsWithProjectContext(fields, taskIdToSave, hierarchy)
         }
         
         if (editingItem.value.id) {
@@ -862,19 +959,7 @@ async function splitItem() {
         // Collect hierarchy for the split entry
         if (splitTaskId) {
             const hierarchy = await getTaskHierarchy(splitTaskId)
-            if (hierarchy) {
-                splitFields[config.value.FIELDS.TASK_HIERARCHY] = hierarchy.idPath
-                splitFields[config.value.FIELDS.TITLE_HIERARCHY] = hierarchy.titlePath
-                if (hierarchy.projectId) {
-                    splitFields[config.value.FIELDS.PROJECT_ID] = hierarchy.projectId
-                    splitFields[config.value.FIELDS.PROJECT_TITLE] = hierarchy.projectTitle
-                }
-                if (hierarchy.titlePath && hierarchy.titlePath.length > 0) {
-                    splitFields[config.value.FIELDS.TASK_NAME] = hierarchy.titlePath[hierarchy.titlePath.length - 1]
-                }
-                if (hierarchy.ourInn) splitFields[config.value.SPA_FIELDS.OUR_INN] = hierarchy.ourInn
-                if (hierarchy.clientInn) splitFields[config.value.SPA_FIELDS.CLIENT_INN] = hierarchy.clientInn
-            }
+            await enrichFieldsWithProjectContext(splitFields, splitTaskId, hierarchy)
         }
 
         await ($b24 as any).callMethod('crm.item.add', {

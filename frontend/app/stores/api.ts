@@ -193,15 +193,32 @@ export const useApiStore = defineStore(
     }
 
     const getFilterEmployees = async (forceRefresh = false): Promise<any[]> => {
-      return await withBrowserCache('filter-employees', browserCacheTtl.filters, async () => {
-        const response = await $api('/api/get-filter-employees', {
-          headers: {
-            Authorization: `Bearer ${tokenJWT.value}`
-          }
-        })
+      const scope = 'filter-employees-v2'
 
-        return response.employees || []
-      }, forceRefresh)
+      if (!forceRefresh) {
+        const cached = readCache<any[]>(scope)
+        if (Array.isArray(cached) && cached.length > 0) {
+          return cached
+        }
+        if (cached !== null) {
+          clearCache(scope)
+        }
+      }
+
+      const response = await $api('/api/get-filter-employees', {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+
+      const employees = response.employees || []
+      if (employees.length > 0) {
+        writeCache(scope, employees, browserCacheTtl.filters)
+      } else {
+        clearCache(scope)
+      }
+
+      return employees
     }
 
     const getFilterProjects = async (forceRefresh = false): Promise<any[]> => {
@@ -403,6 +420,21 @@ export const useApiStore = defineStore(
       }
 
       return value
+    }
+
+    const getProjectBoardCard = async (projectId: string): Promise<any | null> => {
+      const normalizedProjectId = String(projectId || '').trim()
+      if (!normalizedProjectId) {
+        return null
+      }
+
+      const response = await $api(`/api/project-board/card?project_id=${encodeURIComponent(normalizedProjectId)}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+
+      return response.card || null
     }
 
     const getHomepagePortfolio = async (forceRefresh = false): Promise<any> => {
@@ -683,6 +715,7 @@ export const useApiStore = defineStore(
       getTimesheetsList,
       getProjectBoard,
       getProjectBoardMeta,
+      getProjectBoardCard,
       getHomepagePortfolio,
       getSupportStatus,
       connectSupportLine,

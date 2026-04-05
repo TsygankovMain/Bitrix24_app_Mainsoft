@@ -268,7 +268,7 @@ onMounted(async () => {
           <B24Button label="Назад в настройки" color="link" @click="$router.push('/settings')" />
       </div>
 
-      <B24Card v-if="isInit" class="ms-surface">
+      <B24Card v-if="isInit" class="ms-surface ms-report-surface">
           <template #header>
             <div class="flex flex-row justify-between items-center w-full">
                 <div>

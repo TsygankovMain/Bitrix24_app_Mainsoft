@@ -8,6 +8,7 @@ const { t, locales: localesI18n, setLocale } = useI18n()
 
 let $b24: null | B24Frame = null
 const fieldConfigStore = useFieldConfigStore()
+const apiStore = useApiStore()
 
 // --- STATE ---
 const isLoading = ref(true)
@@ -20,6 +21,7 @@ const currentUserId = ref<string | null>(null)
 const isModalOpen = ref(false)
 const modalError = ref<string | null>(null)
 const isSaving = ref(false)
+const projectCardCache = new Map<string, any>()
 
 useHead({
   title: 'Отчет по проекту'
@@ -164,6 +166,28 @@ const closeModal = () => {
     isModalOpen.value = false
 }
 
+async function getCurrentProjectCard() {
+    const normalizedGroupId = String(currentGroupId.value || '').trim()
+    if (!normalizedGroupId) {
+        return null
+    }
+
+    if (projectCardCache.has(normalizedGroupId)) {
+        return projectCardCache.get(normalizedGroupId)
+    }
+
+    try {
+        const card = await apiStore.getProjectBoardCard(normalizedGroupId)
+        if (card) {
+            projectCardCache.set(normalizedGroupId, card)
+        }
+        return card
+    } catch (error) {
+        console.warn('[ProjectReport] Failed to load project card for mycompany binding:', normalizedGroupId, error)
+        return null
+    }
+}
+
 const handleSaveMeeting = async () => {
     modalError.value = null
     if (!formData.value.hours || parseFloat(formData.value.hours) <= 0) {
@@ -189,22 +213,34 @@ const handleSaveMeeting = async () => {
             else if (gData && gData.NAME) groupName = gData.NAME
         }
 
+        const projectCard = await getCurrentProjectCard()
+        const myCompanyId = String(projectCard?.our_legal_entity_id || '').trim()
+
+        const fields: Record<string, any> = {
+            title: formData.value.description.substring(0, 255),
+            [F.HOURS]: parseFloat(formData.value.hours),
+            [F.IS_CONSIDERED]: formData.value.isConsidered ? 'Y' : 'N',
+            [F.EMPLOYEE]: formData.value.employeeId,
+            assignedById: formData.value.employeeId,
+            [F.DESCRIPTION]: formData.value.description,
+            createdTime: formData.value.date + 'T00:00:00',
+            [F.PROJECT_ID]: currentGroupId.value,
+            [F.PROJECT_TITLE]: groupName,
+            [F.DATE]: formData.value.date + 'T00:00:00'
+        }
+
+        if (F.TASK_NAME) {
+            fields[F.TASK_NAME] = 'Встреча/Без задачи'
+        }
+
+        if (myCompanyId) {
+            fields.mycompanyId = /^\d+$/.test(myCompanyId) ? Number(myCompanyId) : myCompanyId
+        }
+
         // @ts-ignore
         await $b24!.callMethod('crm.item.add', {
             entityTypeId: entityTypeId.value,
-            fields: {
-                title: formData.value.description.substring(0, 255),
-                [F.HOURS]: parseFloat(formData.value.hours),
-                [F.IS_CONSIDERED]: formData.value.isConsidered ? 'Y' : 'N',
-                [F.EMPLOYEE]: formData.value.employeeId,
-                assignedById: formData.value.employeeId,
-                [F.DESCRIPTION]: formData.value.description,
-                createdTime: formData.value.date + 'T00:00:00',
-                [F.PROJECT_ID]: currentGroupId.value,
-                [F.PROJECT_TITLE]: groupName,
-                [F.DATE]: formData.value.date + 'T00:00:00',
-                [F.TASK_NAME]: 'Встреча/Без задачи'
-            }
+            fields
         })
 
         closeModal()

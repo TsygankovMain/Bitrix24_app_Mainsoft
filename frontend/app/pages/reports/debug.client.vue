@@ -129,7 +129,7 @@ onMounted(async () => {
           <B24Button label="Назад" color="link" @click="$router.push('/')" />
       </div>
 
-      <B24Card v-if="isInit" class="ms-surface">
+      <B24Card v-if="isInit" class="ms-surface ms-report-surface">
           <template #header>
             <div class="flex flex-row justify-between items-center w-full">
                 <div>

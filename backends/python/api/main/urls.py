@@ -21,6 +21,7 @@ urlpatterns = [
     path('api/support/connect', views.connect_support_line, name='connect_support_line'),
     path('api/project-board', views.get_project_board, name='get_project_board'),
     path('api/project-board/meta', views.get_project_board_meta, name='get_project_board_meta'),
+    path('api/project-board/card', views.get_project_board_card, name='get_project_board_card'),
     path('api/project-board/companies', views.get_project_board_companies, name='get_project_board_companies'),
     path('api/homepage/portfolio', views.get_homepage_portfolio, name='get_homepage_portfolio'),
     path('api/project-board/sync', views.sync_project_board, name='sync_project_board'),

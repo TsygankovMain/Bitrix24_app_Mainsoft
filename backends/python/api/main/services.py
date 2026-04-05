@@ -53,6 +53,7 @@ PROJECT_CARD_TABLE_NAME = ProjectCard._meta.db_table
 BITRIX_REFERENCE_CACHE_TTL = 60 * 30
 PROJECT_BOARD_CACHE_TTL = 60 * 2
 HOMEPAGE_CACHE_TTL = 60 * 2
+FILTER_EMPLOYEES_CACHE_SUFFIX = "filter-employees-v2"
 
 
 def build_account_cache_key(account: Bitrix24Account, suffix: str) -> str:
@@ -70,6 +71,7 @@ def invalidate_account_cache(account: Bitrix24Account, suffixes: List[str]) -> N
 def invalidate_project_runtime_caches(account: Bitrix24Account) -> None:
     invalidate_account_cache(account, [
         "filter-employees",
+        FILTER_EMPLOYEES_CACHE_SUFFIX,
         "filter-projects",
         "project-board",
         "project-board-meta",
@@ -225,7 +227,7 @@ class BitrixDataService:
     def fetch_active_users(self) -> List[Dict[str, str]]:
         """Fetch all active Bitrix24 users for report filters."""
         if self.account:
-            cache_key = build_account_cache_key(self.account, "filter-employees")
+            cache_key = build_account_cache_key(self.account, FILTER_EMPLOYEES_CACHE_SUFFIX)
             cached = cache.get(cache_key)
             if cached:
                 return cached
@@ -236,7 +238,7 @@ class BitrixDataService:
             response = self.client._bitrix_token.call_method(
                 "user.get",
                 {
-                    "FILTER": {"ACTIVE": "Y"},
+                    "FILTER": {"ACTIVE": True, "USER_TYPE": "employee"},
                     "sort": "LAST_NAME",
                     "order": "ASC",
                 }
@@ -247,6 +249,10 @@ class BitrixDataService:
             for user in users:
                 user_id = str(user.get('ID', '')).strip()
                 if not user_id:
+                    continue
+
+                user_type = str(user.get('USER_TYPE', '')).strip().lower()
+                if user_type and user_type != 'employee':
                     continue
 
                 name = f"{user.get('LAST_NAME', '')} {user.get('NAME', '')}".strip()
@@ -260,7 +266,7 @@ class BitrixDataService:
 
             result = sorted(result, key=lambda item: item["name"])
             if self.account:
-                cache_key = build_account_cache_key(self.account, "filter-employees")
+                cache_key = build_account_cache_key(self.account, FILTER_EMPLOYEES_CACHE_SUFFIX)
                 if result:
                     cache.set(cache_key, result, BITRIX_REFERENCE_CACHE_TTL)
                 else:
@@ -1393,6 +1399,12 @@ class ProjectCardService:
     def __init__(self, client: Optional[Client], account: Bitrix24Account):
         self.client = client or account.client
         self.account = account
+
+    def get_card_data(self, project_id: str) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
+
+        return self.serialize_card(self._get_card(project_id))
 
     def get_board_data(self) -> Dict[str, Any]:
         cached = cache.get(build_account_cache_key(self.account, "project-board"))

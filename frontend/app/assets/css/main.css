@@ -67,6 +67,15 @@
     @apply rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 shadow-sm;
   }
 
+  .ms-report-surface {
+    min-height: calc(100vh - 6rem);
+    overflow: visible !important;
+  }
+
+  .ms-report-surface .ms-filter-wrap {
+    overflow: visible;
+  }
+
   .ms-toolbar {
     @apply flex flex-wrap items-center justify-between gap-3;
   }

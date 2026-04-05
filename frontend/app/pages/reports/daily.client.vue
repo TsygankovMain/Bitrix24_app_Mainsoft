@@ -187,7 +187,7 @@ onMounted(async () => {
 
       <div class="flex flex-col gap-6" v-if="isInit">
          <!-- Filters Header -->
-         <div class="ms-surface flex flex-col gap-4 p-5">
+         <div class="ms-surface ms-report-surface flex flex-col gap-4 p-5">
              <div class="flex flex-row justify-between items-center w-full">
                  <div>
                    <h2 class="text-xl font-bold text-slate-900">Ежедневная нагрузка</h2>

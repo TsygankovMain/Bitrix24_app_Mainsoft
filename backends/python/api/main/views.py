@@ -45,6 +45,7 @@ __all__ = [
     "connect_support_line",
     "get_project_board",
     "get_project_board_meta",
+    "get_project_board_card",
     "sync_project_board",
     "update_project_board",
     "update_project_board_stage",
@@ -378,6 +379,25 @@ def get_project_board(request: AuthorizedRequest):
 def get_project_board_meta(request: AuthorizedRequest):
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
     return JsonResponse(service.get_meta())
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_project_board_card")
+@auth_required
+def get_project_board_card(request: AuthorizedRequest):
+    project_id = str(request.GET.get("project_id") or "").strip()
+    if not project_id:
+        return JsonResponse({"error": "project_id is required"}, status=400)
+
+    service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+
+    try:
+        return JsonResponse({"card": service.get_card_data(project_id)})
+    except ProjectCard.DoesNotExist:
+        return JsonResponse({"card": None}, status=404)
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
 
 @xframe_options_exempt
