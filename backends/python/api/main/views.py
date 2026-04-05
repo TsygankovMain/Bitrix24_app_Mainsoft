@@ -1,6 +1,5 @@
 from django.core.paginator import Paginator
 from django.db.models import Q
-from django.db.models import Q
 from django.http import JsonResponse, HttpResponse
 from django.conf import settings
 from django.utils import timezone
@@ -10,14 +9,22 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 
 from .utils.decorators import auth_required, log_errors
 from .utils import AuthorizedRequest
-from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog
+from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard
 
 import json
 import openpyxl
 from openpyxl.styles import Font, Alignment
 
 from config import load_config
-from .services import BitrixDataService, ReportService, TimesheetSyncService, ConfigurationService
+from .services import (
+    BitrixDataService,
+    ReportService,
+    TimesheetSyncService,
+    ConfigurationService,
+    ProjectCardService,
+    ProjectSyncService,
+    ProjectStageAutomationService,
+)
 from .installation_service import InstallationService, InstallationError
 
 __all__ = [
@@ -32,6 +39,13 @@ __all__ = [
     "get_filter_options",
     "get_filter_employees",
     "get_filter_projects",
+    "get_project_board",
+    "sync_project_board",
+    "update_project_board",
+    "update_project_board_stage",
+    "archive_project_board",
+    "run_project_board_daily_check",
+    "get_project_board_companies",
     "report_employee_project",
     "report_project_employee",
     "report_daily_workload",
@@ -57,6 +71,9 @@ config = load_config()
 
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
     queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
+    archived_cards = ProjectCard.objects.filter(bitrix24_account=request.bitrix24_account, is_archived=True)
+    archived_project_ids = [project_id for project_id in archived_cards.values_list('project_id', flat=True) if project_id]
+    archived_project_names = [project_name for project_name in archived_cards.values_list('project_name', flat=True) if project_name]
 
     date_from = request.GET.get('date_from')
     date_to = request.GET.get('date_to')
@@ -69,6 +86,13 @@ def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
         queryset = queryset.filter(date_reflection__date__gte=date_from)
     if date_to:
         queryset = queryset.filter(date_reflection__date__lte=date_to)
+    if archived_project_ids or archived_project_names:
+        archived_q = Q()
+        if archived_project_ids:
+            archived_q |= Q(project_id__in=archived_project_ids)
+        if archived_project_names:
+            archived_q |= Q(project_title__in=archived_project_names)
+        queryset = queryset.exclude(archived_q)
     if emp_ids:
         if employee_mode == 'exclude':
             queryset = queryset.exclude(employee_id__in=emp_ids)
@@ -107,6 +131,18 @@ def _build_employee_filter_options(request: AuthorizedRequest):
 
 def _build_project_filter_options(request: AuthorizedRequest):
     queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
+    active_project_ids = set(
+        project_id
+        for project_id in ProjectCard.objects.filter(bitrix24_account=request.bitrix24_account, is_archived=False)
+        .values_list('project_id', flat=True)
+        if project_id
+    )
+    active_project_names = set(
+        project_name
+        for project_name in ProjectCard.objects.filter(bitrix24_account=request.bitrix24_account, is_archived=False)
+        .values_list('project_name', flat=True)
+        if project_name
+    )
     projs = queryset.values('project_id', 'project_title').distinct()
     projects = []
     seen_ids = set()
@@ -119,6 +155,8 @@ def _build_project_filter_options(request: AuthorizedRequest):
             continue
 
         final_id = str(project_id) if project_id else str(project_title)
+        if (active_project_ids or active_project_names) and final_id not in active_project_ids and (project_title or "") not in active_project_names:
+            continue
         if final_id in seen_ids:
             continue
 
@@ -129,6 +167,13 @@ def _build_project_filter_options(request: AuthorizedRequest):
         seen_ids.add(final_id)
 
     return sorted(projects, key=lambda item: item["name"])
+
+
+def _load_request_json(request: AuthorizedRequest):
+    try:
+        return json.loads(request.body or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
 
 
 @xframe_options_exempt
@@ -276,6 +321,114 @@ def get_filter_employees(request: AuthorizedRequest):
 @auth_required
 def get_filter_projects(request: AuthorizedRequest):
     return JsonResponse({"projects": _build_project_filter_options(request)})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_project_board")
+@auth_required
+def get_project_board(request: AuthorizedRequest):
+    service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(service.get_board_data())
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_project_board_companies")
+@auth_required
+def get_project_board_companies(request: AuthorizedRequest):
+    service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse({"companies": service.get_companies()})
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("sync_project_board")
+@auth_required
+def sync_project_board(request: AuthorizedRequest):
+    service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(service.sync())
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("update_project_board")
+@auth_required
+def update_project_board(request: AuthorizedRequest):
+    payload = _load_request_json(request)
+    project_id = payload.get("project_id")
+    if not project_id:
+        return JsonResponse({"error": "project_id is required"}, status=400)
+
+    service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+
+    try:
+        result = service.update_project_card(str(project_id), payload)
+        return JsonResponse(result)
+    except ProjectCard.DoesNotExist:
+        return JsonResponse({"error": "Проект не найден"}, status=404)
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("update_project_board_stage")
+@auth_required
+def update_project_board_stage(request: AuthorizedRequest):
+    payload = _load_request_json(request)
+    project_id = payload.get("project_id")
+    stage = payload.get("stage")
+
+    if not project_id or not stage:
+        return JsonResponse({"error": "project_id and stage are required"}, status=400)
+
+    service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+
+    try:
+        card = service.update_stage(str(project_id), str(stage))
+        return JsonResponse({"card": card})
+    except ProjectCard.DoesNotExist:
+        return JsonResponse({"error": "Проект не найден"}, status=404)
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("archive_project_board")
+@auth_required
+def archive_project_board(request: AuthorizedRequest):
+    payload = _load_request_json(request)
+    project_id = payload.get("project_id")
+    is_archived = str(payload.get("is_archived", "")).strip().lower() in {"1", "true", "y", "yes", "on"}
+
+    if not project_id:
+        return JsonResponse({"error": "project_id is required"}, status=400)
+
+    service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+
+    try:
+        result = service.archive_project(str(project_id), is_archived)
+        return JsonResponse(result)
+    except ProjectCard.DoesNotExist:
+        return JsonResponse({"error": "Проект не найден"}, status=404)
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("run_project_board_daily_check")
+@auth_required
+def run_project_board_daily_check(request: AuthorizedRequest):
+    service = ProjectStageAutomationService(request.bitrix24_account)
+    return JsonResponse(service.run_daily_check())
 
 
 @xframe_options_exempt

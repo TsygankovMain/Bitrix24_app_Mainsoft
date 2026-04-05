@@ -258,6 +258,78 @@ export const useApiStore = defineStore(
       })
     }
 
+    const getProjectBoard = async (): Promise<any> => {
+      return await $api('/api/project-board', {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const syncProjectCards = async (): Promise<any> => {
+      return await $api('/api/project-board/sync', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const updateProjectCard = async (payload: Record<string, any>): Promise<any> => {
+      return await $api('/api/project-board/update', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        body: JSON.stringify(payload)
+      })
+    }
+
+    const updateProjectStage = async (projectId: string, stage: string): Promise<any> => {
+      return await $api('/api/project-board/update-stage', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        body: JSON.stringify({
+          project_id: projectId,
+          stage
+        })
+      })
+    }
+
+    const archiveProject = async (projectId: string, isArchived: boolean): Promise<any> => {
+      return await $api('/api/project-board/archive', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        body: JSON.stringify({
+          project_id: projectId,
+          is_archived: isArchived
+        })
+      })
+    }
+
+    const runProjectBoardDailyCheck = async (): Promise<any> => {
+      return await $api('/api/project-board/run-daily-check', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const getCompaniesForProjectBinding = async (): Promise<any[]> => {
+      const response = await $api('/api/project-board/companies', {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+
+      return response.companies || []
+    }
+
     const exportRawData = async (dateFrom: string, dateTo: string, dateType: string, fields: string[]): Promise<Blob> => {
       return await $api('/api/export-raw-data', {
         method: 'POST',
@@ -418,6 +490,13 @@ export const useApiStore = defineStore(
       getReportFocusAnalysis,
       syncTimesheets,
       getTimesheetsList,
+      getProjectBoard,
+      syncProjectCards,
+      updateProjectCard,
+      updateProjectStage,
+      archiveProject,
+      runProjectBoardDailyCheck,
+      getCompaniesForProjectBinding,
       getFilterOptions,
       getFilterEmployees,
       getFilterProjects,

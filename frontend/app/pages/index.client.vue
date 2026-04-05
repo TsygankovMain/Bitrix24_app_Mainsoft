@@ -50,6 +50,13 @@ const tiles = [
         color: 'bg-indigo-50 text-indigo-600'
     },
     {
+        icon: CrmLettersIcon,
+        title: 'Управление проектами',
+        description: 'Board, таймлайн и архив проектов',
+        action: () => router.push('/projects'),
+        color: 'bg-lime-50 text-lime-700'
+    },
+    {
         icon: ActivityIcon,
         title: 'Ежедневная нагрузка',
         description: 'Матрица часов по дням',
@@ -165,8 +172,8 @@ onMounted(async () => {
       <div v-if="isInit" class="w-full">
           <!-- Header -->
           <div class="mb-10 text-center">
-              <h1 class="text-3xl font-bold text-gray-900 mb-2">Выберите отчет</h1>
-              <p class="text-gray-500">Доступные отчеты и инструменты управления</p>
+              <h1 class="text-3xl font-bold text-gray-900 mb-2">Выберите инструмент</h1>
+              <p class="text-gray-500">Отчеты, управление проектами и служебные разделы</p>
               
 
           </div>

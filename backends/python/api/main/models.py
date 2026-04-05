@@ -173,6 +173,37 @@ class TimesheetItem(models.Model):
         unique_together = ("bitrix24_account", "bitrix_id")
 
 
+class ProjectCard(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(Bitrix24Account, on_delete=models.CASCADE, related_name="project_cards")
+    project_id = models.CharField(max_length=50, db_index=True)
+    project_name = models.CharField(max_length=255)
+    stage = models.CharField(max_length=50, db_index=True)
+    manual_stage = models.CharField(max_length=50, null=True, blank=True)
+    is_archived = models.BooleanField(default=False, db_index=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    project_hours_budget = models.FloatField(null=True, blank=True)
+    hourly_rate = models.FloatField(default=0.0)
+    is_support = models.BooleanField(default=False)
+    curator_user_id = models.CharField(max_length=50, null=True, blank=True)
+    curator_name = models.CharField(max_length=255, null=True, blank=True)
+    project_start_date = models.DateField(null=True, blank=True)
+    project_end_date = models.DateField(null=True, blank=True)
+    company_id = models.CharField(max_length=50, null=True, blank=True)
+    company_name = models.CharField(max_length=255, null=True, blank=True)
+    last_writeoff_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_writeoff_days = models.IntegerField(default=0)
+    stage_updated_at = models.DateTimeField(auto_now=True)
+    stage_source = models.CharField(max_length=20, default="manual")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "project_card"
+        unique_together = ("bitrix24_account", "project_id")
+
+
 class RequestLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     timestamp = models.DateTimeField(auto_now_add=True)
