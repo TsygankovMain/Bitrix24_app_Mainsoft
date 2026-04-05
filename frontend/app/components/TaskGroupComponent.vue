@@ -42,41 +42,41 @@ function deleteItem(item: any) {
 
 <template>
 <div :style="{ marginLeft: level > 0 ? `${level}rem` : '0' }">
-    <div class="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden mb-4">
+    <div class="task-group-card">
         <!-- TASK HEADER -->
-        <div @click="toggleTask" class="w-full text-left p-3 bg-slate-50 border-b flex justify-between items-center cursor-pointer hover:bg-slate-100">
+        <div @click="toggleTask" class="task-group-header">
             <div class="flex-1 min-w-0">
                 <h3 class="text-sm font-bold text-slate-900 truncate">
-                    <span v-if="level > 0" class="font-normal text-purple-600">[Подзадача] </span>
+                    <span v-if="level > 0" class="font-normal text-lime-700">[Подзадача] </span>
                     {{ task.taskTitle }}
                 </h3>
                 <p class="text-xs text-slate-600 mt-1">ID: {{ task.taskId }}</p>
             </div>
             <div class="flex items-center gap-4 ml-4 text-right shrink-0">
                 <div v-if="clientHourRate > 0" class="border-r pr-4 border-slate-200">
-                    <p class="text-xs text-blue-600">Сумма для клиента</p>
+                    <p class="text-xs text-slate-500">Сумма для клиента</p>
                     <p class="text-sm font-bold text-slate-800">{{ totalClientAmount }} руб.</p>
                 </div>
                 <div>
-                    <p class="text-xs text-green-600">Учтено (всего)</p>
+                    <p class="text-xs text-teal-700">Учтено (всего)</p>
                     <p class="text-sm font-bold text-slate-800">{{ task.cumulativeConsidered.toFixed(2) }} ч</p>
                     <p v-if="task.children.length > 0 && task.totalConsidered > 0" class="text-xs text-slate-500 italic">
                         в т.ч. своих: {{ task.totalConsidered.toFixed(2) }} ч
                     </p>
                 </div>
                 <div>
-                    <p class="text-xs text-red-600">Не учтено (всего)</p>
+                    <p class="text-xs text-rose-600">Не учтено (всего)</p>
                     <p class="text-sm font-bold text-slate-800">{{ task.cumulativeUnconsidered.toFixed(2) }} ч</p>
                     <p v-if="task.children.length > 0 && task.totalUnconsidered > 0" class="text-xs text-slate-500 italic">
                         в т.ч. своих: {{ task.totalUnconsidered.toFixed(2) }} ч
                     </p>
                 </div>
                 <div class="flex flex-col items-center gap-1">
-                    <button @click.stop="createForTask" title="Отразить время" class="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1">
+                    <button @click.stop="createForTask" title="Отразить время" class="task-group-create-btn">
                         <span class="material-symbols-outlined text-sm">add_circle</span>
                         Отразить
                     </button>
-                    <button @click.stop="toggleTask" title="Развернуть/Свернуть" class="p-1 rounded-full hover:bg-slate-200">
+                    <button @click.stop="toggleTask" title="Развернуть/Свернуть" class="rounded-full p-1 transition hover:bg-slate-200">
                         <span class="material-symbols-outlined text-slate-500 transition-transform" :class="{ 'rotate-180': isExpanded }">expand_more</span>
                     </button>
                 </div>
@@ -90,8 +90,8 @@ function deleteItem(item: any) {
                 v-for="item in task.items"
                 :key="item.id"
                 @click="selectItem(item)"
-                class="flex items-center gap-2 px-3 border-t border-slate-100 transition-colors cursor-pointer hover:bg-blue-50 group"
-                :class="currentEditingId === item.id ? 'bg-blue-50 border-l-2 border-blue-500' : ''"
+                class="task-group-row"
+                :class="currentEditingId === item.id ? 'task-group-row-active' : ''"
                 style="min-height: 34px;"
             >
                 <!-- Indicator dot -->
@@ -123,7 +123,7 @@ function deleteItem(item: any) {
                 <!-- Edit button (hover only) -->
                 <button
                     @click.stop="selectItem(item)"
-                    class="p-1 rounded text-slate-300 hover:text-blue-600 hover:bg-blue-100 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                    class="task-group-action-btn"
                     title="Редактировать"
                 >
                     <span class="material-symbols-outlined text-base leading-none">edit</span>
@@ -132,7 +132,7 @@ function deleteItem(item: any) {
                 <!-- Delete button (hover only) -->
                 <button
                     @click.stop="deleteItem(item)"
-                    class="p-1 rounded text-slate-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                    class="task-group-delete-btn"
                     title="Удалить запись"
                 >
                     <span class="material-symbols-outlined text-base leading-none">delete</span>
@@ -140,7 +140,7 @@ function deleteItem(item: any) {
             </div>
 
             <!-- Children -->
-            <div v-if="task.children.length > 0" class="p-2 space-y-2 bg-slate-50 border-t">
+            <div v-if="task.children.length > 0" class="border-t border-slate-200 bg-slate-50/80 p-2 space-y-2">
                 <TaskGroupComponent 
                     v-for="child in task.children" 
                     :key="child.taskId"
@@ -163,5 +163,104 @@ function deleteItem(item: any) {
 <style scoped>
 .material-symbols-outlined {
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.task-group-card {
+    margin-bottom: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(216, 226, 238, 0.95);
+    border-radius: 22px;
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.task-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    width: 100%;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(226, 232, 240, 0.95);
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.88));
+    cursor: pointer;
+    transition: 180ms ease;
+}
+
+.task-group-header:hover {
+    background: linear-gradient(180deg, rgba(246, 255, 223, 0.96), rgba(241, 245, 249, 0.88));
+}
+
+.task-group-create-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 12px;
+    background: #b7ea2c;
+    color: #0f172a;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    transition: 180ms ease;
+}
+
+.task-group-create-btn:hover {
+    background: #c7f04f;
+}
+
+.task-group-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border-top: 1px solid rgba(241, 245, 249, 0.95);
+    background: #fff;
+    cursor: pointer;
+    transition: 180ms ease;
+}
+
+.task-group-row:hover {
+    background: rgba(236, 252, 203, 0.35);
+}
+
+.task-group-row-active {
+    background: rgba(236, 252, 203, 0.55);
+    box-shadow: inset 3px 0 0 #84cc16;
+}
+
+.task-group-action-btn {
+    padding: 4px;
+    border-radius: 10px;
+    color: #cbd5e1;
+    opacity: 0;
+    transition: 180ms ease;
+    flex-shrink: 0;
+}
+
+.task-group-row:hover .task-group-action-btn {
+    opacity: 1;
+}
+
+.task-group-action-btn:hover {
+    color: #65a30d;
+    background: rgba(217, 249, 157, 0.55);
+}
+
+.task-group-delete-btn {
+    padding: 4px;
+    border-radius: 10px;
+    color: #cbd5e1;
+    opacity: 0;
+    transition: 180ms ease;
+    flex-shrink: 0;
+}
+
+.task-group-row:hover .task-group-delete-btn {
+    opacity: 1;
+}
+
+.task-group-delete-btn:hover {
+    color: #e11d48;
+    background: rgba(255, 228, 230, 0.95);
 }
 </style>

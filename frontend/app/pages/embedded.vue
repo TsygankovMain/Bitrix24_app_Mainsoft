@@ -943,105 +943,89 @@ async function deleteItemDirect(item: any) {
 </script>
 
 <template>
-<div class="flex flex-col h-screen bg-slate-50 overflow-hidden">
-    
-    <!-- HEADER -->
-    <header class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0">
-        <div class="flex items-center gap-3">
-            <div class="bg-blue-500 p-2 rounded-lg">
-                <span class="material-symbols-outlined text-white text-2xl">schedule</span>
+<div class="ms-page-shell embedded-shell">
+    <section class="ms-surface embedded-topbar">
+        <div class="embedded-topbar__title">
+            <div class="embedded-icon">
+                <span class="material-symbols-outlined text-[26px]">schedule</span>
             </div>
-            <div>
-                <h1 class="text-xl font-bold text-slate-900">Учет часов</h1>
-                <p class="text-xs text-slate-500">Учет трудозатрат по иерархии задач</p>
+            <div class="min-w-0">
+                <div class="ms-eyebrow">Task Workspace</div>
+                <h1 class="mt-2 text-2xl font-semibold text-slate-900">Учет часов</h1>
+                <p class="mt-1 text-sm text-slate-500">Учет трудозатрат по иерархии задач.</p>
             </div>
         </div>
 
-        <div class="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg p-3">
-            <button @click="createNewEntry" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold transition-colors">
+        <div class="embedded-topbar__actions">
+            <button @click="createNewEntry" class="embedded-primary-btn">
                 <span class="material-symbols-outlined">add</span>
                 <span>Отразить</span>
             </button>
-            <div class="h-8 w-px bg-slate-300"></div>
-            <div class="flex flex-col">
-                <label class="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Стоимость часа (руб.)</label>
-                <input type="number" v-model="clientHourRate" class="bg-transparent font-bold text-slate-900 focus:outline-none w-24 mt-1">
+
+            <div class="embedded-summary">
+                <label class="embedded-summary__card">
+                    <span class="embedded-summary__label">Стоимость часа</span>
+                    <input type="number" v-model="clientHourRate" class="embedded-rate-input">
+                </label>
+                <div class="embedded-summary__card embedded-summary__card--accent">
+                    <span class="embedded-summary__label">Сумма для клиента</span>
+                    <span class="embedded-summary__value">{{ totalClientAmount }} руб.</span>
+                </div>
             </div>
-            <div class="h-8 w-px bg-slate-300"></div>
-            <div class="flex flex-col text-right">
-                <span class="text-[10px] uppercase font-bold text-blue-600 tracking-wider">Сумма для клиента</span>
-                <span class="font-bold text-lg text-slate-900 mt-1">{{ totalClientAmount }} руб.</span>
+        </div>
+    </section>
+
+    <section v-if="isLoading" class="ms-surface embedded-state">
+        <div class="embedded-state__content">
+            <span class="material-symbols-outlined text-5xl animate-spin text-lime-600">progress_activity</span>
+            <div class="text-base font-semibold text-slate-900">Загрузка данных</div>
+            <p class="text-sm text-slate-500">Получаем задачи и записи времени.</p>
+        </div>
+    </section>
+
+    <section v-else-if="error" class="ms-surface embedded-state">
+        <div class="embedded-state__content">
+            <div class="rounded-2xl bg-rose-100 p-3 text-rose-600">
+                <span class="material-symbols-outlined text-4xl">error</span>
             </div>
-
+            <div class="text-base font-semibold text-slate-900">Ошибка загрузки</div>
+            <p class="max-w-lg text-sm leading-6 text-slate-600">{{ error }}</p>
         </div>
-    </header>
+    </section>
 
-    <!-- LOADING -->
-    <div v-if="isLoading" class="flex-1 flex items-center justify-center">
-        <div class="text-center">
-            <span class="material-symbols-outlined text-5xl text-blue-500 animate-spin mb-4">progress_activity</span>
-            <p class="text-slate-600">Загрузка данных...</p>
-        </div>
-    </div>
-
-    <!-- ERROR -->
-    <div v-else-if="error" class="flex-1 flex items-center justify-center p-6">
-        <div class="bg-red-50 border border-red-200 p-6 rounded-xl max-w-lg text-center">
-            <span class="material-symbols-outlined text-5xl text-red-500 mb-2">error</span>
-            <h3 class="text-lg font-bold text-red-700 mb-2">Ошибка</h3>
-            <p class="text-red-600">{{ error }}</p>
-        </div>
-    </div>
-
-    <!-- MAIN SPLIT -->
-    <div v-else class="flex-1 flex overflow-hidden">
-        
-    <!-- LEFT: TREE -->
-        <div class="w-[70%] flex flex-col bg-white">
-
-            <!-- FILTER PANEL -->
-            <div class="px-4 py-2.5 border-b border-slate-200 bg-slate-50 flex flex-wrap items-end gap-3">
-                <div class="flex flex-col gap-1 min-w-[160px] flex-1">
-                    <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Сотрудник</label>
-                    <select
-                        v-model="filterEmployeeId"
-                        class="text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
-                    >
+    <div v-else class="embedded-grid">
+        <section class="ms-surface embedded-left-pane">
+            <div class="ms-filter-wrap embedded-filter-bar">
+                <div class="flex min-w-[180px] flex-1 flex-col gap-1">
+                    <label class="embedded-filter-label">Сотрудник</label>
+                    <select v-model="filterEmployeeId">
                         <option value="">Все сотрудники</option>
                         <option v-for="u in usersList" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
                     </select>
                 </div>
                 <div class="flex flex-col gap-1">
-                    <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Дата от</label>
-                    <input
-                        type="date"
-                        v-model="filterDateFrom"
-                        class="text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
-                    >
+                    <label class="embedded-filter-label">Дата от</label>
+                    <input type="date" v-model="filterDateFrom">
                 </div>
                 <div class="flex flex-col gap-1">
-                    <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Дата до</label>
-                    <input
-                        type="date"
-                        v-model="filterDateTo"
-                        class="text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
-                    >
+                    <label class="embedded-filter-label">Дата до</label>
+                    <input type="date" v-model="filterDateTo">
                 </div>
                 <button
                     v-if="isFilterActive"
                     @click="resetFilter"
-                    class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-red-50 hover:border-red-300 hover:text-red-600 transition-colors"
+                    class="embedded-secondary-btn"
                 >
                     <span class="material-symbols-outlined text-base">filter_alt_off</span>
                     Сбросить
                 </button>
-                <div v-if="isFilterActive" class="text-xs text-blue-600 font-medium flex items-center gap-1 ml-auto">
+                <div v-if="isFilterActive" class="embedded-filter-state">
                     <span class="material-symbols-outlined text-sm">filter_alt</span>
                     Фильтр активен
                 </div>
             </div>
 
-            <div class="flex-1 overflow-y-auto p-4">
+            <div class="embedded-tree-scroll">
                 <TaskGroupComponent 
                     v-for="task in filteredTaskTree" 
                     :key="task.taskId"
@@ -1056,89 +1040,386 @@ async function deleteItemDirect(item: any) {
                     @delete="deleteItemDirect"
                 />
             </div>
-        </div>
+        </section>
 
-        <!-- RIGHT: EDITOR -->
-        <div class="w-[30%] flex flex-col bg-slate-50 border-l border-slate-200">
-            <div class="px-5 py-4 bg-white border-b border-slate-200 flex items-center justify-between">
-                <h2 class="font-bold text-slate-800">Редактирование</h2>
-                <button @click="closeEditor" class="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded">
+        <aside class="ms-surface embedded-editor-pane">
+            <div class="embedded-editor-header">
+                <div>
+                    <h2 class="text-lg font-semibold text-slate-900">Редактирование</h2>
+                    <p class="mt-1 text-xs text-slate-500">Поля записи и дополнительные действия.</p>
+                </div>
+                <button @click="closeEditor" class="embedded-icon-btn">
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
 
-            <div v-if="!editingItem" class="flex-1 flex items-center justify-center text-center text-slate-400 p-8">
-                <div>
-                    <span class="material-symbols-outlined text-5xl mb-2">touch_app</span>
-                    <p class="text-sm">Выберите запись для редактирования</p>
+            <div v-if="!editingItem" class="embedded-editor-empty">
+                <div class="space-y-2 text-center">
+                    <div class="mx-auto inline-flex rounded-2xl bg-slate-100 p-3 text-slate-400">
+                        <span class="material-symbols-outlined text-4xl">touch_app</span>
+                    </div>
+                    <div class="text-sm font-medium text-slate-700">Выберите запись для редактирования</div>
+                    <p class="text-xs leading-5 text-slate-500">Левая колонка показывает дерево задач и все связанные записи времени.</p>
                 </div>
             </div>
 
-            <div v-else class="flex-1 overflow-y-auto p-5 space-y-4">
+            <div v-else class="embedded-editor-body">
                 <div>
-                    <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Описание</label>
-                    <textarea v-model="editingItem.description" rows="2" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none resize-none"></textarea>
+                    <label class="embedded-filter-label">Описание</label>
+                    <textarea v-model="editingItem.description" rows="2" class="resize-none"></textarea>
                 </div>
                 <div>
-                    <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Сотрудник</label>
-                    <select v-model="editingItem.employeeId" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none bg-white">
+                    <label class="embedded-filter-label">Сотрудник</label>
+                    <select v-model="editingItem.employeeId" class="bg-white">
                         <option v-for="u in usersList" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
                     </select>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid gap-4 sm:grid-cols-2">
                     <div>
-                        <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Дата</label>
-                        <input type="date" v-model="editingItem.date" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none">
+                        <label class="embedded-filter-label">Дата</label>
+                        <input type="date" v-model="editingItem.date">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-slate-500 uppercase mb-2">Часы</label>
-                        <input type="number" v-model.number="editingItem.hours" step="0.25" min="0" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:border-blue-500 focus:ring-2 focus:ring-blue-200 outline-none font-bold">
+                        <label class="embedded-filter-label">Часы</label>
+                        <input type="number" v-model.number="editingItem.hours" step="0.25" min="0" class="font-semibold">
                     </div>
                 </div>
-                <div>
-                    <label class="flex items-center gap-3 p-3 border border-slate-200 rounded-lg bg-white cursor-pointer hover:border-slate-300">
-                        <input type="checkbox" v-model="editingItem.isConsidered" class="w-4 h-4 accent-blue-600">
-                        <span class="text-sm font-medium">Учитывать?</span>
-                    </label>
-                </div>
 
-                <hr class="border-slate-200 my-6">
+                <label class="embedded-toggle">
+                    <span class="text-sm font-medium text-slate-700">Учитывать в аналитике</span>
+                    <input type="checkbox" v-model="editingItem.isConsidered" class="h-4 w-4 accent-lime-600">
+                </label>
 
-                <div class="p-4 bg-purple-50 border border-purple-200 rounded-lg">
-                    <h3 class="flex items-center gap-2 font-bold text-purple-900 mb-3 text-sm">
-                        <span class="material-symbols-outlined">call_split</span>
+                <div class="embedded-split-card">
+                    <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                        <span class="material-symbols-outlined text-slate-500">call_split</span>
                         Разделить запись
                     </h3>
-                    <p class="text-xs text-slate-600 mb-3">Отделить часть времени в новую запись</p>
-                    <div class="grid grid-cols-2 gap-2 mb-3">
-                        <input type="number" v-model="editingItem.splitHours" step="0.5" placeholder="0" class="px-2 py-1.5 border border-purple-300 rounded text-center font-bold text-sm">
-                        <span class="text-xs text-slate-600 flex items-center">часов отделить</span>
+                    <p class="mt-2 text-xs leading-5 text-slate-500">Отделите часть времени в новую запись, если нужно разнести ее отдельно.</p>
+                    <div class="mt-4 grid grid-cols-[120px_1fr] gap-2">
+                        <input type="number" v-model="editingItem.splitHours" step="0.5" placeholder="0">
+                        <div class="flex items-center text-xs text-slate-500">часов отделить</div>
                     </div>
-                    <label class="flex items-center gap-2 mb-3 text-xs cursor-pointer">
-                        <input type="checkbox" v-model="editingItem.splitInvert" class="w-3 h-3 accent-purple-600">
-                        <span>Инвертировать "Учитывать?"</span>
+                    <label class="mt-3 flex items-center gap-2 text-xs text-slate-600">
+                        <input type="checkbox" v-model="editingItem.splitInvert" class="h-3.5 w-3.5 accent-slate-700">
+                        <span>Инвертировать признак «Учитывать»</span>
                     </label>
-                    <button @click="splitItem" class="w-full py-2 bg-white border border-purple-300 text-purple-700 font-medium rounded-lg hover:bg-purple-100 text-sm">Выполнить разделение</button>
+                    <button @click="splitItem" class="embedded-secondary-btn mt-4 w-full justify-center">Выполнить разделение</button>
                 </div>
 
-                <button v-if="editingItem.id" @click="deleteItem" class="w-full py-2 bg-red-50 border border-red-200 text-red-700 font-medium rounded-lg hover:bg-red-100 text-sm flex items-center justify-center gap-2">
+                <button v-if="editingItem.id" @click="deleteItem" class="embedded-danger-btn">
                     <span class="material-symbols-outlined text-base">delete</span>
                     Удалить запись
                 </button>
             </div>
 
-            <div v-if="editingItem" class="p-5 bg-white border-t border-slate-200 flex justify-end gap-3">
-                <button @click="closeEditor" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">Отмена</button>
-                <button @click="saveCurrentItem" class="px-6 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm">Сохранить</button>
+            <div v-if="editingItem" class="embedded-editor-footer">
+                <button @click="closeEditor" class="embedded-secondary-btn">Отмена</button>
+                <button @click="saveCurrentItem" class="embedded-primary-btn">Сохранить</button>
             </div>
-        </div>
+        </aside>
     </div>
 
+    <HelpSidePanel v-model="isHelpOpen" />
 </div>
 </template>
 
 <style scoped>
 .material-symbols-outlined {
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.embedded-shell {
+    min-height: 100vh;
+    padding: 12px;
+    overflow: hidden;
+}
+
+.embedded-topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 20px;
+    margin-bottom: 12px;
+}
+
+.embedded-topbar__title {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    min-width: 0;
+}
+
+.embedded-topbar__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.embedded-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 52px;
+    height: 52px;
+    border-radius: 18px;
+    background: #d9f99d;
+    color: #4d7c0f;
+}
+
+.embedded-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.embedded-summary__card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 156px;
+    border: 1px solid rgba(216, 226, 238, 0.95);
+    border-radius: 18px;
+    background: #fff;
+    padding: 12px 14px;
+}
+
+.embedded-summary__card--accent {
+    background: linear-gradient(180deg, rgba(248, 250, 252, 1), rgba(238, 248, 200, 0.55));
+}
+
+.embedded-summary__label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #64748b;
+}
+
+.embedded-summary__value {
+    font-size: 20px;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.embedded-rate-input {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font-size: 20px;
+    font-weight: 700;
+    color: #0f172a;
+    outline: none;
+    box-shadow: none;
+}
+
+.embedded-rate-input:focus {
+    border: 0;
+    box-shadow: none;
+    ring: 0;
+}
+
+.embedded-primary-btn,
+.embedded-secondary-btn,
+.embedded-danger-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 14px;
+    padding: 10px 15px;
+    font-size: 14px;
+    font-weight: 600;
+    transition: 180ms ease;
+}
+
+.embedded-primary-btn {
+    background: #b7ea2c;
+    color: #0f172a;
+    box-shadow: 0 10px 24px rgba(183, 234, 44, 0.28);
+}
+
+.embedded-primary-btn:hover {
+    background: #c7f04f;
+}
+
+.embedded-secondary-btn {
+    border: 1px solid rgba(203, 213, 225, 0.95);
+    background: #fff;
+    color: #334155;
+}
+
+.embedded-secondary-btn:hover {
+    border-color: rgba(148, 163, 184, 0.95);
+    color: #0f172a;
+}
+
+.embedded-danger-btn {
+    justify-content: center;
+    border: 1px solid rgba(254, 205, 211, 0.95);
+    background: #fff1f2;
+    color: #be123c;
+}
+
+.embedded-danger-btn:hover {
+    background: #ffe4e6;
+}
+
+.embedded-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 300px;
+}
+
+.embedded-state__content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    text-align: center;
+}
+
+.embedded-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    height: calc(100vh - 148px);
+    min-height: 0;
+}
+
+.embedded-left-pane,
+.embedded-editor-pane {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.embedded-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 12px;
+    margin: 12px;
+    margin-bottom: 0;
+}
+
+.embedded-filter-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #64748b;
+}
+
+.embedded-filter-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 600;
+    color: #4d7c0f;
+}
+
+.embedded-tree-scroll {
+    height: calc(100% - 104px);
+    overflow-y: auto;
+    padding: 12px;
+}
+
+.embedded-editor-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid rgba(226, 232, 240, 0.95);
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.82));
+}
+
+.embedded-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    color: #94a3b8;
+    transition: 180ms ease;
+}
+
+.embedded-icon-btn:hover {
+    background: #f1f5f9;
+    color: #334155;
+}
+
+.embedded-editor-empty {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.embedded-editor-body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+    padding: 18px;
+}
+
+.embedded-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid rgba(216, 226, 238, 0.95);
+    border-radius: 16px;
+    background: #f8fafc;
+    padding: 12px 14px;
+}
+
+.embedded-split-card {
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    border-radius: 20px;
+    background: linear-gradient(180deg, rgba(248, 250, 252, 1), rgba(241, 245, 249, 0.88));
+    padding: 16px;
+}
+
+.embedded-editor-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 18px;
+    border-top: 1px solid rgba(226, 232, 240, 0.95);
+    background: #f8fafc;
+}
+
+@media (max-width: 1100px) {
+    .embedded-grid {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+
+    .embedded-left-pane {
+        min-height: 420px;
+    }
+
+    .embedded-editor-pane {
+        min-height: 420px;
+    }
+
+    .embedded-tree-scroll {
+        height: auto;
+        min-height: 320px;
+    }
 }
 </style>

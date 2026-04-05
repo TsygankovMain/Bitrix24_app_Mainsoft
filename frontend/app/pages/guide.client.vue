@@ -48,18 +48,18 @@ const faqItems = [
       <section class="ms-surface-hero px-6 py-7">
         <B24Button label="Назад к меню" color="link" @click="router.push('/')" class="mb-4 pl-0" />
 
-        <div class="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] xl:items-start">
+        <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
           <div class="min-w-0">
             <div class="flex items-start gap-4">
               <div class="rounded-2xl bg-lime-100 p-4 text-lime-700">
                 <BookOpen1Icon class="h-8 w-8" />
               </div>
 
-              <div class="space-y-3">
+              <div class="min-w-0 flex-1 space-y-3">
                 <div class="ms-eyebrow">Guide</div>
                 <div>
                   <h1 class="ms-title">Как работать с приложением</h1>
-                  <p class="mt-3 max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">
+                  <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
                     Этот гайд показывает только основные рабочие сценарии: где фиксировать время, как открыть и вести проект,
                     и как быстро собрать нужный отчет без лишних действий.
                   </p>
@@ -68,7 +68,7 @@ const faqItems = [
             </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+          <div class="grid content-start gap-3 sm:grid-cols-3 xl:grid-cols-1">
             <div class="ms-stat-card">
               <div class="text-xs uppercase tracking-[0.16em] text-slate-400">Шаг 1</div>
               <div class="mt-2 text-sm font-semibold text-slate-900">Фиксируйте время внутри задачи</div>
