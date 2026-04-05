@@ -51,11 +51,15 @@ const modalData = ref<any>(null) // { employeeName, date, items: [] }
 
 async function fetchFilterOptions() {
     try {
-        const [employees, projects] = await Promise.all([
+        const [employeesResult, projectsResult] = await Promise.allSettled([
             apiStore.getFilterEmployees(),
             apiStore.getFilterProjects()
         ])
-        filterOptions.value = { employees, projects }
+
+        filterOptions.value = {
+            employees: employeesResult.status === 'fulfilled' ? employeesResult.value : [],
+            projects: projectsResult.status === 'fulfilled' ? projectsResult.value : [],
+        }
     } catch (e) {
         processErrorGlobal(e)
     }

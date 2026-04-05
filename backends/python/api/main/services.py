@@ -238,7 +238,7 @@ class BitrixDataService:
             response = self.client._bitrix_token.call_method(
                 "user.get",
                 {
-                    "FILTER": {"ACTIVE": True, "USER_TYPE": "employee"},
+                    "FILTER": {"ACTIVE": "Y"},
                     "sort": "LAST_NAME",
                     "order": "ASC",
                 }
