@@ -31,6 +31,9 @@ class Config:
     # VIRTUAL_HOST
     app_base_url: str
 
+    # Support line
+    support_openline_code: str
+
 
 def load_config() -> Config:
     build_target = env.str("BUILD_TARGET", "dev")  # dev or production
@@ -46,7 +49,8 @@ def load_config() -> Config:
         jwt_algorithm=env.str("JWT_ALGORITHM", "HS256"),
         client_id=env.str("CLIENT_ID", "client_id"),
         client_secret=env.str("CLIENT_SECRET", "client_secret"),
-        app_base_url=env.str("VIRTUAL_HOST", "app_base_url")
+        app_base_url=env.str("VIRTUAL_HOST", "app_base_url"),
+        support_openline_code=env.str("SUPPORT_OPENLINE_CODE", "2106d29de50818f3e0e36bd949f54f37"),
     )
 
 

@@ -146,6 +146,11 @@ class ApplicationInstallation(models.Model):
     application_token = models.CharField(max_length=255, null=True)
     comment = models.TextField(null=True)
     status_code = models.JSONField(null=True)
+    support_line_code = models.CharField(max_length=64, null=True, blank=True)
+    support_line_dialog_id = models.CharField(max_length=255, null=True, blank=True)
+    support_line_status = models.CharField(max_length=50, default="not_connected")
+    support_line_error = models.TextField(null=True, blank=True)
+    support_line_connected_at = models.DateTimeField(null=True, blank=True)
 
 
 class TimesheetItem(models.Model):

@@ -34,6 +34,7 @@ export const useApiStore = defineStore(
       board: 1000 * 60 * 2,
       meta: 1000 * 60 * 15,
       homepage: 1000 * 60 * 2,
+      support: 1000 * 60 * 2,
       config: 1000 * 60 * 5,
       lists: 1000 * 60 * 15,
     }
@@ -414,6 +415,28 @@ export const useApiStore = defineStore(
       }, forceRefresh)
     }
 
+    const getSupportStatus = async (forceRefresh = false): Promise<any> => {
+      return await withBrowserCache('support-status', browserCacheTtl.support, async () => {
+        return await $api('/api/support/status', {
+          headers: {
+            Authorization: `Bearer ${tokenJWT.value}`
+          }
+        })
+      }, forceRefresh)
+    }
+
+    const connectSupportLine = async (): Promise<any> => {
+      const result = await $api('/api/support/connect', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+      clearCache('support-status')
+      writeCache('support-status', result, browserCacheTtl.support)
+      return result
+    }
+
     const syncProjectCards = async (): Promise<any> => {
       const result = await $api('/api/project-board/sync', {
         method: 'POST',
@@ -661,6 +684,8 @@ export const useApiStore = defineStore(
       getProjectBoard,
       getProjectBoardMeta,
       getHomepagePortfolio,
+      getSupportStatus,
+      connectSupportLine,
       syncProjectCards,
       updateProjectCard,
       updateProjectStage,

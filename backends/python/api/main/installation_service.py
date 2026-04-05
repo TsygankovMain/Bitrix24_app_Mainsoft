@@ -3,7 +3,12 @@ import json
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 
+from django.utils import timezone
+
+from config import config
+
 from .models import Bitrix24Account
+from .models import ApplicationInstallation
 from .configuration_service import ConfigurationService
 
 logger = logging.getLogger(__name__)
@@ -41,6 +46,9 @@ class InstallationService:
             # 2. Install Placements
             self._install_placements_sync()
             self.rollback_stack.append(('delete_placement', None))
+
+            # 3. Connect support line without blocking installation.
+            self.connect_support_line_sync()
 
             return config
 
@@ -223,7 +231,6 @@ class InstallationService:
 
     def _install_placements_sync(self) -> None:
         """Installs the Task Tab placement"""
-        from config import config # Import locally to avoid circulars if any
         base_url = config.app_base_url
         if not base_url.startswith("http"):
             base_url = f"https://{base_url}"
@@ -275,6 +282,77 @@ class InstallationService:
              logger.info("Bound SONET_GROUP_DETAIL_TAB")
         except Exception as e:
              logger.error(f"Failed to bind SONET_GROUP_DETAIL_TAB: {e}")
+
+    def _get_or_create_installation(self) -> ApplicationInstallation:
+        installation, _ = ApplicationInstallation.objects.get_or_create(
+            bitrix_24_account=self.bitrix24_account,
+            defaults={
+                "status": self.bitrix24_account.status,
+                "portal_license_family": "",
+                "application_token": self.bitrix24_account.application_token,
+            },
+        )
+        return installation
+
+    def get_support_line_status(self) -> Dict[str, Any]:
+        installation = self._get_or_create_installation()
+        return {
+            "configured": bool(config.support_openline_code),
+            "code": installation.support_line_code or (config.support_openline_code or ""),
+            "status": installation.support_line_status or "not_connected",
+            "dialog_id": installation.support_line_dialog_id or "",
+            "connected_at": installation.support_line_connected_at.isoformat() if installation.support_line_connected_at else None,
+            "error": installation.support_line_error or "",
+        }
+
+    def connect_support_line_sync(self, force: bool = False) -> Dict[str, Any]:
+        installation = self._get_or_create_installation()
+        support_line_code = (config.support_openline_code or "").strip()
+
+        if not support_line_code:
+            installation.support_line_code = ""
+            installation.support_line_status = "disabled"
+            installation.support_line_error = "SUPPORT_OPENLINE_CODE is not configured"
+            installation.save(update_fields=["support_line_code", "support_line_status", "support_line_error", "update_at_utc"])
+            return self.get_support_line_status()
+
+        if installation.support_line_status == "connected" and installation.support_line_dialog_id and installation.support_line_code == support_line_code and not force:
+            return self.get_support_line_status()
+
+        try:
+            response = self.client._bitrix_token.call_method("imopenlines.network.join", {
+                "CODE": support_line_code,
+            })
+            dialog_id = str(response.get("result", "")).strip()
+            if not dialog_id:
+                raise InstallationError("Support line connection returned empty dialog id")
+
+            installation.support_line_code = support_line_code
+            installation.support_line_dialog_id = dialog_id
+            installation.support_line_status = "connected"
+            installation.support_line_error = ""
+            installation.support_line_connected_at = timezone.now()
+            installation.save(update_fields=[
+                "support_line_code",
+                "support_line_dialog_id",
+                "support_line_status",
+                "support_line_error",
+                "support_line_connected_at",
+                "update_at_utc",
+            ])
+        except Exception as error:
+            installation.support_line_code = support_line_code
+            installation.support_line_status = "error"
+            installation.support_line_error = str(error)
+            installation.save(update_fields=[
+                "support_line_code",
+                "support_line_status",
+                "support_line_error",
+                "update_at_utc",
+            ])
+            logger.warning("Support line connection failed for %s: %s", self.bitrix24_account.domain_url, error)
+
+        return self.get_support_line_status()
 
     def _rollback_sync(self):
         """Rollbacks changes on failure"""

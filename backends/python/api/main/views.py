@@ -41,6 +41,8 @@ __all__ = [
     "get_filter_options",
     "get_filter_employees",
     "get_filter_projects",
+    "get_support_status",
+    "connect_support_line",
     "get_project_board",
     "get_project_board_meta",
     "sync_project_board",
@@ -182,6 +184,17 @@ def _load_request_json(request: AuthorizedRequest):
         return {}
 
 
+def _serialize_support_status(payload):
+    return {
+        "configured": bool(payload.get("configured")),
+        "code": payload.get("code") or "",
+        "status": payload.get("status") or "not_connected",
+        "dialog_id": payload.get("dialog_id") or "",
+        "connected_at": payload.get("connected_at"),
+        "error": payload.get("error") or "",
+    }
+
+
 @xframe_options_exempt
 @require_GET
 @log_errors("root")
@@ -282,7 +295,8 @@ def _install_post_logic(request: AuthorizedRequest):
     try:
         service = InstallationService(bitrix24_account.client, bitrix24_account)
         config = service.install_app_sync()
-        return JsonResponse({"message": "Installation successful", "config": config})
+        support = _serialize_support_status(service.get_support_line_status())
+        return JsonResponse({"message": "Installation successful", "config": config, "support": support})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=500)
     except Exception as e:
@@ -327,6 +341,25 @@ def get_filter_employees(request: AuthorizedRequest):
 @auth_required
 def get_filter_projects(request: AuthorizedRequest):
     return JsonResponse({"projects": _build_project_filter_options(request)})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_support_status")
+@auth_required
+def get_support_status(request: AuthorizedRequest):
+    service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(_serialize_support_status(service.get_support_line_status()))
+
+
+@xframe_options_exempt
+@require_POST
+@log_errors("connect_support_line")
+@auth_required
+def connect_support_line(request: AuthorizedRequest):
+    service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
+    payload = _serialize_support_status(service.connect_support_line_sync(force=True))
+    return JsonResponse(payload)
 
 
 @xframe_options_exempt
