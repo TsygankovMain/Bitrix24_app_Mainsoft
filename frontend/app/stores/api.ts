@@ -27,6 +27,90 @@ export const useApiStore = defineStore(
       }
     })
 
+    const cacheNamespace = `mainsoft-cache:v3:${apiUrl}`
+
+    const browserCacheTtl = {
+      filters: 1000 * 60 * 20,
+      board: 1000 * 60 * 2,
+      meta: 1000 * 60 * 15,
+      homepage: 1000 * 60 * 2,
+      config: 1000 * 60 * 5,
+      lists: 1000 * 60 * 15,
+    }
+
+    const canUseBrowserCache = () => import.meta.client && typeof window !== 'undefined'
+
+    const makeCacheKey = (scope: string) => `${cacheNamespace}:${scope}`
+
+    const readCache = <T>(scope: string): T | null => {
+      if (!canUseBrowserCache()) {
+        return null
+      }
+
+      try {
+        const raw = window.localStorage.getItem(makeCacheKey(scope))
+        if (!raw) {
+          return null
+        }
+
+        const parsed = JSON.parse(raw) as { expiresAt?: number, value?: T }
+        if (!parsed?.expiresAt || parsed.expiresAt < Date.now()) {
+          window.localStorage.removeItem(makeCacheKey(scope))
+          return null
+        }
+
+        return parsed.value ?? null
+      } catch {
+        return null
+      }
+    }
+
+    const writeCache = <T>(scope: string, value: T, ttlMs: number) => {
+      if (!canUseBrowserCache()) {
+        return
+      }
+
+      try {
+        window.localStorage.setItem(
+          makeCacheKey(scope),
+          JSON.stringify({
+            expiresAt: Date.now() + ttlMs,
+            value
+          })
+        )
+      } catch {
+        // Ignore storage quota and serialization errors.
+      }
+    }
+
+    const clearCache = (...scopes: string[]) => {
+      if (!canUseBrowserCache()) {
+        return
+      }
+
+      for (const scope of scopes) {
+        window.localStorage.removeItem(makeCacheKey(scope))
+      }
+    }
+
+    const withBrowserCache = async <T>(
+      scope: string,
+      ttlMs: number,
+      loader: () => Promise<T>,
+      forceRefresh = false
+    ): Promise<T> => {
+      if (!forceRefresh) {
+        const cached = readCache<T>(scope)
+        if (cached !== null) {
+          return cached
+        }
+      }
+
+      const value = await loader()
+      writeCache(scope, value, ttlMs)
+      return value
+    }
+
     // Health check
     const checkHealth = async (): Promise<{
       status: string
@@ -87,24 +171,28 @@ export const useApiStore = defineStore(
       }
     }
 
-    const getFilterEmployees = async (): Promise<any[]> => {
-      const response = await $api('/api/get-filter-employees', {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getFilterEmployees = async (forceRefresh = false): Promise<any[]> => {
+      return await withBrowserCache('filter-employees', browserCacheTtl.filters, async () => {
+        const response = await $api('/api/get-filter-employees', {
+          headers: {
+            Authorization: `Bearer ${tokenJWT.value}`
+          }
+        })
 
-      return response.employees || []
+        return response.employees || []
+      }, forceRefresh)
     }
 
-    const getFilterProjects = async (): Promise<any[]> => {
-      const response = await $api('/api/get-filter-projects', {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getFilterProjects = async (forceRefresh = false): Promise<any[]> => {
+      return await withBrowserCache('filter-projects', browserCacheTtl.filters, async () => {
+        const response = await $api('/api/get-filter-projects', {
+          headers: {
+            Authorization: `Bearer ${tokenJWT.value}`
+          }
+        })
 
-      return response.projects || []
+        return response.projects || []
+      }, forceRefresh)
     }
 
     const normalizeFilterValue = (value?: FilterValue | string[]): { ids: string[], mode: FilterMode } => {
@@ -236,12 +324,14 @@ export const useApiStore = defineStore(
     }
 
     const syncTimesheets = async (): Promise<{ status: string; count: number }> => {
-      return await $api('/api/sync-timesheets', {
+      const result = await $api('/api/sync-timesheets', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
       })
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
     }
 
     const getTimesheetsList = async (page: number = 1, limit: number = 50, createdFrom?: string, createdTo?: string): Promise<any> => {
@@ -258,35 +348,61 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getProjectBoard = async (): Promise<any> => {
-      return await $api('/api/project-board', {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getProjectBoard = async (forceRefresh = false): Promise<any> => {
+      return await withBrowserCache('project-board', browserCacheTtl.board, async () => {
+        return await $api('/api/project-board', {
+          headers: {
+            Authorization: `Bearer ${tokenJWT.value}`
+          }
+        })
+      }, forceRefresh)
+    }
+
+    const getProjectBoardMeta = async (forceRefresh = false): Promise<any> => {
+      return await withBrowserCache('project-board-meta', browserCacheTtl.meta, async () => {
+        return await $api('/api/project-board/meta', {
+          headers: {
+            Authorization: `Bearer ${tokenJWT.value}`
+          }
+        })
+      }, forceRefresh)
+    }
+
+    const getHomepagePortfolio = async (forceRefresh = false): Promise<any> => {
+      return await withBrowserCache('homepage-portfolio', browserCacheTtl.homepage, async () => {
+        return await $api('/api/homepage/portfolio', {
+          headers: {
+            Authorization: `Bearer ${tokenJWT.value}`
+          }
+        })
+      }, forceRefresh)
     }
 
     const syncProjectCards = async (): Promise<any> => {
-      return await $api('/api/project-board/sync', {
+      const result = await $api('/api/project-board/sync', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
       })
+      clearCache('project-board', 'project-board-meta', 'homepage-portfolio', 'filter-projects')
+      return result
     }
 
     const updateProjectCard = async (payload: Record<string, any>): Promise<any> => {
-      return await $api('/api/project-board/update', {
+      const result = await $api('/api/project-board/update', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         },
         body: JSON.stringify(payload)
       })
+      clearCache('project-board', 'project-board-meta', 'homepage-portfolio', 'filter-projects')
+      return result
     }
 
     const updateProjectStage = async (projectId: string, stage: string): Promise<any> => {
-      return await $api('/api/project-board/update-stage', {
+      const result = await $api('/api/project-board/update-stage', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
@@ -296,10 +412,12 @@ export const useApiStore = defineStore(
           stage
         })
       })
+      clearCache('project-board', 'homepage-portfolio')
+      return result
     }
 
     const archiveProject = async (projectId: string, isArchived: boolean): Promise<any> => {
-      return await $api('/api/project-board/archive', {
+      const result = await $api('/api/project-board/archive', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
@@ -309,25 +427,35 @@ export const useApiStore = defineStore(
           is_archived: isArchived
         })
       })
+      clearCache('project-board', 'project-board-meta', 'homepage-portfolio', 'filter-projects')
+      return result
     }
 
     const runProjectBoardDailyCheck = async (): Promise<any> => {
-      return await $api('/api/project-board/run-daily-check', {
+      const result = await $api('/api/project-board/run-daily-check', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
       })
+      clearCache('project-board', 'homepage-portfolio')
+      return result
     }
 
-    const getCompaniesForProjectBinding = async (): Promise<any[]> => {
-      const response = await $api('/api/project-board/companies', {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getCompaniesForProjectBinding = async (forceRefresh = false): Promise<any[]> => {
+      const meta = await getProjectBoardMeta(forceRefresh)
+      return meta.companies || []
+    }
 
-      return response.companies || []
+    const getBitrixInternalLists = async (iblockTypeId: string = 'lists', forceRefresh = false): Promise<any[]> => {
+      return await withBrowserCache(`bitrix-lists:${iblockTypeId}`, browserCacheTtl.lists, async () => {
+        const response = await $api(`/api/bitrix/internal-lists?iblockTypeId=${encodeURIComponent(iblockTypeId)}`, {
+          headers: {
+            Authorization: `Bearer ${tokenJWT.value}`
+          }
+        })
+        return response.lists || []
+      }, forceRefresh)
     }
 
     const exportRawData = async (dateFrom: string, dateTo: string, dateType: string, fields: string[]): Promise<Blob> => {
@@ -385,18 +513,22 @@ export const useApiStore = defineStore(
     }
 
     // Configuration
-    const getConfiguration = async (): Promise<any> => {
-      return await $api('/api/configuration', {
-        headers: { Authorization: `Bearer ${tokenJWT.value}` }
-      })
+    const getConfiguration = async (forceRefresh = false): Promise<any> => {
+      return await withBrowserCache('app-configuration', browserCacheTtl.config, async () => {
+        return await $api('/api/configuration', {
+          headers: { Authorization: `Bearer ${tokenJWT.value}` }
+        })
+      }, forceRefresh)
     }
 
     const saveConfiguration = async (config: any): Promise<any> => {
-      return await $api('/api/configuration/save', {
+      const result = await $api('/api/configuration/save', {
         method: 'POST',
         headers: { Authorization: `Bearer ${tokenJWT.value}` },
         body: JSON.stringify({ config })
       })
+      clearCache('app-configuration', 'project-board-meta', 'homepage-portfolio', 'bitrix-lists:lists', 'bitrix-lists:lists_socnet')
+      return result
     }
 
     const getSmartProcesses = async (): Promise<{ types: any[] }> => {
@@ -491,12 +623,15 @@ export const useApiStore = defineStore(
       syncTimesheets,
       getTimesheetsList,
       getProjectBoard,
+      getProjectBoardMeta,
+      getHomepagePortfolio,
       syncProjectCards,
       updateProjectCard,
       updateProjectStage,
       archiveProject,
       runProjectBoardDailyCheck,
       getCompaniesForProjectBinding,
+      getBitrixInternalLists,
       getFilterOptions,
       getFilterEmployees,
       getFilterProjects,

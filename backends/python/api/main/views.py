@@ -25,6 +25,7 @@ from .services import (
     ProjectSyncService,
     ProjectStageAutomationService,
     get_project_card_queryset,
+    invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
 
@@ -41,12 +42,15 @@ __all__ = [
     "get_filter_employees",
     "get_filter_projects",
     "get_project_board",
+    "get_project_board_meta",
     "sync_project_board",
     "update_project_board",
     "update_project_board_stage",
     "archive_project_board",
     "run_project_board_daily_check",
     "get_project_board_companies",
+    "get_homepage_portfolio",
+    "get_internal_lists",
     "report_employee_project",
     "report_project_employee",
     "report_daily_workload",
@@ -115,14 +119,14 @@ def _get_user_map(request: AuthorizedRequest, user_ids):
 
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config)
+    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
     return data_service.fetch_users(list(user_ids))
 
 
 def _get_data_service(request: AuthorizedRequest):
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     config = config_service.get_configuration_sync()
-    return BitrixDataService(request.bitrix24_account.client, config)
+    return BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
 
 
 def _build_employee_filter_options(request: AuthorizedRequest):
@@ -336,11 +340,29 @@ def get_project_board(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @require_GET
+@log_errors("get_project_board_meta")
+@auth_required
+def get_project_board_meta(request: AuthorizedRequest):
+    service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(service.get_meta())
+
+
+@xframe_options_exempt
+@require_GET
 @log_errors("get_project_board_companies")
 @auth_required
 def get_project_board_companies(request: AuthorizedRequest):
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
     return JsonResponse({"companies": service.get_companies()})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_homepage_portfolio")
+@auth_required
+def get_homepage_portfolio(request: AuthorizedRequest):
+    service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(service.get_homepage_snapshot())
 
 
 @xframe_options_exempt
@@ -462,7 +484,7 @@ def report_employee_project(request: AuthorizedRequest):
     # Config & Services
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config)
+    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
     
     user_map = data_service.fetch_users(list(user_ids))
     
@@ -498,7 +520,7 @@ def report_project_employee(request: AuthorizedRequest):
     
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config)
+    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
 
     user_map = data_service.fetch_users(list(user_ids))
     
@@ -535,7 +557,7 @@ def report_project_task_employee(request: AuthorizedRequest):
 
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config)
+    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
 
     user_map = data_service.fetch_users(list(user_ids))
 
@@ -640,6 +662,7 @@ def timesheet_sync(request: AuthorizedRequest):
     
     service = TimesheetSyncService(request.bitrix24_account.client, request.bitrix24_account, config)
     count = service.sync_all()
+    invalidate_project_runtime_caches(request.bitrix24_account)
     return JsonResponse({"status": "success", "count": count})
 
 
@@ -710,9 +733,22 @@ def save_configuration(request: AuthorizedRequest):
         body = json.loads(request.body)
         config = body.get('config', {})
         service.save_configuration_sync(config)
+        invalidate_project_runtime_caches(request.bitrix24_account)
         return JsonResponse({"status": "success"})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_internal_lists")
+@auth_required
+def get_internal_lists(request: AuthorizedRequest):
+    service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    iblock_type_id = request.GET.get('iblockTypeId', 'lists')
+    socnet_group_id = request.GET.get('socnetGroupId')
+    socnet_group_value = int(socnet_group_id) if socnet_group_id and str(socnet_group_id).isdigit() else None
+    return JsonResponse({"lists": service.get_internal_lists_sync(iblock_type_id=iblock_type_id, socnet_group_id=socnet_group_value)})
 
 
 @xframe_options_exempt
@@ -815,7 +851,7 @@ def report_daily_workload(request: AuthorizedRequest):
     # Config lookup for user fetching (not strictly needed since fetch_users uses generic user.get, but cleaner)
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config)
+    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
 
     user_map = data_service.fetch_users(list(user_ids))
     

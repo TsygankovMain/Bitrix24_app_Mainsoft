@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import { onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { SettingsIcon } from '@bitrix24/b24icons-vue/main'
 import { BugIcon } from '@bitrix24/b24icons-vue/outline'
 import { ActivityIcon } from '@bitrix24/b24icons-vue/main'
 import { CrmLettersIcon } from '@bitrix24/b24icons-vue/crm'
 import { BookOpen1Icon } from '@bitrix24/b24icons-vue/main'
+import PortfolioHomeDashboard from '~/components/home/PortfolioHomeDashboard.vue'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -27,9 +28,13 @@ const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
+const userSettings = useUserSettingsStore()
 // endregion ////
 
 const isInit = ref(false)
+const isPortfolioLoading = ref(false)
+const portfolioData = ref<any | null>(null)
+const homePageMode = ref<'legacy' | 'portfolio'>('legacy')
 
 
 // Tiles Configuration
@@ -107,6 +112,54 @@ const tiles = [
     }
 ]
 
+const homeModeLabel = computed(() =>
+  homePageMode.value === 'portfolio' ? 'Новый формат' : 'Старый формат'
+)
+
+function openReport(report: string) {
+  const reportRoutes: Record<string, string> = {
+    employee: '/reports/employee',
+    project: '/reports/project',
+    'project-task': '/reports/project-task',
+    daily: '/reports/daily',
+    'revenue-leakage': '/reports/revenue-leakage',
+    'time-discipline': '/reports/time-discipline',
+    'focus-analysis': '/reports/focus-analysis',
+  }
+
+  router.push(reportRoutes[report] || '/')
+}
+
+async function loadPortfolio(forceRefresh = false) {
+  isPortfolioLoading.value = true
+  try {
+    portfolioData.value = await apiStore.getHomepagePortfolio(forceRefresh)
+  } catch (error) {
+    processErrorGlobal(error)
+  } finally {
+    isPortfolioLoading.value = false
+  }
+}
+
+async function setHomePageMode(mode: 'legacy' | 'portfolio') {
+  if (homePageMode.value === mode) {
+    return
+  }
+
+  homePageMode.value = mode
+  userSettings.configSettings.homePageMode = mode
+
+  try {
+    await userSettings.saveSettings()
+  } catch (error) {
+    console.error('Failed to save home page mode:', error)
+  }
+
+  if (mode === 'portfolio' && !portfolioData.value) {
+    await loadPortfolio()
+  }
+}
+
 
 
 // region Lifecycle Hooks ////
@@ -157,8 +210,17 @@ onMounted(async () => {
         })
     }
 
+    homePageMode.value = userSettings.configSettings.homePageMode === 'portfolio' ? 'portfolio' : 'legacy'
     isInit.value = true
-    
+    if (homePageMode.value === 'portfolio') {
+      await loadPortfolio()
+    } else {
+      void apiStore.getHomepagePortfolio().then((result) => {
+        portfolioData.value = result
+      }).catch(() => {
+        // warm cache silently
+      })
+    }
 
   } catch (error) {
     processErrorGlobal(error)
@@ -168,52 +230,86 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col min-h-screen bg-white w-full justify-center items-center p-6">
-      <div v-if="isInit" class="w-full">
-          <!-- Header -->
-          <div class="mb-10 text-center">
-              <h1 class="text-3xl font-bold text-gray-900 mb-2">Выберите инструмент</h1>
-              <p class="text-gray-500">Отчеты, управление проектами и служебные разделы</p>
-              
+  <div class="min-h-screen w-full bg-[#f7f8fb] p-6">
+    <div v-if="isInit" class="mx-auto w-full max-w-[1440px]">
+      <div class="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h1 class="text-3xl font-bold text-gray-900">Рабочее пространство</h1>
+          <p class="mt-2 text-gray-500">
+            {{ homePageMode === 'portfolio' ? 'Новая главная сфокусирована на проектном портфеле и сигналах.' : 'Отчеты, управление проектами и служебные разделы.' }}
+          </p>
+        </div>
 
-          </div>
-
-          <!-- Grid -->
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              <div 
-                  v-for="(tile, index) in tiles" 
-                  :key="index"
-                  @click="tile.action"
-                  class="group relative p-8 rounded-xl border border-gray-100 hover:border-gray-200 bg-white shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer flex flex-col items-center text-center gap-4 h-full"
-              >
-                  <!-- Icon Box -->
-                  <div :class="['p-4 rounded-full transition-colors duration-300', tile.color]">
-                      <component :is="tile.icon" class="w-10 h-10" />
-                  </div>
-                  
-                  <!-- Content -->
-                  <div class="flex-grow flex flex-col justify-center">
-                      <h3 class="text-xl font-semibold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors">
-                          {{ tile.title }}
-                      </h3>
-                      <p class="text-sm text-gray-500">
-                          {{ tile.description }}
-                      </p>
-                  </div>
-
-                  <!-- Arrow (Visual Hint) -->
-                  <div class="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300">
-                      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                      </svg>
-                  </div>
-              </div>
-          </div>
+        <div class="rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+          <button
+            type="button"
+            :class="[
+              'rounded-xl px-4 py-2 text-sm font-medium transition',
+              homePageMode === 'legacy' ? 'bg-slate-900 text-white' : 'text-gray-500 hover:text-gray-900',
+            ]"
+            @click="setHomePageMode('legacy')"
+          >
+            Старый
+          </button>
+          <button
+            type="button"
+            :class="[
+              'rounded-xl px-4 py-2 text-sm font-medium transition',
+              homePageMode === 'portfolio' ? 'bg-lime-300 text-slate-900' : 'text-gray-500 hover:text-gray-900',
+            ]"
+            @click="setHomePageMode('portfolio')"
+          >
+            Новый
+          </button>
+        </div>
       </div>
 
+      <div v-if="homePageMode === 'portfolio'">
+        <PortfolioHomeDashboard
+          :data="portfolioData"
+          :loading="isPortfolioLoading"
+          @open-board="router.push('/projects')"
+          @open-report="openReport"
+        />
+      </div>
 
+      <div v-else>
+        <div class="mb-10 text-center">
+          <div class="inline-flex rounded-full bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 shadow-sm">
+            {{ homeModeLabel }}
+          </div>
+          <h2 class="mt-4 text-3xl font-bold text-gray-900">Выберите инструмент</h2>
+          <p class="mt-2 text-gray-500">Отчеты, управление проектами и служебные разделы</p>
+        </div>
 
+        <div class="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
+          <div
+            v-for="(tile, index) in tiles"
+            :key="index"
+            @click="tile.action"
+            class="group relative flex h-full cursor-pointer flex-col items-center gap-4 rounded-[24px] border border-gray-100 bg-white p-8 text-center shadow-sm transition-all duration-300 hover:border-gray-200 hover:shadow-lg"
+          >
+            <div :class="['rounded-full p-4 transition-colors duration-300', tile.color]">
+              <component :is="tile.icon" class="h-10 w-10" />
+            </div>
 
-        
+            <div class="flex flex-grow flex-col justify-center">
+              <h3 class="mb-2 text-xl font-semibold text-gray-900 transition-colors group-hover:text-blue-600">
+                {{ tile.title }}
+              </h3>
+              <p class="text-sm text-gray-500">
+                {{ tile.description }}
+              </p>
+            </div>
+
+            <div class="absolute right-4 top-4 text-gray-300 opacity-0 transition-opacity group-hover:opacity-100">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

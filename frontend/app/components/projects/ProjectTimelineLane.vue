@@ -83,6 +83,9 @@ function diffDays(start: Date, end: Date) {
           <div class="mt-1 text-xs text-gray-500">
             {{ card.company_name || 'Без компании' }} · {{ card.curator_name || 'Без куратора' }}
           </div>
+          <div class="mt-1 text-xs text-gray-400">
+            {{ card.our_legal_entity_name || 'Юрлицо не выбрано' }}
+          </div>
         </div>
         <span :class="['inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold', stageBadgeClass]">
           {{ card.stage }}

@@ -191,6 +191,8 @@ class ProjectCard(models.Model):
     project_end_date = models.DateField(null=True, blank=True)
     company_id = models.CharField(max_length=50, null=True, blank=True)
     company_name = models.CharField(max_length=255, null=True, blank=True)
+    our_legal_entity_id = models.CharField(max_length=50, null=True, blank=True)
+    our_legal_entity_name = models.CharField(max_length=255, null=True, blank=True)
     last_writeoff_at = models.DateTimeField(null=True, blank=True, db_index=True)
     last_writeoff_days = models.IntegerField(default=0)
     stage_updated_at = models.DateTimeField(auto_now=True)

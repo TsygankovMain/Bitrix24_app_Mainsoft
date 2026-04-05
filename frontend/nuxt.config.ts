@@ -50,7 +50,7 @@ export default defineNuxtConfig({
     ],
     build: {
       target: 'es2020', // Change target to support modern destructuring syntax
-      minify: false // Disable minification for debugging
+      minify: true
     },
     server: {
       proxy: {

@@ -16,6 +16,7 @@ const props = defineProps<{
   card: ProjectBoardCardRecord | null
   employees: SelectOption[]
   companies: SelectOption[]
+  legalEntities: SelectOption[]
   isSaving?: boolean
   isArchiving?: boolean
 }>()
@@ -48,7 +49,9 @@ watch(
       project_start_date: props.card.project_start_date || '',
       project_end_date: props.card.project_end_date || '',
       company_id: props.card.company_id || '',
-      company_name: props.card.company_name || ''
+      company_name: props.card.company_name || '',
+      our_legal_entity_id: props.card.our_legal_entity_id || '',
+      our_legal_entity_name: props.card.our_legal_entity_name || '',
     }
   },
   { immediate: true }
@@ -66,6 +69,11 @@ function handleCompanyChange() {
 function handleCuratorChange() {
   const selected = props.employees.find(item => String(item.id) === String(draft.value.curator_user_id))
   draft.value.curator_name = selected ? String(selected.name) : ''
+}
+
+function handleLegalEntityChange() {
+  const selected = props.legalEntities.find(item => String(item.id) === String(draft.value.our_legal_entity_id))
+  draft.value.our_legal_entity_name = selected ? String(selected.name) : ''
 }
 
 function handleSave() {
@@ -190,6 +198,24 @@ function handleSave() {
                 :value="String(company.id)"
               >
                 {{ company.name }}
+              </option>
+            </select>
+          </label>
+
+          <label class="grid gap-1 text-sm">
+            <span class="font-medium text-gray-700">Наше юрлицо</span>
+            <select
+              v-model="draft.our_legal_entity_id"
+              class="rounded-xl border border-gray-200 px-3 py-2 outline-none transition focus:border-lime-500"
+              @change="handleLegalEntityChange"
+            >
+              <option value="">Не выбрано</option>
+              <option
+                v-for="entity in legalEntities"
+                :key="entity.id"
+                :value="String(entity.id)"
+              >
+                {{ entity.name }}
               </option>
             </select>
           </label>

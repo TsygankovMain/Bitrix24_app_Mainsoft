@@ -33,12 +33,14 @@ const isArchiving = ref(false)
 const boardData = ref<ProjectBoardResponse | null>(null)
 const employees = ref<Array<{ id: string | number; name: string | number }>>([])
 const companies = ref<Array<{ id: string | number; name: string | number }>>([])
+const legalEntities = ref<Array<{ id: string | number; name: string | number }>>([])
 
 const activeView = ref<'board' | 'timeline' | 'archive'>('board')
 const searchQuery = ref('')
 const supportFilter = ref<'all' | 'support' | 'delivery'>('all')
 const curatorFilter = ref('')
 const companyFilter = ref('')
+const legalEntityFilter = ref('')
 
 const selectedCard = ref<ProjectBoardCardRecord | null>(null)
 const isDrawerOpen = ref(false)
@@ -83,6 +85,10 @@ const filteredCards = computed(() => {
       return false
     }
 
+    if (legalEntityFilter.value && String(card.our_legal_entity_id || '') !== legalEntityFilter.value) {
+      return false
+    }
+
     if (!query) {
       return true
     }
@@ -92,6 +98,7 @@ const filteredCards = computed(() => {
       card.project_id,
       card.curator_name,
       card.company_name,
+      card.our_legal_entity_name,
       card.stage
     ].some(value => String(value || '').toLowerCase().includes(query))
   })
@@ -223,29 +230,29 @@ function applyUpdatedCard(updatedCard: ProjectBoardCardRecord) {
   }
 }
 
-async function loadBoard() {
-  boardData.value = await apiStore.getProjectBoard()
+async function loadBoard(forceRefresh = false) {
+  boardData.value = await apiStore.getProjectBoard(forceRefresh)
 
   if (boardData.value?.warning) {
     showStatus('warning', boardData.value.warning)
   }
 }
 
-async function loadMeta() {
-  const [loadedEmployees, loadedCompanies] = await Promise.all([
-    apiStore.getFilterEmployees(),
-    apiStore.getCompaniesForProjectBinding()
-  ])
-
-  employees.value = loadedEmployees
-  companies.value = loadedCompanies
+async function loadMeta(forceRefresh = false) {
+  const meta = await apiStore.getProjectBoardMeta(forceRefresh)
+  employees.value = meta.employees || []
+  companies.value = meta.companies || []
+  legalEntities.value = meta.legal_entities || []
 }
 
 async function syncBoard(showToast = true) {
   isSyncing.value = true
   try {
     const result = await apiStore.syncProjectCards()
-    await loadBoard()
+    await Promise.all([
+      loadMeta(true),
+      loadBoard(true)
+    ])
 
     if (showToast) {
       const baseMessage = `Синхронизировано ${result.synced || 0} проектов. Новых: ${result.created || 0}, обновлено: ${result.updated || 0}.`
@@ -257,7 +264,7 @@ async function syncBoard(showToast = true) {
     }
   } catch (error) {
     try {
-      await loadBoard()
+      await loadBoard(true)
     } catch {
       // keep original sync error for global handler
     }
@@ -272,7 +279,7 @@ async function runDailyCheck() {
   isSyncing.value = true
   try {
     const result = await apiStore.runProjectBoardDailyCheck()
-    await loadBoard()
+    await loadBoard(true)
     showStatus(
       'success',
       `Проверено ${result.checked || 0} проектов. В 30 дней: ${result.moved_to_30_days || 0}, в 90 дней: ${result.moved_to_90_days || 0}, возвращено в работу: ${result.returned_to_work || 0}.`
@@ -372,8 +379,10 @@ onMounted(async () => {
     await $b24.parent.setTitle('Управление проектами')
     isInit.value = true
 
-    await loadMeta()
-    await loadBoard()
+    await Promise.all([
+      loadMeta(),
+      loadBoard()
+    ])
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -461,13 +470,13 @@ onMounted(async () => {
             </button>
           </div>
 
-          <div class="grid gap-3 xl:grid-cols-[1.4fr_repeat(3,minmax(0,1fr))]">
+          <div class="grid gap-3 xl:grid-cols-[1.2fr_repeat(4,minmax(0,1fr))]">
             <label class="grid gap-1 text-sm">
               <span class="font-medium text-gray-700">Поиск</span>
               <input
                 v-model="searchQuery"
                 type="text"
-                placeholder="Название проекта, компания, куратор"
+                placeholder="Название проекта, компания, юрлицо, куратор"
                 class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
               >
             </label>
@@ -506,6 +515,19 @@ onMounted(async () => {
                 <option value="">Все</option>
                 <option v-for="company in companies" :key="company.id" :value="String(company.id)">
                   {{ company.name }}
+                </option>
+              </select>
+            </label>
+
+            <label class="grid gap-1 text-sm">
+              <span class="font-medium text-gray-700">Наше юрлицо</span>
+              <select
+                v-model="legalEntityFilter"
+                class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
+              >
+                <option value="">Все</option>
+                <option v-for="entity in legalEntities" :key="entity.id" :value="String(entity.id)">
+                  {{ entity.name }}
                 </option>
               </select>
             </label>
@@ -574,6 +596,9 @@ onMounted(async () => {
               <div class="mt-1 text-xs text-gray-500">
                 {{ card.company_name || 'Без компании' }} · {{ card.curator_name || 'Без куратора' }}
               </div>
+              <div class="mt-1 text-xs text-gray-400">
+                {{ card.our_legal_entity_name || 'Юрлицо не выбрано' }}
+              </div>
             </div>
             <span class="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
               Архив
@@ -598,6 +623,7 @@ onMounted(async () => {
       :card="selectedCard"
       :employees="employees"
       :companies="companies"
+      :legal-entities="legalEntities"
       :is-saving="isSaving"
       :is-archiving="isArchiving"
       @save="handleSaveProject"

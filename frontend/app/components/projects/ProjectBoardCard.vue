@@ -94,6 +94,10 @@ function handleDragStart(event: DragEvent) {
         <span class="truncate font-medium text-gray-800">{{ card.company_name || 'Не выбрана' }}</span>
       </div>
       <div class="flex items-center justify-between gap-3">
+        <span class="text-gray-400">Наше юрлицо</span>
+        <span class="truncate font-medium text-gray-800">{{ card.our_legal_entity_name || 'Не выбрано' }}</span>
+      </div>
+      <div class="flex items-center justify-between gap-3">
         <span class="text-gray-400">Сроки</span>
         <span class="text-right font-medium text-gray-800">
           {{ card.project_start_date ? formatProjectDate(card.project_start_date) : '—' }}

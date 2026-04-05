@@ -33,6 +33,7 @@ class ConfigurationService:
             if 'timestamp_config' in result and result['timestamp_config']:
                 try:
                     config = json.loads(result['timestamp_config'])
+                    config = self._merge_with_defaults(config)
                     self._config_cache = config
                     # logger.info(f"Loaded config: {config}")
                     return config
@@ -51,12 +52,25 @@ class ConfigurationService:
         """
         Synchronously save configuration to app.option.
         """
+        config = self._merge_with_defaults(config)
         json_config = json.dumps(config, ensure_ascii=False)
         self.client._bitrix_token.call_method('app.option.set', {
             'options': {'timestamp_config': json_config}
         })
         self._config_cache = config
         logger.info("Configuration saved successfully")
+
+    def _merge_with_defaults(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        defaults = self._get_default_configuration()
+        merged = dict(defaults)
+        merged.update(config or {})
+
+        directory_defaults = defaults.get('legal_entity_directory', {})
+        merged_directory = dict(directory_defaults)
+        merged_directory.update((config or {}).get('legal_entity_directory') or {})
+        merged['legal_entity_directory'] = merged_directory
+
+        return merged
 
     def _get_default_configuration(self) -> Dict[str, Any]:
         """
@@ -65,8 +79,56 @@ class ConfigurationService:
         return {
             'sp_entity_type_id': 0, # 0 means not configured
             'fields_mapping': {},
-            'is_configured': False
+            'is_configured': False,
+            'hourly_rate': 0,
+            'legal_entity_directory': {
+                'iblock_type_id': 'lists',
+                'iblock_id': 0,
+                'iblock_code': '',
+                'socnet_group_id': 0,
+            },
         }
+
+    def get_internal_lists_sync(self, iblock_type_id: str = 'lists', socnet_group_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Returns available Bitrix24 universal lists for configuring internal directories.
+        Uses lists.get as recommended by Bitrix24 REST docs.
+        """
+        start = 0
+        items: List[Dict[str, Any]] = []
+
+        while True:
+            params: Dict[str, Any] = {
+                'IBLOCK_TYPE_ID': iblock_type_id,
+                'IBLOCK_ORDER': {
+                    'SORT': 'asc',
+                    'NAME': 'asc',
+                },
+                'start': start,
+            }
+            if iblock_type_id == 'lists_socnet' and socnet_group_id:
+                params['SOCNET_GROUP_ID'] = int(socnet_group_id)
+
+            response = self.client._bitrix_token.call_method('lists.get', params)
+            result = response.get('result', [])
+            total = int(response.get('total') or len(result) or 0)
+
+            if not isinstance(result, list) or not result:
+                break
+
+            for row in result:
+                items.append({
+                    'id': int(row.get('ID')) if str(row.get('ID') or '').isdigit() else row.get('ID'),
+                    'name': row.get('NAME') or row.get('TITLE') or f"Список {row.get('ID')}",
+                    'code': row.get('CODE') or '',
+                    'iblock_type_id': iblock_type_id,
+                })
+
+            start += 50
+            if start >= total:
+                break
+
+        return items
 
     def get_smart_processes_sync(self) -> List[Dict[str, Any]]:
         """

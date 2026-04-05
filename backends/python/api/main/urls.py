@@ -18,7 +18,9 @@ urlpatterns = [
     path('api/get-filter-employees', views.get_filter_employees, name='get_filter_employees'),
     path('api/get-filter-projects', views.get_filter_projects, name='get_filter_projects'),
     path('api/project-board', views.get_project_board, name='get_project_board'),
+    path('api/project-board/meta', views.get_project_board_meta, name='get_project_board_meta'),
     path('api/project-board/companies', views.get_project_board_companies, name='get_project_board_companies'),
+    path('api/homepage/portfolio', views.get_homepage_portfolio, name='get_homepage_portfolio'),
     path('api/project-board/sync', views.sync_project_board, name='sync_project_board'),
     path('api/project-board/update', views.update_project_board, name='update_project_board'),
     path('api/project-board/update-stage', views.update_project_board_stage, name='update_project_board_stage'),
@@ -40,6 +42,7 @@ urlpatterns = [
     # Configuration
     path('api/configuration', views.get_configuration, name='get_configuration'),
     path('api/configuration/save', views.save_configuration, name='save_configuration'),
+    path('api/bitrix/internal-lists', views.get_internal_lists, name='get_internal_lists'),
     path('api/smart-processes', views.get_smart_processes, name='get_smart_processes'),
     path('api/smart-processes/fields', views.get_sp_fields, name='get_sp_fields'),
     path('api/smart-processes/create', views.create_smart_process, name='create_smart_process'),

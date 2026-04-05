@@ -14,6 +14,7 @@ export const useUserSettingsStore = defineStore(
       someValue_2: string
       isSomeOption: boolean
       clickableLabelsEnabled: boolean
+      homePageMode: 'legacy' | 'portfolio'
     }
     type CombinedConfigTyp = ConfigType & { [key: string]: any }
 
@@ -21,7 +22,8 @@ export const useUserSettingsStore = defineStore(
       someValue_1: 30,
       someValue_2: 'some text',
       isSomeOption: true,
-      clickableLabelsEnabled: false
+      clickableLabelsEnabled: false,
+      homePageMode: 'legacy'
     })
     // endregion ////
 
