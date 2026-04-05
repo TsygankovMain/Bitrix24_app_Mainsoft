@@ -50,6 +50,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'open-card', card: ProjectBoardCardRecord): void
   (event: 'open-board'): void
+  (event: 'open-project', card: ProjectBoardCardRecord): void
   (event: 'open-report', payload: string | ReportRoutePayload): void
 }>()
 
@@ -377,12 +378,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
             <B24Button
               label="Открыть проект"
               color="default"
-              @click="emit('open-report', {
-                report: 'project-task',
-                projectId: selectedProject.project_id,
-                projectName: selectedProject.project_name,
-                autogenerate: true,
-              })"
+              @click="emit('open-project', selectedProject)"
             />
           </div>
         </template>

@@ -24,15 +24,15 @@ const totalMoney = computed(() => props.node.cumulativeConsidered * props.rate)
     <div>
         <!-- ROW -->
         <div 
-            class="flex items-center gap-3 p-3 border-b border-slate-100 transition-colors group"
-            :class="level === 0 ? 'bg-slate-50/50' : 'bg-white hover:bg-slate-50'"
+            class="group flex items-center gap-3 border-b border-slate-200/80 p-3 transition-colors"
+            :class="level === 0 ? 'bg-slate-50/70' : 'bg-white hover:bg-lime-50/40'"
             :style="indentStyle"
         >
             <div class="flex-1 min-w-0 flex items-center gap-2">
                 <button 
                     v-if="hasChildren" 
                     @click="isExpanded = !isExpanded" 
-                    class="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-colors"
+                    class="flex h-7 w-7 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
                 >
                      <span class="material-symbols-outlined">{{ isExpanded ? "expand_more" : "chevron_right" }}</span>
                 </button>
@@ -41,7 +41,7 @@ const totalMoney = computed(() => props.node.cumulativeConsidered * props.rate)
                 <div class="flex flex-col min-w-0">
                     <div class="flex items-center gap-2">
                         <span class="font-semibold text-sm text-slate-800 truncate" :title="node.taskTitle">{{ node.taskTitle }}</span>
-                         <a :href="`/company/personal/user/0/tasks/task/view/${node.taskId}/`" target="_blank" class="text-slate-300 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                         <a :href="`/company/personal/user/0/tasks/task/view/${node.taskId}/`" target="_blank" class="text-slate-300 opacity-0 transition-opacity hover:text-lime-700 group-hover:opacity-100">
                             <span class="material-symbols-outlined text-xs">open_in_new</span>
                         </a>
                     </div>
@@ -57,12 +57,12 @@ const totalMoney = computed(() => props.node.cumulativeConsidered * props.rate)
                 </div>
 
                 <div class="w-20">
-                    <div class="text-xs text-emerald-600 font-medium">Учтено</div>
+                    <div class="text-xs font-medium text-teal-700">Учтено</div>
                     <div class="text-sm font-bold text-slate-700">{{ node.cumulativeConsidered.toFixed(2) }} ч</div>
                 </div>
                 
-                <div class="w-20">
-                    <div class="text-xs text-rose-600 font-medium opacity-80">Не учтено</div>
+                <div class="w-24">
+                    <div class="text-xs font-medium text-rose-600/90">Не учтено</div>
                     <div class="text-sm font-medium text-slate-500">{{ node.cumulativeUnconsidered.toFixed(2) }} ч</div>
                 </div>
             </div>

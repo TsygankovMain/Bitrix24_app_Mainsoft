@@ -441,132 +441,138 @@ async function handleTransferToReport() {
 </script>
 
 <template>
-<div class="flex flex-col h-full bg-slate-50 min-h-screen text-slate-800">
-    
-    <!-- HEADER -->
-    <div class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
-        <div class="flex items-center gap-3">
-             <div class="bg-blue-600 p-2 rounded-lg text-white">
-                <span class="material-symbols-outlined text-xl">schedule</span>
-            </div>
-            <div>
-                <h1 class="text-xl font-bold text-slate-900">Отражение часов</h1>
-                <p class="text-xs text-slate-500">Учет трудозатрат по иерархии задач</p>
-            </div>
-        </div>
-        
-        <div class="flex items-center gap-3">
-            <button @click="handleExportExcel" class="px-4 py-2 bg-white border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 text-sm font-medium flex items-center gap-2">
-                <span class="material-symbols-outlined">download</span>
-                <span>Excel (CSV)</span>
-            </button>
-            <button @click="isReportModalOpen = true" class="px-4 py-2 bg-blue-600 rounded-lg text-white hover:bg-blue-700 text-sm font-medium flex items-center gap-2 shadow-sm shadow-blue-200">
-                <span class="material-symbols-outlined">send</span>
-                <span>В отчет Битрикс</span>
-            </button>
-        </div>
-    </div>
+<div class="ms-page-shell min-h-screen">
+    <div class="w-full space-y-5">
+        <section class="ms-surface px-5 py-5">
+            <div class="ms-page-header-row">
+                <div class="flex items-center gap-4">
+                    <div class="rounded-2xl bg-lime-100 p-3 text-lime-700">
+                        <span class="material-symbols-outlined text-[26px]">schedule</span>
+                    </div>
+                    <div>
+                        <div class="ms-eyebrow">Task Workspace</div>
+                        <h1 class="mt-2 text-2xl font-semibold text-slate-900">Отражение часов</h1>
+                        <p class="mt-1 text-sm text-slate-500">Учет трудозатрат по иерархии задач без выхода из карточки.</p>
+                    </div>
+                </div>
 
-    <!-- CONTENT -->
-    <div class="flex-grow p-6 overflow-auto">
-        
-        <!-- LOADING -->
-        <div v-if="isLoading" class="flex flex-col items-center justify-center h-64 text-slate-400">
-             <span class="material-symbols-outlined text-4xl animate-spin text-blue-500 mb-4">progress_activity</span>
-             <p>Загрузка данных...</p>
-        </div>
-
-        <!-- ERROR -->
-        <div v-if="initError || error" class="flex justify-center">
-            <div class="bg-red-50 border border-red-200 p-6 rounded-xl max-w-lg text-center">
-                <span class="material-symbols-outlined text-4xl text-red-500 mb-2">error</span>
-                <h3 class="text-lg font-bold text-red-700 mb-2">Ошибка</h3>
-                <p class="text-red-600">{{ initError || error }}</p>
+                <div class="flex flex-wrap gap-2">
+                    <button @click="handleExportExcel" class="task-secondary-btn">
+                        <span class="material-symbols-outlined text-lg">download</span>
+                        <span>Excel (CSV)</span>
+                    </button>
+                    <button @click="isReportModalOpen = true" class="task-primary-btn">
+                        <span class="material-symbols-outlined text-lg">send</span>
+                        <span>В отчет Bitrix24</span>
+                    </button>
+                </div>
             </div>
-        </div>
+        </section>
 
-        <!-- TREE -->
-        <div v-if="!isLoading && !initError && !error" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div class="bg-slate-50 border-b border-slate-200 px-4 py-3 text-xs font-semibold text-slate-500 uppercase flex">
-                <div class="flex-1">Задача / Запись</div>
-                <div class="w-24 text-right">Сумма</div>
+        <section v-if="isLoading" class="ms-surface px-6 py-14 text-center">
+            <div class="mx-auto flex max-w-sm flex-col items-center gap-3 text-slate-500">
+                <span class="material-symbols-outlined text-4xl animate-spin text-lime-600">progress_activity</span>
+                <div class="text-base font-medium text-slate-700">Загрузка данных задачи</div>
+                <div class="text-sm text-slate-500">Получаем дерево подзадач и записи времени.</div>
+            </div>
+        </section>
+
+        <section v-else-if="initError || error" class="ms-surface px-6 py-10">
+            <div class="mx-auto max-w-xl text-center">
+                <div class="mx-auto mb-4 inline-flex rounded-2xl bg-rose-100 p-3 text-rose-600">
+                    <span class="material-symbols-outlined text-3xl">error</span>
+                </div>
+                <h2 class="text-xl font-semibold text-slate-900">Не удалось открыть вкладку задачи</h2>
+                <p class="mt-3 text-sm leading-6 text-slate-600">{{ initError || error }}</p>
+            </div>
+        </section>
+
+        <section v-else class="ms-surface overflow-hidden">
+            <div class="flex items-center gap-3 border-b border-slate-200 bg-slate-50/80 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                <div class="flex-1 min-w-0">Задача / Запись</div>
+                <div class="hidden w-24 text-right md:block">Сумма</div>
                 <div class="w-20 text-right">Учтено</div>
-                <div class="w-20 text-right">Не учтено</div>
+                <div class="w-24 text-right">Не учтено</div>
             </div>
-            
-            <TaskNode 
-                v-for="node in taskTree" 
-                :key="node.taskId" 
-                :node="node" 
+
+            <TaskNode
+                v-for="node in taskTree"
+                :key="node.taskId"
+                :node="node"
                 :rate="clientHourRate"
                 @edit="editingItem = $event"
             />
-        </div>
+        </section>
     </div>
 
-    <!-- MODAL EDIT -->
-
-    <!-- MODAL EDIT -->
     <Teleport to="body">
-    <div v-if="editingItem" class="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-        <div class="modal bg-white shadow-xl animate-fade-in">
-            <div class="modal__header bg-slate-50/50 flex justify-between items-center border-b border-slate-100">
-                <h3 class="font-bold text-slate-800">Редактирование</h3>
-                <button @click="editingItem = null" class="text-slate-400 hover:text-slate-600"><span class="material-symbols-outlined">close</span></button>
+    <div v-if="editingItem" class="ms-modal-overlay" @click.self="editingItem = null">
+        <div class="ms-modal-panel flex w-full max-w-2xl flex-col">
+            <div class="ms-modal-header">
+                <div>
+                    <div class="text-sm font-semibold text-slate-900">Редактирование записи</div>
+                    <div class="mt-1 text-xs text-slate-500">Измените сотрудника, часы, дату и описание.</div>
+                </div>
+                <button @click="editingItem = null" class="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
             </div>
-            <div class="modal__body space-y-4">
+
+            <div class="ms-modal-body space-y-4 overflow-y-auto">
                  <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Сотрудник</label>
-                    <select v-model="editingItem.employeeId" class="w-full border-slate-300 rounded-lg p-2 border text-sm">
+                    <label class="task-field-label">Сотрудник</label>
+                    <select v-model="editingItem.employeeId" class="task-field-input w-full">
                         <option v-for="u in usersMap" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
                     </select>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid gap-4 md:grid-cols-2">
                      <div>
-                        <label class="block text-sm font-medium text-slate-700 mb-1">Часы</label>
-                        <input type="number" v-model="editingItem.hours" class="w-full border-slate-300 rounded-lg p-2 border text-sm" step="0.5">
+                        <label class="task-field-label">Часы</label>
+                        <input type="number" v-model="editingItem.hours" class="task-field-input w-full" step="0.5">
                     </div>
-                    <div class="flex items-end pb-2">
-                        <label class="flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" v-model="editingItem.isConsidered" class="w-4 h-4 text-blue-600 rounded">
-                            <span class="text-sm font-medium">Учитывать?</span>
-                        </label>
-                    </div>
+                    <label class="task-toggle">
+                        <span class="text-sm font-medium text-slate-700">Учитывать в аналитике</span>
+                        <input type="checkbox" v-model="editingItem.isConsidered" class="h-4 w-4 rounded border-slate-300 text-lime-600">
+                    </label>
                 </div>
                  <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Дата</label>
-                    <input type="date" v-model="editingItem.date" class="w-full border-slate-300 rounded-lg p-2 border text-sm">
+                    <label class="task-field-label">Дата</label>
+                    <input type="date" v-model="editingItem.date" class="task-field-input w-full">
                 </div>
                  <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Описание</label>
-                    <textarea v-model="editingItem.description" class="w-full border-slate-300 rounded-lg p-2 border text-sm h-24"></textarea>
+                    <label class="task-field-label">Описание</label>
+                    <textarea v-model="editingItem.description" class="task-field-input min-h-28 w-full"></textarea>
                 </div>
             </div>
-            <div class="modal__footer border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
-                <button @click="editingItem = null" class="px-4 py-2 border rounded-lg text-slate-600 hover:bg-white bg-white">Отмена</button>
-                <button @click="handleSaveItem(editingItem)" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Сохранить</button>
+
+            <div class="ms-modal-footer flex flex-wrap justify-end gap-2">
+                <button @click="editingItem = null" class="task-secondary-btn">Отмена</button>
+                <button @click="handleSaveItem(editingItem)" class="task-primary-btn">Сохранить</button>
             </div>
         </div>
     </div>
     </Teleport>
-    
-     <!-- MODAL REPORT -->
+
     <Teleport to="body">
-        <div v-if="isReportModalOpen" class="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-        <div class="modal bg-white shadow-xl animate-fade-in text-center">
-            <div class="modal__body">
-                <span class="material-symbols-outlined text-4xl text-blue-500 mb-4">cloud_upload</span>
-                <h3 class="font-bold text-lg mb-2">Отправить в отчет?</h3>
-                <p class="text-sm text-slate-500 mb-6">Все "Учтенные" часы будут добавлены в задачи Битрикс24 как отработанное время.</p>
+        <div v-if="isReportModalOpen" class="ms-modal-overlay" @click.self="isReportModalOpen = false">
+            <div class="ms-modal-panel flex w-full max-w-lg flex-col text-center">
+                <div class="ms-modal-body px-6 py-8">
+                    <div class="mx-auto mb-4 inline-flex rounded-2xl bg-lime-100 p-3 text-lime-700">
+                        <span class="material-symbols-outlined text-3xl">cloud_upload</span>
+                    </div>
+                    <h3 class="text-xl font-semibold text-slate-900">Отправить часы в отчет Bitrix24?</h3>
+                    <p class="mt-3 text-sm leading-6 text-slate-500">
+                        Все учтенные часы будут добавлены в задачи Bitrix24 как отработанное время.
+                    </p>
+                </div>
+                <div class="ms-modal-footer flex flex-wrap justify-center gap-2">
+                     <button @click="isReportModalOpen = false" class="task-secondary-btn">Отмена</button>
+                     <button @click="handleTransferToReport" :disabled="isReporting" class="task-primary-btn">
+                        <span v-if="isReporting" class="material-symbols-outlined animate-spin text-sm">progress_activity</span>
+                        <span>{{ isReporting ? 'Отправка...' : 'Подтвердить' }}</span>
+                     </button>
+                </div>
             </div>
-            <div class="modal__footer flex justify-center gap-3">
-                 <button @click="isReportModalOpen = false" class="px-4 py-2 border rounded-lg text-slate-600 hover:bg-slate-50">Отмена</button>
-                 <button @click="handleTransferToReport" :disabled="isReporting" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2">
-                    <span v-if="isReporting" class="material-symbols-outlined animate-spin text-sm">progress_activity</span>
-                    <span>{{ isReporting ? 'Отправка...' : 'Подтвердить' }}</span>
-                 </button>
-            </div>
-        </div>
         </div>
     </Teleport>
 
@@ -574,41 +580,79 @@ async function handleTransferToReport() {
 </template>
 
 <style scoped>
-/* Modal Adaptive Styles */
-.modal {
-  width: min(92vw, 720px);
-  max-height: 85vh;
+.task-primary-btn,
+.task-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border-radius: 14px;
-  overflow: hidden;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: 180ms ease;
+}
+
+.task-primary-btn {
+  background: #b7ea2c;
+  color: #0f172a;
+  box-shadow: 0 8px 20px rgba(183, 234, 44, 0.28);
+}
+
+.task-primary-btn:hover:not(:disabled) {
+  background: #c7f04f;
+}
+
+.task-primary-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.task-secondary-btn {
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  background: rgba(255, 255, 255, 0.96);
+  color: #334155;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+.task-secondary-btn:hover {
+  border-color: rgba(148, 163, 184, 0.95);
+  color: #0f172a;
+}
+
+.task-field-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.task-field-input {
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #0f172a;
+  outline: none;
+  transition: 180ms ease;
+}
+
+.task-field-input:focus {
+  border-color: #84cc16;
+  box-shadow: 0 0 0 4px rgba(190, 242, 100, 0.25);
+}
+
+.task-toggle {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  align-self: end;
+  border: 1px solid rgba(203, 213, 225, 0.95);
+  border-radius: 16px;
+  background: #f8fafc;
+  padding: 12px 14px;
 }
-
-.modal__header,
-.modal__footer {
-  padding: 16px 20px;
-}
-
-.modal__body {
-  padding: 16px 20px;
-  overflow-y: auto;
-}
-
-@media (max-width: 768px) {
-  .modal {
-    width: 94vw;
-    max-height: 90vh;
-    border-radius: 12px;
-  }
-
-  .modal__header,
-  .modal__body,
-  .modal__footer {
-    padding: 12px 14px;
-  }
-}
-
-/* Basic Animations */
-.animate-fade-in { animation: fadeIn 0.2s ease-out; }
-@keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
 </style>

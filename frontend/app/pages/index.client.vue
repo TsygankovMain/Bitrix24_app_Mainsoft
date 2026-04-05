@@ -10,6 +10,7 @@ import PortfolioHomeDashboard from '~/components/home/PortfolioHomeDashboard.vue
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import { buildReportRouteLocation, type ReportRouteName, type ReportRoutePayload } from '~/utils/reportNavigation'
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
+import { openProjectGroup } from '~/utils/openProjectGroup'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -260,18 +261,13 @@ async function handleHomeProjectArchive(nextArchivedState: boolean) {
   }
 }
 
-function openProjectTaskReport(card?: ProjectBoardCardRecord | null) {
+function openProject(card?: ProjectBoardCardRecord | null) {
   const targetCard = card || selectedHomeProject.value
   if (!targetCard) {
     return
   }
 
-  router.push(buildReportRouteLocation({
-    report: 'project-task',
-    projectId: targetCard.project_id,
-    projectName: targetCard.project_name,
-    autogenerate: true,
-  }))
+  openProjectGroup(targetCard.project_id)
 }
 
 
@@ -403,6 +399,7 @@ onMounted(async () => {
           :loading="isPortfolioLoading"
           @open-card="openHomeProjectCard"
           @open-board="router.push('/projects')"
+          @open-project="openProject"
           @open-report="openReport"
         />
       </div>
@@ -455,7 +452,7 @@ onMounted(async () => {
         :is-archiving="isHomeProjectArchiving"
         @save="handleHomeProjectSave"
         @archive="handleHomeProjectArchive"
-        @open-report="openProjectTaskReport"
+        @open-project="openProject"
       />
     </div>
   </div>

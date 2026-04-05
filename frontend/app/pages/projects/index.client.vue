@@ -7,7 +7,7 @@ import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import ProjectTimelineLane from '~/components/projects/ProjectTimelineLane.vue'
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption, ProjectBoardResponse } from '~/utils/projectBoard'
 import { formatProjectDate, getTimelineAnchor, parseProjectDateValue } from '~/utils/projectBoard'
-import { buildReportRouteLocation } from '~/utils/reportNavigation'
+import { openProjectGroup } from '~/utils/openProjectGroup'
 
 const router = useRouter()
 const { locales: localesI18n, setLocale } = useI18n()
@@ -459,18 +459,13 @@ function closeDrawer() {
   isDrawerOpen.value = false
 }
 
-function openProjectReport(card?: ProjectBoardCardRecord | null) {
+function openProject(card?: ProjectBoardCardRecord | null) {
   const targetCard = card || selectedCard.value
   if (!targetCard) {
     return
   }
 
-  router.push(buildReportRouteLocation({
-    report: 'project-task',
-    projectId: targetCard.project_id,
-    projectName: targetCard.project_name,
-    autogenerate: true,
-  }))
+  openProjectGroup(targetCard.project_id)
 }
 
 function handleDragStart(projectId: string) {
@@ -790,7 +785,7 @@ onMounted(async () => {
         :is-archiving="isArchiving"
         @save="handleSaveProject"
         @archive="handleArchiveProject"
-        @open-report="openProjectReport"
+        @open-project="openProject"
       />
     </div>
   </div>

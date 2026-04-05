@@ -21,7 +21,7 @@ const emit = defineEmits<{
   (event: 'update:modelValue', value: boolean): void
   (event: 'save', payload: Record<string, any>): void
   (event: 'archive', value: boolean): void
-  (event: 'open-report', card: ProjectBoardCardRecord): void
+  (event: 'open-project', card: ProjectBoardCardRecord): void
 }>()
 
 const draft = ref<Record<string, any>>({})
@@ -226,7 +226,7 @@ function handleSave() {
       <div class="border-t border-slate-200 px-5 py-4">
         <div class="flex flex-wrap gap-2">
           <B24Button label="Сохранить" color="success" :loading="isSaving" @click="handleSave" />
-          <B24Button label="Открыть проект" color="default" @click="emit('open-report', card)" />
+          <B24Button label="Открыть проект" color="default" @click="emit('open-project', card)" />
           <B24Button
             :label="card.is_archived ? 'Вернуть из архива' : 'В архив'"
             color="default"

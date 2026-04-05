@@ -15,7 +15,7 @@ const hours = computed(() => parseFloat(props.item.hours).toFixed(2))
 </script>
 
 <template>
-    <div class="flex items-center gap-3 p-2 border-b border-slate-50 bg-white hover:bg-blue-50/30 transition-colors group" :style="indentStyle">
+    <div class="group flex items-center gap-3 border-b border-slate-100 bg-white p-2.5 transition-colors hover:bg-lime-50/30" :style="indentStyle">
         <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
                  <div class="w-1.5 h-1.5 rounded-full shrink-0" :class="isConsidered ? 'bg-emerald-500' : 'bg-rose-400'"></div>
@@ -29,10 +29,10 @@ const hours = computed(() => parseFloat(props.item.hours).toFixed(2))
         </div>
 
         <div class="flex items-center gap-4 shrink-0">
-            <div class="text-sm font-bold w-16 text-right" :class="isConsidered ? 'text-emerald-600' : 'text-slate-400'">
+            <div class="w-16 text-right text-sm font-bold" :class="isConsidered ? 'text-teal-700' : 'text-slate-400'">
                 {{ hours }} ч
             </div>
-            <button @click="$emit('edit', item)" class="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-100 opacity-0 group-hover:opacity-100 transition-all">
+            <button @click="$emit('edit', item)" class="rounded-xl p-1.5 text-slate-400 opacity-0 transition-all hover:bg-lime-100 hover:text-lime-700 group-hover:opacity-100">
                 <span class="material-symbols-outlined text-lg">edit</span>
             </button>
         </div>
