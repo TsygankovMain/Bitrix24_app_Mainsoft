@@ -1734,6 +1734,70 @@ class ProjectSyncService:
         }
 
     def fetch_project_groups(self) -> List[Dict[str, Any]]:
+        errors: List[str] = []
+
+        for fetcher in (
+            self._fetch_project_groups_via_sonet_group,
+            self._fetch_project_groups_via_socialnetwork,
+        ):
+            try:
+                groups = fetcher()
+                if groups:
+                    return groups
+            except Exception as exc:
+                error_text = str(exc)
+                errors.append(error_text)
+                logger.warning("Project sync fetcher %s failed: %s", fetcher.__name__, error_text)
+
+        if errors:
+            raise RuntimeError(f"Не удалось загрузить проекты из Битрикс24: {' | '.join(errors)}")
+
+        return []
+
+    def _fetch_project_groups_via_sonet_group(self) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        page = 1
+        page_size = 50
+
+        while True:
+            response = self.client._bitrix_token.call_method(
+                "sonet_group.get",
+                {
+                    "FILTER": {
+                        "PROJECT": "Y",
+                    },
+                    "SELECT": [
+                        "ID",
+                        "NAME",
+                        "PROJECT",
+                        "CLOSED",
+                        "OWNER_ID",
+                        "PROJECT_DATE_START",
+                        "PROJECT_DATE_FINISH",
+                    ],
+                    "NAV_PARAMS": {
+                        "nPageSize": page_size,
+                        "iNumPage": page,
+                    },
+                }
+            )
+
+            batch, _ = self.extract_items_from_response(response)
+            if not batch:
+                break
+
+            for item in batch:
+                if self._is_project(item):
+                    items.append(item)
+
+            if len(batch) < page_size:
+                break
+
+            page += 1
+
+        return items
+
+    def _fetch_project_groups_via_socialnetwork(self) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         start = 0
 

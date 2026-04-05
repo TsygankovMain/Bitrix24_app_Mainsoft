@@ -250,7 +250,12 @@ async function syncBoard(showToast = true) {
       )
     }
   } catch (error) {
-    await loadBoard()
+    try {
+      await loadBoard()
+    } catch {
+      // keep original sync error for global handler
+    }
+    showStatus('error', 'Не удалось синхронизировать проекты. Попробуйте еще раз или проверьте права приложения в Битрикс24.')
     processErrorGlobal(error)
   } finally {
     isSyncing.value = false
@@ -361,10 +366,12 @@ onMounted(async () => {
     await $b24.parent.setTitle('Управление проектами')
     isInit.value = true
 
-    await Promise.all([
-      loadMeta(),
-      syncBoard(false)
-    ])
+    await loadMeta()
+    await loadBoard()
+
+    if (!boardData.value?.cards?.length) {
+      await syncBoard(false)
+    }
   } catch (error) {
     processErrorGlobal(error)
   } finally {
