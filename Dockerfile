@@ -2,14 +2,15 @@
 FROM node:20-slim AS frontend-builder
 WORKDIR /app/frontend
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Install pinned pnpm without resolving latest during build
+ARG PNPM_VERSION=9.15.9
+RUN npm install -g pnpm@${PNPM_VERSION}
 
 # Copy manifest files
-COPY frontend/package.json frontend/pnpm-lock.yaml* ./
+COPY frontend/package.json frontend/.npmrc ./
 
 # Install dependencies
-RUN pnpm install
+RUN pnpm install --no-frozen-lockfile
 
 # Copy source code
 COPY frontend/ .
