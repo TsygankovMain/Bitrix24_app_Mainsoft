@@ -225,6 +225,10 @@ function applyUpdatedCard(updatedCard: ProjectBoardCardRecord) {
 
 async function loadBoard() {
   boardData.value = await apiStore.getProjectBoard()
+
+  if (boardData.value?.warning) {
+    showStatus('warning', boardData.value.warning)
+  }
 }
 
 async function loadMeta() {
@@ -370,10 +374,6 @@ onMounted(async () => {
 
     await loadMeta()
     await loadBoard()
-
-    if (!boardData.value?.cards?.length) {
-      await syncBoard(false)
-    }
   } catch (error) {
     processErrorGlobal(error)
   } finally {

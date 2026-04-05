@@ -50,6 +50,7 @@ export interface ProjectBoardResponse {
     can_drop: boolean
   }>
   cards: ProjectBoardCardRecord[]
+  warning?: string
   summary: {
     total_count: number
     active_count: number

@@ -6,6 +6,8 @@ from typing import List, Dict, Any, Optional, Union, Tuple
 
 from b24pysdk import Client
 from b24pysdk.bitrix_api.requests import BitrixAPIRequest
+from django.core.management import call_command
+from django.db import connection
 from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
@@ -45,6 +47,64 @@ PROJECT_STAGE_ORDER = [
     PROJECT_STAGE_SUCCESS,
     PROJECT_STAGE_FAILED,
 ]
+
+PROJECT_CARD_TABLE_NAME = ProjectCard._meta.db_table
+
+
+def ensure_project_card_schema() -> bool:
+    try:
+        if PROJECT_CARD_TABLE_NAME in connection.introspection.table_names():
+            return True
+    except Exception as exc:
+        logger.warning("ProjectCard schema check failed: %s", exc)
+
+    try:
+        call_command("migrate", interactive=False, verbosity=0)
+    except Exception as exc:
+        logger.warning("ProjectCard auto-migrate failed: %s", exc)
+
+    try:
+        return PROJECT_CARD_TABLE_NAME in connection.introspection.table_names()
+    except Exception as exc:
+        logger.warning("ProjectCard schema re-check failed: %s", exc)
+        return False
+
+
+def get_project_card_queryset(account: Bitrix24Account):
+    if not ensure_project_card_schema():
+        return ProjectCard.objects.none()
+
+    return ProjectCard.objects.filter(bitrix24_account=account)
+
+
+def build_local_project_groups(account: Bitrix24Account) -> List[Dict[str, Any]]:
+    rows = (
+        TimesheetItem.objects.filter(bitrix24_account=account)
+        .exclude(project_id__isnull=True)
+        .exclude(project_id="")
+        .values("project_id", "project_title")
+        .distinct()
+    )
+
+    items: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    for row in rows:
+        project_id = str(row.get("project_id") or "").strip()
+        project_name = str(row.get("project_title") or "").strip() or f"Проект {project_id}"
+
+        if not project_id or project_id in seen_ids:
+            continue
+
+        seen_ids.add(project_id)
+        items.append({
+            "ID": project_id,
+            "NAME": project_name,
+            "PROJECT": "Y",
+            "CLOSED": "N",
+        })
+
+    return items
 
 # Field Constants from Documentation
 class BitrixDataService:
@@ -1292,10 +1352,12 @@ class ProjectCardService:
         self.account = account
 
     def get_board_data(self) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            return self.get_fallback_board_data()
+
         self.refresh_writeoff_stats()
         cards = list(
-            ProjectCard.objects.filter(bitrix24_account=self.account)
-            .order_by("is_archived", "project_name")
+            get_project_card_queryset(self.account).order_by("is_archived", "project_name")
         )
 
         active_cards = [card for card in cards if not card.is_archived]
@@ -1321,7 +1383,70 @@ class ProjectCardService:
             },
         }
 
+    def get_fallback_board_data(self) -> Dict[str, Any]:
+        by_project_id, by_project_title = self.collect_writeoff_maps()
+        fallback_cards = []
+
+        for group in build_local_project_groups(self.account):
+            project_id = ProjectSyncService._get_first(group, "ID", "id")
+            project_name = ProjectSyncService._get_first(group, "NAME", "name") or f"Проект {project_id}"
+            last_writeoff_at = by_project_id.get(project_id) or by_project_title.get(project_name)
+            last_writeoff_days = (timezone.localdate() - last_writeoff_at.date()).days if last_writeoff_at else 0
+            stage = PROJECT_STAGE_IN_WORK if last_writeoff_at else PROJECT_STAGE_NEW
+
+            fallback_cards.append({
+                "id": f"fallback-{project_id}",
+                "project_id": project_id,
+                "project_name": project_name,
+                "stage": stage,
+                "manual_stage": stage,
+                "is_archived": False,
+                "archived_at": None,
+                "project_hours_budget": None,
+                "hourly_rate": 0.0,
+                "is_support": False,
+                "curator_user_id": None,
+                "curator_name": None,
+                "project_start_date": None,
+                "project_end_date": None,
+                "company_id": None,
+                "company_name": None,
+                "last_writeoff_at": last_writeoff_at.isoformat() if last_writeoff_at else None,
+                "last_writeoff_days": last_writeoff_days,
+                "stage_source": "manual",
+                "created_at": None,
+                "updated_at": None,
+            })
+
+        return {
+            "stages": [
+                {
+                    "id": stage,
+                    "title": stage,
+                    "kind": "auto" if stage in PROJECT_AUTO_STAGES else "manual",
+                    "can_drop": stage in PROJECT_MANUAL_STAGES,
+                }
+                for stage in PROJECT_STAGE_ORDER
+            ],
+            "cards": sorted(fallback_cards, key=lambda card: card["project_name"]),
+            "summary": {
+                "total_count": len(fallback_cards),
+                "active_count": len(fallback_cards),
+                "archived_count": 0,
+                "support_count": 0,
+                "inactive_30_count": sum(1 for card in fallback_cards if card["stage"] == PROJECT_STAGE_NO_WRITEOFF_30),
+                "inactive_90_count": sum(1 for card in fallback_cards if card["stage"] == PROJECT_STAGE_NO_WRITEOFF_90),
+            },
+            "warning": (
+                "Локальная таблица проектов недоступна. Показан временный board по уже загруженным списаниям. "
+                "Редактирование и архив могут быть недоступны до завершения миграции."
+            ),
+        }
+
     def update_project_card(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
+
         card = self._get_card(project_id)
         warning: Optional[str] = None
 
@@ -1403,6 +1528,9 @@ class ProjectCardService:
         }
 
     def update_stage(self, project_id: str, stage: str) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
+
         if stage not in PROJECT_MANUAL_STAGES:
             raise ValueError("Недопустимая стадия для ручного перевода")
 
@@ -1414,6 +1542,9 @@ class ProjectCardService:
         return self.serialize_card(card)
 
     def archive_project(self, project_id: str, is_archived: bool) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
+
         card = self._get_card(project_id)
         warning: Optional[str] = None
 
@@ -1477,8 +1608,11 @@ class ProjectCardService:
         return []
 
     def refresh_writeoff_stats(self) -> None:
+        if not ensure_project_card_schema():
+            return
+
         by_project_id, by_project_title = self.collect_writeoff_maps()
-        cards = list(ProjectCard.objects.filter(bitrix24_account=self.account))
+        cards = list(get_project_card_queryset(self.account))
         today = timezone.localdate()
         updated_cards: List[ProjectCard] = []
 
@@ -1645,7 +1779,7 @@ class ProjectSyncService:
             groups = self.fetch_project_groups()
         except Exception as exc:
             logger.warning("Project sync Bitrix fetch failed, falling back to local timesheets: %s", exc)
-            groups = self.build_project_groups_from_timesheets()
+            groups = build_local_project_groups(self.account)
             warning = (
                 "Не удалось получить список проектов напрямую из Битрикс24. "
                 "Использован локальный список по уже загруженным списаниям."
@@ -1658,9 +1792,27 @@ class ProjectSyncService:
             if group.get("OWNER_ID") or group.get("ownerId")
         }
         user_map = BitrixDataService(self.client, {}).fetch_users(list(owner_ids))
+
+        if not ensure_project_card_schema():
+            daily_check = ProjectStageAutomationService(self.account).run_daily_check()
+            result = {
+                "status": "success",
+                "synced": len(groups),
+                "created": 0,
+                "updated": 0,
+                **daily_check,
+                "warning": (
+                    "Локальная таблица проектов недоступна, поэтому board собран без сохранения карточек. "
+                    "После завершения миграции синхронизация начнет сохранять метаданные."
+                ),
+            }
+            if warning:
+                result["warning"] = f"{result['warning']} {warning}"
+            return result
+
         existing_cards = {
             card.project_id: card
-            for card in ProjectCard.objects.filter(bitrix24_account=self.account)
+            for card in get_project_card_queryset(self.account)
         }
 
         created = 0
@@ -1852,35 +2004,6 @@ class ProjectSyncService:
 
         return items
 
-    def build_project_groups_from_timesheets(self) -> List[Dict[str, Any]]:
-        rows = (
-            TimesheetItem.objects.filter(bitrix24_account=self.account)
-            .exclude(project_id__isnull=True)
-            .exclude(project_id="")
-            .values("project_id", "project_title")
-            .distinct()
-        )
-
-        items: List[Dict[str, Any]] = []
-        seen_ids = set()
-
-        for row in rows:
-            project_id = self._get_first(row, "project_id")
-            project_name = self._get_first(row, "project_title") or (f"Проект {project_id}" if project_id else None)
-
-            if not project_id or project_id in seen_ids or not project_name:
-                continue
-
-            seen_ids.add(project_id)
-            items.append({
-                "ID": project_id,
-                "NAME": project_name,
-                "PROJECT": "Y",
-                "CLOSED": "N",
-            })
-
-        return items
-
     def normalize_project_group(
         self,
         group: Dict[str, Any],
@@ -1956,8 +2079,17 @@ class ProjectStageAutomationService:
         self.account = account
 
     def run_daily_check(self) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            return {
+                "status": "ok",
+                "checked": 0,
+                "moved_to_30_days": 0,
+                "moved_to_90_days": 0,
+                "returned_to_work": 0,
+            }
+
         ProjectCardService(None, self.account).refresh_writeoff_stats()
-        cards = ProjectCard.objects.filter(bitrix24_account=self.account, is_archived=False)
+        cards = get_project_card_queryset(self.account).filter(is_archived=False)
 
         checked = 0
         moved_to_30_days = 0

@@ -24,6 +24,7 @@ from .services import (
     ProjectCardService,
     ProjectSyncService,
     ProjectStageAutomationService,
+    get_project_card_queryset,
 )
 from .installation_service import InstallationService, InstallationError
 
@@ -71,7 +72,7 @@ config = load_config()
 
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
     queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
-    archived_cards = ProjectCard.objects.filter(bitrix24_account=request.bitrix24_account, is_archived=True)
+    archived_cards = get_project_card_queryset(request.bitrix24_account).filter(is_archived=True)
     archived_project_ids = [project_id for project_id in archived_cards.values_list('project_id', flat=True) if project_id]
     archived_project_names = [project_name for project_name in archived_cards.values_list('project_name', flat=True) if project_name]
 
@@ -131,15 +132,16 @@ def _build_employee_filter_options(request: AuthorizedRequest):
 
 def _build_project_filter_options(request: AuthorizedRequest):
     queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
+    project_cards = get_project_card_queryset(request.bitrix24_account)
     active_project_ids = set(
         project_id
-        for project_id in ProjectCard.objects.filter(bitrix24_account=request.bitrix24_account, is_archived=False)
+        for project_id in project_cards.filter(is_archived=False)
         .values_list('project_id', flat=True)
         if project_id
     )
     active_project_names = set(
         project_name
-        for project_name in ProjectCard.objects.filter(bitrix24_account=request.bitrix24_account, is_archived=False)
+        for project_name in project_cards.filter(is_archived=False)
         .values_list('project_name', flat=True)
         if project_name
     )
