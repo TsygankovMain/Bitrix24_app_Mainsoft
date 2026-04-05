@@ -138,18 +138,19 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4 min-h-screen">
-    <div class="mb-4">
-      <B24Button label="Назад" color="link" @click="$router.push('/')" />
-    </div>
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
+      <div class="mb-4">
+        <B24Button label="Назад" color="link" @click="$router.push('/')" />
+      </div>
 
-    <B24Card v-if="isInit">
+      <B24Card v-if="isInit" class="ms-surface">
       <template #header>
         <div class="flex flex-col gap-4 w-full">
           <div class="flex flex-row justify-between items-center w-full gap-4">
             <div>
-              <ProseH2>Потери выручки</ProseH2>
-              <p class="text-xs text-gray-500 mt-1">Где команда теряет учитываемые часы по проектам и сотрудникам</p>
+              <ProseH2 class="!text-slate-900">Потери выручки</ProseH2>
+              <p class="mt-1 text-xs text-slate-500">Где команда теряет учитываемые часы по проектам и сотрудникам</p>
             </div>
             <div class="flex gap-2">
               <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
@@ -157,7 +158,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-lg">
+          <div class="ms-filter-wrap flex flex-wrap gap-4 items-end">
             <DateRangeFilter
               v-model:dateFrom="dateFrom"
               v-model:dateTo="dateTo"
@@ -181,15 +182,15 @@ onMounted(async () => {
       </template>
 
       <div v-if="isLoading" class="flex justify-center py-8">
-        <span class="text-gray-500">Загрузка...</span>
+        <span class="text-slate-500">Загрузка...</span>
       </div>
 
-      <div v-else-if="!hasGenerated" class="py-8 text-center text-gray-500">
+      <div v-else-if="!hasGenerated" class="ms-empty-state">
         Выберите фильтры и нажмите «Сформировать»
       </div>
 
       <div v-else-if="reportData" class="space-y-6">
-        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div class="ms-kpi-grid">
           <ReportMetricCard label="Всего часов" :value="formatHours(reportData.summary.total_hours)" />
           <ReportMetricCard label="Учтено" :value="formatHours(reportData.summary.billable_hours)" tone="success" />
           <ReportMetricCard label="Не учтено" :value="formatHours(reportData.summary.non_billable_hours)" tone="danger" />
@@ -199,50 +200,50 @@ onMounted(async () => {
         </div>
 
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div class="ms-panel">
             <div class="flex items-center justify-between mb-4">
-              <h3 class="text-base font-semibold text-gray-900">Потери по проектам</h3>
-              <span class="text-xs text-gray-500">по неучтенным часам</span>
+              <h3 class="text-base font-semibold text-slate-900">Потери по проектам</h3>
+              <span class="text-xs text-slate-500">по неучтенным часам</span>
             </div>
 
             <div class="space-y-4">
               <div v-for="project in reportData.project_rows" :key="project.name" class="space-y-2">
                 <div class="flex items-center justify-between gap-3">
                   <div class="min-w-0">
-                    <div class="text-sm font-medium text-gray-900 truncate">{{ project.name }}</div>
-                    <div class="text-xs text-gray-500">{{ formatHours(project.non_billable_hours) }} не учтено из {{ formatHours(project.total_hours) }}</div>
+                    <div class="text-sm font-medium text-slate-900 truncate">{{ project.name }}</div>
+                    <div class="text-xs text-slate-500">{{ formatHours(project.non_billable_hours) }} не учтено из {{ formatHours(project.total_hours) }}</div>
                   </div>
                   <span :class="['inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold', lossBadgeClass(project.loss_rate)]">
                     {{ formatPercent(project.loss_rate) }}
                   </span>
                 </div>
 
-                <div class="h-3 rounded-full bg-gray-100 overflow-hidden">
+                <div class="h-3 overflow-hidden rounded-full bg-slate-100">
                   <div class="h-full rounded-full bg-red-500" :style="{ width: projectBarWidth(project) }" />
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div class="ms-panel">
             <div class="flex items-center justify-between mb-4">
-              <h3 class="text-base font-semibold text-gray-900">Самые рискованные связки</h3>
-              <span class="text-xs text-gray-500">проект × сотрудник</span>
+              <h3 class="text-base font-semibold text-slate-900">Самые рискованные связки</h3>
+              <span class="text-xs text-slate-500">проект × сотрудник</span>
             </div>
 
             <div class="space-y-3">
-              <div v-for="row in topRiskRows" :key="`${row.project_name}-${row.employee_id}`" class="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+              <div v-for="row in topRiskRows" :key="`${row.project_name}-${row.employee_id}`" class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div class="flex items-start justify-between gap-3">
                   <div>
-                    <div class="text-sm font-semibold text-gray-900">{{ row.employee_name }}</div>
-                    <div class="text-xs text-gray-500">{{ row.project_name }}</div>
+                    <div class="text-sm font-semibold text-slate-900">{{ row.employee_name }}</div>
+                    <div class="text-xs text-slate-500">{{ row.project_name }}</div>
                   </div>
                   <span :class="['inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold', lossBadgeClass(row.loss_rate)]">
                     {{ formatPercent(row.loss_rate) }}
                   </span>
                 </div>
-                <div class="mt-2 grid grid-cols-3 gap-2 text-xs text-gray-500">
-                  <div>Всего: <span class="font-semibold text-gray-700">{{ formatHours(row.total_hours) }}</span></div>
+                <div class="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-500">
+                  <div>Всего: <span class="font-semibold text-slate-700">{{ formatHours(row.total_hours) }}</span></div>
                   <div>Учтено: <span class="font-semibold text-emerald-700">{{ formatHours(row.billable_hours) }}</span></div>
                   <div>Не учтено: <span class="font-semibold text-red-700">{{ formatHours(row.non_billable_hours) }}</span></div>
                 </div>
@@ -251,26 +252,26 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div class="overflow-x-auto border rounded-lg">
-          <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
+        <div class="ms-table-shell">
+          <table class="ms-table">
+            <thead>
               <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Проект</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Сотрудник</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Всего</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Учтено</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Не учтено</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Потери %</th>
+                <th>Проект</th>
+                <th>Сотрудник</th>
+                <th class="text-right">Всего</th>
+                <th class="text-right">Учтено</th>
+                <th class="text-right">Не учтено</th>
+                <th class="text-right">Потери %</th>
               </tr>
             </thead>
-            <tbody class="bg-white divide-y divide-gray-200">
-              <tr v-for="row in reportData.risk_rows" :key="`${row.project_name}-${row.employee_id}`" class="hover:bg-gray-50">
-                <td class="px-4 py-3 text-sm text-gray-900">{{ row.project_name }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ row.employee_name }}</td>
-                <td class="px-4 py-3 text-sm text-gray-900 text-right font-medium">{{ row.total_hours.toFixed(2) }}</td>
-                <td class="px-4 py-3 text-sm text-emerald-700 text-right">{{ row.billable_hours.toFixed(2) }}</td>
-                <td class="px-4 py-3 text-sm text-red-700 text-right">{{ row.non_billable_hours.toFixed(2) }}</td>
-                <td class="px-4 py-3 text-sm text-right">
+            <tbody>
+              <tr v-for="row in reportData.risk_rows" :key="`${row.project_name}-${row.employee_id}`">
+                <td class="text-slate-900">{{ row.project_name }}</td>
+                <td>{{ row.employee_name }}</td>
+                <td class="text-right font-medium text-slate-900">{{ row.total_hours.toFixed(2) }}</td>
+                <td class="text-right text-emerald-700">{{ row.billable_hours.toFixed(2) }}</td>
+                <td class="text-right text-red-700">{{ row.non_billable_hours.toFixed(2) }}</td>
+                <td class="text-right">
                   <span :class="['inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold', lossBadgeClass(row.loss_rate)]">
                     {{ formatPercent(row.loss_rate) }}
                   </span>
@@ -281,9 +282,10 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div v-else class="py-8 text-center text-gray-500">
+      <div v-else class="ms-empty-state">
         Нет данных
       </div>
-    </B24Card>
+      </B24Card>
+    </div>
   </div>
 </template>

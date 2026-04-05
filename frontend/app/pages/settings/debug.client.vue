@@ -1,130 +1,138 @@
 <template>
-  <div class="p-4 sm:p-6 bg-white dark:bg-gray-900 min-h-screen">
-    <!-- Header -->
-    <div class="flex items-center justify-between mb-8">
-      <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Панель отладки</h1>
-      <button @click="router.push('/settings')" class="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded hover:bg-gray-200">
-        Назад
-      </button>
-    </div>
-    
-    <!-- Tabs -->
-    <div class="flex space-x-4 mb-6 border-b border-gray-200 dark:border-gray-700 pb-2">
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
+      <div class="ms-page-header">
+        <div>
+          <h1 class="ms-title">Панель отладки</h1>
+          <p class="ms-subtitle mt-2">История запросов, системные события и разбор ошибок.</p>
+        </div>
+        <B24Button label="Назад" color="link" @click="router.push('/settings')" />
+      </div>
+
+      <div class="ms-tabbar mb-6">
       <button 
         @click="activeTab = 'requests'" 
-        class="pb-2 px-1 text-sm font-medium transition-colors"
-        :class="activeTab === 'requests' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'"
+        class="ms-tab-btn"
+        :class="activeTab === 'requests' ? 'ms-tab-btn-active' : ''"
       >
         HTTP Запросы
       </button>
       <button 
         @click="activeTab = 'system'" 
-        class="pb-2 px-1 text-sm font-medium transition-colors"
-        :class="activeTab === 'system' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'"
+        class="ms-tab-btn"
+        :class="activeTab === 'system' ? 'ms-tab-btn-active' : ''"
       >
         Системные Логи
       </button>
-    </div>
-    
-    <!-- Requests Tab -->
-    <div v-if="activeTab === 'requests'">
-      <div class="mb-4 flex justify-between">
-         <button @click="fetchRequests(1)" class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200">Обновить</button>
       </div>
-      
-      <div class="overflow-x-auto border rounded-lg shadow-sm">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-           <thead class="bg-gray-50 dark:bg-gray-800">
-             <tr>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Path</th>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Action</th>
-             </tr>
-           </thead>
-           <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-800">
-             <tr v-for="log in requestLogs" :key="log.id" class="text-sm hover:bg-gray-50">
-                <td class="px-3 py-2 whitespace-nowrap text-gray-500">{{ formatDate(log.timestamp) }}</td>
-                <td class="px-3 py-2 font-mono font-bold" :class="getMethodColor(log.method)">{{ log.method }}</td>
-                <td class="px-3 py-2 font-mono text-xs max-w-xs truncate" :title="log.path">{{ log.path }}</td>
-                <td class="px-3 py-2 font-mono" :class="getStatusColor(log.status_code)">{{ log.status_code }}</td>
-                <td class="px-3 py-2 text-gray-500">{{ log.duration_ms?.toFixed(0) }}ms</td>
-                <td class="px-3 py-2">
-                   <button @click="openDetails(log)" class="text-blue-600 hover:text-blue-800 text-xs font-medium">Details</button>
+
+      <div v-if="activeTab === 'requests'">
+        <div class="ms-toolbar-muted mb-4">
+          <div>
+            <div class="text-sm font-semibold text-slate-900">HTTP запросы</div>
+            <div class="mt-1 text-sm text-slate-500">Последние обращения frontend к backend и внешним API.</div>
+          </div>
+          <B24Button label="Обновить" size="sm" @click="fetchRequests(1)" />
+        </div>
+
+        <div class="ms-table-shell">
+          <table class="ms-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Method</th>
+                <th>Path</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="log in requestLogs" :key="log.id" class="text-sm">
+                <td class="whitespace-nowrap text-slate-500">{{ formatDate(log.timestamp) }}</td>
+                <td class="font-mono font-bold" :class="getMethodColor(log.method)">{{ log.method }}</td>
+                <td class="max-w-xs truncate font-mono text-xs" :title="log.path">{{ log.path }}</td>
+                <td class="font-mono" :class="getStatusColor(log.status_code)">{{ log.status_code }}</td>
+                <td class="text-slate-500">{{ log.duration_ms?.toFixed(0) }}ms</td>
+                <td>
+                  <button @click="openDetails(log)" class="text-xs font-medium text-lime-700 hover:text-lime-800">Details</button>
                 </td>
-             </tr>
-           </tbody>
-        </table>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
     
-    <!-- System Tab -->
-    <div v-if="activeTab === 'system'">
-       <div class="mb-4 flex justify-between">
-         <button @click="fetchSystem(1)" class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded hover:bg-blue-200">Обновить</button>
-      </div>
-       <div class="overflow-x-auto border rounded-lg shadow-sm">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-           <thead class="bg-gray-50 dark:bg-gray-800">
-             <tr>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Level</th>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Module</th>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Message</th>
-               <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Trace</th>
-             </tr>
-           </thead>
-           <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-800">
-             <tr v-for="log in systemLogs" :key="log.id" class="text-sm hover:bg-gray-50 leading-tight">
-                <td class="px-3 py-2 whitespace-nowrap text-gray-500">{{ formatDate(log.timestamp) }}</td>
-                <td class="px-3 py-2 font-bold" :class="getLevelColor(log.level)">{{ log.level }}</td>
-                <td class="px-3 py-2 text-gray-600 text-xs">{{ log.module }}</td>
-                <td class="px-3 py-2 max-w-md truncate" :title="log.message">{{ log.message }}</td>
-                <td class="px-3 py-2">
-                   <button v-if="log.traceback" @click="openTrace(log)" class="text-red-600 hover:text-red-800 text-xs font-medium">Trace</button>
+      <div v-if="activeTab === 'system'">
+        <div class="ms-toolbar-muted mb-4">
+          <div>
+            <div class="text-sm font-semibold text-slate-900">Системные логи</div>
+            <div class="mt-1 text-sm text-slate-500">Ошибки, warning-события и ключевые сообщения приложения.</div>
+          </div>
+          <B24Button label="Обновить" size="sm" @click="fetchSystem(1)" />
+        </div>
+
+        <div class="ms-table-shell">
+          <table class="ms-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Level</th>
+                <th>Module</th>
+                <th>Message</th>
+                <th>Trace</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="log in systemLogs" :key="log.id" class="text-sm leading-tight">
+                <td class="whitespace-nowrap text-slate-500">{{ formatDate(log.timestamp) }}</td>
+                <td class="font-bold" :class="getLevelColor(log.level)">{{ log.level }}</td>
+                <td class="text-xs text-slate-500">{{ log.module }}</td>
+                <td class="max-w-md truncate" :title="log.message">{{ log.message }}</td>
+                <td>
+                  <button v-if="log.traceback" @click="openTrace(log)" class="text-xs font-medium text-rose-600 hover:text-rose-700">Trace</button>
                 </td>
-             </tr>
-           </tbody>
-        </table>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
     
-    <!-- Modal -->
-    <div v-if="selectedItem" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm" @click.self="selectedItem = null">
-       <div class="bg-white dark:bg-gray-800 w-screen h-screen overflow-y-auto p-6 shadow-xl">
-          <div class="flex justify-between items-center mb-4">
-             <h3 class="text-xl font-bold">Детали лога</h3>
-             <button @click="selectedItem = null" class="text-gray-500 hover:text-gray-700 bg-gray-100 p-2 rounded-full hover:bg-gray-200 transition-colors">
-               ✕
-             </button>
-          </div>
-          
-          <div v-if="selectedItem.request_body" class="mb-4">
-               <h4 class="font-bold text-sm mb-1">Request Body:</h4>
-               <pre class="bg-gray-100 p-2 rounded text-xs overflow-x-auto whitespace-pre-wrap">{{ parseOrRaw(selectedItem.request_body) }}</pre>
-          </div>
-          
-          <div v-if="selectedItem.response_body" class="mb-4">
-                <h4 class="font-bold text-sm mb-1">Response Body:</h4>
-               <pre class="bg-gray-100 p-2 rounded text-xs overflow-x-auto whitespace-pre-wrap">{{ parseOrRaw(selectedItem.response_body) }}</pre>
-          </div>
-          
-          <div v-if="selectedItem.traceback" class="mb-4">
-               <h4 class="font-bold text-sm mb-1 text-red-600">Traceback:</h4>
-               <pre class="bg-red-50 text-red-900 p-2 rounded text-xs overflow-x-auto whitespace-pre-wrap">{{ selectedItem.traceback }}</pre>
+      <div v-if="selectedItem" class="ms-modal-overlay" @click.self="selectedItem = null">
+        <div class="ms-modal-panel flex max-h-[90vh] w-full max-w-5xl flex-col">
+          <div class="ms-modal-header">
+            <h3 class="text-lg font-semibold text-slate-900">Детали лога</h3>
+            <button @click="selectedItem = null" class="rounded-full bg-slate-100 p-2 text-slate-500 transition hover:bg-slate-200 hover:text-slate-700">
+              ✕
+            </button>
           </div>
 
-          <pre class="bg-slate-50 p-4 rounded text-xs overflow-x-auto whitespace-pre-wrap font-mono mt-4 border">{{ JSON.stringify(selectedItem, null, 2) }}</pre>
-          
-          <div class="mt-6 flex justify-end">
-             <button @click="selectedItem = null" class="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300 transition-colors text-sm">Close</button>
-          </div>
-       </div>
-    </div>
+          <div class="ms-modal-body overflow-y-auto">
+            <div v-if="selectedItem.request_body" class="mb-4">
+              <h4 class="mb-1 text-sm font-semibold text-slate-900">Request Body</h4>
+              <pre class="ms-code-block whitespace-pre-wrap">{{ parseOrRaw(selectedItem.request_body) }}</pre>
+            </div>
 
-  </div>
+            <div v-if="selectedItem.response_body" class="mb-4">
+              <h4 class="mb-1 text-sm font-semibold text-slate-900">Response Body</h4>
+              <pre class="ms-code-block whitespace-pre-wrap">{{ parseOrRaw(selectedItem.response_body) }}</pre>
+            </div>
+
+            <div v-if="selectedItem.traceback" class="mb-4">
+              <h4 class="mb-1 text-sm font-semibold text-rose-700">Traceback</h4>
+              <pre class="overflow-x-auto whitespace-pre-wrap rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-900 shadow-sm">{{ selectedItem.traceback }}</pre>
+            </div>
+
+            <pre class="ms-code-block mt-4 whitespace-pre-wrap font-mono">{{ JSON.stringify(selectedItem, null, 2) }}</pre>
+          </div>
+
+          <div class="ms-modal-footer flex justify-end">
+            <B24Button label="Закрыть" color="default" @click="selectedItem = null" />
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
 </template>
 
 <script setup lang="ts">
@@ -174,14 +182,14 @@ const getMethodColor = (m: string) => {
   if(m === 'GET') return 'text-green-600'
   if(m === 'POST') return 'text-blue-600'
   if(m === 'DELETE') return 'text-red-600'
-  return 'text-gray-600'
+  return 'text-slate-600'
 }
 
 const getStatusColor = (s: number) => {
   if(s >= 500) return 'text-red-600 font-bold'
   if(s >= 400) return 'text-orange-600'
   if(s >= 200) return 'text-green-600'
-  return 'text-gray-600'
+  return 'text-slate-600'
 }
 
 const getLevelColor = (l: string) => {

@@ -40,13 +40,13 @@ function handleDragStart(event: DragEvent) {
   <button
     type="button"
     draggable="true"
-    class="group w-full rounded-2xl border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md cursor-grab active:cursor-grabbing"
+    class="group w-full cursor-grab rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md active:cursor-grabbing"
     @click="emit('edit', card)"
     @dragstart="handleDragStart"
   >
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
-        <div class="truncate text-sm font-semibold text-gray-900">
+        <div class="truncate text-sm font-semibold text-slate-900">
           {{ card.project_name }}
         </div>
         <div class="mt-1 flex flex-wrap gap-2">
@@ -68,38 +68,38 @@ function handleDragStart(event: DragEvent) {
         </div>
       </div>
 
-      <div class="text-right text-[11px] text-gray-400">
+      <div class="text-right text-[11px] text-slate-400">
         #{{ card.project_id }}
       </div>
     </div>
 
     <div class="mt-4 grid grid-cols-2 gap-3 text-xs">
-      <div class="rounded-xl bg-gray-50 px-3 py-2">
-        <div class="text-gray-400">Бюджет</div>
-        <div class="mt-1 font-semibold text-gray-800">{{ formatProjectHours(card.project_hours_budget) }}</div>
+      <div class="rounded-xl bg-slate-50 px-3 py-2">
+        <div class="text-slate-400">Бюджет</div>
+        <div class="mt-1 font-semibold text-slate-800">{{ formatProjectHours(card.project_hours_budget) }}</div>
       </div>
-      <div class="rounded-xl bg-gray-50 px-3 py-2">
-        <div class="text-gray-400">Ставка</div>
-        <div class="mt-1 font-semibold text-gray-800">{{ formatProjectMoney(card.hourly_rate) }}</div>
+      <div class="rounded-xl bg-slate-50 px-3 py-2">
+        <div class="text-slate-400">Ставка</div>
+        <div class="mt-1 font-semibold text-slate-800">{{ formatProjectMoney(card.hourly_rate) }}</div>
       </div>
     </div>
 
-    <div class="mt-4 space-y-2 text-xs text-gray-600">
+    <div class="mt-4 space-y-2 text-xs text-slate-600">
       <div class="flex items-center justify-between gap-3">
-        <span class="text-gray-400">Куратор</span>
-        <span class="truncate font-medium text-gray-800">{{ card.curator_name || 'Не назначен' }}</span>
+        <span class="text-slate-400">Куратор</span>
+        <span class="truncate font-medium text-slate-800">{{ card.curator_name || 'Не назначен' }}</span>
       </div>
       <div class="flex items-center justify-between gap-3">
-        <span class="text-gray-400">Компания</span>
-        <span class="truncate font-medium text-gray-800">{{ card.company_name || 'Не выбрана' }}</span>
+        <span class="text-slate-400">Компания</span>
+        <span class="truncate font-medium text-slate-800">{{ card.company_name || 'Не выбрана' }}</span>
       </div>
       <div class="flex items-center justify-between gap-3">
-        <span class="text-gray-400">Наше юрлицо</span>
-        <span class="truncate font-medium text-gray-800">{{ card.our_legal_entity_name || 'Не выбрано' }}</span>
+        <span class="text-slate-400">Наше юрлицо</span>
+        <span class="truncate font-medium text-slate-800">{{ card.our_legal_entity_name || 'Не выбрано' }}</span>
       </div>
       <div class="flex items-center justify-between gap-3">
-        <span class="text-gray-400">Сроки</span>
-        <span class="text-right font-medium text-gray-800">
+        <span class="text-slate-400">Сроки</span>
+        <span class="text-right font-medium text-slate-800">
           {{ card.project_start_date ? formatProjectDate(card.project_start_date) : '—' }}
           -
           {{ card.project_end_date ? formatProjectDate(card.project_end_date) : '—' }}
@@ -107,7 +107,7 @@ function handleDragStart(event: DragEvent) {
       </div>
     </div>
 
-    <div class="mt-4 rounded-xl bg-gray-50 px-3 py-2 text-xs text-gray-600">
+    <div class="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
       {{ lastWriteoffLabel }}
     </div>
   </button>

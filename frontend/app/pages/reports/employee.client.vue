@@ -175,16 +175,17 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4 min-h-screen">
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
       <div class="mb-4">
           <B24Button label="Назад" color="link" @click="$router.push('/')" />
       </div>
 
-      <B24Card v-if="isInit">
+      <B24Card v-if="isInit" class="ms-surface">
           <template #header>
             <div class="flex flex-col gap-4 w-full">
                 <div class="flex flex-row justify-between items-center w-full">
-                    <ProseH2>Отчет по сотрудникам</ProseH2>
+                    <ProseH2 class="!text-slate-900">Отчет по сотрудникам</ProseH2>
                     <div class="flex gap-2">
                         <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
                         <B24Button label="Сформировать" @click="fetchReport" loading-auto />
@@ -192,7 +193,7 @@ onMounted(async () => {
                 </div>
                 
                 <!-- Filters -->
-                <div class="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-lg">
+                <div class="ms-filter-wrap flex flex-wrap gap-4 items-end">
                     <DateRangeFilter 
                         v-model:dateFrom="dateFrom" 
                         v-model:dateTo="dateTo" 
@@ -216,17 +217,18 @@ onMounted(async () => {
           </template>
 
           <div v-if="isLoading" class="flex justify-center py-8">
-              <span class="text-gray-500">Загрузка...</span>
+              <span class="text-slate-500">Загрузка...</span>
           </div>
           <div v-else-if="hasGenerated && reportData.length > 0">
               <EmployeeProjectTable :data="reportData" :clickable-labels="clickableLabelsEnabled" :entity-type-id="entityTypeId" />
           </div>
-          <div v-else-if="hasGenerated" class="py-8 text-center text-gray-500">
+          <div v-else-if="hasGenerated" class="ms-empty-state">
               Нет данных
           </div>
-          <div v-else class="py-8 text-center text-gray-500">
+          <div v-else class="ms-empty-state">
               Выберите фильтры и нажмите «Сформировать»
           </div>
       </B24Card>
+    </div>
   </div>
 </template>

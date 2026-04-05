@@ -53,7 +53,7 @@ function handleDrop(event: DragEvent) {
 <template>
   <section
     :class="[
-      'flex min-h-[540px] w-[320px] flex-col rounded-3xl border border-gray-200 bg-gradient-to-b p-4 shadow-sm transition',
+      'flex min-h-[540px] w-[320px] flex-col rounded-3xl border border-slate-200 bg-gradient-to-b p-4 shadow-sm transition',
       columnClass,
       isDragOver ? 'border-lime-400 shadow-lg' : ''
     ]"
@@ -63,12 +63,12 @@ function handleDrop(event: DragEvent) {
   >
     <div class="mb-4 flex items-center justify-between gap-3">
       <div>
-        <h3 class="text-sm font-semibold text-gray-900">{{ title }}</h3>
-        <p class="mt-1 text-xs text-gray-500">
+        <h3 class="text-sm font-semibold text-slate-900">{{ title }}</h3>
+        <p class="mt-1 text-xs text-slate-500">
           {{ canDrop ? 'Перетащите карточку сюда' : 'Статус назначается автоматически' }}
         </p>
       </div>
-      <div class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-gray-700 shadow-sm">
+      <div class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm">
         {{ cards.length }}
       </div>
     </div>
@@ -84,7 +84,7 @@ function handleDrop(event: DragEvent) {
 
       <div
         v-if="cards.length === 0"
-        class="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white/70 px-4 py-8 text-center text-sm text-gray-400"
+        class="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/70 px-4 py-8 text-center text-sm text-slate-400"
       >
         Пусто
       </div>

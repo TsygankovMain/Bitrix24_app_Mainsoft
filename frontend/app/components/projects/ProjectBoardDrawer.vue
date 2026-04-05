@@ -21,6 +21,7 @@ const emit = defineEmits<{
   (event: 'update:modelValue', value: boolean): void
   (event: 'save', payload: Record<string, any>): void
   (event: 'archive', value: boolean): void
+  (event: 'open-report', card: ProjectBoardCardRecord): void
 }>()
 
 const draft = ref<Record<string, any>>({})
@@ -84,22 +85,22 @@ function handleSave() {
 <template>
   <div
     v-if="modelValue && card"
-    class="fixed inset-0 z-50 flex justify-end bg-slate-950/20"
+    class="fixed inset-0 z-[9999] flex justify-end bg-slate-900/40 backdrop-blur-sm"
     @click="closeDrawer"
   >
     <aside
-      class="flex h-full w-full max-w-[460px] flex-col border-l border-gray-200 bg-white shadow-2xl"
+      class="flex h-full w-full max-w-[460px] flex-col border-l border-slate-200 bg-white shadow-2xl"
       @click.stop
     >
-      <div class="border-b border-gray-200 px-5 py-4">
+      <div class="border-b border-slate-200 px-5 py-4">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <div class="truncate text-lg font-semibold text-gray-900">{{ card.project_name }}</div>
+            <div class="truncate text-lg font-semibold text-slate-900">{{ card.project_name }}</div>
             <div class="mt-2 flex flex-wrap gap-2">
               <span :class="['inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold', stageBadgeClass]">
                 {{ card.stage }}
               </span>
-              <span class="inline-flex rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-700">
+              <span class="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
                 Ручная стадия: {{ card.manual_stage || 'Не задана' }}
               </span>
             </div>
@@ -107,7 +108,7 @@ function handleSave() {
 
           <button
             type="button"
-            class="rounded-full p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+            class="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
             @click="closeDrawer"
           >
             ✕
@@ -116,46 +117,43 @@ function handleSave() {
       </div>
 
       <div class="flex-1 space-y-5 overflow-y-auto px-5 py-5">
-        <div class="rounded-2xl bg-gray-50 p-4 text-xs text-gray-600">
+        <div class="rounded-2xl bg-slate-50 p-4 text-xs text-slate-600">
           Стадия проекта меняется перетаскиванием между колонками.
           Автоматические статусы выставляются по последним списаниям.
         </div>
 
         <div class="grid gap-4">
           <label class="grid gap-1 text-sm">
-            <span class="font-medium text-gray-700">Название проекта</span>
+            <span class="font-medium text-slate-700">Название проекта</span>
             <input
               v-model="draft.project_name"
               type="text"
-              class="rounded-xl border border-gray-200 px-3 py-2 outline-none transition focus:border-lime-500"
             >
           </label>
 
           <div class="grid grid-cols-2 gap-4">
             <label class="grid gap-1 text-sm">
-              <span class="font-medium text-gray-700">Бюджет, часы</span>
+              <span class="font-medium text-slate-700">Бюджет, часы</span>
               <input
                 v-model="draft.project_hours_budget"
                 type="number"
                 min="0"
                 step="0.5"
-                class="rounded-xl border border-gray-200 px-3 py-2 outline-none transition focus:border-lime-500"
               >
             </label>
             <label class="grid gap-1 text-sm">
-              <span class="font-medium text-gray-700">Ставка</span>
+              <span class="font-medium text-slate-700">Ставка</span>
               <input
                 v-model="draft.hourly_rate"
                 type="number"
                 min="0"
                 step="100"
-                class="rounded-xl border border-gray-200 px-3 py-2 outline-none transition focus:border-lime-500"
               >
             </label>
           </div>
 
-          <label class="flex items-center justify-between rounded-2xl border border-gray-200 px-4 py-3 text-sm">
-            <span class="font-medium text-gray-700">Проект на поддержке</span>
+          <label class="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3 text-sm">
+            <span class="font-medium text-slate-700">Проект на поддержке</span>
             <B24Switch v-model="draft.is_support" />
           </label>
 
@@ -188,48 +186,47 @@ function handleSave() {
 
           <div class="grid grid-cols-2 gap-4">
             <label class="grid gap-1 text-sm">
-              <span class="font-medium text-gray-700">Дата старта</span>
+              <span class="font-medium text-slate-700">Дата старта</span>
               <input
                 v-model="draft.project_start_date"
                 type="date"
-                class="rounded-xl border border-gray-200 px-3 py-2 outline-none transition focus:border-lime-500"
               >
             </label>
             <label class="grid gap-1 text-sm">
-              <span class="font-medium text-gray-700">Дата завершения</span>
+              <span class="font-medium text-slate-700">Дата завершения</span>
               <input
                 v-model="draft.project_end_date"
                 type="date"
-                class="rounded-xl border border-gray-200 px-3 py-2 outline-none transition focus:border-lime-500"
               >
             </label>
           </div>
         </div>
 
-        <div class="rounded-2xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
-          <div class="font-medium text-gray-800">Текущие данные</div>
+        <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          <div class="font-medium text-slate-800">Текущие данные</div>
           <div class="mt-3 grid gap-2 text-xs">
             <div class="flex items-center justify-between gap-3">
-              <span class="text-gray-400">Последнее списание</span>
-              <span class="font-medium text-gray-700">
+              <span class="text-slate-400">Последнее списание</span>
+              <span class="font-medium text-slate-700">
                 {{ card.last_writeoff_at ? formatProjectDate(card.last_writeoff_at) : 'Нет данных' }}
               </span>
             </div>
             <div class="flex items-center justify-between gap-3">
-              <span class="text-gray-400">Дней без списаний</span>
-              <span class="font-medium text-gray-700">{{ card.last_writeoff_days || 0 }}</span>
+              <span class="text-slate-400">Дней без списаний</span>
+              <span class="font-medium text-slate-700">{{ card.last_writeoff_days || 0 }}</span>
             </div>
             <div class="flex items-center justify-between gap-3">
-              <span class="text-gray-400">Архив</span>
-              <span class="font-medium text-gray-700">{{ card.is_archived ? 'Да' : 'Нет' }}</span>
+              <span class="text-slate-400">Архив</span>
+              <span class="font-medium text-slate-700">{{ card.is_archived ? 'Да' : 'Нет' }}</span>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="border-t border-gray-200 px-5 py-4">
+      <div class="border-t border-slate-200 px-5 py-4">
         <div class="flex flex-wrap gap-2">
           <B24Button label="Сохранить" color="success" :loading="isSaving" @click="handleSave" />
+          <B24Button label="Проектный отчет" color="default" @click="emit('open-report', card)" />
           <B24Button
             :label="card.is_archived ? 'Вернуть из архива' : 'В архив'"
             color="default"

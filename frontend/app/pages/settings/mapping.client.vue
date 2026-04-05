@@ -329,14 +329,17 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4 min-h-screen bg-gray-50 dark:bg-gray-900">
-      <!-- Headers -->
-      <div class="flex items-center justify-between mb-4">
-          <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">Настройка полей (Маппинг)</h1>
-          <div class="flex gap-2">
-            <B24Button label="Назад" color="link" @click="router.push('/settings')" />
-            <B24Button label="Сохранить" color="success" @click="handleSave" :loading="isSaving" />
-          </div>
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
+      <div class="ms-page-header">
+        <div>
+          <h1 class="ms-title">Настройка полей (Маппинг)</h1>
+          <p class="ms-subtitle mt-2">Привязка полей приложения к Smart Process и проверка структуры данных.</p>
+        </div>
+        <div class="flex gap-2">
+          <B24Button label="Назад" color="link" @click="router.push('/settings')" />
+          <B24Button label="Сохранить" color="success" @click="handleSave" :loading="isSaving" />
+        </div>
       </div>
 
       <div v-if="isLoading && !isInit" class="text-center py-10">
@@ -345,18 +348,18 @@ onMounted(async () => {
 
       <div v-else class="flex flex-col gap-6">
           <!-- SP Selector -->
-          <B24Card title="Выбор Смарт-Процесса">
+          <B24Card title="Выбор Смарт-Процесса" class="ms-surface">
               <!-- Status Message -->
-              <div v-if="statusMessage" class="mb-4 p-3 rounded-md text-sm font-medium" :class="statusMessage.type === 'success' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'">
+              <div v-if="statusMessage" class="mb-4 ms-note" :class="statusMessage.type === 'success' ? 'ms-note-success' : 'ms-note-danger'">
                   {{ statusMessage.text }}
               </div>
 
               <div class="w-full space-y-4">
                   <div>
-                      <label class="block text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Смарт-процесс</label>
+                      <label class="mb-1 block text-sm font-semibold text-slate-800">Смарт-процесс</label>
                       <select 
                         v-model="selectedSpId" 
-                        class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                        class="block w-full sm:text-sm"
                       >
                           <option :value="null">-- Не выбрано --</option>
                           <option v-for="sp in smartProcesses" :key="sp.id" :value="sp.entityTypeId">
@@ -374,12 +377,12 @@ onMounted(async () => {
                         class="rate-field__input" 
                         placeholder="Например: 1500"
                       />
-                      <p class="mt-1 text-xs text-gray-500">Без ставки расчёт будет неточным. Применяется для новых записей.</p>
+                      <p class="mt-1 text-xs text-slate-500">Без ставки расчёт будет неточным. Применяется для новых записей.</p>
                   </div>
 
-                  <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                      <div class="text-sm font-semibold text-gray-900">Источник поля «Наше юрлицо»</div>
-                      <p class="mt-1 text-xs text-gray-500">
+                  <div class="ms-panel-muted">
+                      <div class="text-sm font-semibold text-slate-900">Источник поля «Наше юрлицо»</div>
+                      <p class="mt-1 text-xs text-slate-500">
                           Поле в проектах заполняется автоматически из CRM-компаний, у которых `IS_MY_COMPANY = Y`.
                           Для поиска доступны название компании и ИНН.
                       </p>
@@ -411,7 +414,7 @@ onMounted(async () => {
                                 :disabled="!selectedSpId || isCreatingFields"
                             />
                         </div>
-                        <p class="text-sm text-gray-700 dark:text-gray-300">
+                        <p class="text-sm text-slate-600">
                             Выберите процесс и нажмите "Подгрузить", чтобы получить список полей.
                             Или создайте новый процесс и поля кнопками выше.
                         </p>
@@ -420,55 +423,55 @@ onMounted(async () => {
           </B24Card>
 
           <!-- Field List (Read-Only) -->
-          <B24Card title="Доступные поля сущности" v-if="selectedSpId">
-             <div v-if="spFields.length > 0" class="overflow-x-auto max-h-60 overflow-y-auto">
-                 <table class="min-w-full divide-y divide-gray-200">
-                     <thead class="bg-gray-50 sticky top-0">
+          <B24Card title="Доступные поля сущности" v-if="selectedSpId" class="ms-surface">
+             <div v-if="spFields.length > 0" class="ms-table-shell max-h-60 overflow-y-auto">
+                 <table class="ms-table">
+                     <thead class="sticky top-0">
                          <tr>
-                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Название</th>
-                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Код (ID)</th>
-                             <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Тип</th>
+                             <th>Название</th>
+                             <th>Код (ID)</th>
+                             <th>Тип</th>
                          </tr>
                      </thead>
-                     <tbody class="bg-white divide-y divide-gray-200 text-sm">
+                     <tbody class="text-sm">
                          <tr v-for="field in spFields" :key="field.id">
-                             <td class="px-3 py-1 font-medium text-gray-900">{{ field.title }}</td>
-                             <td class="px-3 py-1 text-gray-500 font-mono text-xs">{{ field.id }}</td>
-                             <td class="px-3 py-1 text-gray-500">{{ field.type }}</td>
+                             <td class="font-medium text-slate-900">{{ field.title }}</td>
+                             <td class="font-mono text-xs text-slate-500">{{ field.id }}</td>
+                             <td class="text-slate-500">{{ field.type }}</td>
                          </tr>
                      </tbody>
                  </table>
              </div>
-             <div v-else class="text-gray-500 text-sm italic p-4">
+             <div v-else class="ms-empty-state">
                  Поля еще не загружены. Нажмите "Подгрузить поля".
              </div>
           </B24Card>
 
           <!-- Mapping Table -->
-          <B24Card title="Сопоставление полей" v-if="selectedSpId">
-              <div class="overflow-x-auto">
-                  <table class="min-w-full divide-y divide-gray-200">
-                      <thead class="bg-gray-50">
+          <B24Card title="Сопоставление полей" v-if="selectedSpId" class="ms-surface">
+              <div class="ms-table-shell">
+                  <table class="ms-table">
+                      <thead>
                           <tr>
-                              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/2">
+                              <th class="w-1/2">
                                   Поле приложения
                               </th>
-                              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/2">
+                              <th class="w-1/2">
                                   Поле в Битрикс24
                               </th>
                           </tr>
                       </thead>
-                      <tbody class="bg-white divide-y divide-gray-200">
+                      <tbody>
                           <tr v-for="field in APP_FIELDS" :key="field.key">
-                              <td class="px-6 py-4">
-                                  <div class="text-sm font-medium text-gray-900">{{ field.label }}</div>
-                                  <div class="text-xs text-gray-500">{{ field.desc }}</div>
-                                  <div class="text-xs text-blue-500 mt-1">Тип: {{ field.type }}</div>
+                              <td>
+                                  <div class="text-sm font-medium text-slate-900">{{ field.label }}</div>
+                                  <div class="text-xs text-slate-500">{{ field.desc }}</div>
+                                  <div class="mt-1 text-xs text-lime-700">Тип: {{ field.type }}</div>
                               </td>
-                              <td class="px-6 py-4">
+                              <td>
                                   <select 
                                     v-model="mapping[field.key]"
-                                    class="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                    class="block w-full sm:text-sm"
                                   >
                                       <option :value="undefined">-- Не сопоставлено --</option>
                                       <option v-for="opt in getFieldOptions(field.type)" :key="opt.value" :value="opt.value">
@@ -482,6 +485,7 @@ onMounted(async () => {
               </div>
           </B24Card>
       </div>
+    </div>
   </div>
 </template>
 
@@ -498,27 +502,25 @@ onMounted(async () => {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.3;
-  color: #1f2937;
-}
-.dark .rate-field__label {
-  color: #e5e7eb;
+  color: #0f172a;
 }
 
 .rate-field__input {
   width: 100%;
   min-height: 48px;
   padding: 10px 12px;
-  border: 1px solid #c7ced8;
+  border: 1px solid #d8e2ee;
   border-radius: 10px;
   background: #fff;
   font-size: 16px;
   line-height: 1.2;
+  color: #334155;
 }
 
 .rate-field__input:focus {
   outline: none;
-  border-color: #2f6fed;
-  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.18);
+  border-color: #84cc16;
+  box-shadow: 0 0 0 4px rgba(190, 242, 100, 0.35);
 }
 
 @media (max-width: 768px) {

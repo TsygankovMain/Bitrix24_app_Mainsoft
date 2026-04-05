@@ -103,11 +103,11 @@ export const PROJECT_STAGE_META = {
 } as const
 
 export function getStageBadgeClass(stage: string) {
-  return PROJECT_STAGE_META[stage as ProjectBoardStage]?.badge || 'bg-gray-100 text-gray-700'
+  return PROJECT_STAGE_META[stage as ProjectBoardStage]?.badge || 'bg-slate-100 text-slate-700'
 }
 
 export function getStageColumnClass(stage: string) {
-  return PROJECT_STAGE_META[stage as ProjectBoardStage]?.column || 'from-gray-50 to-white'
+  return PROJECT_STAGE_META[stage as ProjectBoardStage]?.column || 'from-slate-50 to-white'
 }
 
 export function formatProjectDate(value?: string | null) {

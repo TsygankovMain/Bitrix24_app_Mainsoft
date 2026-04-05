@@ -73,17 +73,17 @@ function diffDays(start: Date, end: Date) {
 <template>
   <button
     type="button"
-    class="grid w-full grid-cols-[280px_minmax(0,1fr)] gap-4 rounded-2xl border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md"
+    class="grid w-full grid-cols-[280px_minmax(0,1fr)] gap-4 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
     @click="emit('open', card)"
   >
     <div class="min-w-0">
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
-          <div class="truncate text-sm font-semibold text-gray-900">{{ card.project_name }}</div>
-          <div class="mt-1 text-xs text-gray-500">
+          <div class="truncate text-sm font-semibold text-slate-900">{{ card.project_name }}</div>
+          <div class="mt-1 text-xs text-slate-500">
             {{ card.company_name || 'Без компании' }} · {{ card.curator_name || 'Без куратора' }}
           </div>
-          <div class="mt-1 text-xs text-gray-400">
+          <div class="mt-1 text-xs text-slate-400">
             {{ card.our_legal_entity_name || 'Юрлицо не выбрано' }}
           </div>
         </div>
@@ -92,16 +92,16 @@ function diffDays(start: Date, end: Date) {
         </span>
       </div>
 
-      <div class="mt-3 flex flex-wrap gap-2 text-xs text-gray-500">
-        <span class="rounded-full bg-gray-100 px-2.5 py-1">
+      <div class="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+        <span class="rounded-full bg-slate-100 px-2.5 py-1">
           Старт: {{ card.project_start_date ? formatProjectDate(card.project_start_date) : 'не задан' }}
         </span>
-        <span class="rounded-full bg-gray-100 px-2.5 py-1">
+        <span class="rounded-full bg-slate-100 px-2.5 py-1">
           Финиш: {{ card.project_end_date ? formatProjectDate(card.project_end_date) : 'не задан' }}
         </span>
         <span
           v-if="card.last_writeoff_at"
-          class="rounded-full bg-gray-100 px-2.5 py-1"
+          class="rounded-full bg-slate-100 px-2.5 py-1"
         >
           Последнее списание: {{ formatProjectDate(card.last_writeoff_at) }}
         </span>
@@ -109,8 +109,8 @@ function diffDays(start: Date, end: Date) {
     </div>
 
     <div class="flex items-center">
-      <div class="relative h-14 w-full overflow-hidden rounded-2xl bg-gray-50 px-3">
-        <div class="absolute inset-x-3 top-1/2 h-2 -translate-y-1/2 rounded-full bg-gray-200" />
+      <div class="relative h-14 w-full overflow-hidden rounded-2xl bg-slate-50 px-3">
+        <div class="absolute inset-x-3 top-1/2 h-2 -translate-y-1/2 rounded-full bg-slate-200" />
         <div
           class="absolute top-1/2 h-6 -translate-y-1/2 rounded-full bg-lime-300 shadow-sm"
           :style="range"

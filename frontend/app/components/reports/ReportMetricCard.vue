@@ -22,7 +22,7 @@ const containerClass = computed(() => {
     case 'info':
       return 'border-sky-100 bg-sky-50'
     default:
-      return 'border-gray-200 bg-white'
+      return 'border-slate-200 bg-white'
   }
 })
 
@@ -37,20 +37,20 @@ const valueClass = computed(() => {
     case 'info':
       return 'text-sky-700'
     default:
-      return 'text-gray-900'
+      return 'text-slate-900'
   }
 })
 </script>
 
 <template>
-  <div :class="['rounded-xl border p-4 shadow-sm', containerClass]">
-    <div class="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">
+  <div :class="['rounded-2xl border p-4 shadow-sm', containerClass]">
+    <div class="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
       {{ label }}
     </div>
     <div :class="['mt-2 text-2xl font-bold', valueClass]">
       {{ value }}
     </div>
-    <div v-if="caption" class="mt-1 text-sm text-gray-500">
+    <div v-if="caption" class="mt-1 text-sm text-slate-500">
       {{ caption }}
     </div>
   </div>

@@ -128,36 +128,36 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="rootRef" class="relative w-full">
-    <label v-if="label" class="mb-1 block text-sm font-medium text-gray-700">{{ label }}</label>
+    <label v-if="label" class="mb-1 block text-sm font-medium text-slate-700">{{ label }}</label>
 
     <button
       type="button"
-      class="inline-flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-3 py-2 text-left text-sm text-gray-700 shadow-sm outline-none transition hover:border-gray-300 focus:border-lime-500"
+      class="inline-flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-lime-500"
       :disabled="disabled"
       @click="toggleDropdown"
     >
       <span class="min-w-0 truncate">{{ displayLabel }}</span>
-      <svg class="ml-3 h-4 w-4 shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <svg class="ml-3 h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
         <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
       </svg>
     </button>
 
     <div
       v-if="isOpen"
-      class="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl"
+      class="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
     >
-      <div class="border-b border-gray-100 p-3">
+      <div class="border-b border-slate-100 p-3">
         <input
           v-model="query"
           type="search"
           :placeholder="searchPlaceholder"
-          class="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none transition focus:border-lime-500"
+          class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-lime-500"
         >
         <div class="mt-2 flex items-center justify-between text-xs">
-          <button type="button" class="text-gray-500 transition hover:text-gray-700" @click="clearValue">
+          <button type="button" class="text-slate-500 transition hover:text-slate-700" @click="clearValue">
             Сбросить
           </button>
-          <span class="text-gray-400">{{ filteredOptions.length }} знач.</span>
+          <span class="text-slate-400">{{ filteredOptions.length }} знач.</span>
         </div>
       </div>
 
@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
         <button
           v-if="!filteredOptions.length"
           type="button"
-          class="w-full rounded-xl px-3 py-3 text-left text-sm text-gray-400"
+          class="w-full rounded-xl px-3 py-3 text-left text-sm text-slate-400"
           @click="closeDropdown"
         >
           Ничего не найдено
@@ -178,13 +178,13 @@ onBeforeUnmount(() => {
           :class="[
             'mb-1 w-full rounded-xl px-3 py-3 text-left transition',
             String(option.id) === normalizedModelValue
-              ? 'bg-lime-50 text-gray-900 ring-1 ring-lime-200'
-              : 'text-gray-700 hover:bg-gray-50'
+              ? 'bg-lime-50 text-slate-900 ring-1 ring-lime-200'
+              : 'text-slate-700 hover:bg-slate-50'
           ]"
           @click="selectOption(option)"
         >
           <div class="truncate text-sm font-medium">{{ option.name }}</div>
-          <div v-if="option.inn" class="mt-1 text-xs text-gray-500">ИНН {{ option.inn }}</div>
+          <div v-if="option.inn" class="mt-1 text-xs text-slate-500">ИНН {{ option.inn }}</div>
         </button>
       </div>
     </div>

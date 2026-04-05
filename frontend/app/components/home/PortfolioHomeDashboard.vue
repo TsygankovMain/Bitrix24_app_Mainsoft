@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { ProjectBoardCardRecord } from '~/utils/projectBoard'
+import type { ReportRoutePayload } from '~/utils/reportNavigation'
 import {
   formatProjectDate,
   formatProjectHours,
@@ -48,7 +49,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'open-board'): void
-  (event: 'open-report', report: string): void
+  (event: 'open-report', payload: string | ReportRoutePayload): void
 }>()
 
 const previewMode = ref<'board' | 'timeline'>('board')
@@ -156,18 +157,12 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
 
 <template>
   <div class="space-y-6">
-    <section class="overflow-hidden rounded-[28px] border border-lime-100 bg-gradient-to-br from-lime-50 via-white to-slate-50 p-5 shadow-sm">
+    <section class="ms-surface-hero overflow-hidden p-5">
       <div class="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_auto] xl:items-start">
         <div class="min-w-0">
-          <div class="inline-flex rounded-full bg-lime-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-lime-700">
+          <div class="ms-eyebrow">
             Portfolio Home
           </div>
-          <h2 class="mt-3 max-w-3xl text-2xl font-semibold leading-tight text-slate-900">
-            Рабочее пространство для портфеля проектов
-          </h2>
-          <p class="mt-2 max-w-3xl text-sm text-slate-500">
-            Сигналы по списаниям, быстрый доступ к project board и маршруты в ключевые отчеты без тяжелой синхронизации на старте.
-          </p>
           <div
             v-if="data?.warning"
             class="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
@@ -177,12 +172,12 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
         </div>
 
         <div class="flex flex-wrap items-center gap-2 xl:justify-end">
-          <div class="rounded-2xl bg-white p-1 shadow-sm">
+          <div class="ms-segmented">
             <button
               type="button"
               :class="[
-                'rounded-xl px-4 py-2 text-sm font-medium transition',
-                previewMode === 'board' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900',
+                'ms-segmented-btn',
+                previewMode === 'board' ? 'ms-segmented-btn-active-dark' : '',
               ]"
               @click="previewMode = 'board'"
             >
@@ -191,8 +186,8 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
             <button
               type="button"
               :class="[
-                'rounded-xl px-4 py-2 text-sm font-medium transition',
-                previewMode === 'timeline' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900',
+                'ms-segmented-btn',
+                previewMode === 'timeline' ? 'ms-segmented-btn-active-dark' : '',
               ]"
               @click="previewMode = 'timeline'"
             >
@@ -205,22 +200,22 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
       </div>
 
       <div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <article class="rounded-2xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm">
+        <article class="ms-stat-card">
           <div class="text-xs text-slate-400">Проектов в работе</div>
           <div class="mt-2 text-3xl font-semibold text-slate-900">{{ data?.summary.active_count || 0 }}</div>
           <div class="mt-1 text-xs text-slate-500">Активный портфель</div>
         </article>
-        <article class="rounded-2xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm">
+        <article class="ms-stat-card">
           <div class="text-xs text-slate-400">Нет списаний 1 месяц</div>
           <div class="mt-2 text-3xl font-semibold text-amber-600">{{ data?.summary.inactive_30_count || 0 }}</div>
           <div class="mt-1 text-xs text-slate-500">Требуют внимания</div>
         </article>
-        <article class="rounded-2xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm">
+        <article class="ms-stat-card">
           <div class="text-xs text-slate-400">Нет списаний 3 месяца</div>
           <div class="mt-2 text-3xl font-semibold text-rose-600">{{ data?.summary.inactive_90_count || 0 }}</div>
           <div class="mt-1 text-xs text-slate-500">Высокий риск потери</div>
         </article>
-        <article class="rounded-2xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm">
+        <article class="ms-stat-card">
           <div class="text-xs text-slate-400">Support-проекты</div>
           <div class="mt-2 text-3xl font-semibold text-cyan-700">{{ data?.summary.support_count || 0 }}</div>
           <div class="mt-1 text-xs text-slate-500">Отдельный режим работы</div>
@@ -228,7 +223,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
       </div>
     </section>
 
-    <section class="grid gap-3 rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm xl:grid-cols-[1.1fr_1fr_auto_auto]">
+    <section class="ms-filter-wrap grid gap-3 xl:grid-cols-[1.1fr_1fr_auto_auto]">
       <label class="grid gap-1 text-sm">
         <span class="font-medium text-slate-700">Куратор</span>
         <select
@@ -252,11 +247,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
         >
       </label>
 
-      <button
-        type="button"
-        class="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
-        @click="signalsOnly = !signalsOnly"
-      >
+      <button type="button" class="ms-action-card text-center" @click="signalsOnly = !signalsOnly">
         {{ signalsOnly ? 'Все проекты' : 'Показать сигналы' }}
       </button>
 
@@ -264,7 +255,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
     </section>
 
     <div class="grid gap-6 xl:grid-cols-[1.7fr_0.9fr]">
-      <section class="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <section class="ms-surface p-5">
         <div class="flex items-start justify-between gap-4">
           <div>
             <h3 class="text-lg font-semibold text-slate-900">Портфель</h3>
@@ -338,7 +329,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
         </div>
       </section>
 
-      <aside class="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <aside class="ms-surface p-5">
         <template v-if="selectedProject">
           <div class="flex flex-wrap gap-2">
             <span :class="['inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold', getStageBadgeClass(selectedProject.stage)]">
@@ -382,7 +373,15 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
 
           <div class="mt-5 flex flex-wrap gap-2">
             <B24Button label="Открыть карточку проекта" color="success" @click="emit('open-board')" />
-            <B24Button label="Открыть проектный отчет" color="default" @click="emit('open-report', 'project')" />
+            <B24Button
+              label="Открыть проектный отчет"
+              color="default"
+              @click="emit('open-report', {
+                report: 'project',
+                projectId: selectedProject.project_id,
+                projectName: selectedProject.project_name,
+              })"
+            />
           </div>
         </template>
 
@@ -393,7 +392,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
     </div>
 
     <div class="grid gap-6 xl:grid-cols-3">
-      <section class="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <section class="ms-surface p-5">
         <div class="flex items-start justify-between gap-3">
           <div>
             <h3 class="text-lg font-semibold text-slate-900">Проекты без списаний</h3>
@@ -426,7 +425,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
         </div>
       </section>
 
-      <section class="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <section class="ms-surface p-5">
         <h3 class="text-lg font-semibold text-slate-900">Где теряем деньги</h3>
         <p class="mt-1 text-sm text-slate-500">Топ проектов по неучтенным часам за последние 90 дней.</p>
 
@@ -454,35 +453,35 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
         </div>
       </section>
 
-      <section class="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <section class="ms-surface p-5">
         <h3 class="text-lg font-semibold text-slate-900">Маршруты в отчеты</h3>
         <p class="mt-1 text-sm text-slate-500">Навигация вокруг проектного контура, а не списка плиток.</p>
 
         <div class="mt-4 grid gap-3">
           <button
             type="button"
-            class="rounded-2xl border border-slate-200 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:border-lime-200 hover:bg-lime-50"
+            class="ms-action-card"
             @click="emit('open-report', 'project')"
           >
             Отчет по проектам
           </button>
           <button
             type="button"
-            class="rounded-2xl border border-slate-200 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:border-lime-200 hover:bg-lime-50"
+            class="ms-action-card"
             @click="emit('open-report', 'project-task')"
           >
             Учет по проектам/задачам
           </button>
           <button
             type="button"
-            class="rounded-2xl border border-slate-200 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:border-lime-200 hover:bg-lime-50"
+            class="ms-action-card"
             @click="emit('open-report', 'revenue-leakage')"
           >
             Потери выручки
           </button>
           <button
             type="button"
-            class="rounded-2xl border border-slate-200 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:border-lime-200 hover:bg-lime-50"
+            class="ms-action-card"
             @click="emit('open-report', 'daily')"
           >
             Ежедневная нагрузка

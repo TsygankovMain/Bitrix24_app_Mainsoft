@@ -42,7 +42,7 @@ export function buildReportRouteLocation(target: ReportRouteName | ReportRoutePa
       query.project_name = projectName
     }
 
-    if (payload.autogenerate !== false) {
+    if (payload.autogenerate === true) {
       query.autogenerate = '1'
     }
   }

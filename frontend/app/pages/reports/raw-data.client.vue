@@ -243,7 +243,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4 min-h-screen">
+  <div class="ms-page-shell">
+    <div class="ms-page-frame flex flex-col gap-4">
 
       <!-- ===== GLOBAL STATUS BAR ===== -->
       <Transition name="status-slide">
@@ -267,10 +268,13 @@ onMounted(async () => {
           <B24Button label="Назад в настройки" color="link" @click="$router.push('/settings')" />
       </div>
 
-      <B24Card v-if="isInit">
+      <B24Card v-if="isInit" class="ms-surface">
           <template #header>
             <div class="flex flex-row justify-between items-center w-full">
-                <ProseH2>Сырые данные (БД)</ProseH2>
+                <div>
+                  <ProseH2 class="!text-slate-900">Сырые данные (БД)</ProseH2>
+                  <p class="mt-1 text-sm text-slate-500">Локальная база, ручная синхронизация и Excel-выгрузка по выбранным полям.</p>
+                </div>
                 <div class="flex gap-2 items-center">
                     <B24Button label="Синхронизировать с Б24" @click="handleSync" :loading="isSyncing" color="success" class="mr-2" />
                     <B24Button label="Обновить" @click="() => fetchTimesheetList(itemsPage)" loading-auto />
@@ -279,13 +283,13 @@ onMounted(async () => {
           </template>
 
           <!-- Filter by creation date -->
-          <div class="flex flex-wrap gap-3 items-end mb-4 p-3 bg-gray-50 rounded-lg border">
+          <div class="ms-filter-wrap mb-4 flex flex-wrap items-end gap-3">
               <div class="flex flex-col gap-1">
-                  <label class="text-xs font-medium text-gray-500">Дата создания — с</label>
+                  <label class="text-xs font-medium text-slate-500">Дата создания — с</label>
                   <UiDatePickerInput v-model="filterCreatedFrom" placeholder="Выберите дату" />
               </div>
               <div class="flex flex-col gap-1">
-                  <label class="text-xs font-medium text-gray-500">Дата создания — по</label>
+                  <label class="text-xs font-medium text-slate-500">Дата создания — по</label>
                   <UiDatePickerInput v-model="filterCreatedTo" placeholder="Выберите дату" />
               </div>
               <div class="flex gap-2 items-end">
@@ -301,9 +305,9 @@ onMounted(async () => {
           </div>
           <div v-else>
               <!-- Блок Экспорта -->
-              <div class="mb-8 bg-blue-50/30 border border-blue-100 rounded-lg p-6">
-                  <h3 class="text-md font-semibold text-gray-700 mb-4 flex items-center gap-2">
-                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div class="ms-panel mb-8">
+                  <h3 class="mb-4 flex items-center gap-2 text-md font-semibold text-slate-900">
+                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
                      </svg>
                      Настройки динамической выгрузки (Excel)
@@ -312,18 +316,18 @@ onMounted(async () => {
                   <!-- Dates -->
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                       <div>
-                          <label class="block text-sm text-gray-600 mb-1">Тип даты</label>
-                          <select v-model="dateType" class="w-full border-gray-300 border rounded-md shadow-sm py-2 px-3 focus:outline-none focus:border-blue-300 bg-white">
+                          <label class="mb-1 block text-sm text-slate-600">Тип даты</label>
+                          <select v-model="dateType" class="w-full bg-white">
                               <option value="reflection">По дате отражения (data)</option>
                               <option value="creation">По дате создания (createdTime)</option>
                           </select>
                       </div>
                        <div>
-                           <label class="block text-sm text-gray-600 mb-1">Период: с</label>
+                           <label class="mb-1 block text-sm text-slate-600">Период: с</label>
                            <UiDatePickerInput v-model="dateFrom" placeholder="Начало периода" />
                        </div>
                        <div>
-                           <label class="block text-sm text-gray-600 mb-1">по</label>
+                           <label class="mb-1 block text-sm text-slate-600">по</label>
                            <UiDatePickerInput v-model="dateTo" placeholder="Конец периода" />
                        </div>
                   </div>
@@ -331,72 +335,72 @@ onMounted(async () => {
                   <!-- Fields -->
                   <div class="mb-4">
                       <div class="flex justify-between items-center mb-2">
-                          <span class="text-sm font-medium text-gray-700">Поля для экспорта в Excel:</span>
-                          <span class="text-xs text-gray-500">Выбрано: {{ selectedFields.length }} из {{ spFields.length }}</span>
+                          <span class="text-sm font-medium text-slate-700">Поля для экспорта в Excel:</span>
+                          <span class="text-xs text-slate-500">Выбрано: {{ selectedFields.length }} из {{ spFields.length }}</span>
                       </div>
                       <div class="mb-3 space-x-4">
-                          <button @click="toggleSelectAll(true)" class="text-sm text-blue-600 hover:text-blue-800 font-medium cursor-pointer">Выбрать все</button>
-                          <button @click="toggleSelectAll(false)" class="text-sm text-gray-500 hover:text-gray-700 font-medium cursor-pointer">Снять все</button>
+                          <button @click="toggleSelectAll(true)" class="cursor-pointer text-sm font-medium text-lime-700 hover:text-lime-800">Выбрать все</button>
+                          <button @click="toggleSelectAll(false)" class="cursor-pointer text-sm font-medium text-slate-500 hover:text-slate-700">Снять все</button>
                       </div>
                       
-                      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-y-3 gap-x-6 bg-white p-4 border border-gray-200 rounded-lg max-h-64 overflow-y-auto shadow-inner">
+                      <div class="grid max-h-64 grid-cols-1 gap-x-6 gap-y-3 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-inner sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
                           <label v-for="f in spFields" :key="f.id" class="flex items-start gap-2 cursor-pointer group">
                               <!-- custom styling matching mockup -->
-                              <input type="checkbox" :value="f.id" v-model="selectedFields" class="mt-1 appearance-none w-4 h-4 border border-gray-300 rounded bg-white checked:bg-blue-600 checked:border-blue-600 focus:ring-1 focus:ring-blue-500 transition-colors bg-center bg-no-repeat 
+                              <input type="checkbox" :value="f.id" v-model="selectedFields" class="mt-1 h-4 w-4 appearance-none rounded border border-slate-300 bg-white bg-center bg-no-repeat transition-colors checked:border-lime-500 checked:bg-lime-500 focus:ring-1 focus:ring-lime-500
                               checked:bg-[url('data:image/svg+xml;utf8,%3Csvg%20viewBox=%220%200%2016%2016%22%20fill=%22white%22%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath%20d=%22M12.207%204.793a1%201%200%20010%201.414l-5%205a1%201%200%2001-1.414%200l-2-2a1%201%200%20011.414-1.414L6.5%209.086l4.293-4.293a1%201%200%20011.414%200z%22/%3E%3C/svg%3E')]">
                               <div class="flex flex-col overflow-hidden">
-                                  <span class="text-sm font-medium text-gray-800 group-hover:text-blue-600 transition-colors truncate" :title="f.title">{{ f.title }}</span>
-                                  <span class="text-xs text-gray-400 truncate" :title="f.id">{{ f.id }}</span>
+                                  <span class="truncate text-sm font-medium text-slate-800 transition-colors group-hover:text-lime-700" :title="f.title">{{ f.title }}</span>
+                                  <span class="truncate text-xs text-slate-400" :title="f.id">{{ f.id }}</span>
                               </div>
                           </label>
                       </div>
                   </div>
                   
-                  <div class="flex justify-between items-center mt-6 pt-4 border-t border-blue-200">
-                       <span class="text-sm text-gray-500 italic">Скачивание происходит напрямую из Bitrix24 (в обход локальной БД)</span>
+                  <div class="mt-6 flex items-center justify-between border-t border-slate-200 pt-4">
+                       <span class="text-sm italic text-slate-500">Скачивание происходит напрямую из Bitrix24 (в обход локальной БД)</span>
                        <B24Button label="Скачать Excel" @click="handleExport" :loading="isExporting" color="primary" />
                   </div>
               </div>
 
               <!-- Превью закешированных записей -->
-              <h3 class="text-lg font-bold text-gray-800 mb-2 mt-8">Превью закешированных записей (БД)</h3>
-              <div class="mb-2 text-sm text-gray-500">Всего записей локально: {{ itemsTotal }}</div>
-              <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200 border">
-                    <thead class="bg-gray-50">
+              <h3 class="mb-2 mt-8 text-lg font-bold text-slate-800">Превью закешированных записей (БД)</h3>
+              <div class="mb-2 text-sm text-slate-500">Всего записей локально: {{ itemsTotal }}</div>
+              <div class="ms-table-shell">
+                <table class="ms-table">
+                    <thead>
                         <tr>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Дата</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Сотрудник</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Проект</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID Задачи</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Иерархия</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Часы</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Неучт. Часы</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Учит?</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Описание</th>
-                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Создано</th>
+                            <th>ID</th>
+                            <th>Дата</th>
+                            <th>Сотрудник</th>
+                            <th>Проект</th>
+                            <th>ID Задачи</th>
+                            <th>Иерархия</th>
+                            <th>Часы</th>
+                            <th>Неучт. Часы</th>
+                            <th>Учит?</th>
+                            <th>Описание</th>
+                            <th>Создано</th>
                         </tr>
                     </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
-                        <tr v-for="item in timesheetItems" :key="item.id" class="hover:bg-gray-50">
-                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">{{ item.id }}</td>
-                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.date ? new Date(item.date).toLocaleDateString() : '-' }}</td>
-                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.employee_id }}</td>
-                            <td class="px-3 py-2 text-sm text-gray-500">{{ item.project_title || '-' }}</td>
-                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.task_id }}</td>
-                            <td class="px-3 py-2 text-sm text-gray-500 max-w-xs truncate" :title="item.task_hierarchy_titles ? item.task_hierarchy_titles.join(' > ') : ''">
+                    <tbody>
+                        <tr v-for="item in timesheetItems" :key="item.id">
+                            <td class="whitespace-nowrap text-sm text-slate-900">{{ item.id }}</td>
+                            <td class="whitespace-nowrap text-sm text-slate-500">{{ item.date ? new Date(item.date).toLocaleDateString() : '-' }}</td>
+                            <td class="whitespace-nowrap text-sm text-slate-500">{{ item.employee_id }}</td>
+                            <td class="text-sm text-slate-500">{{ item.project_title || '-' }}</td>
+                            <td class="whitespace-nowrap text-sm text-slate-500">{{ item.task_id }}</td>
+                            <td class="max-w-xs truncate text-sm text-slate-500" :title="item.task_hierarchy_titles ? item.task_hierarchy_titles.join(' > ') : ''">
                                 {{ item.task_hierarchy_titles ? item.task_hierarchy_titles.join(' > ') : '-' }}
                             </td>
-                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900 font-medium">{{ item.hours }}</td>
-                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.non_billable_hours }}</td>
-                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
-                                <span :class="item.is_billable ? 'text-green-600' : 'text-gray-400'">
+                            <td class="whitespace-nowrap text-sm font-medium text-slate-900">{{ item.hours }}</td>
+                            <td class="whitespace-nowrap text-sm text-slate-500">{{ item.non_billable_hours }}</td>
+                            <td class="whitespace-nowrap text-sm text-slate-500">
+                                <span :class="item.is_billable ? 'text-green-600' : 'text-slate-400'">
                                     {{ item.is_billable ? 'Да' : 'Нет' }}
                                 </span>
                             </td>
-                            <td class="px-3 py-2 text-sm text-gray-500 max-w-xs truncate" :title="item.description">{{ item.description || '-' }}</td>
-                            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.created_at ? new Date(item.created_at).toLocaleString() : '-' }}</td>
+                            <td class="max-w-xs truncate text-sm text-slate-500" :title="item.description">{{ item.description || '-' }}</td>
+                            <td class="whitespace-nowrap text-sm text-slate-500">{{ item.created_at ? new Date(item.created_at).toLocaleString() : '-' }}</td>
                         </tr>
                     </tbody>
                 </table>
@@ -407,21 +411,22 @@ onMounted(async () => {
                   <button 
                     @click="changePage(itemsPage - 1)" 
                     :disabled="itemsPage <= 1"
-                    class="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="rounded-xl border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Prev
                   </button>
-                  <span class="text-sm text-gray-600">Page {{ itemsPage }} of {{ itemsPages }}</span>
+                  <span class="text-sm text-slate-600">Page {{ itemsPage }} of {{ itemsPages }}</span>
                   <button 
                     @click="changePage(itemsPage + 1)" 
                     :disabled="itemsPage >= itemsPages"
-                    class="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="rounded-xl border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Next
                   </button>
               </div>
           </div>
       </B24Card>
+    </div>
   </div>
 </template>
 

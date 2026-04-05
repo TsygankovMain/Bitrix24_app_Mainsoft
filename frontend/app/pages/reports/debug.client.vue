@@ -123,89 +123,93 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4 min-h-screen">
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
       <div class="mb-4">
           <B24Button label="Назад" color="link" @click="$router.push('/')" />
       </div>
 
-      <B24Card v-if="isInit">
+      <B24Card v-if="isInit" class="ms-surface">
           <template #header>
             <div class="flex flex-row justify-between items-center w-full">
-                <ProseH2>Debug Report</ProseH2>
+                <div>
+                  <ProseH2 class="!text-slate-900">Debug Report</ProseH2>
+                  <p class="mt-1 text-sm text-slate-500">Технический экран для сверки агрегатов и локальных данных.</p>
+                </div>
                 <div class="flex gap-2 items-center">
                     <B24Button v-if="activeTab === 'raw-data'" label="Синхронизировать с Б24" @click="handleSync" :loading="isSyncing" color="success" class="mr-2" />
-                    <input type="date" v-model="dateFrom" class="border rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-500" @change="fetchReport" />
+                    <input type="date" v-model="dateFrom" class="px-2 py-1" @change="fetchReport" />
                     <B24Button label="Refresh" @click="fetchReport" loading-auto />
                 </div>
             </div>
           </template>
 
-          <div class="mb-4 flex gap-2">
+          <div class="ms-tabbar mb-4">
               <button 
                 @click="activeTab = 'employee-project'"
-                :class="['px-4 py-2 rounded transition-colors', activeTab === 'employee-project' ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800']"
+                :class="['ms-tab-btn', activeTab === 'employee-project' ? 'ms-tab-btn-active' : '']"
               >
                 Employee / Project
               </button>
               <button 
                 @click="activeTab = 'project-employee'"
-                :class="['px-4 py-2 rounded transition-colors', activeTab === 'project-employee' ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800']"
+                :class="['ms-tab-btn', activeTab === 'project-employee' ? 'ms-tab-btn-active' : '']"
               >
                 Project / Employee
               </button>
               <button 
                 @click="activeTab = 'raw-data'"
-                :class="['px-4 py-2 rounded transition-colors', activeTab === 'raw-data' ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800']"
+                :class="['ms-tab-btn', activeTab === 'raw-data' ? 'ms-tab-btn-active' : '']"
               >
                 Сырые данные (БД)
               </button>
           </div>
 
           <div v-if="isLoading" class="flex justify-center py-8">
-              <span class="text-gray-500">Loading...</span>
+              <span class="text-slate-500">Loading...</span>
           </div>
           <div v-else>
               <EmployeeProjectTable v-if="activeTab === 'employee-project'" :data="reportData" />
               <ProjectEmployeeTable v-if="activeTab === 'project-employee'" :data="reportData" />
               
               <div v-if="activeTab === 'raw-data'">
-                  <div class="mb-2 text-sm text-gray-500">Всего записей: {{ itemsTotal }}</div>
-                  <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-200 border">
-                        <thead class="bg-gray-50">
+                  <div class="mb-2 text-sm text-slate-500">Всего записей: {{ itemsTotal }}</div>
+                  <div class="ms-table-shell">
+                    <table class="ms-table">
+                        <thead>
                             <tr>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Дата</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Сотрудник</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Проект</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID Задачи</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Иерархия</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Часы</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Неучт. Часы</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Учит?</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Описание</th>
-                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Создано</th>
+                                <th>ID</th>
+                                <th>Дата</th>
+                                <th>Сотрудник</th>
+                                <th>Проект</th>
+                                <th>ID Задачи</th>
+                                <th>Иерархия</th>
+                                <th>Часы</th>
+                                <th>Неучт. Часы</th>
+                                <th>Учит?</th>
+                                <th>Описание</th>
+                                <th>Создано</th>
                             </tr>
                         </thead>
-                        <tbody class="bg-white divide-y divide-gray-200">
-                            <tr v-for="item in timesheetItems" :key="item.id" class="hover:bg-gray-50">
-                                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">{{ item.id }}</td>
-                                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.date ? new Date(item.date).toLocaleDateString() : '-' }}</td>
-                                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.employee_id }}</td>
-                                <td class="px-3 py-2 text-sm text-gray-500">{{ item.project_title || '-' }}</td>
-                                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.task_id }}</td>
-                                <td class="px-3 py-2 text-sm text-gray-500 max-w-xs truncate" :title="item.task_hierarchy_titles ? item.task_hierarchy_titles.join(' > ') : ''">
+                        <tbody>
+                            <tr v-for="item in timesheetItems" :key="item.id">
+                                <td class="whitespace-nowrap text-sm text-slate-900">{{ item.id }}</td>
+                                <td class="whitespace-nowrap text-sm text-slate-500">{{ item.date ? new Date(item.date).toLocaleDateString() : '-' }}</td>
+                                <td class="whitespace-nowrap text-sm text-slate-500">{{ item.employee_id }}</td>
+                                <td class="text-sm text-slate-500">{{ item.project_title || '-' }}</td>
+                                <td class="whitespace-nowrap text-sm text-slate-500">{{ item.task_id }}</td>
+                                <td class="max-w-xs truncate text-sm text-slate-500" :title="item.task_hierarchy_titles ? item.task_hierarchy_titles.join(' > ') : ''">
                                     {{ item.task_hierarchy_titles ? item.task_hierarchy_titles.join(' > ') : '-' }}
                                 </td>
-                                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900 font-medium">{{ item.hours }}</td>
-                                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.non_billable_hours }}</td>
-                                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
-                                    <span :class="item.is_billable ? 'text-green-600' : 'text-gray-400'">
+                                <td class="whitespace-nowrap text-sm font-medium text-slate-900">{{ item.hours }}</td>
+                                <td class="whitespace-nowrap text-sm text-slate-500">{{ item.non_billable_hours }}</td>
+                                <td class="whitespace-nowrap text-sm text-slate-500">
+                                    <span :class="item.is_billable ? 'text-green-600' : 'text-slate-400'">
                                         {{ item.is_billable ? 'Да' : 'Нет' }}
                                     </span>
                                 </td>
-                                <td class="px-3 py-2 text-sm text-gray-500 max-w-xs truncate" :title="item.description">{{ item.description || '-' }}</td>
-                                <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{{ item.created_at ? new Date(item.created_at).toLocaleString() : '-' }}</td>
+                                <td class="max-w-xs truncate text-sm text-slate-500" :title="item.description">{{ item.description || '-' }}</td>
+                                <td class="whitespace-nowrap text-sm text-slate-500">{{ item.created_at ? new Date(item.created_at).toLocaleString() : '-' }}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -216,15 +220,15 @@ onMounted(async () => {
                       <button 
                         @click="changePage(itemsPage - 1)" 
                         :disabled="itemsPage <= 1"
-                        class="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        class="rounded-xl border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Prev
                       </button>
-                      <span class="text-sm text-gray-600">Page {{ itemsPage }} of {{ itemsPages }}</span>
+                      <span class="text-sm text-slate-600">Page {{ itemsPage }} of {{ itemsPages }}</span>
                       <button 
                         @click="changePage(itemsPage + 1)" 
                         :disabled="itemsPage >= itemsPages"
-                        class="px-3 py-1 border rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        class="rounded-xl border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Next
                       </button>
@@ -232,5 +236,6 @@ onMounted(async () => {
               </div>
           </div>
       </B24Card>
+    </div>
   </div>
 </template>

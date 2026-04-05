@@ -159,18 +159,19 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4 min-h-screen">
-    <div class="mb-4">
-      <B24Button label="Назад" color="link" @click="$router.push('/')" />
-    </div>
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
+      <div class="mb-4">
+        <B24Button label="Назад" color="link" @click="$router.push('/')" />
+      </div>
 
-    <B24Card v-if="isInit">
+    <B24Card v-if="isInit" class="ms-surface">
       <template #header>
         <div class="flex flex-col gap-4 w-full">
           <div class="flex flex-row justify-between items-center w-full gap-4">
             <div>
-              <ProseH2>Фокус и распыление</ProseH2>
-              <p class="text-xs text-gray-500 mt-1">Как сотрудники распределяют часы между проектами и задачами</p>
+              <ProseH2 class="!text-slate-900">Фокус и распыление</ProseH2>
+              <p class="mt-1 text-xs text-slate-500">Как сотрудники распределяют часы между проектами и задачами</p>
             </div>
             <div class="flex gap-2">
               <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
@@ -178,7 +179,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-lg">
+          <div class="ms-filter-wrap flex flex-wrap gap-4 items-end">
             <DateRangeFilter
               v-model:dateFrom="dateFrom"
               v-model:dateTo="dateTo"
@@ -202,15 +203,15 @@ onMounted(async () => {
       </template>
 
       <div v-if="isLoading" class="flex justify-center py-8">
-        <span class="text-gray-500">Загрузка...</span>
+        <span class="text-slate-500">Загрузка...</span>
       </div>
 
-      <div v-else-if="!hasGenerated" class="py-8 text-center text-gray-500">
+      <div v-else-if="!hasGenerated" class="ms-empty-state">
         Выберите фильтры и нажмите «Сформировать»
       </div>
 
       <div v-else-if="reportData" class="space-y-6">
-        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div class="ms-kpi-grid">
           <ReportMetricCard label="Индекс фокуса" :value="formatIndex(reportData.summary.avg_focus_index)" tone="info" />
           <ReportMetricCard label="Ср. размер записи" :value="`${reportData.summary.avg_entry_size.toFixed(2)}ч`" tone="success" />
           <ReportMetricCard label="Ср. записей / сотрудник" :value="reportData.summary.avg_entries_per_employee" />
@@ -219,20 +220,20 @@ onMounted(async () => {
           <ReportMetricCard label="Сотрудников" :value="reportData.summary.employee_count" />
         </div>
 
-        <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div class="ms-panel">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-base font-semibold text-gray-900">Карта фокуса: проекты vs часы</h3>
-            <div class="flex items-center gap-3 text-xs text-gray-500">
+            <h3 class="text-base font-semibold text-slate-900">Карта фокуса: проекты vs часы</h3>
+            <div class="flex items-center gap-3 text-xs text-slate-500">
               <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-full bg-emerald-500" /> Низкий риск</span>
               <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-full bg-amber-400" /> Средний риск</span>
               <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-full bg-red-500" /> Высокий риск</span>
             </div>
           </div>
 
-          <div class="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4">
             <div class="relative h-[320px]">
-              <div class="absolute inset-y-0 left-10 border-l border-gray-300" />
-              <div class="absolute bottom-10 inset-x-10 border-b border-gray-300" />
+              <div class="absolute inset-y-0 left-10 border-l border-slate-300" />
+              <div class="absolute bottom-10 inset-x-10 border-b border-slate-300" />
 
               <div
                 v-for="row in reportData.employee_rows"
@@ -244,45 +245,45 @@ onMounted(async () => {
                 {{ row.employee_name.slice(0, 2).toUpperCase() }}
               </div>
 
-              <div class="absolute left-0 top-0 bottom-10 flex flex-col justify-between text-xs text-gray-500">
+              <div class="absolute left-0 top-0 bottom-10 flex flex-col justify-between text-xs text-slate-500">
                 <span>{{ maxHours.toFixed(0) }}ч</span>
                 <span>{{ (maxHours * 0.66).toFixed(0) }}ч</span>
                 <span>{{ (maxHours * 0.33).toFixed(0) }}ч</span>
                 <span>0ч</span>
               </div>
 
-              <div class="absolute left-10 right-0 bottom-0 flex justify-between px-1 text-xs text-gray-500">
+              <div class="absolute left-10 right-0 bottom-0 flex justify-between px-1 text-xs text-slate-500">
                 <span v-for="idx in maxProjectCount" :key="idx">{{ idx }}</span>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="overflow-x-auto border rounded-lg">
-          <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
+        <div class="ms-table-shell">
+          <table class="ms-table">
+            <thead>
               <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Сотрудник</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Проектов</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Задач</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Записей</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Всего часов</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Ср. запись</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Focus</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Риск</th>
+                <th>Сотрудник</th>
+                <th class="text-right">Проектов</th>
+                <th class="text-right">Задач</th>
+                <th class="text-right">Записей</th>
+                <th class="text-right">Всего часов</th>
+                <th class="text-right">Ср. запись</th>
+                <th class="text-right">Focus</th>
+                <th class="text-right">Риск</th>
               </tr>
             </thead>
-            <tbody class="bg-white divide-y divide-gray-200">
-              <tr v-for="row in reportData.employee_rows" :key="row.employee_id" class="hover:bg-gray-50">
-                <td class="px-4 py-3 text-sm text-gray-900">{{ row.employee_name }}</td>
-                <td class="px-4 py-3 text-sm text-gray-900 text-right font-medium">{{ row.project_count }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 text-right">{{ row.task_count }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 text-right">{{ row.entry_count }}</td>
-                <td class="px-4 py-3 text-sm text-gray-900 text-right">{{ row.total_hours.toFixed(2) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 text-right">{{ row.avg_entry_hours.toFixed(2) }}ч</td>
-                <td class="px-4 py-3 text-sm text-sky-700 text-right">{{ formatPercentFromIndex(row.focus_index) }}</td>
-                <td class="px-4 py-3 text-sm text-right">
-                  <span :class="['inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold', riskBadgeClass(row.risk_level)]">
+            <tbody>
+              <tr v-for="row in reportData.employee_rows" :key="row.employee_id">
+                <td class="text-slate-900">{{ row.employee_name }}</td>
+                <td class="text-right font-medium text-slate-900">{{ row.project_count }}</td>
+                <td class="text-right text-slate-700">{{ row.task_count }}</td>
+                <td class="text-right text-slate-700">{{ row.entry_count }}</td>
+                <td class="text-right text-slate-900">{{ row.total_hours.toFixed(2) }}</td>
+                <td class="text-right text-slate-700">{{ row.avg_entry_hours.toFixed(2) }}ч</td>
+                <td class="text-right text-sky-700">{{ formatPercentFromIndex(row.focus_index) }}</td>
+                <td class="text-right">
+                  <span :class="['ms-pill', riskBadgeClass(row.risk_level)]">
                     {{ row.risk_level }}
                   </span>
                 </td>
@@ -292,9 +293,10 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div v-else class="py-8 text-center text-gray-500">
+      <div v-else class="ms-empty-state">
         Нет данных
       </div>
     </B24Card>
+    </div>
   </div>
 </template>

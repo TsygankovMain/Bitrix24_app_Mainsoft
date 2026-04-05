@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import ProjectEmployeeTable from '../../components/reports/ProjectEmployeeTable.vue'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import { getCurrentMonthRange } from '~/utils/reportDateRange'
+import { readProjectReportPreset } from '~/utils/reportNavigation'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -23,6 +24,7 @@ let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
 const userSettings = useUserSettingsStore()
+const route = useRoute()
 // endregion ////
 
 const { contextId, isLoading: isLoadingState, load } = useDashboard({ isLoading: ref(false), load: () => {} })
@@ -71,6 +73,36 @@ async function fetchFilterOptions() {
         fetchEmployeeOptions(),
         fetchProjectOptions()
     ])
+}
+
+function applyProjectPresetFromRoute() {
+    const preset = readProjectReportPreset(route.query as Record<string, unknown>)
+    if (!preset.projectIds.length) {
+        return false
+    }
+
+    selectedProjects.value = preset.projectIds
+    projectFilterMode.value = 'include'
+
+    if (preset.projectName && !filterOptions.value.projects.some(option => String(option.id) === preset.projectIds[0])) {
+        filterOptions.value.projects = [
+            { id: preset.projectIds[0], name: preset.projectName },
+            ...filterOptions.value.projects,
+        ]
+    }
+
+    return preset.autogenerate
+}
+
+async function syncWithRoutePreset() {
+    const shouldAutogenerate = applyProjectPresetFromRoute()
+    if (!shouldAutogenerate) {
+        return
+    }
+
+    hasGenerated.value = false
+    reportData.value = []
+    await fetchReport()
 }
 
 async function fetchReport() {
@@ -165,26 +197,45 @@ onMounted(async () => {
     const range = getCurrentMonthRange()
     dateFrom.value = range.dateFrom
     dateTo.value = range.dateTo
+
+    await syncWithRoutePreset()
   } catch (error) {
     processErrorGlobal(error)
   } finally {
     isLoading.value = false
   }
 })
+
+watch(
+  () => [
+    route.query.project_id,
+    route.query.project_ids,
+    route.query.project_name,
+    route.query.autogenerate
+  ],
+  async () => {
+    if (!isInit.value) {
+      return
+    }
+
+    await syncWithRoutePreset()
+  }
+)
 // endregion ////
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4 min-h-screen">
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
       <div class="mb-4">
           <B24Button label="Назад" color="link" @click="$router.push('/')" />
       </div>
 
-      <B24Card v-if="isInit">
+      <B24Card v-if="isInit" class="ms-surface">
           <template #header>
             <div class="flex flex-col gap-4 w-full">
                 <div class="flex flex-row justify-between items-center w-full">
-                    <ProseH2>Отчет по проектам</ProseH2>
+                    <ProseH2 class="!text-slate-900">Отчет по проектам</ProseH2>
                     <div class="flex gap-2">
                         <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
                         <B24Button label="Сформировать" @click="fetchReport" loading-auto />
@@ -192,7 +243,7 @@ onMounted(async () => {
                 </div>
                 
                  <!-- Filters -->
-                 <div class="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-lg">
+                 <div class="ms-filter-wrap flex flex-wrap items-end gap-4">
                     <DateRangeFilter 
                         v-model:dateFrom="dateFrom" 
                         v-model:dateTo="dateTo" 
@@ -217,17 +268,18 @@ onMounted(async () => {
           </template>
 
           <div v-if="isLoading" class="flex justify-center py-8">
-              <span class="text-gray-500">Загрузка...</span>
+              <span class="text-slate-500">Загрузка...</span>
           </div>
           <div v-else-if="hasGenerated && reportData.length > 0">
               <ProjectEmployeeTable :data="reportData" :clickable-labels="clickableLabelsEnabled" :entity-type-id="entityTypeId" />
           </div>
-          <div v-else-if="hasGenerated" class="py-8 text-center text-gray-500">
+          <div v-else-if="hasGenerated" class="py-8 text-center text-slate-500">
               Нет данных
           </div>
-          <div v-else class="py-8 text-center text-gray-500">
+          <div v-else class="py-8 text-center text-slate-500">
               Выберите фильтры и нажмите «Сформировать»
           </div>
       </B24Card>
+    </div>
   </div>
 </template>

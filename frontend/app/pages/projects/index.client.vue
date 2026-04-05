@@ -7,6 +7,7 @@ import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import ProjectTimelineLane from '~/components/projects/ProjectTimelineLane.vue'
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption, ProjectBoardResponse } from '~/utils/projectBoard'
 import { formatProjectDate, getTimelineAnchor, parseProjectDateValue } from '~/utils/projectBoard'
+import { buildReportRouteLocation } from '~/utils/reportNavigation'
 
 const router = useRouter()
 const { locales: localesI18n, setLocale } = useI18n()
@@ -458,6 +459,19 @@ function closeDrawer() {
   isDrawerOpen.value = false
 }
 
+function openProjectReport(card?: ProjectBoardCardRecord | null) {
+  const targetCard = card || selectedCard.value
+  if (!targetCard) {
+    return
+  }
+
+  router.push(buildReportRouteLocation({
+    report: 'project',
+    projectId: targetCard.project_id,
+    projectName: targetCard.project_name,
+  }))
+}
+
 function handleDragStart(projectId: string) {
   draggedProjectId.value = projectId
 }
@@ -554,18 +568,19 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col gap-4 p-4">
-    <div class="mb-1">
-      <B24Button label="Назад" color="link" @click="router.push('/')" />
-    </div>
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
+      <div class="mb-1">
+        <B24Button label="Назад" color="link" @click="router.push('/')" />
+      </div>
 
-    <B24Card v-if="isInit">
+      <B24Card v-if="isInit" class="ms-surface">
       <template #header>
         <div class="flex w-full flex-col gap-5">
           <div class="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
             <div>
-              <ProseH2>Управление проектами</ProseH2>
-              <p class="mt-1 text-xs text-gray-500">
+              <ProseH2 class="!text-slate-900">Управление проектами</ProseH2>
+              <p class="mt-1 text-xs text-slate-500">
                 Доска стадий, архив проектов, локальные поля и контроль нетиповых статусов по списаниям
               </p>
             </div>
@@ -578,34 +593,34 @@ onMounted(async () => {
           </div>
 
           <div class="grid grid-cols-2 gap-3 xl:grid-cols-5">
-            <div class="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-              <div class="text-xs text-gray-400">Активные</div>
-              <div class="mt-1 text-2xl font-semibold text-gray-900">{{ boardData?.summary.active_count || 0 }}</div>
+            <div class="ms-stat-card">
+              <div class="text-xs text-slate-400">Активные</div>
+              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.active_count || 0 }}</div>
             </div>
-            <div class="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-              <div class="text-xs text-gray-400">В архиве</div>
-              <div class="mt-1 text-2xl font-semibold text-gray-900">{{ boardData?.summary.archived_count || 0 }}</div>
+            <div class="ms-stat-card">
+              <div class="text-xs text-slate-400">В архиве</div>
+              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.archived_count || 0 }}</div>
             </div>
-            <div class="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-              <div class="text-xs text-gray-400">Support</div>
-              <div class="mt-1 text-2xl font-semibold text-gray-900">{{ boardData?.summary.support_count || 0 }}</div>
+            <div class="ms-stat-card">
+              <div class="text-xs text-slate-400">Support</div>
+              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.support_count || 0 }}</div>
             </div>
-            <div class="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-              <div class="text-xs text-gray-400">Нет списаний 1 месяц</div>
-              <div class="mt-1 text-2xl font-semibold text-gray-900">{{ boardData?.summary.inactive_30_count || 0 }}</div>
+            <div class="ms-stat-card">
+              <div class="text-xs text-slate-400">Нет списаний 1 месяц</div>
+              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.inactive_30_count || 0 }}</div>
             </div>
-            <div class="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
-              <div class="text-xs text-gray-400">Нет списаний 3 месяца</div>
-              <div class="mt-1 text-2xl font-semibold text-gray-900">{{ boardData?.summary.inactive_90_count || 0 }}</div>
+            <div class="ms-stat-card">
+              <div class="text-xs text-slate-400">Нет списаний 3 месяца</div>
+              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.inactive_90_count || 0 }}</div>
             </div>
           </div>
 
-          <div class="flex flex-wrap gap-2 rounded-2xl bg-gray-50 p-1.5">
+          <div class="ms-segmented flex flex-wrap gap-2">
             <button
               type="button"
               :class="[
-                'rounded-xl px-4 py-2 text-sm font-medium transition',
-                activeView === 'board' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                'ms-segmented-btn',
+                activeView === 'board' ? 'ms-segmented-btn-active-dark' : ''
               ]"
               @click="activeView = 'board'"
             >
@@ -614,8 +629,8 @@ onMounted(async () => {
             <button
               type="button"
               :class="[
-                'rounded-xl px-4 py-2 text-sm font-medium transition',
-                activeView === 'timeline' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                'ms-segmented-btn',
+                activeView === 'timeline' ? 'ms-segmented-btn-active-dark' : ''
               ]"
               @click="activeView = 'timeline'"
             >
@@ -624,8 +639,8 @@ onMounted(async () => {
             <button
               type="button"
               :class="[
-                'rounded-xl px-4 py-2 text-sm font-medium transition',
-                activeView === 'archive' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                'ms-segmented-btn',
+                activeView === 'archive' ? 'ms-segmented-btn-active-dark' : ''
               ]"
               @click="activeView = 'archive'"
             >
@@ -635,20 +650,18 @@ onMounted(async () => {
 
           <div class="grid gap-3 xl:grid-cols-[1.2fr_repeat(4,minmax(0,1fr))]">
             <label class="grid gap-1 text-sm">
-              <span class="font-medium text-gray-700">Поиск</span>
+              <span class="font-medium text-slate-700">Поиск</span>
               <input
                 v-model="searchQuery"
                 type="text"
                 placeholder="Название проекта, компания, юрлицо, куратор"
-                class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
               >
             </label>
 
             <label class="grid gap-1 text-sm">
-              <span class="font-medium text-gray-700">Тип проекта</span>
+              <span class="font-medium text-slate-700">Тип проекта</span>
               <select
                 v-model="supportFilter"
-                class="rounded-xl border border-gray-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
               >
                 <option value="all">Все</option>
                 <option value="support">Только support</option>
@@ -690,12 +703,12 @@ onMounted(async () => {
         </div>
       </template>
 
-      <div v-if="isLoading" class="py-10 text-center text-gray-500">
+      <div v-if="isLoading" class="ms-empty-state">
         Загружаем проекты...
       </div>
 
       <div v-else-if="!boardData?.cards?.length" class="space-y-3 py-10 text-center">
-        <div class="text-gray-500">Проекты еще не синхронизированы.</div>
+        <div class="text-slate-500">Проекты еще не синхронизированы.</div>
         <B24Button label="Синхронизировать сейчас" color="success" :loading="isSyncing" @click="syncBoard()" />
       </div>
 
@@ -716,7 +729,7 @@ onMounted(async () => {
       </div>
 
       <div v-else-if="activeView === 'timeline'" class="space-y-4">
-        <div class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
           Диапазон: {{ formatProjectDate(timelineRange.start) }} - {{ formatProjectDate(timelineRange.end) }}
         </div>
 
@@ -735,16 +748,16 @@ onMounted(async () => {
           v-for="card in archivedCards"
           :key="card.project_id"
           type="button"
-          class="rounded-2xl border border-gray-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-md"
+          class="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
           @click="openCard(card)"
         >
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
-              <div class="truncate text-sm font-semibold text-gray-900">{{ card.project_name }}</div>
-              <div class="mt-1 text-xs text-gray-500">
+              <div class="truncate text-sm font-semibold text-slate-900">{{ card.project_name }}</div>
+              <div class="mt-1 text-xs text-slate-500">
                 {{ card.company_name || 'Без компании' }} · {{ card.curator_name || 'Без куратора' }}
               </div>
-              <div class="mt-1 text-xs text-gray-400">
+              <div class="mt-1 text-xs text-slate-400">
                 {{ card.our_legal_entity_name || 'Юрлицо не выбрано' }}
               </div>
             </div>
@@ -752,30 +765,32 @@ onMounted(async () => {
               Архив
             </span>
           </div>
-          <div class="mt-4 text-xs text-gray-500">
+          <div class="mt-4 text-xs text-slate-500">
             Перенесен в архив: {{ card.archived_at ? formatProjectDate(card.archived_at) : 'локально' }}
           </div>
         </button>
 
         <div
           v-if="archivedCards.length === 0"
-          class="col-span-full rounded-2xl border border-dashed border-gray-200 px-4 py-10 text-center text-gray-400"
+          class="col-span-full rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-slate-400"
         >
           Архивных проектов по текущим фильтрам нет.
         </div>
       </div>
-    </B24Card>
+      </B24Card>
 
-    <ProjectBoardDrawer
-      v-model="isDrawerOpen"
-      :card="selectedCard"
-      :employees="drawerEmployeeOptions"
-      :companies="drawerCompanyOptions"
-      :legal-entities="drawerLegalEntityOptions"
-      :is-saving="isSaving"
-      :is-archiving="isArchiving"
-      @save="handleSaveProject"
-      @archive="handleArchiveProject"
-    />
+      <ProjectBoardDrawer
+        v-model="isDrawerOpen"
+        :card="selectedCard"
+        :employees="drawerEmployeeOptions"
+        :companies="drawerCompanyOptions"
+        :legal-entities="drawerLegalEntityOptions"
+        :is-saving="isSaving"
+        :is-archiving="isArchiving"
+        @save="handleSaveProject"
+        @archive="handleArchiveProject"
+        @open-report="openProjectReport"
+      />
+    </div>
   </div>
 </template>

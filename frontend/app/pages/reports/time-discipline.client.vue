@@ -138,18 +138,19 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4 min-h-screen">
-    <div class="mb-4">
-      <B24Button label="Назад" color="link" @click="$router.push('/')" />
-    </div>
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
+      <div class="mb-4">
+        <B24Button label="Назад" color="link" @click="$router.push('/')" />
+      </div>
 
-    <B24Card v-if="isInit">
+      <B24Card v-if="isInit" class="ms-surface">
       <template #header>
         <div class="flex flex-col gap-4 w-full">
           <div class="flex flex-row justify-between items-center w-full gap-4">
             <div>
-              <ProseH2>Дисциплина внесения времени</ProseH2>
-              <p class="text-xs text-gray-500 mt-1">Сравнение даты отражения и реального времени создания записи в Bitrix24</p>
+              <ProseH2 class="!text-slate-900">Дисциплина внесения времени</ProseH2>
+              <p class="mt-1 text-xs text-slate-500">Сравнение даты отражения и реального времени создания записи в Bitrix24</p>
             </div>
             <div class="flex gap-2">
               <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
@@ -157,7 +158,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="flex flex-wrap gap-4 items-end bg-gray-50 p-4 rounded-lg">
+          <div class="ms-filter-wrap flex flex-wrap gap-4 items-end">
             <DateRangeFilter
               v-model:dateFrom="dateFrom"
               v-model:dateTo="dateTo"
@@ -181,19 +182,19 @@ onMounted(async () => {
       </template>
 
       <div v-if="isLoading" class="flex justify-center py-8">
-        <span class="text-gray-500">Загрузка...</span>
+        <span class="text-slate-500">Загрузка...</span>
       </div>
 
-      <div v-else-if="!hasGenerated" class="py-8 text-center text-gray-500">
+      <div v-else-if="!hasGenerated" class="ms-empty-state">
         Выберите фильтры и нажмите «Сформировать»
       </div>
 
       <div v-else-if="reportData" class="space-y-6">
-        <div v-if="reportData.summary.fallback_entries > 0" class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div v-if="reportData.summary.fallback_entries > 0" class="ms-panel-warning">
           Для {{ reportData.summary.fallback_entries }} записей использовано локальное время первой синхронизации, потому что `createdTime` еще не заполнен. После полной синхронизации отчет станет точнее.
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div class="ms-kpi-grid">
           <ReportMetricCard label="Всего записей" :value="reportData.summary.total_entries" />
           <ReportMetricCard label="День-в-день" :value="formatPercent(reportData.summary.same_day_share)" tone="success" />
           <ReportMetricCard label="+1 день" :value="formatPercent(reportData.summary.next_day_share)" tone="info" />
@@ -202,47 +203,47 @@ onMounted(async () => {
           <ReportMetricCard label="Красная зона" :value="reportData.summary.high_risk_employee_count" caption="сотрудников" />
         </div>
 
-        <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div class="ms-panel">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="text-base font-semibold text-gray-900">Распределение по задержке</h3>
-            <span class="text-xs text-gray-500">по дням задержки</span>
+            <h3 class="text-base font-semibold text-slate-900">Распределение по задержке</h3>
+            <span class="text-xs text-slate-500">по дням задержки</span>
           </div>
 
           <div class="space-y-4">
             <div v-for="bucket in reportData.lag_buckets" :key="bucket.label" class="flex items-center gap-4">
-              <div class="w-12 text-sm font-medium text-gray-700">{{ bucket.label }}</div>
-              <div class="flex-1 h-4 rounded-full bg-gray-100 overflow-hidden">
+              <div class="w-12 text-sm font-medium text-slate-700">{{ bucket.label }}</div>
+              <div class="flex-1 h-4 overflow-hidden rounded-full bg-slate-100">
                 <div class="h-full rounded-full bg-blue-500" :style="{ width: bucketWidth(bucket.count) }" />
               </div>
-              <div class="w-12 text-right text-sm text-gray-500">{{ bucket.count }}</div>
+              <div class="w-12 text-right text-sm text-slate-500">{{ bucket.count }}</div>
             </div>
           </div>
         </div>
 
-        <div class="overflow-x-auto border rounded-lg">
-          <table class="min-w-full divide-y divide-gray-200">
-            <thead class="bg-gray-50">
+        <div class="ms-table-shell">
+          <table class="ms-table">
+            <thead>
               <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Сотрудник</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Записей</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">День-в-день</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Ср. лаг</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Late 2+</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Макс.</th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Последняя поздняя запись</th>
-                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Риск</th>
+                <th>Сотрудник</th>
+                <th class="text-right">Записей</th>
+                <th class="text-right">День-в-день</th>
+                <th class="text-right">Ср. лаг</th>
+                <th class="text-right">Late 2+</th>
+                <th class="text-right">Макс.</th>
+                <th>Последняя поздняя запись</th>
+                <th class="text-right">Риск</th>
               </tr>
             </thead>
-            <tbody class="bg-white divide-y divide-gray-200">
-              <tr v-for="row in reportData.employee_rows" :key="row.employee_id" class="hover:bg-gray-50">
-                <td class="px-4 py-3 text-sm text-gray-900">{{ row.employee_name }}</td>
-                <td class="px-4 py-3 text-sm text-gray-900 text-right font-medium">{{ row.entry_count }}</td>
-                <td class="px-4 py-3 text-sm text-emerald-700 text-right">{{ formatPercent(row.same_day_share) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 text-right">{{ formatLag(row.avg_lag_days) }}</td>
-                <td class="px-4 py-3 text-sm text-amber-700 text-right">{{ row.late_entries }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 text-right">{{ row.max_lag_days }}д</td>
-                <td class="px-4 py-3 text-sm text-gray-500">{{ row.last_late_entry_date || '—' }}</td>
-                <td class="px-4 py-3 text-sm text-right">
+            <tbody>
+              <tr v-for="row in reportData.employee_rows" :key="row.employee_id">
+                <td class="text-slate-900">{{ row.employee_name }}</td>
+                <td class="text-right font-medium text-slate-900">{{ row.entry_count }}</td>
+                <td class="text-right text-emerald-700">{{ formatPercent(row.same_day_share) }}</td>
+                <td class="text-right">{{ formatLag(row.avg_lag_days) }}</td>
+                <td class="text-right text-amber-700">{{ row.late_entries }}</td>
+                <td class="text-right">{{ row.max_lag_days }}д</td>
+                <td>{{ row.last_late_entry_date || '—' }}</td>
+                <td class="text-right">
                   <span :class="['inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold', riskBadgeClass(row.risk_level)]">
                     {{ row.risk_level }}
                   </span>
@@ -253,9 +254,10 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div v-else class="py-8 text-center text-gray-500">
+      <div v-else class="ms-empty-state">
         Нет данных
       </div>
-    </B24Card>
+      </B24Card>
+    </div>
   </div>
 </template>
