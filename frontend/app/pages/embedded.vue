@@ -1216,6 +1216,9 @@ async function deleteItemDirect(item: any) {
 
 .embedded-shell {
     min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     padding: 12px;
     overflow: hidden;
 }
@@ -1227,7 +1230,6 @@ async function deleteItemDirect(item: any) {
     justify-content: space-between;
     gap: 16px;
     padding: 18px 20px;
-    margin-bottom: 12px;
 }
 
 .embedded-topbar__title {
@@ -1371,14 +1373,16 @@ async function deleteItemDirect(item: any) {
 
 .embedded-grid {
     display: grid;
+    flex: 1;
     gap: 12px;
     grid-template-columns: minmax(0, 1fr) 380px;
-    height: calc(100vh - 148px);
     min-height: 0;
 }
 
 .embedded-left-pane,
 .embedded-editor-pane {
+    display: flex;
+    flex-direction: column;
     min-height: 0;
     overflow: hidden;
 }
@@ -1413,7 +1417,8 @@ async function deleteItemDirect(item: any) {
 }
 
 .embedded-tree-scroll {
-    height: calc(100% - 104px);
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 12px;
 }
@@ -1455,6 +1460,7 @@ async function deleteItemDirect(item: any) {
 .embedded-editor-body {
     display: flex;
     flex: 1;
+    min-height: 0;
     flex-direction: column;
     gap: 16px;
     overflow-y: auto;
@@ -1489,9 +1495,14 @@ async function deleteItemDirect(item: any) {
 }
 
 @media (max-width: 1100px) {
+    .embedded-shell {
+        min-height: 100vh;
+        overflow: visible;
+    }
+
     .embedded-grid {
         grid-template-columns: 1fr;
-        height: auto;
+        flex: initial;
     }
 
     .embedded-left-pane {
@@ -1503,7 +1514,7 @@ async function deleteItemDirect(item: any) {
     }
 
     .embedded-tree-scroll {
-        height: auto;
+        flex: initial;
         min-height: 320px;
     }
 }
