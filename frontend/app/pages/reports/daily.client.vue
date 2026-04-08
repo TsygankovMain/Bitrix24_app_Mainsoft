@@ -49,6 +49,34 @@ const projectFilterMode = ref<'include' | 'exclude'>('include')
 const showModal = ref(false)
 const modalData = ref<any>(null) // { employeeName, date, items: [] }
 
+const normalizedHeaderDays = computed(() =>
+    Array.isArray(reportData.value?.header_days) ? reportData.value.header_days : []
+)
+
+const normalizedRows = computed(() =>
+    Array.isArray(reportData.value?.rows) ? reportData.value.rows : []
+)
+
+const hasRenderableReport = computed(() =>
+    normalizedHeaderDays.value.length > 0 && normalizedRows.value.length > 0
+)
+
+function normalizeDailyReportPayload(payload: any) {
+    return {
+        header_days: Array.isArray(payload?.header_days) ? payload.header_days : [],
+        rows: Array.isArray(payload?.rows) ? payload.rows : [],
+    }
+}
+
+function getDayCell(row: any, dateKey: string) {
+    const cell = row?.days?.[dateKey]
+    return {
+        total: Number(cell?.total || 0),
+        status: typeof cell?.status === 'string' ? cell.status : 'neutral',
+        items: Array.isArray(cell?.items) ? cell.items : [],
+    }
+}
+
 async function fetchFilterOptions() {
     try {
         const [employeesResult, projectsResult] = await Promise.allSettled([
@@ -69,12 +97,13 @@ async function fetchReport() {
     isLoading.value = true
     try {
         await apiStore.syncTimesheets()
-        reportData.value = await apiStore.getReportDailyWorkload(
+        const payload = await apiStore.getReportDailyWorkload(
             dateFrom.value, 
             dateTo.value, 
             { ids: selectedEmployees.value, mode: employeeFilterMode.value },
             { ids: selectedProjects.value, mode: projectFilterMode.value }
         )
+        reportData.value = normalizeDailyReportPayload(payload)
         hasGenerated.value = true
     } catch (e) {
         processErrorGlobal(e)
@@ -88,18 +117,18 @@ async function fetchReport() {
 import * as XLSX from 'xlsx'
 
 function handleExportExcel() {
-    if (!reportData.value) return;
+    if (!hasRenderableReport.value) return;
 
     const exportData: any[] = [];
-    const days = reportData.value.header_days;
+    const days = normalizedHeaderDays.value;
 
-    reportData.value.rows.forEach(row => {
+    normalizedRows.value.forEach(row => {
         const rowData: any = {
             "Сотрудник": row.employee.name
         };
         
         days.forEach(day => {
-            const dayInfo = row.days[day.date];
+            const dayInfo = getDayCell(row, day.date);
             rowData[day.date] = dayInfo.total > 0 ? dayInfo.total : '';
         });
 
@@ -111,7 +140,7 @@ function handleExportExcel() {
     // Adjust Column Widths
     const cols = [{ wch: 30 }]; // Employee Name column
     // Add width for date columns
-    reportData.value.header_days.forEach(() => {
+    normalizedHeaderDays.value.forEach(() => {
         cols.push({ wch: 5 }); // Minimal width for hours
     });
     worksheet['!cols'] = cols;
@@ -224,15 +253,15 @@ onMounted(async () => {
          </div>
 
          <!-- GRID -->
-         <div class="ms-table-shell" v-if="!isLoading && reportData">
+         <div class="ms-table-shell" v-if="!isLoading && hasRenderableReport">
              <table class="ms-table">
                  <thead>
                      <tr>
                          <th class="shadow-r sticky left-0 z-10 bg-slate-50">
                              Сотрудник
                          </th>
-                         <th 
-                            v-for="day in reportData.header_days" 
+                         <th
+                            v-for="day in normalizedHeaderDays"
                             :key="day.date" 
                             class="min-w-[50px] px-2 py-3 text-center text-xs font-medium uppercase tracking-wider"
                             :class="day.is_weekend ? 'bg-rose-50 text-rose-600' : 'text-slate-500'"
@@ -243,22 +272,22 @@ onMounted(async () => {
                      </tr>
                  </thead>
                  <tbody>
-                     <tr v-for="row in reportData.rows" :key="row.employee.id">
+                     <tr v-for="row in normalizedRows" :key="row.employee.id">
                          <td class="sticky left-0 z-10 whitespace-nowrap border-r border-slate-200 bg-white text-sm font-medium text-slate-900">
                              {{ row.employee.name }}
                          </td>
-                         <td 
-                            v-for="day in reportData.header_days" 
+                         <td
+                            v-for="day in normalizedHeaderDays"
                             :key="day.date" 
                             class="px-1 py-1 text-center"
                             :class="day.is_weekend ? 'bg-slate-50' : ''"
                          >
                              <div 
                                 class="w-full h-full py-2 rounded text-xs font-bold transition-colors"
-                                :class="getCellColorClass(row.days[day.date].status)"
-                                @click="openDetail(row.employee.name, day.date, row.days[day.date].items)"
+                                :class="getCellColorClass(getDayCell(row, day.date).status)"
+                                @click="openDetail(row.employee.name, day.date, getDayCell(row, day.date).items)"
                              >
-                                 {{ row.days[day.date].total > 0 ? row.days[day.date].total : '-' }}
+                                 {{ getDayCell(row, day.date).total > 0 ? getDayCell(row, day.date).total : '-' }}
                              </div>
                          </td>
                      </tr>
@@ -272,7 +301,7 @@ onMounted(async () => {
              Выберите фильтры и нажмите «Сформировать»
          </div>
          <div v-else class="ms-empty-state">
-             Нет данных
+             Нет данных за выбранный период
          </div>
       </div>
 
