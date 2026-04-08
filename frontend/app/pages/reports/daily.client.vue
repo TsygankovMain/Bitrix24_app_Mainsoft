@@ -4,7 +4,10 @@ import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
-import { getCurrentMonthRange } from '~/utils/reportDateRange'
+import { exportDailyWorkloadToXlsx } from '~/utils/reportExport'
+import { useReportFilters } from '~/composables/useReportFilters'
+import { useReportGenerator } from '~/composables/useReportGenerator'
+import type { DailyWorkloadReport } from '~/types/report'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -31,20 +34,9 @@ const isLoading = computed({
 })
 
 // Report State
-const reportData = ref<{ header_days: any[], rows: any[] } | null>(null)
-const dateFrom = ref('')
-const dateTo = ref('')
+const reportData = ref<DailyWorkloadReport | null>(null)
 const isInit = ref(false)
-const hasGenerated = ref(false)
 const domain = ref('') // Store domain for links
-const syncWarning = ref('')
-
-// Filters
-const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
-const selectedEmployees = ref<(string|number)[]>([])
-const selectedProjects = ref<(string|number)[]>([])
-const employeeFilterMode = ref<'include' | 'exclude'>('include')
-const projectFilterMode = ref<'include' | 'exclude'>('include')
 
 // Modal State
 const showModal = ref(false)
@@ -62,7 +54,7 @@ const hasRenderableReport = computed(() =>
     normalizedHeaderDays.value.length > 0 && normalizedRows.value.length > 0
 )
 
-function normalizeDailyReportPayload(payload: any) {
+function normalizeDailyReportPayload(payload: DailyWorkloadReport | null | undefined): DailyWorkloadReport {
     return {
         header_days: Array.isArray(payload?.header_days) ? payload.header_days : [],
         rows: Array.isArray(payload?.rows) ? payload.rows : [],
@@ -78,84 +70,33 @@ function getDayCell(row: any, dateKey: string) {
     }
 }
 
-async function fetchFilterOptions() {
-    try {
-        const [employeesResult, projectsResult] = await Promise.allSettled([
-            apiStore.getFilterEmployees(),
-            apiStore.getFilterProjects()
-        ])
-
-        filterOptions.value = {
-            employees: employeesResult.status === 'fulfilled' ? employeesResult.value : [],
-            projects: projectsResult.status === 'fulfilled' ? projectsResult.value : [],
-        }
-    } catch (e) {
-        processErrorGlobal(e)
-    }
-}
-
 async function fetchReport() {
-    isLoading.value = true
-    syncWarning.value = ''
-    try {
-        try {
-            await apiStore.syncTimesheets()
-        } catch (error) {
-            $logger.warn('Timesheet sync failed, fallback to stored data', error)
-            syncWarning.value = 'Не удалось обновить данные из Битрикс24. Отчет построен по последней сохраненной синхронизации.'
-        }
+    const payload = await generateReport({
+        loader: () => apiStore.getReportDailyWorkload(
+            dateFrom.value,
+            dateTo.value,
+            employeeFilter.value,
+            projectFilter.value
+        ),
+        normalize: normalizeDailyReportPayload,
+        allowSyncFallback: true,
+        syncWarningMessage: 'Не удалось обновить данные из Битрикс24. Отчет построен по последней сохраненной синхронизации.'
+    })
 
-        const payload = await apiStore.getReportDailyWorkload(
-            dateFrom.value, 
-            dateTo.value, 
-            { ids: selectedEmployees.value, mode: employeeFilterMode.value },
-            { ids: selectedProjects.value, mode: projectFilterMode.value }
-        )
-        reportData.value = normalizeDailyReportPayload(payload)
-        hasGenerated.value = true
-    } catch (e) {
-        processErrorGlobal(e)
-    } finally {
-        isLoading.value = false
+    if (payload) {
+        reportData.value = payload
     }
 }
 
-
-// Excel Export
-import * as XLSX from 'xlsx'
-
-function handleExportExcel() {
+async function handleExportExcel() {
     if (!hasRenderableReport.value) return;
+    if (!reportData.value) return
 
-    const exportData: any[] = [];
-    const days = normalizedHeaderDays.value;
-
-    normalizedRows.value.forEach(row => {
-        const rowData: any = {
-            "Сотрудник": row.employee.name
-        };
-        
-        days.forEach(day => {
-            const dayInfo = getDayCell(row, day.date);
-            rowData[day.date] = dayInfo.total > 0 ? dayInfo.total : '';
-        });
-
-        exportData.push(rowData);
-    });
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-
-    // Adjust Column Widths
-    const cols = [{ wch: 30 }]; // Employee Name column
-    // Add width for date columns
-    normalizedHeaderDays.value.forEach(() => {
-        cols.push({ wch: 5 }); // Minimal width for hours
-    });
-    worksheet['!cols'] = cols;
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Ежедневная нагрузка");
-    XLSX.writeFile(workbook, `Report_Daily_${dateFrom.value}_${dateTo.value}.xlsx`);
+    await exportDailyWorkloadToXlsx({
+        report: reportData.value,
+        sheetName: 'Ежедневная нагрузка',
+        fileName: `Report_Daily_${dateFrom.value}_${dateTo.value}.xlsx`
+    })
 }
 
 function openDetail(employeeName: string, date: string, items: any[]) {
@@ -205,12 +146,10 @@ onMounted(async () => {
     await $b24.parent.setTitle('Ежедневная нагрузка') 
     isInit.value = true
     
-    await fetchFilterOptions()
+    await loadFilterOptions()
     
     // Default range: Current Month
-    const range = getCurrentMonthRange()
-    dateFrom.value = range.dateFrom
-    dateTo.value = range.dateTo
+    initCurrentMonthRange()
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -228,7 +167,7 @@ onMounted(async () => {
 
       <div class="flex flex-col gap-6" v-if="isInit">
          <!-- Filters Header -->
-         <div class="ms-surface ms-report-surface flex flex-col gap-4 p-5">
+         <div class="ms-surface flex flex-col gap-4 p-5">
              <div class="flex flex-row justify-between items-center w-full">
                  <div>
                    <h2 class="text-xl font-bold text-slate-900">Ежедневная нагрузка</h2>
@@ -264,56 +203,59 @@ onMounted(async () => {
              {{ syncWarning }}
          </div>
 
-         <!-- GRID -->
-         <div class="ms-table-shell" v-if="!isLoading && hasRenderableReport">
-             <table class="ms-table">
-                 <thead>
-                     <tr>
-                         <th class="shadow-r sticky left-0 z-10 bg-slate-50">
-                             Сотрудник
-                         </th>
-                         <th
-                            v-for="day in normalizedHeaderDays"
-                            :key="day.date" 
-                            class="min-w-[50px] px-2 py-3 text-center text-xs font-medium uppercase tracking-wider"
-                            :class="day.is_weekend ? 'bg-rose-50 text-rose-600' : 'text-slate-500'"
-                         >
-                             <div>{{ day.day }}</div>
-                             <div class="text-[10px]">{{ ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'][day.weekday] }}</div>
-                         </th>
-                     </tr>
-                 </thead>
-                 <tbody>
-                     <tr v-for="row in normalizedRows" :key="row.employee.id">
-                         <td class="sticky left-0 z-10 whitespace-nowrap border-r border-slate-200 bg-white text-sm font-medium text-slate-900">
-                             {{ row.employee.name }}
-                         </td>
-                         <td
-                            v-for="day in normalizedHeaderDays"
-                            :key="day.date" 
-                            class="px-1 py-1 text-center"
-                            :class="day.is_weekend ? 'bg-slate-50' : ''"
-                         >
-                             <div 
-                                class="w-full h-full py-2 rounded text-xs font-bold transition-colors"
-                                :class="getCellColorClass(getDayCell(row, day.date).status)"
-                                @click="openDetail(row.employee.name, day.date, getDayCell(row, day.date).items)"
+         <div class="ms-surface p-4" v-if="!isLoading && hasRenderableReport">
+             <div class="ms-table-shell">
+                 <table class="ms-table">
+                     <thead>
+                         <tr>
+                             <th class="shadow-r sticky left-0 z-10 bg-slate-50">
+                                 Сотрудник
+                             </th>
+                             <th
+                                v-for="day in normalizedHeaderDays"
+                                :key="day.date"
+                                class="min-w-[50px] px-2 py-3 text-center text-xs font-medium uppercase tracking-wider"
+                                :class="day.is_weekend ? 'bg-rose-50 text-rose-600' : 'text-slate-500'"
                              >
-                                 {{ getDayCell(row, day.date).total > 0 ? getDayCell(row, day.date).total : '-' }}
-                             </div>
-                         </td>
-                     </tr>
-                 </tbody>
-             </table>
+                                 <div>{{ day.day }}</div>
+                                 <div class="text-[10px]">{{ ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'][day.weekday] }}</div>
+                             </th>
+                         </tr>
+                     </thead>
+                     <tbody>
+                         <tr v-for="row in normalizedRows" :key="row.employee.id">
+                             <td class="sticky left-0 z-10 whitespace-nowrap border-r border-slate-200 bg-white text-sm font-medium text-slate-900">
+                                 {{ row.employee.name }}
+                             </td>
+                             <td
+                                v-for="day in normalizedHeaderDays"
+                                :key="day.date"
+                                class="px-1 py-1 text-center"
+                                :class="day.is_weekend ? 'bg-slate-50' : ''"
+                             >
+                                 <div
+                                    class="w-full h-full py-2 rounded text-xs font-bold transition-colors"
+                                    :class="getCellColorClass(getDayCell(row, day.date).status)"
+                                    @click="openDetail(row.employee.name, day.date, getDayCell(row, day.date).items)"
+                                 >
+                                     {{ getDayCell(row, day.date).total > 0 ? getDayCell(row, day.date).total : '-' }}
+                                 </div>
+                             </td>
+                         </tr>
+                     </tbody>
+                 </table>
+             </div>
          </div>
-         <div v-else-if="isLoading" class="ms-empty-state">
-             Загрузка данных...
-         </div>
-         <div v-else-if="!hasGenerated" class="ms-empty-state">
-             Выберите фильтры и нажмите «Сформировать»
-         </div>
-         <div v-else class="ms-empty-state">
-             Нет данных за выбранный период
+         <div v-else class="ms-surface px-5 py-8">
+             <div v-if="isLoading" class="ms-empty-state !py-0">
+                 Загрузка данных...
+             </div>
+             <div v-else-if="!hasGenerated" class="ms-empty-state !py-0">
+                 Выберите фильтры и нажмите «Сформировать»
+             </div>
+             <div v-else class="ms-empty-state !py-0">
+                 Нет данных за выбранный период
+             </div>
          </div>
       </div>
 
@@ -371,3 +313,23 @@ onMounted(async () => {
     box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.1);
 }
 </style>
+const {
+    dateFrom,
+    dateTo,
+    filterOptions,
+    selectedEmployees,
+    selectedProjects,
+    employeeFilterMode,
+    projectFilterMode,
+    employeeFilter,
+    projectFilter,
+    loadFilterOptions,
+    initCurrentMonthRange,
+} = useReportFilters()
+
+const { hasGenerated, syncWarning, generateReport } = useReportGenerator({
+    setLoading: (value) => {
+        isLoading.value = value
+    },
+    onError: processErrorGlobal
+})

@@ -6,7 +6,9 @@ import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
 import { exportRowsToXlsx } from '~/utils/exportXlsx'
-import { getCurrentMonthRange } from '~/utils/reportDateRange'
+import { useReportFilters } from '~/composables/useReportFilters'
+import { useReportGenerator } from '~/composables/useReportGenerator'
+import type { RevenueLeakageReport } from '~/types/report'
 
 const { locales: localesI18n, setLocale } = useI18n()
 
@@ -32,16 +34,28 @@ const isLoading = computed({
 })
 
 const isInit = ref(false)
-const hasGenerated = ref(false)
-const reportData = ref<{ summary: any; project_rows: any[]; risk_rows: any[] } | null>(null)
-const dateFrom = ref('')
-const dateTo = ref('')
+const reportData = ref<RevenueLeakageReport | null>(null)
 
-const filterOptions = ref<{ employees: any[]; projects: any[] }>({ employees: [], projects: [] })
-const selectedEmployees = ref<(string | number)[]>([])
-const selectedProjects = ref<(string | number)[]>([])
-const employeeFilterMode = ref<'include' | 'exclude'>('include')
-const projectFilterMode = ref<'include' | 'exclude'>('include')
+const {
+  dateFrom,
+  dateTo,
+  filterOptions,
+  selectedEmployees,
+  selectedProjects,
+  employeeFilterMode,
+  projectFilterMode,
+  employeeFilter,
+  projectFilter,
+  loadFilterOptions,
+  initCurrentMonthRange,
+} = useReportFilters()
+
+const { hasGenerated, generateReport } = useReportGenerator({
+  setLoading: (value) => {
+    isLoading.value = value
+  },
+  onError: processErrorGlobal
+})
 
 const maxLeakageHours = computed(() =>
   Math.max(...(reportData.value?.project_rows || []).map((row: any) => row.non_billable_hours || 0), 0)
@@ -68,36 +82,18 @@ function lossBadgeClass(value: number) {
   return 'bg-emerald-100 text-emerald-700'
 }
 
-async function fetchFilterOptions() {
-  try {
-    const [employeesResult, projectsResult] = await Promise.allSettled([
-      apiStore.getFilterEmployees(),
-      apiStore.getFilterProjects()
-    ])
-    filterOptions.value = {
-      employees: employeesResult.status === 'fulfilled' ? employeesResult.value : [],
-      projects: projectsResult.status === 'fulfilled' ? projectsResult.value : [],
-    }
-  } catch (error) {
-    processErrorGlobal(error)
-  }
-}
-
 async function fetchReport() {
-  isLoading.value = true
-  try {
-    await apiStore.syncTimesheets()
-    reportData.value = await apiStore.getReportRevenueLeakage(
+  const payload = await generateReport({
+    loader: () => apiStore.getReportRevenueLeakage(
       dateFrom.value,
       dateTo.value,
-      { ids: selectedEmployees.value, mode: employeeFilterMode.value },
-      { ids: selectedProjects.value, mode: projectFilterMode.value }
+      employeeFilter.value,
+      projectFilter.value
     )
-    hasGenerated.value = true
-  } catch (error) {
-    processErrorGlobal(error)
-  } finally {
-    isLoading.value = false
+  })
+
+  if (payload) {
+    reportData.value = payload
   }
 }
 
@@ -127,11 +123,9 @@ onMounted(async () => {
     await $b24.parent.setTitle('Потери выручки')
     isInit.value = true
 
-    await fetchFilterOptions()
+    await loadFilterOptions()
 
-    const range = getCurrentMonthRange()
-    dateFrom.value = range.dateFrom
-    dateTo.value = range.dateTo
+    initCurrentMonthRange()
   } catch (error) {
     processErrorGlobal(error)
   } finally {

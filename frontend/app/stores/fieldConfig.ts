@@ -8,6 +8,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { B24Frame } from '@bitrix24/b24jssdk'
+import type { AppConfigurationPayload, FieldConfigObject } from '~/types/config'
 
 /**
  * Maps backend config keys (from installation_service.py) 
@@ -99,8 +100,8 @@ export const useFieldConfigStore = defineStore(
          * Apply raw config object (from app.option or direct API).
          * Handles the backend→frontend key mapping.
          */
-        function applyRawConfig(rawConfig: Record<string, any>) {
-            entityTypeId.value = rawConfig.sp_entity_type_id || 0
+        function applyRawConfig(rawConfig: AppConfigurationPayload) {
+            entityTypeId.value = rawConfig.sp_entity_type_id ? Number(rawConfig.sp_entity_type_id) : 0
 
             const backendFields = rawConfig.fields_mapping || {}
             const mappedFields: Record<string, string> = {}
@@ -132,7 +133,7 @@ export const useFieldConfigStore = defineStore(
          * Get fields as the config object expected by embedded.vue / task.vue.
          * Backward-compatible format: { DEFAULT_SMART_PROCESS_ID, FIELDS, TASK_FIELDS, SPA_FIELDS }
          */
-        const configObject = computed(() => ({
+        const configObject = computed<FieldConfigObject>(() => ({
             DEFAULT_SMART_PROCESS_ID: entityTypeId.value,
             FIELDS: fields.value,
             TASK_FIELDS: taskFields.value,

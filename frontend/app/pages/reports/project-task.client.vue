@@ -5,8 +5,11 @@ import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import { openCrmItemCard } from '~/utils/openCrmItem'
-import { getCurrentMonthRange } from '~/utils/reportDateRange'
 import { readProjectReportPreset } from '~/utils/reportNavigation'
+import { exportProjectTaskReportToXlsx } from '~/utils/reportExport'
+import { useReportFilters } from '~/composables/useReportFilters'
+import { useReportGenerator } from '~/composables/useReportGenerator'
+import type { ProjectTaskReportNode } from '~/types/report'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -36,11 +39,8 @@ const isLoading = computed({
 })
 
 // Report State
-const reportData = ref<any[]>([])
-const dateFrom = ref('')
-const dateTo = ref('')
+const reportData = ref<ProjectTaskReportNode[]>([])
 const isInit = ref(false)
-const hasGenerated = ref(false)
 const expandedNodes = ref<Set<string>>(new Set())
 const entityTypeId = ref<string | number>(0)
 
@@ -53,45 +53,30 @@ function handleLabelClick(itemIdElem: string | number) {
 }
 
 // Filters State
-const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
-const selectedEmployees = ref<(string|number)[]>([])
-const selectedProjects = ref<(string|number)[]>([])
-const employeeFilterMode = ref<'include' | 'exclude'>('include')
-const projectFilterMode = ref<'include' | 'exclude'>('include')
+const {
+    dateFrom,
+    dateTo,
+    filterOptions,
+    selectedEmployees,
+    selectedProjects,
+    employeeFilterMode,
+    projectFilterMode,
+    employeeFilter,
+    projectFilter,
+    loadFilterOptions,
+    initCurrentMonthRange,
+    applyRouteProjectPreset
+} = useReportFilters()
 
-async function fetchFilterOptions() {
-    try {
-        const [employeesResult, projectsResult] = await Promise.allSettled([
-            apiStore.getFilterEmployees(),
-            apiStore.getFilterProjects()
-        ])
-
-        filterOptions.value = {
-            employees: employeesResult.status === 'fulfilled' ? employeesResult.value : [],
-            projects: projectsResult.status === 'fulfilled' ? projectsResult.value : [],
-        }
-    } catch (e) {
-        processErrorGlobal(e)
-    }
-}
+const { hasGenerated, generateReport, resetGenerated } = useReportGenerator({
+    setLoading: (value) => {
+        isLoading.value = value
+    },
+    onError: processErrorGlobal
+})
 
 function applyProjectPresetFromRoute() {
-    const preset = readProjectReportPreset(route.query as Record<string, unknown>)
-    if (!preset.projectIds.length) {
-        return false
-    }
-
-    selectedProjects.value = preset.projectIds
-    projectFilterMode.value = 'include'
-
-    if (preset.projectName && !filterOptions.value.projects.some(option => String(option.id) === preset.projectIds[0])) {
-        filterOptions.value.projects = [
-            { id: preset.projectIds[0], name: preset.projectName },
-            ...filterOptions.value.projects,
-        ]
-    }
-
-    return preset.autogenerate
+    return applyRouteProjectPreset(route.query as Record<string, unknown>)
 }
 
 async function syncWithRoutePreset() {
@@ -100,28 +85,25 @@ async function syncWithRoutePreset() {
         return
     }
 
-    hasGenerated.value = false
+    resetGenerated()
     reportData.value = []
     await fetchReport()
 }
 
 async function fetchReport() {
-    isLoading.value = true
-    try {
-        await apiStore.syncTimesheets()
-        reportData.value = await apiStore.getReportProjectTaskEmployee(
-            dateFrom.value, 
-            dateTo.value, 
-            { ids: selectedEmployees.value, mode: employeeFilterMode.value },
-            { ids: selectedProjects.value, mode: projectFilterMode.value }
+    const payload = await generateReport({
+        loader: () => apiStore.getReportProjectTaskEmployee(
+            dateFrom.value,
+            dateTo.value,
+            employeeFilter.value,
+            projectFilter.value
         )
+    })
+
+    if (payload) {
+        reportData.value = payload
         // All groups collapsed by default
         expandedNodes.value = new Set()
-        hasGenerated.value = true
-    } catch (e) {
-        processErrorGlobal(e)
-    } finally {
-        isLoading.value = false
     }
 }
 
@@ -147,91 +129,12 @@ function formatDate(dateStr: string) {
     return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
-// Excel Export
-import * as XLSX from 'xlsx'
-
 function handleExportExcel() {
-    const exportData: any[] = []
-    const rowLevels: number[] = []
-
-    const processProject = (project: any) => {
-        exportData.push({
-            "Название": project.name,
-            "Всего часов": project.total_hours,
-            "Учтено": project.billable_hours,
-            "Не учтено": project.non_billable_hours
-        })
-        rowLevels.push(0)
-
-        if (project.children) {
-            project.children.forEach((task: any) => processTask(task, 1))
-        }
-    }
-
-    const processTask = (task: any, level: number) => {
-        const indent = "    ".repeat(level)
-        exportData.push({
-            "Название": indent + task.name,
-            "Всего часов": task.total_hours,
-            "Учтено": task.billable_hours,
-            "Не учтено": task.non_billable_hours
-        })
-        rowLevels.push(level)
-
-        // Sub-tasks
-        if (task.children && task.children.length > 0) {
-            task.children.forEach((sub: any) => processTask(sub, level + 1))
-        }
-
-        // Employees
-        if (task.employees) {
-            task.employees.forEach((emp: any) => {
-                const empIndent = "    ".repeat(level + 1)
-                exportData.push({
-                    "Название": empIndent + emp.name,
-                    "Всего часов": emp.total_hours,
-                    "Учтено": emp.billable_hours,
-                    "Не учтено": emp.non_billable_hours
-                })
-                rowLevels.push(level + 1)
-
-                if (emp.items) {
-                    emp.items.forEach((item: any) => {
-                        const itemIndent = "    ".repeat(level + 2)
-                        exportData.push({
-                            "Название": itemIndent + (item.nazvanie_zadachi || item.opisanie || '—'),
-                            "Дата": item.data ? formatDate(item.data) : '',
-                            "Всего часов": item.kolichestvo_chasov,
-                            "Учтено": item.uchitivaem ? item.kolichestvo_chasov : 0,
-                            "Не учтено": item.uchitivaem ? 0 : item.kolichestvo_chasov
-                        })
-                        rowLevels.push(level + 2)
-                    })
-                }
-            })
-        }
-    }
-
-    reportData.value.forEach(p => processProject(p))
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData)
-    worksheet['!cols'] = [
-        { wch: 55 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 15 }
-    ]
-
-    const rows: any[] = [{ level: 0 }]
-    rowLevels.forEach(level => {
-        rows.push({ level, hidden: false })
+    exportProjectTaskReportToXlsx({
+        rows: reportData.value,
+        sheetName: 'Проект-Задача',
+        fileName: `Report_Project_Task_${dateFrom.value}_${dateTo.value}.xlsx`
     })
-    worksheet['!rows'] = rows
-
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Проект-Задача")
-    XLSX.writeFile(workbook, `Report_Project_Task_${dateFrom.value}_${dateTo.value}.xlsx`)
 }
 
 // region Lifecycle Hooks ////
@@ -243,7 +146,7 @@ onMounted(async () => {
     await $b24.parent.setTitle('Учет по проектам/задачам') 
     isInit.value = true
     
-    await fetchFilterOptions()
+    await loadFilterOptions()
     
     // Load entity type ID for clickable labels
     try {
@@ -256,9 +159,7 @@ onMounted(async () => {
     }
     
     // Set default range (current month)
-    const range = getCurrentMonthRange()
-    dateFrom.value = range.dateFrom
-    dateTo.value = range.dateTo
+    initCurrentMonthRange()
 
     await syncWithRoutePreset()
   } catch (error) {
@@ -271,10 +172,7 @@ onMounted(async () => {
 
 watch(
   () => [
-    route.query.project_id,
-    route.query.project_ids,
-    route.query.project_name,
-    route.query.autogenerate
+    readProjectReportPreset(route.query as Record<string, unknown>)
   ],
   async () => {
     if (!isInit.value) {

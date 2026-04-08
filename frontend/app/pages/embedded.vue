@@ -1,20 +1,21 @@
 <script setup lang="ts">
-import { useFieldConfigStore } from '@/stores/fieldConfig'
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 
 import HelpSidePanel from '@/components/HelpSidePanel.vue'
+import { canOpenNativeApplication, resolveTaskPlacementId, useIframeResizeOnToggle } from '@/composables/useTaskPlacement'
+import { useTaskTreeLoader } from '@/composables/useTaskTreeLoader'
+import { filterTaskTree, findTaskIdForItem, findTaskNodeById, flattenTaskItems } from '@/utils/taskTree'
 
 const { $logger, initApp, processErrorGlobal } = useAppInit('EmbeddedPage')
 const { $initializeB24Frame } = useNuxtApp()
 const { t, locales: localesI18n, setLocale } = useI18n()
-const router = useRouter()
 
 // --- STATE ---
 const isHelpOpen = ref(false)
 
 
-import { requestIframeFullHeight, requestIframeAutoHeight } from '@/utils/iframe-resizer'
+import { requestIframeFullHeight } from '@/utils/iframe-resizer'
 
 // --- Diagnostics & Navigation ---
 const isNativeSidePanelAvailable = ref(false)
@@ -49,48 +50,45 @@ function openHelp() {
     isHelpOpen.value = true
 }
 
-// Watch for closing to reset height
-watch(isHelpOpen, (newVal) => {
-    if (!newVal) {
-        // Delay slightly to allow transition
-        setTimeout(() => requestIframeAutoHeight(), 300)
-    }
-})
+useIframeResizeOnToggle(isHelpOpen)
 
 
 let $b24: null | B24Frame = null
-const fieldConfigStore = useFieldConfigStore()
 const apiStore = useApiStore()
 
-// --- STATE ---
-const isLoading = ref(true)
-const error = ref<string | null>(null)
-
-// Computed config from store
-const config = computed(() => fieldConfigStore.configObject)
-
 const rootTaskId = ref<string | null>(null)
-const taskTree = ref<any[]>([])
 const expandedTasks = ref<Set<string>>(new Set())
-const usersMap = ref<Record<string, any>>({})
-
-// Global hourly rate from store
-const clientHourRate = computed(() => fieldConfigStore.hourlyRate)
-
 const currentEditingId = ref<string | null>(null)
 const editingItem = ref<any>(null)
-const currentUserId = ref<string | null>(null)
+
+const {
+    isLoading,
+    error,
+    usersMap,
+    usersList,
+    currentUserId,
+    taskTree,
+    config,
+    clientHourRate,
+    loadConfigAndUsers,
+    loadTaskTree
+} = useTaskTreeLoader()
 
 // --- FILTER STATE ---
 const filterEmployeeId = ref<string>('')
 const filterDateFrom = ref<string>('')
 const filterDateTo = ref<string>('')
 
-// Config mapping is now in stores/fieldConfig.ts
-
-// Computed properties
-const usersList = computed(() => Object.values(usersMap.value))
 const projectCardCache = new Map<string, any>()
+
+async function reloadWorkspace() {
+    if (!$b24 || !rootTaskId.value) {
+        return
+    }
+
+    await loadTaskTree($b24, rootTaskId.value)
+    expandedTasks.value = new Set([rootTaskId.value])
+}
 
 // --- INITIALIZATION ---
 onMounted(async () => {
@@ -102,8 +100,7 @@ onMounted(async () => {
     console.info('[Diagnostics] Env:', { isInIframe, hasBX24 })
     
     // Check if we can open native slider
-    // @ts-ignore
-    if (hasBX24 && typeof window.BX24.openApplication === 'function') {
+    if (hasBX24 && canOpenNativeApplication()) {
         console.info('[Diagnostics] Native SidePanel (openApplication) is AVAILABLE')
         isNativeSidePanelAvailable.value = true
     } else {
@@ -114,17 +111,7 @@ onMounted(async () => {
         $b24 = await $initializeB24Frame()
         await initApp($b24, localesI18n, setLocale)
 
-        // Get task ID from placement
-        let options = ($b24 as any).placement?.options || (($b24 as any).placement?.info && ($b24 as any).placement.info.options)
-        
-        if (!options && typeof (window as any).BX24 !== 'undefined') {
-            try {
-                const rawInfo = (window as any).BX24.placement.info()
-                if (rawInfo) options = rawInfo.options
-            } catch(e) { console.warn('BX24.placement.info failed', e) }
-        }
-
-        const tid = options?.taskId || options?.ID || options?.id
+        const tid = resolveTaskPlacementId($b24)
         if (!tid) {
             error.value = "Не передан ID задачи. Откройте приложение во вкладке задачи."
             isLoading.value = false
@@ -132,9 +119,9 @@ onMounted(async () => {
         }
         rootTaskId.value = tid
 
-        await loadConfigAndUsers()
-        if (config.value) {
-            await loadData(rootTaskId.value!)
+        await loadConfigAndUsers($b24, { includeProfile: true })
+        if (config.value?.DEFAULT_SMART_PROCESS_ID) {
+            await reloadWorkspace()
         }
 
     } catch (e: any) {
@@ -144,441 +131,23 @@ onMounted(async () => {
     }
 })
 
-async function loadConfigAndUsers() {
-    const result = await ($b24 as any).callBatch({
-        users: { method: 'user.get', params: { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' } },
-        profile: { method: 'profile' }
-    })
-
-    const data = result.getData()
-
-    // Users
-    if (data.users && !data.users.error) {
-        const map: Record<string, any> = {}
-        // BX24 user.get returns array in 'result' property
-        console.log('📦 [Embedded] Full users response:', data.users)
-        const usersData = data.users.result || data.users.data || data.users
-        
-        console.log('👥 [Embedded] Users data extracted:', usersData)
-        if (Array.isArray(usersData)) {
-            usersData.forEach((u: any) => {
-                // Ensure ID is string
-                const uid = String(u.ID)
-                map[uid] = u
-            })
-            usersMap.value = map
-            console.log('✅ [Embedded] Users loaded:', Object.keys(map).length)
-        }
-    } else {
-        console.error('❌ [Embedded] Error loading users:', data.users?.error)
-    }
-
-    // Profile - get current user ID
-    if (data.profile && !data.profile.error) {
-        const profileData = data.profile.result || data.profile.data || data.profile
-        if (profileData && profileData.ID) {
-            currentUserId.value = String(profileData.ID)
-            console.log('✅ [Embedded] Current user ID:', currentUserId.value)
-        }
-    }
-
-    // HARDCODED Config (from Application_Documentation.md)
-    // NOW: Dynamic config from app.option.get via fieldConfigStore
-    await fieldConfigStore.loadFromB24($b24!)
-    
-    if (fieldConfigStore.isConfigured) {
-        // config is computed now
-        console.log('✅ [Embedded] Config loaded from app.option', config.value)
-    } else {
-        console.error('❌ [Embedded] Config not found or incomplete:', fieldConfigStore.loadError)
-        error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Зайдите в Настройки → Маппинг и настройте поля.'
-    }
-}
-
-async function loadData(taskId: string) {
-    if (!config.value) return
-    isLoading.value = true
-    error.value = null
-
-    const FIELDS = config.value.FIELDS
-    const SMART_PROCESS_ID = config.value.DEFAULT_SMART_PROCESS_ID
-
-    try {
-        // 1. Root Task
-        console.log('🔍 [Embedded] Loading root task:', taskId)
-        const rootTaskRes = await ($b24 as any).callMethod('tasks.task.get', { taskId, select: ['ID', 'TITLE'] })
-        console.log('📦 [Embedded] rootTaskRes =', rootTaskRes)
-        
-        const rootTaskData = rootTaskRes.getData()
-        console.log('📦 [Embedded] rootTaskData =', rootTaskData)
-        
-        // API returns: { result: { task: { id, title } } }
-        const rootTask = rootTaskData.result?.task || rootTaskData.task
-        console.log('📦 [Embedded] rootTask =', rootTask)
-        
-        if (!rootTask || !rootTask.id) {
-            throw new Error('Не удалось загрузить данные корневой задачи. Ответ API: ' + JSON.stringify(rootTaskData))
-        }
-
-        // 2. BFS Subtasks
-        let allTasks = [{ id: rootTask.id, title: rootTask.title, parentId: null }]
-        let queue = [rootTask.id]
-        let processed = new Set([rootTask.id])
-        
-        let iterations = 0
-        while(queue.length > 0 && iterations < 50) {
-            const batch: any = {}
-            const currentLevelIds = queue.splice(0, 50)
-            
-            currentLevelIds.forEach(pid => {
-                batch[`tasks_${pid}`] = { 
-                    method: 'tasks.task.list', 
-                    params: { filter: { PARENT_ID: pid }, select: ['ID', 'TITLE', 'PARENT_ID'] } 
-                }
-            })
-
-            if (Object.keys(batch).length === 0) break
-
-            console.log(`🔄 [Embedded] Calling batch for ${currentLevelIds.length} parent IDs:`, currentLevelIds)
-            const batchResult = await ($b24 as any).callBatch(batch)
-            const batchData = batchResult.getData()
-            console.log(`📦 [Embedded] Full batch response:`, batchData)
-            
-            Object.entries(batchData).forEach(([key, res]: [string, any]) => {
-                console.log(`🔍 [Embedded] Processing batch key: ${key}`)
-                console.log(`📋 [Embedded] Response for ${key}:`, res)
-                
-                if (!res.error) {
-                    // API can return: { result: { tasks: [...] } } OR { tasks: [...] } directly
-                    const tasks = res.result?.tasks || res.data?.tasks || res.tasks || []
-                    console.log(`📋 [Embedded] Found ${tasks.length} tasks in response`)
-                    
-                    if (tasks.length > 0) {
-                        console.log(`📋 [Embedded] First task structure:`, tasks[0])
-                    }
-                    
-                    tasks.forEach((t: any) => {
-                        // API fields are UPPERCASE: ID, TITLE, PARENT_ID
-                        const taskId = t.ID || t.id
-                        const taskTitle = t.TITLE || t.title
-                        const taskParentId = t.PARENT_ID || t.parentId
-                        
-                        if (!processed.has(taskId)) {
-                            processed.add(taskId)
-                            allTasks.push({ id: taskId, title: taskTitle, parentId: taskParentId })
-                            queue.push(taskId)
-                            console.log(`➕ [Embedded] Added subtask: ${taskId} - ${taskTitle} (parent: ${taskParentId})`)
-                        }
-                    })
-                } else {
-                    console.error(`❌ [Embedded] Error in batch response for ${key}:`, res.error)
-                }
-            })
-            iterations++
-        }
-
-        // 3. Load Items (with full pagination + deduplication)
-        // Bitrix24 crm.item.list wraps-around when start > total (returns page 0 again)
-        // instead of returning empty. We detect this by tracking seen item IDs.
-        const allTaskIds = allTasks.map(t => t.id)
-        console.log(`⏱️ [Embedded] Loading time entries for ${allTaskIds.length} tasks:`, allTaskIds)
-        console.log(`⏱️ [Embedded] Using entityTypeId: ${SMART_PROCESS_ID}, TASK_ID field: ${FIELDS.TASK_ID}`)
-        
-        const CHUNK_SIZE = 50
-        const PAGE_SIZE = 50
-        let allItems: any[] = []
-        // Global deduplication tracker — prevents counting items twice across all pages
-        const seenItemIds = new Set<string>()
-
-        for (let i = 0; i < allTaskIds.length; i += CHUNK_SIZE) {
-            const chunk = allTaskIds.slice(i, i + CHUNK_SIZE)
-            const batchCmds: any = {}
-            
-            chunk.forEach(tid => {
-                batchCmds[`items_${tid}`] = {
-                    method: 'crm.item.list',
-                    params: { 
-                        entityTypeId: SMART_PROCESS_ID,
-                        filter: { [FIELDS.TASK_ID]: Number(tid) },
-                        select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
-                        start: 0,
-                        limit: PAGE_SIZE
-                    }
-                }
-            })
-            
-            const chunkResult = await ($b24 as any).callBatch(batchCmds)
-            const chunkData = chunkResult.getData()
-
-            const tasksNeedingMore: string[] = []
-
-            Object.entries(chunkData).forEach(([key, res]: [string, any]) => {
-                if (!res.error) {
-                    const result = res.result || res.data || res
-                    const items = result?.items || []
-                    console.log(`📋 [Embedded] Batch key ${key}: got ${items.length} items`)
-                    
-                    // Add first-page items to tracker and allItems
-                    items.forEach((item: any) => {
-                        const itemId = String(item.id)
-                        if (!seenItemIds.has(itemId)) {
-                            seenItemIds.add(itemId)
-                            allItems.push(item)
-                        }
-                    })
-
-                    // If we got a full page — there might be more (check with dedup)
-                    if (items.length >= PAGE_SIZE) {
-                        const tid = key.replace('items_', '')
-                        tasksNeedingMore.push(tid)
-                        console.log(`📄 [Embedded] Task ${tid}: full first page, will check for more`)
-                    }
-                } else {
-                    console.error(`❌ [Embedded] Error in CRM batch response for ${key}:`, res.error)
-                }
-            })
-
-            // Fetch additional pages using callBatch — callMethod ignores `start` in b24jssdk,
-            // but batch params are passed through correctly.
-            for (const tid of tasksNeedingMore) {
-                let start = PAGE_SIZE
-                let pageCount = 0
-                while (pageCount < 50) {  // Hard upper bound (50 pages * 50 items = 2500 max)
-                    console.log(`📄 [Embedded] Fetching extra page for task ${tid}, start=${start}`)
-                    
-                    // Use callBatch (not callMethod) — batch API correctly passes `start`
-                    const extraBatch: any = {
-                        [`extra_${tid}_${start}`]: {
-                            method: 'crm.item.list',
-                            params: {
-                                entityTypeId: SMART_PROCESS_ID,
-                                filter: { [FIELDS.TASK_ID]: Number(tid) },
-                                select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE],
-                                start,
-                                limit: PAGE_SIZE
-                            }
-                        }
-                    }
-                    const extraBatchRes = await ($b24 as any).callBatch(extraBatch)
-                    const extraBatchData = extraBatchRes.getData()
-                    const extraKey = `extra_${tid}_${start}`
-                    const extraResult = extraBatchData[extraKey]
-                    const extraItems = extraResult?.result?.items || extraResult?.data?.items || extraResult?.items || []
-                    
-                    // Deduplicate: add only new items, stop on first duplicate (API wrap-around)
-                    let newCount = 0
-                    let foundDuplicate = false
-                    for (const item of extraItems) {
-                        const itemId = String(item.id)
-                        if (seenItemIds.has(itemId)) {
-                            foundDuplicate = true
-                            break
-                        }
-                        seenItemIds.add(itemId)
-                        allItems.push(item)
-                        newCount++
-                    }
-                    
-                    console.log(`📄 [Embedded] Extra page start=${start}: got ${extraItems.length} raw, ${newCount} new${foundDuplicate ? ' (WRAP-AROUND, stopping)' : ''}`)
-                    
-
-                    
-                    pageCount++
-                    // Stop if: API wrapped around (duplicate found), or last page (< PAGE_SIZE results)
-                    if (foundDuplicate || extraItems.length < PAGE_SIZE) break
-                    start += PAGE_SIZE
-                }
-            }
-        }
-        console.log(`📦 [Embedded] Total CRM items loaded: ${allItems.length} unique items`)
-
-
-
-        // 4. Build Tree — all IDs normalized to string
-        const nodesMap: Record<string, any> = {}
-        const knownTaskIds = new Set<string>()
-        allTasks.forEach(t => {
-            const key = String(t.id)
-            knownTaskIds.add(key)
-            nodesMap[key] = {
-                taskId: key,
-                taskTitle: t.title,
-                parentId: t.parentId,
-                children: [],
-                items: [],
-                totalConsidered: 0, 
-                totalUnconsidered: 0,
-                cumulativeConsidered: 0,
-                cumulativeUnconsidered: 0
-            }
-        })
-
-        console.log('🗂️ [DEBUG] Known task IDs in tree:', [...knownTaskIds].sort())
-        console.log('🗂️ [DEBUG] FIELDS.TASK_ID field name:', FIELDS.TASK_ID)
-
-        // Track items that don't match any task (orphans)
-        const orphanItems: any[] = []
-        let matchedCount = 0
-
-        allItems.forEach((item, idx) => {
-            const rawTid = item[FIELDS.TASK_ID]
-            const tid = String(rawTid ?? '')
-
-            // Detailed log for each item
-            console.log(`📋 [DEBUG] Item #${idx} id=${item.id} | rawTID=${rawTid} (type=${typeof rawTid}) | normalizedTID="${tid}" | inMap=${!!nodesMap[tid]}`)
-
-            if (tid && nodesMap[tid]) {
-                matchedCount++
-                const hours = parseFloat(item[FIELDS.HOURS]) || 0
-                const isConsidered = item[FIELDS.IS_CONSIDERED] === 'Y' || item[FIELDS.IS_CONSIDERED] === true
-                const empId = item[FIELDS.EMPLOYEE]
-                
-                const u = usersMap.value[String(empId)]
-                const empName = u ? `${u.NAME} ${u.LAST_NAME}` : `User ${empId}`
-
-                let dateVal = item[FIELDS.DATE]
-                if (!dateVal && item.createdTime) {
-                    dateVal = item.createdTime.split('T')[0]
-                }
-
-                nodesMap[tid].items.push({
-                    id: item.id,
-                    title: item.title,
-                    createdTime: item.createdTime,
-                    hours: hours,
-                    isConsidered: isConsidered,
-                    description: item[FIELDS.DESCRIPTION] || '',
-                    employeeId: empId,
-                    employeeName: empName,
-                    date: dateVal
-                })
-                
-                if (isConsidered) nodesMap[tid].totalConsidered += hours
-                else nodesMap[tid].totalUnconsidered += hours
-            } else {
-                orphanItems.push({ idx, itemId: item.id, rawTid, tid })
-            }
-        })
-
-        // Summary diagnostics
-        console.log('✅ [DEBUG] Items matched to tasks:', matchedCount)
-        console.log('❌ [DEBUG] Orphan items (no matching task):', orphanItems.length)
-        if (orphanItems.length > 0) {
-            console.warn('❌ [DEBUG] Orphan items list:', orphanItems)
-            console.warn('❌ [DEBUG] Orphan task IDs (unique):', [...new Set(orphanItems.map(o => o.tid))])
-            console.warn('❌ [DEBUG] Are orphan task IDs known?', 
-                [...new Set(orphanItems.map(o => o.tid))].map(tid => ({ tid, inTree: knownTaskIds.has(tid) }))
-            )
-        }
-
-        console.log('🌳 [Embedded] All tasks loaded:', allTasks.length)
-        console.log('🌳 [Embedded] All items loaded:', allItems.length)
-
-        const roots: any[] = []
-        Object.values(nodesMap).forEach(node => {
-            if (node.parentId && nodesMap[node.parentId]) {
-                nodesMap[node.parentId].children.push(node)
-                console.log(`📎 [Embedded] Task ${node.taskId} is child of ${node.parentId}`)
-            } else if (String(node.taskId) === String(taskId)) {
-                roots.push(node) 
-                console.log(`🌲 [Embedded] Task ${node.taskId} is ROOT`)
-            }
-        })
-
-        console.log('🌲 [Embedded] Roots found:', roots.length)
-        console.log('🌲 [Embedded] Root tasks:', roots.map(r => ({ id: r.taskId, title: r.taskTitle, children: r.children.length })))
-
-        const calculateTotals = (node: any) => {
-            let childCons = 0
-            let childUncons = 0
-            node.children.forEach((child: any) => {
-                const res = calculateTotals(child)
-                childCons += res.cons
-                childUncons += res.uncons
-            })
-            node.cumulativeConsidered = node.totalConsidered + childCons
-            node.cumulativeUnconsidered = node.totalUnconsidered + childUncons
-            return { cons: node.cumulativeConsidered, uncons: node.cumulativeUnconsidered }
-        }
-        
-        roots.forEach(calculateTotals)
-
-        taskTree.value = roots
-        expandedTasks.value = new Set([rootTaskId.value!])
-        console.log('✅ [Embedded] Task tree built:', taskTree.value)
-        isLoading.value = false
-
-    } catch (e: any) {
-        console.error(e)
-        error.value = e.message || e.toString()
-        isLoading.value = false
-    }
-}
-
 // --- COMPUTED ---
-
-/**
- * Recursively filter task tree by employee and date.
- * Returns a copy of the tree with only matching items.
- * Tasks with no matching items (and no matching children) are kept but with empty items.
- */
-function filterNode(node: any): any {
-    const empId = filterEmployeeId.value
-    const dateFrom = filterDateFrom.value
-    const dateTo = filterDateTo.value
-
-    const filteredItems = node.items.filter((item: any) => {
-        if (empId && String(item.employeeId) !== String(empId)) return false
-        if (dateFrom || dateTo) {
-            const itemDate = item.date || item.createdTime
-            if (!itemDate) return !dateFrom && !dateTo
-            const d = itemDate.split('T')[0]
-            if (dateFrom && d < dateFrom) return false
-            if (dateTo && d > dateTo) return false
-        }
-        return true
-    })
-
-    const filteredChildren = node.children.map(filterNode)
-
-    // Recalculate totals for filtered node
-    const totalConsidered = filteredItems.filter((i: any) => i.isConsidered).reduce((s: number, i: any) => s + i.hours, 0)
-    const totalUnconsidered = filteredItems.filter((i: any) => !i.isConsidered).reduce((s: number, i: any) => s + i.hours, 0)
-    const childCons = filteredChildren.reduce((s: number, c: any) => s + c.cumulativeConsidered, 0)
-    const childUncons = filteredChildren.reduce((s: number, c: any) => s + c.cumulativeUnconsidered, 0)
-
-    return {
-        ...node,
-        items: filteredItems,
-        children: filteredChildren,
-        totalConsidered,
-        totalUnconsidered,
-        cumulativeConsidered: totalConsidered + childCons,
-        cumulativeUnconsidered: totalUnconsidered + childUncons,
-    }
-}
 
 const isFilterActive = computed(() =>
     !!filterEmployeeId.value || !!filterDateFrom.value || !!filterDateTo.value
 )
 
 const filteredTaskTree = computed(() => {
-    if (!isFilterActive.value) return taskTree.value
-    return taskTree.value.map(filterNode)
+    return filterTaskTree(taskTree.value, {
+        employeeId: filterEmployeeId.value,
+        dateFrom: filterDateFrom.value,
+        dateTo: filterDateTo.value
+    })
 })
 
 const totalClientAmount = computed(() => {
-    let total = 0
-    const getAllItems = (nodes: any[]): any[] => {
-        let result: any[] = []
-        nodes.forEach(node => {
-            result = result.concat(node.items)
-            if (node.children) result = result.concat(getAllItems(node.children))
-        })
-        return result
-    }
-    const allItems = getAllItems(filteredTaskTree.value)
-    total = allItems.filter(i => i.isConsidered).reduce((sum, i) => sum + i.hours, 0)
+    const allItems = flattenTaskItems(filteredTaskTree.value)
+    const total = allItems.filter(item => item.isConsidered).reduce((sum, item) => sum + item.hours, 0)
     return (total * clientHourRate.value).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 })
 
@@ -596,28 +165,8 @@ function assignMappedField(target: Record<string, any>, fieldCode: string | unde
     target[fieldCode] = value
 }
 
-function findTaskNodeById(taskId: string | null | undefined, nodes: any[] = taskTree.value): any | null {
-    const normalizedTaskId = String(taskId || '').trim()
-    if (!normalizedTaskId) {
-        return null
-    }
-
-    for (const node of nodes) {
-        if (String(node.taskId) === normalizedTaskId) {
-            return node
-        }
-
-        const childNode = findTaskNodeById(normalizedTaskId, node.children || [])
-        if (childNode) {
-            return childNode
-        }
-    }
-
-    return null
-}
-
 function resolveTaskTitle(taskId: string | null | undefined, hierarchy?: { titlePath?: string[] | null } | null) {
-    const node = findTaskNodeById(taskId)
+    const node = findTaskNodeById(taskId, taskTree.value)
     if (node?.taskTitle) {
         return String(node.taskTitle)
     }
@@ -825,7 +374,7 @@ function toggleTask(taskId: string) {
 
 function selectItem(item: any) {
     currentEditingId.value = item.id
-    const taskId = findTaskIdForItem(item.id)
+    const taskId = findTaskIdForItem(item.id, taskTree.value)
     editingItem.value = { ...item, taskId, splitHours: 0, splitInvert: false }
 }
 
@@ -915,7 +464,7 @@ async function saveCurrentItem() {
             })
         }
         
-        if (rootTaskId.value) await loadData(rootTaskId.value)
+        await reloadWorkspace()
         closeEditor()
     } catch (e: any) {
         alert("Ошибка сохранения: " + e.message)
@@ -944,7 +493,7 @@ async function splitItem() {
 
         // Create new split entry with full hierarchy
         const newConsidered = editingItem.value.splitInvert ? !editingItem.value.isConsidered : editingItem.value.isConsidered
-        const splitTaskId = findTaskIdForItem(editingItem.value.id)
+        const splitTaskId = findTaskIdForItem(editingItem.value.id, taskTree.value)
         
         const splitFields: any = {
             TITLE: editingItem.value.description + ' (разделено)',
@@ -967,24 +516,12 @@ async function splitItem() {
             fields: splitFields
         })
 
-        if (rootTaskId.value) await loadData(rootTaskId.value)
+        await reloadWorkspace()
         closeEditor()
     } catch (e: any) {
         alert("Ошибка разделения: " + e.message)
         isLoading.value = false
     }
-}
-
-function findTaskIdForItem(itemId: string): string | null {
-    const search = (nodes: any[]): string | null => {
-        for (let node of nodes) {
-            if (node.items.find((i: any) => i.id === itemId)) return node.taskId
-            const result = search(node.children)
-            if (result) return result
-        }
-        return null
-    }
-    return search(taskTree.value)
 }
 
 async function deleteItem() {
@@ -997,7 +534,7 @@ async function deleteItem() {
             entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
             id: editingItem.value.id
         })
-        if (rootTaskId.value) await loadData(rootTaskId.value)
+        await reloadWorkspace()
         closeEditor()
     } catch (e: any) {
         alert("Ошибка удаления: " + e.message)
@@ -1018,7 +555,7 @@ async function deleteItemDirect(item: any) {
         })
         // If this item was open in the editor — close it
         if (currentEditingId.value === item.id) closeEditor()
-        if (rootTaskId.value) await loadData(rootTaskId.value)
+        await reloadWorkspace()
     } catch (e: any) {
         alert("Ошибка удаления: " + e.message)
         isLoading.value = false

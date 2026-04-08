@@ -5,7 +5,10 @@ import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import EmployeeProjectTable from '../../components/reports/EmployeeProjectTable.vue'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
-import { getCurrentMonthRange } from '~/utils/reportDateRange'
+import { exportHierarchyReportToXlsx } from '~/utils/reportExport'
+import { useReportFilters } from '~/composables/useReportFilters'
+import { useReportGenerator } from '~/composables/useReportGenerator'
+import type { HierarchicalReportNode } from '~/types/report'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -34,110 +37,55 @@ const isLoading = computed({
 })
 
 // Report State
-const reportData = ref<any[]>([])
-const dateFrom = ref('') // YYYY-MM-DD
-const dateTo = ref('')   // YYYY-MM-DD
+const reportData = ref<HierarchicalReportNode[]>([])
 const isInit = ref(false)
-const hasGenerated = ref(false)
 const entityTypeId = ref<string | number>(0)
 
 const clickableLabelsEnabled = computed(() => userSettings.configSettings.clickableLabelsEnabled ?? false)
 
 // Filters State
-const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
-const selectedEmployees = ref<(string|number)[]>([])
-const selectedProjects = ref<(string|number)[]>([])
-const employeeFilterMode = ref<'include' | 'exclude'>('include')
-const projectFilterMode = ref<'include' | 'exclude'>('include')
+const {
+  dateFrom,
+  dateTo,
+  filterOptions,
+  selectedEmployees,
+  selectedProjects,
+  employeeFilterMode,
+  projectFilterMode,
+  employeeFilter,
+  projectFilter,
+  loadFilterOptions,
+  initCurrentMonthRange,
+} = useReportFilters()
 
-async function fetchEmployeeOptions() {
-    try {
-        filterOptions.value.employees = await apiStore.getFilterEmployees()
-    } catch (e) {
-        processErrorGlobal(e)
-    }
-}
-
-async function fetchProjectOptions() {
-    try {
-        filterOptions.value.projects = await apiStore.getFilterProjects()
-    } catch (e) {
-        processErrorGlobal(e)
-    }
-}
-
-async function fetchFilterOptions() {
-    await Promise.all([
-        fetchEmployeeOptions(),
-        fetchProjectOptions()
-    ])
-}
+const { hasGenerated, generateReport } = useReportGenerator({
+  setLoading: (value) => {
+    isLoading.value = value
+  },
+  onError: processErrorGlobal
+})
 
 async function fetchReport() {
-    isLoading.value = true
-    try {
-        await apiStore.syncTimesheets()
-        reportData.value = await apiStore.getReportEmployeeProject(
-            dateFrom.value, 
-            dateTo.value, 
-            { ids: selectedEmployees.value, mode: employeeFilterMode.value },
-            { ids: selectedProjects.value, mode: projectFilterMode.value }
+    const payload = await generateReport({
+        loader: () => apiStore.getReportEmployeeProject(
+            dateFrom.value,
+            dateTo.value,
+            employeeFilter.value,
+            projectFilter.value
         )
-        hasGenerated.value = true
-    } catch (e) {
-        processErrorGlobal(e)
-    } finally {
-        isLoading.value = false
+    })
+
+    if (payload) {
+        reportData.value = payload
     }
 }
 
-// Excel Export
-import * as XLSX from 'xlsx'
-
-
-function handleExportExcel() {
-    const exportData: any[] = [];
-    const rowLevels: number[] = [];
-    
-    // Recursive function to flatten data
-    const processNode = (node: any, level = 0) => {
-        const indent = "    ".repeat(level);
-        exportData.push({
-            "Название": indent + node.name,
-            // "Тип": node.type,
-            "Всего часов": node.total_hours,
-            "Учитываемые": node.billable_hours,
-            "Не учитываемые": node.non_billable_hours
-        });
-        rowLevels.push(level);
-
-        if (node.children && node.children.length > 0) {
-            node.children.forEach((child: any) => processNode(child, level + 1));
-        }
-    };
-
-    reportData.value.forEach(node => processNode(node));
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    
-    // Adjust Column Widths
-    worksheet['!cols'] = [
-        { wch: 50 }, // Name
-        { wch: 15 }, // Total Hours
-        { wch: 15 }, // Billable
-        { wch: 15 }  // Non-billable
-    ];
-
-    // Adjust Row Levels (Grouping)
-    const rows: any[] = [{ level: 0 }]; // Header row
-    rowLevels.forEach(level => {
-        rows.push({ level: level, hidden: false });
-    });
-    worksheet['!rows'] = rows;
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Отчет по сотрудникам");
-    XLSX.writeFile(workbook, `Report_Employees_${dateFrom.value}_${dateTo.value}.xlsx`);
+async function handleExportExcel() {
+    await exportHierarchyReportToXlsx({
+        rows: reportData.value,
+        sheetName: 'Отчет по сотрудникам',
+        fileName: `Report_Employees_${dateFrom.value}_${dateTo.value}.xlsx`
+    })
 }
 
 // region Lifecycle Hooks ////
@@ -149,7 +97,7 @@ onMounted(async () => {
     await $b24.parent.setTitle('Отчет по сотрудникам') 
     isInit.value = true
     
-    await fetchFilterOptions()
+    await loadFilterOptions()
     
     // Load entity type ID for clickable labels
     try {
@@ -162,9 +110,7 @@ onMounted(async () => {
     }
     
     // Set default range (current month)
-    const range = getCurrentMonthRange()
-    dateFrom.value = range.dateFrom
-    dateTo.value = range.dateTo
+    initCurrentMonthRange()
   } catch (error) {
     processErrorGlobal(error)
   } finally {

@@ -6,7 +6,7 @@ import ProjectBoardColumn from '~/components/projects/ProjectBoardColumn.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import ProjectTimelineLane from '~/components/projects/ProjectTimelineLane.vue'
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption, ProjectBoardResponse } from '~/utils/projectBoard'
-import { formatProjectDate, getTimelineAnchor, parseProjectDateValue } from '~/utils/projectBoard'
+import { buildProjectBoardSummary, formatProjectDate, getTimelineAnchor, parseProjectDateValue, upsertProjectBoardCard } from '~/utils/projectBoard'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 
 const router = useRouter()
@@ -323,25 +323,12 @@ function applyUpdatedCard(updatedCard: ProjectBoardCardRecord) {
     return
   }
 
-  const cards = [...boardData.value.cards]
-  const index = cards.findIndex(card => card.project_id === updatedCard.project_id)
-  if (index === -1) {
-    cards.unshift(updatedCard)
-  } else {
-    cards.splice(index, 1, updatedCard)
-  }
+  const cards = upsertProjectBoardCard(boardData.value.cards, updatedCard)
 
   boardData.value = {
     ...boardData.value,
     cards,
-    summary: {
-      total_count: cards.length,
-      active_count: cards.filter(card => !card.is_archived).length,
-      archived_count: cards.filter(card => card.is_archived).length,
-      support_count: cards.filter(card => !card.is_archived && card.is_support).length,
-      inactive_30_count: cards.filter(card => !card.is_archived && card.stage === 'Нет списаний 1 месяц').length,
-      inactive_90_count: cards.filter(card => !card.is_archived && card.stage === 'Нет списаний 3 месяца').length
-    }
+    summary: buildProjectBoardSummary(cards)
   }
 
   if (selectedCard.value?.project_id === updatedCard.project_id) {

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
-import * as Helper from '@bitrix24/b24jssdk'
-import { requestIframeFullHeight, requestIframeAutoHeight } from '@/utils/iframe-resizer'
+import { resolveTaskPlacementId, useIframeResizeOnToggle } from '@/composables/useTaskPlacement'
+import { useTaskTreeLoader } from '@/composables/useTaskTreeLoader'
 
 // --- ICONS ---
 // Using Material Symbols directly via class "material-symbols-outlined" 
@@ -16,39 +16,27 @@ let $b24: null | B24Frame = null
 
 // --- STATE ---
 const isInit = ref(false)
-const isLoading = ref(true)
-const error = ref<string | null>(null)
 const initError = ref<string | null>(null)
 
-const config = ref<any>(null)
-const clientHourRate = ref(3000)
-
 const rootTaskId = ref<string | null>(null)
-const taskTree = ref<any[]>([])
-
+const {
+    isLoading,
+    error,
+    usersMap,
+    taskTree,
+    config,
+    clientHourRate,
+    loadConfigAndUsers,
+    loadTaskTree
+} = useTaskTreeLoader()
 
 // Modals
 const editingItem = ref<any>(null)
 const isReportModalOpen = ref(false)
 const isReporting = ref(false)
 
-// Watch for modals to resize iframe
-watch(isReportModalOpen, (isOpen) => {
-    if (isOpen) requestIframeFullHeight()
-    else setTimeout(() => requestIframeAutoHeight(), 300)
-})
-
-watch(editingItem, (item) => {
-    if (item) requestIframeFullHeight()
-    else setTimeout(() => requestIframeAutoHeight(), 300)
-})
-
-
-// Users Map
-const usersMap = ref<Record<string, any>>({})
-
-// --- CONFIG CONSTANTS (now in stores/fieldConfig.ts) ---
-const fieldConfigStore = useFieldConfigStore()
+useIframeResizeOnToggle(isReportModalOpen)
+useIframeResizeOnToggle(computed(() => Boolean(editingItem.value)))
 
 // --- INIT LOGIC ---
 
@@ -74,7 +62,7 @@ onMounted(async () => {
              } catch(e) { console.warn('BX24.placement.info failed', e); }
         }
 
-        const tid = options?.taskId || options?.ID || options?.id
+        const tid = resolveTaskPlacementId($b24)
 
         if (!tid) {
             // Debug info to help user if it fails
@@ -86,11 +74,13 @@ onMounted(async () => {
         rootTaskId.value = tid
 
         // 2. Load Config & Users
-        await loadConfigAndUsers()
+        await loadConfigAndUsers($b24)
         
         // 3. Load Data
-        if (config.value && !initError.value) {
-            await loadData(rootTaskId.value!)
+        if (config.value?.DEFAULT_SMART_PROCESS_ID && !initError.value) {
+            await loadTaskTree($b24, rootTaskId.value!)
+        } else if (error.value) {
+            initError.value = error.value
         }
 
         isInit.value = true
@@ -100,218 +90,6 @@ onMounted(async () => {
         isLoading.value = false
     }
 })
-
-async function loadConfigAndUsers() {
-    // @ts-ignore
-    const result = await $b24.callBatch({
-        users: { method: 'user.get', params: { FILTER: { 'ACTIVE': 'Y' }, 'sort': 'LAST_NAME', 'order': 'ASC' } },
-    })
-
-    console.log('loadConfigAndUsers: result =', result)
-    
-    // @ts-ignore
-    const data = result.getData()
-    console.log('loadConfigAndUsers: data =', data)
-
-    // Users - with safe checks
-    if (data.users && !data.users.error) {
-        const map: Record<string, any> = {}
-        const usersData = data.users.data
-        console.log('loadConfigAndUsers: usersData =', usersData)
-        
-        if (Array.isArray(usersData)) {
-            usersData.forEach((u: any) => map[u.ID] = u)
-            usersMap.value = map
-        } else {
-            console.warn('users.data is not an array:', usersData)
-        }
-    } else {
-        console.warn('No users data or error:', data.users)
-    }
-
-    // Config - via fieldConfigStore
-    await fieldConfigStore.loadFromB24($b24!)
-    
-    if (fieldConfigStore.isConfigured) {
-        config.value = fieldConfigStore.configObject
-    } else {
-        console.error('Config Error:', fieldConfigStore.loadError)
-        initError.value = fieldConfigStore.loadError || 'Конфигурация не найдена.'
-    }
-}
-
-
-// --- DATA LOADING (BFS) ---
-
-async function loadData(taskId: string) {
-    if (!config.value) return
-    isLoading.value = true
-    error.value = null
-
-    const FIELDS = config.value.FIELDS
-    const SMART_PROCESS_ID = config.value.DEFAULT_SMART_PROCESS_ID
-
-    try {
-        // 1. Root Task
-        // @ts-ignore
-        const rootTaskRes = await $b24.callMethod('tasks.task.get', { taskId, select: ['ID', 'TITLE'] })
-        // @ts-ignore
-        const rootTask = rootTaskRes.data().task
-
-        // 2. BFS Subtasks
-        let allTasks = [{ id: rootTask.id, title: rootTask.title, parentId: null }]
-        let queue = [rootTask.id]
-        let processed = new Set([rootTask.id])
-        
-        // Safety limit
-        let iterations = 0
-        while(queue.length > 0 && iterations < 50) {
-            const batch: any = {}
-            const currentLevelIds = queue.splice(0, 50)
-            
-            // Batch keys must be strings
-            currentLevelIds.forEach(pid => {
-                batch[`tasks_${pid}`] = { 
-                    method: 'tasks.task.list', 
-                    params: { filter: { PARENT_ID: pid }, select: ['ID', 'TITLE', 'PARENT_ID', 'GROUP_ID'] } 
-                }
-            })
-
-            if (Object.keys(batch).length === 0) break
-
-            // @ts-ignore
-            const batchResult = await $b24.callBatch(batch)
-             // @ts-ignore
-            const batchData = batchResult.getData()
-            
-            Object.values(batchData).forEach((res: any) => {
-                if (!res.error) {
-                    const tasks = res.data.tasks || []
-                    tasks.forEach((t: any) => {
-                        if (!processed.has(t.id)) {
-                            processed.add(t.id)
-                            allTasks.push({ id: t.id, title: t.title, parentId: t.parentId })
-                            queue.push(t.id)
-                        }
-                    })
-                }
-            })
-            iterations++
-        }
-
-        // 3. Load Items
-        const allTaskIds = allTasks.map(t => t.id)
-        const CHUNK_SIZE = 50
-        let allItems: any[] = []
-
-        for (let i = 0; i < allTaskIds.length; i += CHUNK_SIZE) {
-            const chunk = allTaskIds.slice(i, i + CHUNK_SIZE)
-            const batchCmds: any = {}
-            
-            chunk.forEach(tid => {
-                batchCmds[`items_${tid}`] = {
-                    method: 'crm.item.list',
-                    params: { 
-                        entityTypeId: SMART_PROCESS_ID,
-                        filter: { [FIELDS.TASK_ID]: tid },
-                        select: ['id', 'createdTime', FIELDS.TASK_ID, FIELDS.EMPLOYEE, FIELDS.HOURS, FIELDS.IS_CONSIDERED, FIELDS.DESCRIPTION, 'TITLE', FIELDS.DATE]
-                    }
-                }
-            })
-            
-            // @ts-ignore
-            const chunkResult = await $b24.callBatch(batchCmds)
-             // @ts-ignore
-            const chunkData = chunkResult.getData()
-
-            Object.values(chunkData).forEach((res: any) => {
-                if(!res.error) allItems.push(...res.data.items)
-            })
-        }
-
-        // 4. Build Tree
-        const nodesMap: Record<string, any> = {}
-        allTasks.forEach(t => {
-            nodesMap[t.id] = {
-                taskId: t.id,
-                taskTitle: t.title,
-                parentId: t.parentId,
-                children: [],
-                items: [],
-                totalConsidered: 0, 
-                totalUnconsidered: 0,
-                cumulativeConsidered: 0,
-                cumulativeUnconsidered: 0
-            }
-        })
-
-        allItems.forEach(item => {
-            const tid = item[FIELDS.TASK_ID]
-            if (nodesMap[tid]) {
-                const hours = parseFloat(item[FIELDS.HOURS]) || 0
-                const isConsidered = item[FIELDS.IS_CONSIDERED] === 'Y' || item[FIELDS.IS_CONSIDERED] === true
-                const empId = item[FIELDS.EMPLOYEE]
-                const u = usersMap.value[empId]
-                const empName = u ? `${u.NAME} ${u.LAST_NAME}` : `User ${empId}`
-
-                // Date handling
-                let dateVal = item[FIELDS.DATE]
-                if (!dateVal && item.createdTime) {
-                    dateVal = item.createdTime.split('T')[0]
-                }
-
-                nodesMap[tid].items.push({
-                    id: item.id,
-                    title: item.title,
-                    createdTime: item.createdTime,
-                    hours: hours,
-                    isConsidered: isConsidered,
-                    description: item[FIELDS.DESCRIPTION] || '',
-                    employeeId: empId,
-                    employeeName: empName,
-                    date: dateVal
-                })
-                
-                if (isConsidered) nodesMap[tid].totalConsidered += hours
-                else nodesMap[tid].totalUnconsidered += hours
-            }
-        })
-
-        const roots: any[] = []
-        Object.values(nodesMap).forEach(node => {
-            // @ts-ignore
-            if (node.parentId && nodesMap[node.parentId]) {
-                // @ts-ignore
-                nodesMap[node.parentId].children.push(node)
-            } else if (String(node.taskId) === String(taskId)) {
-                roots.push(node) 
-            }
-        })
-
-        const calculateTotals = (node: any) => {
-            let childCons = 0
-            let childUncons = 0
-            node.children.forEach((child: any) => {
-                const res = calculateTotals(child)
-                childCons += res.cons
-                childUncons += res.uncons
-            })
-            node.cumulativeConsidered = node.totalConsidered + childCons
-            node.cumulativeUnconsidered = node.totalUnconsidered + childUncons
-            return { cons: node.cumulativeConsidered, uncons: node.cumulativeUnconsidered }
-        }
-        
-        roots.forEach(calculateTotals)
-
-        taskTree.value = roots
-        isLoading.value = false
-
-    } catch (e: any) {
-        console.error(e)
-        error.value = e.message || e.toString()
-        isLoading.value = false
-    }
-}
 
 // --- ACTIONS ---
 
@@ -333,7 +111,7 @@ async function handleSaveItem(data: any) {
                 [config.value.FIELDS.DATE]: date
             }
         })
-        if (rootTaskId.value) await loadData(rootTaskId.value)
+        if (rootTaskId.value) await loadTaskTree($b24!, rootTaskId.value)
     } catch (e: any) {
         alert("Ошибка сохранения: " + e.message)
         isLoading.value = false

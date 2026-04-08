@@ -9,6 +9,7 @@
     "build": "nuxt build",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
+    "test": "node --import tsx --test tests/**/*.test.ts",
     "lint": "eslint app/utils app/composables --max-warnings=0",
     "lint:fix": "eslint --fix app/utils app/composables",
     "translate-ui": "tsx tools/translate.ui.ts"

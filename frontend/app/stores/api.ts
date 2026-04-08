@@ -1,11 +1,19 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { withoutTrailingSlash } from 'ufo'
-
-type FilterMode = 'include' | 'exclude'
-type FilterValue = {
-  ids?: Array<string | number>
-  mode?: FilterMode
-}
+import { buildReportSearchParams } from '~/utils/reportFilters'
+import type {
+  DailyWorkloadReport,
+  FilterOption,
+  FilterValue,
+  FocusAnalysisReport,
+  HierarchicalReportNode,
+  ProjectTaskReportNode,
+  ReportFilterOptions,
+  RevenueLeakageReport,
+  TimeEntryDisciplineReport,
+} from '~/types/report'
+import type { AppConfigurationPayload } from '~/types/config'
+import type { ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 
 export const useApiStore = defineStore(
   'api',
@@ -96,7 +104,7 @@ export const useApiStore = defineStore(
 
     const hasItems = (value: unknown): value is Array<unknown> => Array.isArray(value) && value.length > 0
 
-    const hasProjectBoardMetaPayload = (value: any) => {
+    const hasProjectBoardMetaPayload = (value: ProjectBoardMetaPayload | null | undefined) => {
       if (!value || typeof value !== 'object') {
         return false
       }
@@ -180,7 +188,7 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getFilterOptions = async (): Promise<{ employees: any[], projects: any[] }> => {
+    const getFilterOptions = async (): Promise<ReportFilterOptions> => {
       const [employees, projects] = await Promise.all([
         getFilterEmployees(),
         getFilterProjects()
@@ -192,11 +200,11 @@ export const useApiStore = defineStore(
       }
     }
 
-    const getFilterEmployees = async (forceRefresh = false): Promise<any[]> => {
+    const getFilterEmployees = async (forceRefresh = false): Promise<FilterOption[]> => {
       const scope = 'filter-employees-v2'
 
       if (!forceRefresh) {
-        const cached = readCache<any[]>(scope)
+        const cached = readCache<FilterOption[]>(scope)
         if (Array.isArray(cached) && cached.length > 0) {
           return cached
         }
@@ -211,7 +219,7 @@ export const useApiStore = defineStore(
         }
       })
 
-      const employees = response.employees || []
+      const employees = (response.employees || []) as FilterOption[]
       if (employees.length > 0) {
         writeCache(scope, employees, browserCacheTtl.filters)
       } else {
@@ -221,7 +229,7 @@ export const useApiStore = defineStore(
       return employees
     }
 
-    const getFilterProjects = async (forceRefresh = false): Promise<any[]> => {
+    const getFilterProjects = async (forceRefresh = false): Promise<FilterOption[]> => {
       return await withBrowserCache('filter-projects', browserCacheTtl.filters, async () => {
         const response = await $api('/api/get-filter-projects', {
           headers: {
@@ -229,136 +237,87 @@ export const useApiStore = defineStore(
           }
         })
 
-        return response.projects || []
+        return (response.projects || []) as FilterOption[]
       }, forceRefresh)
     }
 
-    const normalizeFilterValue = (value?: FilterValue | string[]): { ids: string[], mode: FilterMode } => {
-      if (Array.isArray(value)) {
-        return {
-          ids: value.map(id => String(id)),
-          mode: 'include'
-        }
-      }
-
-      return {
-        ids: (value?.ids || []).map(id => String(id)),
-        mode: value?.mode === 'exclude' ? 'exclude' : 'include'
-      }
-    }
-
-    const appendReportFilters = (
-      params: URLSearchParams,
+    const runReportRequest = async <T>(
+      path: string,
+      dateFrom?: string,
+      dateTo?: string,
       employeeFilter?: FilterValue | string[],
       projectFilter?: FilterValue | string[]
-    ) => {
-      const normalizedEmployees = normalizeFilterValue(employeeFilter)
-      const normalizedProjects = normalizeFilterValue(projectFilter)
+    ): Promise<T> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, employeeFilter, projectFilter)
 
-      if (normalizedEmployees.ids.length) {
-        normalizedEmployees.ids.forEach(id => params.append('employee_ids[]', id))
-      }
-      if (normalizedEmployees.mode === 'exclude') {
-        params.append('employee_mode', 'exclude')
-      }
-
-      if (normalizedProjects.ids.length) {
-        normalizedProjects.ids.forEach(id => params.append('project_ids[]', id))
-      }
-      if (normalizedProjects.mode === 'exclude') {
-        params.append('project_mode', 'exclude')
-      }
-    }
-
-    const getReportEmployeeProject = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
-      const params = new URLSearchParams()
-      if (dateFrom) params.append('date_from', dateFrom)
-      if (dateTo) params.append('date_to', dateTo)
-      appendReportFilters(params, empIds, projIds)
-
-      return await $api(`/api/report-employee-project?${params.toString()}`, {
+      return await $api(`${path}?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
       })
     }
 
-    const getReportProjectEmployee = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
-      const params = new URLSearchParams()
-      if (dateFrom) params.append('date_from', dateFrom)
-      if (dateTo) params.append('date_to', dateTo)
-      appendReportFilters(params, empIds, projIds)
-
-      return await $api(`/api/report-project-employee?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getReportEmployeeProject = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<HierarchicalReportNode[]> => {
+      return await runReportRequest<HierarchicalReportNode[]>('/api/report-employee-project', dateFrom, dateTo, empIds, projIds)
     }
 
-    const getReportDailyWorkload = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
-      const params = new URLSearchParams()
-      if (dateFrom) params.append('date_from', dateFrom)
-      if (dateTo) params.append('date_to', dateTo)
-      appendReportFilters(params, empIds, projIds)
-
-      return await $api(`/api/report-daily-workload?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getReportProjectEmployee = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<HierarchicalReportNode[]> => {
+      return await runReportRequest<HierarchicalReportNode[]>('/api/report-project-employee', dateFrom, dateTo, empIds, projIds)
     }
 
-    const getReportProjectTaskEmployee = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
-      const params = new URLSearchParams()
-      if (dateFrom) params.append('date_from', dateFrom)
-      if (dateTo) params.append('date_to', dateTo)
-      appendReportFilters(params, empIds, projIds)
-
-      return await $api(`/api/report-project-task-employee?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getReportDailyWorkload = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<DailyWorkloadReport> => {
+      return await runReportRequest<DailyWorkloadReport>('/api/report-daily-workload', dateFrom, dateTo, empIds, projIds)
     }
 
-    const getReportRevenueLeakage = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
-      const params = new URLSearchParams()
-      if (dateFrom) params.append('date_from', dateFrom)
-      if (dateTo) params.append('date_to', dateTo)
-      appendReportFilters(params, empIds, projIds)
-
-      return await $api(`/api/report-revenue-leakage?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getReportProjectTaskEmployee = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<ProjectTaskReportNode[]> => {
+      return await runReportRequest<ProjectTaskReportNode[]>('/api/report-project-task-employee', dateFrom, dateTo, empIds, projIds)
     }
 
-    const getReportTimeEntryDiscipline = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
-      const params = new URLSearchParams()
-      if (dateFrom) params.append('date_from', dateFrom)
-      if (dateTo) params.append('date_to', dateTo)
-      appendReportFilters(params, empIds, projIds)
-
-      return await $api(`/api/report-time-entry-discipline?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getReportRevenueLeakage = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<RevenueLeakageReport> => {
+      return await runReportRequest<RevenueLeakageReport>('/api/report-revenue-leakage', dateFrom, dateTo, empIds, projIds)
     }
 
-    const getReportFocusAnalysis = async (dateFrom?: string, dateTo?: string, empIds?: FilterValue | string[], projIds?: FilterValue | string[]): Promise<any> => {
-      const params = new URLSearchParams()
-      if (dateFrom) params.append('date_from', dateFrom)
-      if (dateTo) params.append('date_to', dateTo)
-      appendReportFilters(params, empIds, projIds)
+    const getReportTimeEntryDiscipline = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<TimeEntryDisciplineReport> => {
+      return await runReportRequest<TimeEntryDisciplineReport>('/api/report-time-entry-discipline', dateFrom, dateTo, empIds, projIds)
+    }
 
-      return await $api(`/api/report-focus-analysis?${params.toString()}`, {
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
+    const getReportFocusAnalysis = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<FocusAnalysisReport> => {
+      return await runReportRequest<FocusAnalysisReport>('/api/report-focus-analysis', dateFrom, dateTo, empIds, projIds)
     }
 
     const syncTimesheets = async (): Promise<{ status: string; count: number }> => {
@@ -386,7 +345,7 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getProjectBoard = async (forceRefresh = false): Promise<any> => {
+    const getProjectBoard = async (forceRefresh = false): Promise<ProjectBoardResponse> => {
       return await withBrowserCache('project-board', browserCacheTtl.board, async () => {
         return await $api('/api/project-board', {
           headers: {
@@ -396,11 +355,11 @@ export const useApiStore = defineStore(
       }, forceRefresh)
     }
 
-    const getProjectBoardMeta = async (forceRefresh = false): Promise<any> => {
+    const getProjectBoardMeta = async (forceRefresh = false): Promise<ProjectBoardMetaPayload> => {
       const scope = 'project-board-meta'
 
       if (!forceRefresh) {
-        const cached = readCache<any>(scope)
+        const cached = readCache<ProjectBoardMetaPayload>(scope)
         if (hasProjectBoardMetaPayload(cached)) {
           return cached
         }
@@ -422,7 +381,7 @@ export const useApiStore = defineStore(
       return value
     }
 
-    const getProjectBoardCard = async (projectId: string): Promise<any | null> => {
+    const getProjectBoardCard = async (projectId: string): Promise<ProjectBoardResponse['cards'][number] | null> => {
       const normalizedProjectId = String(projectId || '').trim()
       if (!normalizedProjectId) {
         return null
@@ -533,7 +492,7 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const getCompaniesForProjectBinding = async (forceRefresh = false): Promise<any[]> => {
+    const getCompaniesForProjectBinding = async (forceRefresh = false): Promise<FilterOption[]> => {
       const meta = await getProjectBoardMeta(forceRefresh)
       return meta.directories?.companies || meta.companies || []
     }
@@ -604,7 +563,7 @@ export const useApiStore = defineStore(
     }
 
     // Configuration
-    const getConfiguration = async (forceRefresh = false): Promise<any> => {
+    const getConfiguration = async (forceRefresh = false): Promise<AppConfigurationPayload> => {
       return await withBrowserCache('app-configuration', browserCacheTtl.config, async () => {
         return await $api('/api/configuration', {
           headers: { Authorization: `Bearer ${tokenJWT.value}` }
@@ -612,7 +571,7 @@ export const useApiStore = defineStore(
       }, forceRefresh)
     }
 
-    const saveConfiguration = async (config: any): Promise<any> => {
+    const saveConfiguration = async (config: AppConfigurationPayload): Promise<{ status?: string; config?: AppConfigurationPayload }> => {
       const result = await $api('/api/configuration/save', {
         method: 'POST',
         headers: { Authorization: `Bearer ${tokenJWT.value}` },
