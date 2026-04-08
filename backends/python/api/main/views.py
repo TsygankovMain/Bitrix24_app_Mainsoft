@@ -1,5 +1,4 @@
 from django.core.paginator import Paginator
-from django.db.models import Q
 from django.http import JsonResponse, HttpResponse
 from django.conf import settings
 from django.utils import timezone
@@ -11,6 +10,7 @@ from .utils.decorators import auth_required, log_errors
 from .utils import AuthorizedRequest
 from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard
 
+import logging
 import json
 import openpyxl
 from openpyxl.styles import Font, Alignment
@@ -28,6 +28,7 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
+from .report_queries import TREE_REPORT_FIELDS, build_filtered_timesheet_queryset, build_tree_report_items, materialize_rows
 
 __all__ = [
     "root",
@@ -75,45 +76,21 @@ __all__ = [
 ]
 
 config = load_config()
+logger = logging.getLogger(__name__)
 
 
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
-    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
-    archived_cards = get_project_card_queryset(request.bitrix24_account).filter(is_archived=True)
-    archived_project_ids = [project_id for project_id in archived_cards.values_list('project_id', flat=True) if project_id]
-    archived_project_names = [project_name for project_name in archived_cards.values_list('project_name', flat=True) if project_name]
-
-    date_from = request.GET.get('date_from')
-    date_to = request.GET.get('date_to')
-    emp_ids = request.GET.getlist('employee_ids[]')
-    proj_ids = request.GET.getlist('project_ids[]')
-    employee_mode = request.GET.get('employee_mode', 'include')
-    project_mode = request.GET.get('project_mode', 'include')
-
-    if date_from:
-        queryset = queryset.filter(date_reflection__date__gte=date_from)
-    if date_to:
-        queryset = queryset.filter(date_reflection__date__lte=date_to)
-    if archived_project_ids or archived_project_names:
-        archived_q = Q()
-        if archived_project_ids:
-            archived_q |= Q(project_id__in=archived_project_ids)
-        if archived_project_names:
-            archived_q |= Q(project_title__in=archived_project_names)
-        queryset = queryset.exclude(archived_q)
-    if emp_ids:
-        if employee_mode == 'exclude':
-            queryset = queryset.exclude(employee_id__in=emp_ids)
-        else:
-            queryset = queryset.filter(employee_id__in=emp_ids)
-    if proj_ids:
-        project_q = Q(project_id__in=proj_ids) | Q(project_title__in=proj_ids)
-        if project_mode == 'exclude':
-            queryset = queryset.exclude(project_q)
-        else:
-            queryset = queryset.filter(project_q)
-
-    return queryset
+    return build_filtered_timesheet_queryset(
+        request.bitrix24_account,
+        {
+            "date_from": request.GET.get("date_from"),
+            "date_to": request.GET.get("date_to"),
+            "employee_ids[]": request.GET.getlist("employee_ids[]"),
+            "project_ids[]": request.GET.getlist("project_ids[]"),
+            "employee_mode": request.GET.get("employee_mode", "include"),
+            "project_mode": request.GET.get("project_mode", "include"),
+        },
+    )
 
 
 def _get_user_map(request: AuthorizedRequest, user_ids):
@@ -139,20 +116,14 @@ def _build_employee_filter_options(request: AuthorizedRequest):
 
 def _build_project_filter_options(request: AuthorizedRequest):
     queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
-    project_cards = get_project_card_queryset(request.bitrix24_account)
-    active_project_ids = set(
-        project_id
-        for project_id in project_cards.filter(is_archived=False)
-        .values_list('project_id', flat=True)
-        if project_id
+    active_project_rows = list(
+        get_project_card_queryset(request.bitrix24_account)
+        .filter(is_archived=False)
+        .values("project_id", "project_name")
     )
-    active_project_names = set(
-        project_name
-        for project_name in project_cards.filter(is_archived=False)
-        .values_list('project_name', flat=True)
-        if project_name
-    )
-    projs = queryset.values('project_id', 'project_title').distinct()
+    active_project_ids = {row["project_id"] for row in active_project_rows if row.get("project_id")}
+    active_project_names = {row["project_name"] for row in active_project_rows if row.get("project_name")}
+    projs = queryset.values("project_id", "project_title").distinct()
     projects = []
     seen_ids = set()
 
@@ -183,6 +154,30 @@ def _load_request_json(request: AuthorizedRequest):
         return json.loads(request.body or "{}")
     except (TypeError, ValueError, json.JSONDecodeError):
         return {}
+
+
+def _apply_created_at_filters(queryset, created_from, created_to):
+    from datetime import date, datetime, time, timedelta
+
+    current_tz = timezone.get_current_timezone()
+
+    def parse_date(raw_value):
+        if not raw_value:
+            return None
+        try:
+            return date.fromisoformat(str(raw_value)[:10])
+        except (TypeError, ValueError):
+            return None
+
+    parsed_from = parse_date(created_from)
+    parsed_to = parse_date(created_to)
+
+    if parsed_from:
+        queryset = queryset.filter(created_at__gte=timezone.make_aware(datetime.combine(parsed_from, time.min), current_tz))
+    if parsed_to:
+        next_day = parsed_to + timedelta(days=1)
+        queryset = queryset.filter(created_at__lt=timezone.make_aware(datetime.combine(next_day, time.min), current_tz))
+    return queryset
 
 
 def _serialize_support_status(payload):
@@ -253,7 +248,7 @@ def install(request):
     Handle Bitrix24 application installation.
     Supports HEAD/GET for Marketplace validation.
     """
-    print(f"DEBUG: install view called. Method: {request.method} Path: {request.path}")
+    logger.info("Install view called. Method=%s Path=%s", request.method, request.path)
     if request.method in ["HEAD", "GET"]:
         return HttpResponse(status=200)
 
@@ -514,36 +509,13 @@ def run_project_board_daily_check(request: AuthorizedRequest):
 @auth_required
 def report_employee_project(request: AuthorizedRequest):
     queryset = _get_filtered_timesheet_queryset(request)
+    rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
+    user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
+    user_map = _get_user_map(request, user_ids)
+    items = build_tree_report_items(rows)
 
-    items = []
-    user_ids = set()
-    
-    for model_item in queryset:
-        user_ids.add(model_item.employee_id)
-        # Construct item for Service
-        items.append({
-            "sotrudnik_id": model_item.employee_id,
-            "project_name": model_item.project_title,
-            "kolichestvo_chasov": model_item.hours,
-            "id_zadach_ierarhiya": model_item.task_hierarchy_ids,
-            "title_zadach_ierarhiya": model_item.task_hierarchy_titles,
-            "uchitivaem": model_item.is_billable,
-            "opisanie": model_item.description,
-            "data": model_item.date_reflection.isoformat() if model_item.date_reflection else None,
-            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title",
-            "id_elem": model_item.bitrix_id,
-        })
-    
-    # Config & Services
-    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
-    config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
-    
-    user_map = data_service.fetch_users(list(user_ids))
-    
     report_service = ReportService()
     report = report_service.generate_employee_projects(items, user_map)
-    
     return JsonResponse(report, safe=False)
 
 
@@ -553,33 +525,13 @@ def report_employee_project(request: AuthorizedRequest):
 @auth_required
 def report_project_employee(request: AuthorizedRequest):
     queryset = _get_filtered_timesheet_queryset(request)
+    rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
+    user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
+    user_map = _get_user_map(request, user_ids)
+    items = build_tree_report_items(rows)
 
-    items = []
-    user_ids = set()
-    for model_item in queryset:
-        user_ids.add(model_item.employee_id)
-        items.append({
-            "sotrudnik_id": model_item.employee_id,
-            "project_name": model_item.project_title,
-            "kolichestvo_chasov": model_item.hours,
-            "id_zadach_ierarhiya": model_item.task_hierarchy_ids,
-            "title_zadach_ierarhiya": model_item.task_hierarchy_titles,
-            "uchitivaem": model_item.is_billable,
-            "opisanie": model_item.description,
-            "data": model_item.date_reflection.isoformat() if model_item.date_reflection else None,
-            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title",
-            "id_elem": model_item.bitrix_id,
-        })
-    
-    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
-    config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
-
-    user_map = data_service.fetch_users(list(user_ids))
-    
     report_service = ReportService()
     report = report_service.generate_project_employees(items, user_map)
-    
     return JsonResponse(report, safe=False)
 
 @xframe_options_exempt
@@ -589,30 +541,10 @@ def report_project_employee(request: AuthorizedRequest):
 def report_project_task_employee(request: AuthorizedRequest):
     """Report: Project -> Task Hierarchy -> Employee -> Items"""
     queryset = _get_filtered_timesheet_queryset(request)
-
-    items = []
-    user_ids = set()
-    for model_item in queryset:
-        user_ids.add(model_item.employee_id)
-        items.append({
-            "sotrudnik_id": model_item.employee_id,
-            "project_name": model_item.project_title,
-            "kolichestvo_chasov": model_item.hours,
-            "id_zadach_ierarhiya": model_item.task_hierarchy_ids,
-            "title_zadach_ierarhiya": model_item.task_hierarchy_titles,
-            "uchitivaem": model_item.is_billable,
-            "opisanie": model_item.description,
-            "data": model_item.date_reflection.isoformat() if model_item.date_reflection else None,
-            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title",
-            "id_zadachi": model_item.task_id,
-            "id_elem": model_item.bitrix_id,
-        })
-
-    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
-    config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
-
-    user_map = data_service.fetch_users(list(user_ids))
+    rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
+    user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
+    user_map = _get_user_map(request, user_ids)
+    items = build_tree_report_items(rows, include_task_id=True)
 
     report_service = ReportService()
     report = report_service.generate_project_task_employees(items, user_map)
@@ -729,10 +661,7 @@ def timesheet_list(request: AuthorizedRequest):
     # Filter by record creation date (created_at)
     created_from = request.GET.get('created_from')
     created_to = request.GET.get('created_to')
-    if created_from:
-        queryset = queryset.filter(created_at__date__gte=created_from)
-    if created_to:
-        queryset = queryset.filter(created_at__date__lte=created_to)
+    queryset = _apply_created_at_filters(queryset, created_from, created_to)
 
     page_number = request.GET.get('page', 1)
     page_size = request.GET.get('limit', 50)
@@ -883,30 +812,32 @@ def report_daily_workload(request: AuthorizedRequest):
         today = date.today()
         date_to = today.isoformat()
 
-    queryset = _get_filtered_timesheet_queryset(request)
-    queryset = queryset.filter(date_reflection__date__gte=date_from, date_reflection__date__lte=date_to)
-
-    items = []
-    user_ids = set()
-    for model_item in queryset:
-        user_ids.add(model_item.employee_id)
-        # Re-construct dictionary identical to what Service expects
-        items.append({
-            "sotrudnik_id": model_item.employee_id,
-            "project_name": model_item.project_title,
-            "kolichestvo_chasov": model_item.hours,
-            "id_zadachi": model_item.task_id,
-            "nazvanie_zadachi": model_item.task_hierarchy_titles[-1] if model_item.task_hierarchy_titles else "No Title",
-            "opisanie": model_item.description,
-            "data": model_item.date_reflection.isoformat() if model_item.date_reflection else None,
-        })
-    
-    # Config lookup for user fetching (not strictly needed since fetch_users uses generic user.get, but cleaner)
-    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
-    config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
-
-    user_map = data_service.fetch_users(list(user_ids))
+    queryset = build_filtered_timesheet_queryset(
+        request.bitrix24_account,
+        {
+            "date_from": date_from,
+            "date_to": date_to,
+            "employee_ids[]": request.GET.getlist("employee_ids[]"),
+            "project_ids[]": request.GET.getlist("project_ids[]"),
+            "employee_mode": request.GET.get("employee_mode", "include"),
+            "project_mode": request.GET.get("project_mode", "include"),
+        },
+    )
+    rows = materialize_rows(queryset, ("employee_id", "project_title", "hours", "task_id", "task_hierarchy_titles", "description", "date_reflection"))
+    user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
+    user_map = _get_user_map(request, user_ids)
+    items = [
+        {
+            "sotrudnik_id": row["employee_id"],
+            "project_name": row["project_title"],
+            "kolichestvo_chasov": row["hours"],
+            "id_zadachi": row["task_id"],
+            "nazvanie_zadachi": row["task_hierarchy_titles"][-1] if row.get("task_hierarchy_titles") else "No Title",
+            "opisanie": row["description"],
+            "data": row["date_reflection"].isoformat() if row.get("date_reflection") else None,
+        }
+        for row in rows
+    ]
     
     report_service = ReportService()
     report = report_service.generate_daily_workload(items, user_map, date_from, date_to)
@@ -1191,7 +1122,7 @@ def serve_spa(request):
     """
     Serve index.html for any route (GET or POST) to support Bitrix24 iframe loading and SPA navigation.
     """
-    print(f"DEBUG: serve_spa view called. Method: {request.method} Path: {request.path}")
+    logger.info("serve_spa called. Method=%s Path=%s", request.method, request.path)
     try:
         # settings.BASE_DIR points to /app inside container
         # index.html is copied to /app/frontend_build/index.html

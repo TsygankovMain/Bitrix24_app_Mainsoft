@@ -24,7 +24,6 @@ export function requestIframeResize(height: number) {
 
     // Fallback for custom environments or local dev
     if (window.parent && window.parent !== window) {
-        console.log(`[IframeResizer] Requesting resize to ${height} via postMessage`)
         window.parent.postMessage({
             action: 'resizeIframe',
             height: `${height}px`,

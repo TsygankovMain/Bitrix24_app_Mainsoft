@@ -1,0 +1,746 @@
+import logging
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from b24pysdk import Client
+from django.core.cache import cache
+from django.db.models import Case, F, FloatField, Max, Sum, Value, When
+from django.utils import timezone
+
+from .bitrix_data_access import BitrixDataService
+from .configuration_service import ConfigurationService
+from .models import Bitrix24Account, ProjectCard, TimesheetItem
+from .project_board_shared import (
+    BITRIX_REFERENCE_CACHE_TTL,
+    HOMEPAGE_CACHE_TTL,
+    PROJECT_AUTO_STAGES,
+    PROJECT_BOARD_CACHE_TTL,
+    PROJECT_MANUAL_STAGES,
+    PROJECT_STAGE_IN_WORK,
+    PROJECT_STAGE_NEW,
+    PROJECT_STAGE_NO_WRITEOFF_30,
+    PROJECT_STAGE_NO_WRITEOFF_90,
+    PROJECT_STAGE_ORDER,
+    build_account_cache_key,
+    build_local_project_groups,
+    ensure_project_card_schema,
+    get_project_card_queryset,
+    invalidate_project_runtime_caches,
+)
+
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_items_from_response(response: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+    result = response.get("result", [])
+    next_value = response.get("next")
+
+    if isinstance(result, dict):
+        items = result.get("items")
+        if items is None:
+            items = result.get("result", [])
+        if next_value is None:
+            next_value = result.get("next")
+    else:
+        items = result
+
+    if not isinstance(items, list):
+        items = []
+
+    if next_value in ("", False):
+        next_value = None
+
+    return items, int(next_value) if next_value is not None else None
+
+
+def _get_group_value(source: Dict[str, Any], *keys: str) -> Optional[str]:
+    for key in keys:
+        value = source.get(key)
+        if value is None:
+            continue
+        value_str = str(value).strip()
+        if value_str:
+            return value_str
+    return None
+
+
+class ProjectCardService:
+    def __init__(self, client: Optional[Client], account: Bitrix24Account):
+        self.client = client or account.client
+        self.account = account
+
+    def get_card_data(self, project_id: str) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
+        return self.serialize_card(self._get_card(project_id))
+
+    def get_board_data(self) -> Dict[str, Any]:
+        cached = cache.get(build_account_cache_key(self.account, "project-board"))
+        if cached is not None:
+            return cached
+
+        if not ensure_project_card_schema():
+            return self.get_fallback_board_data()
+
+        self.refresh_writeoff_stats()
+        cards = list(get_project_card_queryset(self.account).order_by("is_archived", "project_name"))
+        active_cards = [card for card in cards if not card.is_archived]
+
+        payload = {
+            "stages": [
+                {
+                    "id": stage,
+                    "title": stage,
+                    "kind": "auto" if stage in PROJECT_AUTO_STAGES else "manual",
+                    "can_drop": stage in PROJECT_MANUAL_STAGES,
+                }
+                for stage in PROJECT_STAGE_ORDER
+            ],
+            "cards": [self.serialize_card(card) for card in cards],
+            "summary": {
+                "total_count": len(cards),
+                "active_count": len(active_cards),
+                "archived_count": len(cards) - len(active_cards),
+                "support_count": sum(1 for card in active_cards if card.is_support),
+                "inactive_30_count": sum(1 for card in active_cards if card.stage == PROJECT_STAGE_NO_WRITEOFF_30),
+                "inactive_90_count": sum(1 for card in active_cards if card.stage == PROJECT_STAGE_NO_WRITEOFF_90),
+            },
+        }
+        cache.set(build_account_cache_key(self.account, "project-board"), payload, PROJECT_BOARD_CACHE_TTL)
+        return payload
+
+    def get_fallback_board_data(self) -> Dict[str, Any]:
+        by_project_id, by_project_title = self.collect_writeoff_maps()
+        fallback_cards = []
+
+        for group in build_local_project_groups(self.account):
+            project_id = _get_group_value(group, "ID", "id")
+            project_name = _get_group_value(group, "NAME", "name") or f"Проект {project_id}"
+            last_writeoff_at = by_project_id.get(project_id) or by_project_title.get(project_name)
+            last_writeoff_days = (timezone.localdate() - last_writeoff_at.date()).days if last_writeoff_at else 0
+            stage = PROJECT_STAGE_IN_WORK if last_writeoff_at else PROJECT_STAGE_NEW
+
+            fallback_cards.append(
+                {
+                    "id": f"fallback-{project_id}",
+                    "project_id": project_id,
+                    "project_name": project_name,
+                    "stage": stage,
+                    "manual_stage": stage,
+                    "is_archived": False,
+                    "archived_at": None,
+                    "project_hours_budget": None,
+                    "hourly_rate": 0.0,
+                    "is_support": False,
+                    "curator_user_id": None,
+                    "curator_name": None,
+                    "project_start_date": None,
+                    "project_end_date": None,
+                    "company_id": None,
+                    "company_name": None,
+                    "our_legal_entity_id": None,
+                    "our_legal_entity_name": None,
+                    "last_writeoff_at": last_writeoff_at.isoformat() if last_writeoff_at else None,
+                    "last_writeoff_days": last_writeoff_days,
+                    "stage_source": "manual",
+                    "created_at": None,
+                    "updated_at": None,
+                }
+            )
+
+        payload = {
+            "stages": [
+                {
+                    "id": stage,
+                    "title": stage,
+                    "kind": "auto" if stage in PROJECT_AUTO_STAGES else "manual",
+                    "can_drop": stage in PROJECT_MANUAL_STAGES,
+                }
+                for stage in PROJECT_STAGE_ORDER
+            ],
+            "cards": sorted(fallback_cards, key=lambda card: card["project_name"]),
+            "summary": {
+                "total_count": len(fallback_cards),
+                "active_count": len(fallback_cards),
+                "archived_count": 0,
+                "support_count": 0,
+                "inactive_30_count": sum(1 for card in fallback_cards if card["stage"] == PROJECT_STAGE_NO_WRITEOFF_30),
+                "inactive_90_count": sum(1 for card in fallback_cards if card["stage"] == PROJECT_STAGE_NO_WRITEOFF_90),
+            },
+            "warning": (
+                "Локальная таблица проектов недоступна. Показан временный board по уже загруженным списаниям. "
+                "Редактирование и архив могут быть недоступны до завершения миграции."
+            ),
+        }
+        cache.set(build_account_cache_key(self.account, "project-board"), payload, PROJECT_BOARD_CACHE_TTL)
+        return payload
+
+    def get_meta(self) -> Dict[str, Any]:
+        cache_key = build_account_cache_key(self.account, "project-board-meta")
+        cached = cache.get(cache_key)
+        if cached and self._meta_has_required_shape(cached) and self._meta_has_options(cached):
+            return cached
+        if cached is not None:
+            cache.delete(cache_key)
+
+        config = self._load_config()
+        fallback_employees = self._get_project_card_fallback_options("curator_user_id", "curator_name")
+        fallback_companies = self._get_project_card_fallback_options("company_id", "company_name")
+        fallback_legal_entities = self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name")
+
+        directory_employees = self._merge_reference_options(
+            BitrixDataService(self.client, config, self.account).fetch_active_users(),
+            fallback_employees,
+        )
+        directory_companies = self._merge_reference_options(self.get_companies(), fallback_companies)
+        directory_legal_entities = self._merge_reference_options(self.get_legal_entities(config), fallback_legal_entities)
+
+        meta = {
+            "filters": {
+                "curators": directory_employees,
+                "companies": directory_companies,
+                "legal_entities": directory_legal_entities,
+            },
+            "directories": {
+                "employees": directory_employees,
+                "companies": directory_companies,
+                "legal_entities": directory_legal_entities,
+            },
+            "employees": directory_employees,
+            "companies": directory_companies,
+            "legal_entities": directory_legal_entities,
+        }
+        if self._meta_has_options(meta):
+            cache.set(cache_key, meta, BITRIX_REFERENCE_CACHE_TTL)
+        else:
+            cache.delete(cache_key)
+        return meta
+
+    def get_homepage_snapshot(self) -> Dict[str, Any]:
+        cached = cache.get(build_account_cache_key(self.account, "project-board-homepage"))
+        if cached is not None:
+            return cached
+
+        board = self.get_board_data()
+        cards = board.get("cards", [])
+        active_cards = [card for card in cards if not card.get("is_archived")]
+        curators_map: Dict[str, Dict[str, str]] = {}
+
+        for card in active_cards:
+            curator_id = str(card.get("curator_user_id") or "").strip()
+            curator_name = str(card.get("curator_name") or "").strip()
+            if curator_id and curator_id not in curators_map:
+                curators_map[curator_id] = {
+                    "id": curator_id,
+                    "name": curator_name or f"Сотрудник {curator_id}",
+                }
+
+        risk_cards = sorted(
+            [card for card in active_cards if (card.get("last_writeoff_days") or 0) >= 30],
+            key=lambda card: (card.get("last_writeoff_days") or 0, card.get("project_name") or ""),
+            reverse=True,
+        )[:6]
+
+        snapshot = {
+            "summary": board.get("summary", {}),
+            "cards": active_cards,
+            "stages": board.get("stages", []),
+            "curators": sorted(curators_map.values(), key=lambda item: item["name"]),
+            "risk_cards": risk_cards,
+            "top_loss_projects": self._get_revenue_leakage_rows(limit=5),
+            "warning": board.get("warning"),
+            "generated_at": timezone.now().isoformat(),
+        }
+        cache.set(build_account_cache_key(self.account, "project-board-homepage"), snapshot, HOMEPAGE_CACHE_TTL)
+        return snapshot
+
+    def update_project_card(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
+
+        card = self._get_card(project_id)
+        warning: Optional[str] = None
+
+        next_project_name = self._clean_str(payload.get("project_name")) or card.project_name
+        next_curator_user_id = self._clean_str(payload.get("curator_user_id")) if "curator_user_id" in payload else card.curator_user_id
+        next_curator_name = self._clean_str(payload.get("curator_name")) if "curator_name" in payload else card.curator_name
+        next_company_id = self._clean_str(payload.get("company_id")) if "company_id" in payload else card.company_id
+        next_company_name = self._clean_str(payload.get("company_name")) if "company_name" in payload else card.company_name
+        next_legal_entity_id = self._clean_str(payload.get("our_legal_entity_id")) if "our_legal_entity_id" in payload else card.our_legal_entity_id
+        next_legal_entity_name = self._clean_str(payload.get("our_legal_entity_name")) if "our_legal_entity_name" in payload else card.our_legal_entity_name
+        next_budget = self._to_optional_float(payload.get("project_hours_budget")) if "project_hours_budget" in payload else card.project_hours_budget
+        next_hourly_rate = self._to_float(payload.get("hourly_rate"), default=card.hourly_rate) if "hourly_rate" in payload else card.hourly_rate
+        next_is_support = self._to_bool(payload.get("is_support"), default=card.is_support) if "is_support" in payload else card.is_support
+        next_start_date = self._parse_date(payload.get("project_start_date")) if "project_start_date" in payload else card.project_start_date
+        next_end_date = self._parse_date(payload.get("project_end_date")) if "project_end_date" in payload else card.project_end_date
+
+        if next_curator_user_id and not next_curator_name:
+            next_curator_name = BitrixDataService(self.client, {}, self.account).fetch_users([next_curator_user_id]).get(next_curator_user_id)
+        if next_legal_entity_id and not next_legal_entity_name:
+            selected = next((item for item in self.get_legal_entities() if str(item["id"]) == str(next_legal_entity_id)), None)
+            next_legal_entity_name = selected["name"] if selected else card.our_legal_entity_name
+
+        bitrix_payload: Dict[str, Any] = {"GROUP_ID": int(card.project_id)}
+        if next_project_name != card.project_name:
+            bitrix_payload["NAME"] = next_project_name
+        if "project_start_date" in payload:
+            bitrix_payload["PROJECT_DATE_START"] = datetime.combine(next_start_date, datetime.min.time()).isoformat() if next_start_date else None
+        if "project_end_date" in payload:
+            bitrix_payload["PROJECT_DATE_FINISH"] = datetime.combine(next_end_date, datetime.min.time()).isoformat() if next_end_date else None
+
+        bitrix_payload = {key: value for key, value in bitrix_payload.items() if value is not None}
+        if len(bitrix_payload) > 1:
+            try:
+                self.client._bitrix_token.call_method("sonet_group.update", bitrix_payload)
+            except Exception as exc:
+                warning = f"Не удалось полностью синхронизировать изменения с Битрикс24: {exc}"
+                logger.warning("Project update Bitrix sync failed for %s: %s", card.project_id, exc)
+
+        card.project_name = next_project_name
+        card.project_hours_budget = next_budget
+        card.hourly_rate = next_hourly_rate
+        card.is_support = next_is_support
+        card.curator_user_id = next_curator_user_id
+        card.curator_name = next_curator_name
+        card.project_start_date = next_start_date
+        card.project_end_date = next_end_date
+        card.company_id = next_company_id
+        card.company_name = next_company_name
+        card.our_legal_entity_id = next_legal_entity_id
+        card.our_legal_entity_name = next_legal_entity_name
+        card.save()
+        invalidate_project_runtime_caches(self.account)
+
+        return {"card": self.serialize_card(card), "warning": warning}
+
+    def update_stage(self, project_id: str, stage: str) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
+        if stage not in PROJECT_MANUAL_STAGES:
+            raise ValueError("Недопустимая стадия для ручного перевода")
+
+        card = self._get_card(project_id)
+        card.stage = stage
+        card.manual_stage = stage
+        card.stage_source = "manual"
+        card.save(update_fields=["stage", "manual_stage", "stage_source", "stage_updated_at", "updated_at"])
+        invalidate_project_runtime_caches(self.account)
+        return self.serialize_card(card)
+
+    def archive_project(self, project_id: str, is_archived: bool) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
+
+        card = self._get_card(project_id)
+        warning: Optional[str] = None
+        card.is_archived = bool(is_archived)
+        card.archived_at = timezone.now() if card.is_archived else None
+        card.save(update_fields=["is_archived", "archived_at", "updated_at"])
+        invalidate_project_runtime_caches(self.account)
+
+        try:
+            self.client._bitrix_token.call_method(
+                "sonet_group.update",
+                {"GROUP_ID": int(card.project_id), "CLOSED": "Y" if card.is_archived else "N"},
+            )
+        except Exception as exc:
+            warning = f"Локальный архив обновлен, но Битрикс24 вернул ошибку: {exc}"
+            logger.warning("Project archive Bitrix sync failed for %s: %s", card.project_id, exc)
+
+        return {"card": self.serialize_card(card), "warning": warning}
+
+    def refresh_writeoff_stats(self) -> None:
+        if not ensure_project_card_schema():
+            return
+
+        by_project_id, by_project_title = self.collect_writeoff_maps()
+        cards = list(get_project_card_queryset(self.account))
+        today = timezone.localdate()
+        updated_cards: List[ProjectCard] = []
+
+        for card in cards:
+            last_writeoff_at = by_project_id.get(card.project_id)
+            if last_writeoff_at is None and card.project_name:
+                last_writeoff_at = by_project_title.get(card.project_name)
+            last_writeoff_days = (today - last_writeoff_at.date()).days if last_writeoff_at else 0
+
+            if card.last_writeoff_at != last_writeoff_at or card.last_writeoff_days != last_writeoff_days:
+                card.last_writeoff_at = last_writeoff_at
+                card.last_writeoff_days = last_writeoff_days
+                updated_cards.append(card)
+
+        if updated_cards:
+            ProjectCard.objects.bulk_update(updated_cards, ["last_writeoff_at", "last_writeoff_days"])
+
+    def collect_writeoff_maps(self) -> Tuple[Dict[str, datetime], Dict[str, datetime]]:
+        by_project_id: Dict[str, datetime] = {}
+        by_project_title: Dict[str, datetime] = {}
+
+        id_rows = (
+            TimesheetItem.objects.filter(bitrix24_account=self.account)
+            .exclude(project_id__isnull=True)
+            .exclude(project_id="")
+            .values("project_id")
+            .annotate(last_writeoff_at=Max("date_reflection"))
+        )
+        for row in id_rows:
+            project_id = self._clean_str(row.get("project_id"))
+            if project_id and row.get("last_writeoff_at"):
+                by_project_id[project_id] = row["last_writeoff_at"]
+
+        title_rows = (
+            TimesheetItem.objects.filter(bitrix24_account=self.account)
+            .exclude(project_title__isnull=True)
+            .exclude(project_title="")
+            .values("project_title")
+            .annotate(last_writeoff_at=Max("date_reflection"))
+        )
+        for row in title_rows:
+            project_title = self._clean_str(row.get("project_title"))
+            if project_title and row.get("last_writeoff_at"):
+                by_project_title[project_title] = row["last_writeoff_at"]
+
+        return by_project_id, by_project_title
+
+    def get_companies(self) -> List[Dict[str, Any]]:
+        return self._fetch_references_with_cache(
+            "project-board-companies",
+            self._fetch_companies_live,
+            fallback=self._get_project_card_fallback_options("company_id", "company_name"),
+        )
+
+    def get_legal_entities(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        return self._fetch_references_with_cache(
+            "project-board-legal-entities",
+            lambda: self._fetch_companies_live(only_my_company=True),
+            fallback=self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name"),
+        )
+
+    def serialize_card(self, card: ProjectCard) -> Dict[str, Any]:
+        return {
+            "id": str(card.id),
+            "project_id": card.project_id,
+            "project_name": card.project_name,
+            "stage": card.stage,
+            "manual_stage": card.manual_stage,
+            "is_archived": card.is_archived,
+            "archived_at": card.archived_at.isoformat() if card.archived_at else None,
+            "project_hours_budget": card.project_hours_budget,
+            "hourly_rate": card.hourly_rate,
+            "is_support": card.is_support,
+            "curator_user_id": card.curator_user_id,
+            "curator_name": card.curator_name,
+            "project_start_date": card.project_start_date.isoformat() if card.project_start_date else None,
+            "project_end_date": card.project_end_date.isoformat() if card.project_end_date else None,
+            "company_id": card.company_id,
+            "company_name": card.company_name,
+            "our_legal_entity_id": card.our_legal_entity_id,
+            "our_legal_entity_name": card.our_legal_entity_name,
+            "last_writeoff_at": card.last_writeoff_at.isoformat() if card.last_writeoff_at else None,
+            "last_writeoff_days": card.last_writeoff_days,
+            "stage_source": card.stage_source,
+            "created_at": card.created_at.isoformat() if card.created_at else None,
+            "updated_at": card.updated_at.isoformat() if card.updated_at else None,
+        }
+
+    def _load_config(self) -> Dict[str, Any]:
+        return ConfigurationService(self.client, self.account).get_configuration_sync()
+
+    def _get_project_card_fallback_options(self, id_field: str, name_field: str) -> List[Dict[str, Any]]:
+        if not ensure_project_card_schema():
+            return []
+
+        rows = (
+            get_project_card_queryset(self.account)
+            .exclude(**{f"{id_field}__isnull": True})
+            .exclude(**{id_field: ""})
+            .values(id_field, name_field)
+            .order_by(name_field)
+        )
+
+        seen_ids = set()
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            option_id = self._clean_str(row.get(id_field))
+            option_name = self._clean_str(row.get(name_field))
+            if not option_id or option_id in seen_ids:
+                continue
+            seen_ids.add(option_id)
+            result.append(
+                {
+                    "id": option_id,
+                    "name": option_name or option_id,
+                    "search_text": " ".join(part for part in [option_name or option_id] if part).strip(),
+                }
+            )
+        return result
+
+    @staticmethod
+    def _merge_reference_options(*option_groups: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        seen_ids = set()
+        merged: List[Dict[str, Any]] = []
+
+        for option_group in option_groups:
+            if not option_group:
+                continue
+            for option in option_group:
+                option_id = ProjectCardService._clean_str(option.get("id"))
+                option_name = ProjectCardService._clean_str(option.get("name"))
+                if not option_id or option_id in seen_ids:
+                    continue
+
+                seen_ids.add(option_id)
+                normalized_option = dict(option)
+                normalized_option["id"] = option_id
+                normalized_option["name"] = option_name or option_id
+
+                option_inn = ProjectCardService._clean_str(option.get("inn"))
+                if option_inn:
+                    normalized_option["inn"] = option_inn
+                if "is_my_company" in option:
+                    normalized_option["is_my_company"] = ProjectCardService._to_bool(option.get("is_my_company"), default=False)
+
+                normalized_option["search_text"] = " ".join(
+                    part
+                    for part in [
+                        normalized_option.get("name"),
+                        option_inn,
+                        ProjectCardService._clean_str(option.get("search_text")),
+                    ]
+                    if part
+                ).strip()
+                merged.append(normalized_option)
+
+        return sorted(merged, key=lambda item: item["name"])
+
+    @staticmethod
+    def _has_reference_options(options: Optional[List[Dict[str, str]]]) -> bool:
+        return bool(options and len(options) > 0)
+
+    def _meta_has_options(self, meta: Optional[Dict[str, Any]]) -> bool:
+        if not meta:
+            return False
+
+        directories = meta.get("directories") if isinstance(meta, dict) else None
+        if isinstance(directories, dict):
+            return any(self._has_reference_options(directories.get(key)) for key in ("employees", "companies"))
+        return any(self._has_reference_options(meta.get(key)) for key in ("employees", "companies"))
+
+    @staticmethod
+    def _meta_has_required_shape(meta: Optional[Dict[str, Any]]) -> bool:
+        if not isinstance(meta, dict):
+            return False
+        return isinstance(meta.get("filters"), dict) and isinstance(meta.get("directories"), dict)
+
+    def _fetch_references_with_cache(
+        self,
+        cache_suffix: str,
+        fetcher,
+        fallback: Optional[List[Dict[str, Any]]] = None,
+        ttl: int = BITRIX_REFERENCE_CACHE_TTL,
+    ) -> List[Dict[str, Any]]:
+        cache_key = build_account_cache_key(self.account, cache_suffix)
+        cached = cache.get(cache_key)
+        if self._has_reference_options(cached):
+            return cached
+        if cached == []:
+            cache.delete(cache_key)
+
+        live_result: List[Dict[str, Any]] = []
+        try:
+            live_result = fetcher() or []
+        except Exception as exc:
+            logger.warning("Reference fetch failed for %s: %s", cache_suffix, exc)
+
+        merged = self._merge_reference_options(live_result, fallback or [])
+        if merged:
+            cache.set(cache_key, merged, ttl)
+        else:
+            cache.delete(cache_key)
+        return merged
+
+    def _fetch_companies_live(self, only_my_company: bool = False) -> List[Dict[str, Any]]:
+        inn_map = self._fetch_company_inn_map()
+        methods = [
+            ("crm.item.list", {"entityTypeId": 4, "select": ["id", "title", "isMyCompany"], "order": {"title": "ASC"}}),
+            ("crm.company.list", {"select": ["ID", "TITLE", "IS_MY_COMPANY"], "order": {"TITLE": "ASC"}}),
+        ]
+
+        for method, params in methods:
+            try:
+                companies = self._fetch_paginated(method, params)
+            except Exception as exc:
+                logger.warning("Company fetch failed for %s: %s", method, exc)
+                continue
+
+            normalized: List[Dict[str, Any]] = []
+            seen_ids = set()
+            for company in companies:
+                company_id = self._clean_str(company.get("ID") or company.get("id"))
+                company_name = self._clean_str(company.get("TITLE") or company.get("title") or company.get("NAME") or company.get("name"))
+                is_my_company = self._to_bool(company.get("IS_MY_COMPANY") or company.get("isMyCompany"), default=False)
+                company_inn = self._clean_str(
+                    company.get("RQ_INN")
+                    or company.get("rqInn")
+                    or company.get("INN")
+                    or company.get("inn")
+                    or inn_map.get(company_id)
+                )
+                if not company_id or not company_name or company_id in seen_ids:
+                    continue
+                if only_my_company and not is_my_company:
+                    continue
+
+                seen_ids.add(company_id)
+                normalized.append(
+                    {
+                        "id": company_id,
+                        "name": company_name,
+                        "inn": company_inn,
+                        "is_my_company": is_my_company,
+                        "search_text": " ".join(part for part in [company_name, company_inn] if part).strip(),
+                    }
+                )
+
+            if normalized:
+                return sorted(normalized, key=lambda item: item["name"])
+
+        return []
+
+    def _fetch_company_inn_map(self) -> Dict[str, str]:
+        try:
+            requisites = self._fetch_paginated(
+                "crm.requisite.list",
+                {
+                    "filter": {"ENTITY_TYPE_ID": 4},
+                    "select": ["ENTITY_ID", "RQ_INN"],
+                    "order": {"ID": "ASC"},
+                },
+            )
+        except Exception as exc:
+            logger.warning("Company requisites fetch failed: %s", exc)
+            return {}
+
+        inn_map: Dict[str, str] = {}
+        for requisite in requisites:
+            entity_id = self._clean_str(requisite.get("ENTITY_ID") or requisite.get("entityId"))
+            inn = self._clean_str(requisite.get("RQ_INN") or requisite.get("rqInn"))
+            if entity_id and inn and entity_id not in inn_map:
+                inn_map[entity_id] = inn
+        return inn_map
+
+    def _get_revenue_leakage_rows(self, limit: int = 5) -> List[Dict[str, Any]]:
+        recent_from = timezone.localdate() - timedelta(days=90)
+        queryset = TimesheetItem.objects.filter(bitrix24_account=self.account, date_reflection__gte=datetime.combine(recent_from, datetime.min.time(), tzinfo=timezone.get_current_timezone()))
+
+        archived_cards = get_project_card_queryset(self.account).filter(is_archived=True)
+        archived_project_ids = archived_cards.exclude(project_id__isnull=True).exclude(project_id="").values("project_id")
+        archived_project_names = archived_cards.exclude(project_name__isnull=True).exclude(project_name="").values("project_name")
+        queryset = queryset.exclude(project_id__in=archived_project_ids).exclude(project_title__in=archived_project_names)
+
+        rows = list(
+            queryset.values("project_id", "project_title").annotate(
+                total_hours=Sum("hours"),
+                non_billable_hours=Sum(
+                    Case(
+                        When(is_billable=False, then=F("hours")),
+                        default=Value(0.0),
+                        output_field=FloatField(),
+                    )
+                ),
+                billable_hours=Sum(
+                    Case(
+                        When(is_billable=True, then=F("hours")),
+                        default=Value(0.0),
+                        output_field=FloatField(),
+                    )
+                ),
+            )
+        )
+
+        normalized: List[Dict[str, Any]] = []
+        for row in rows:
+            project_name = row.get("project_title") or f"Проект {row.get('project_id') or 'без названия'}"
+            total_hours = float(row.get("total_hours") or 0.0)
+            non_billable_hours = float(row.get("non_billable_hours") or 0.0)
+            if total_hours <= 0 or non_billable_hours <= 0:
+                continue
+            normalized.append(
+                {
+                    "project_id": self._clean_str(row.get("project_id")),
+                    "project_name": project_name,
+                    "total_hours": round(total_hours, 2),
+                    "billable_hours": round(float(row.get("billable_hours") or 0.0), 2),
+                    "non_billable_hours": round(non_billable_hours, 2),
+                    "loss_rate": round((non_billable_hours / total_hours) * 100.0, 1),
+                }
+            )
+
+        normalized.sort(key=lambda item: (item["non_billable_hours"], item["loss_rate"]), reverse=True)
+        return normalized[:limit]
+
+    def _get_card(self, project_id: str) -> ProjectCard:
+        return ProjectCard.objects.get(bitrix24_account=self.account, project_id=str(project_id))
+
+    def _fetch_paginated(self, method: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        start = 0
+        items: List[Dict[str, Any]] = []
+
+        while True:
+            request_params = dict(params)
+            request_params["start"] = start
+            response = self.client._bitrix_token.call_method(method, request_params)
+            batch, next_value = _extract_items_from_response(response)
+            if not batch:
+                break
+            items.extend(batch)
+            if next_value is None or int(next_value) <= start:
+                break
+            start = int(next_value)
+
+        return items
+
+    @staticmethod
+    def _clean_str(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        value_str = str(value).strip()
+        return value_str or None
+
+    @staticmethod
+    def _to_optional_float(value: Any) -> Optional[float]:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "y", "yes", "on"}
+
+    @staticmethod
+    def _parse_date(value: Any) -> Optional[date]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        try:
+            return date.fromisoformat(str(value)[:10])
+        except (TypeError, ValueError):
+            return None

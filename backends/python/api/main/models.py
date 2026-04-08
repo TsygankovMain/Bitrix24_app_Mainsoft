@@ -176,6 +176,13 @@ class TimesheetItem(models.Model):
         managed = True
         db_table = "timesheet_item"
         unique_together = ("bitrix24_account", "bitrix_id")
+        indexes = [
+            models.Index(fields=["bitrix24_account", "date_reflection"], name="timesheet_acc_date_idx"),
+            models.Index(fields=["bitrix24_account", "employee_id", "date_reflection"], name="timesheet_acc_emp_date_idx"),
+            models.Index(fields=["bitrix24_account", "project_id", "date_reflection"], name="timesheet_acc_proj_date_idx"),
+            models.Index(fields=["bitrix24_account", "project_title", "date_reflection"], name="ts_acc_proj_ttl_dt_idx"),
+            models.Index(fields=["bitrix24_account", "created_at", "bitrix_id"], name="timesheet_acc_created_idx"),
+        ]
 
 
 class ProjectCard(models.Model):

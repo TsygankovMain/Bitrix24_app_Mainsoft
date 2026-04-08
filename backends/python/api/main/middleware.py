@@ -1,7 +1,10 @@
+import logging
 import time
-import json
 from django.utils.deprecation import MiddlewareMixin
 from .models import RequestLog
+
+
+logger = logging.getLogger(__name__)
 
 class RequestLoggingMiddleware(MiddlewareMixin):
     def process_request(self, request):
@@ -48,8 +51,6 @@ class RequestLoggingMiddleware(MiddlewareMixin):
                 response_body=res_body
             )
         except Exception as e:
-            # Fail silently to not impact request
-            print(f"Logging failed: {e}")
-            pass
+            logger.warning("Request logging failed: %s", e)
             
         return response

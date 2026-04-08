@@ -2,5 +2,12 @@
 import withNuxt from './.nuxt/eslint.config.mjs'
 
 export default withNuxt(
-  // Your custom configs here
+  {
+    files: ['app/utils/**/*.{ts,js}', 'app/composables/**/*.{ts,js}'],
+    rules: {
+      'no-console': ['error', { allow: ['warn', 'error'] }],
+      'no-debugger': 'error',
+      'no-alert': 'error',
+    },
+  },
 )
