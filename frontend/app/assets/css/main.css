@@ -68,7 +68,7 @@
   }
 
   .ms-report-surface {
-    min-height: calc(100vh - 6rem);
+    min-height: 0;
     overflow: visible !important;
   }
 
