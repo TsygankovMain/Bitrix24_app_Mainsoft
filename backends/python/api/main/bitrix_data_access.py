@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from b24pysdk import Client
 from django.core.cache import cache
 
+from .employee_ids import extract_bitrix_user_id, normalize_employee_id
 from .models import Bitrix24Account
 from .project_board_shared import (
     BITRIX_REFERENCE_CACHE_TTL,
@@ -45,43 +46,39 @@ class BitrixDataService:
         if not user_ids:
             return {}
 
-        numeric_to_original: Dict[str, str] = {}
+        numeric_to_aliases: Dict[str, set[str]] = {}
         for uid in user_ids:
-            if not uid:
-                continue
-            uid_str = str(uid).strip()
-            if uid_str.startswith("["):
-                try:
-                    parsed = json.loads(uid_str)
-                    if isinstance(parsed, list) and parsed:
-                        numeric_to_original[str(parsed[0])] = uid_str
-                        continue
-                except Exception:
-                    pass
+            raw_id = str(uid).strip() if uid not in (None, "") else ""
+            normalized_id = normalize_employee_id(uid)
+            numeric_id = extract_bitrix_user_id(uid)
+            if not numeric_id:
                 continue
 
-            if uid_str and uid_str.lstrip("-").isdigit():
-                numeric_to_original[uid_str] = uid_str
+            aliases = numeric_to_aliases.setdefault(numeric_id, set())
+            aliases.add(numeric_id)
+            if normalized_id:
+                aliases.add(normalized_id)
+            if raw_id:
+                aliases.add(raw_id)
 
-        if not numeric_to_original:
+        if not numeric_to_aliases:
             return {}
 
         try:
             response = self.client._bitrix_token.call_method(
                 "user.get",
-                {"FILTER": {"ID": list(numeric_to_original.keys())}},
+                {"FILTER": {"ID": list(numeric_to_aliases.keys())}},
             )
             users = response.get("result", [])
             user_map: Dict[str, str] = {}
             for user in users:
-                numeric_id = str(user.get("ID", ""))
-                name = f"{user.get('LAST_NAME', '')} {user.get('NAME', '')}".strip()
-                if not name:
-                    name = user.get("EMAIL") or f"User {numeric_id}"
-                user_map[numeric_id] = name
-                original = numeric_to_original.get(numeric_id)
-                if original and original != numeric_id:
-                    user_map[original] = name
+                numeric_id = extract_bitrix_user_id(user.get("ID"))
+                if not numeric_id:
+                    continue
+
+                name = self._build_user_name(user, numeric_id)
+                for alias in numeric_to_aliases.get(numeric_id, {numeric_id}):
+                    user_map[alias] = name
             return user_map
         except Exception as exc:
             logger.error("Error fetching users: %s", exc)
@@ -107,21 +104,17 @@ class BitrixDataService:
             )
             users = response.get("result", [])
             result: List[Dict[str, str]] = []
+            seen_ids = set()
 
             for user in users:
-                user_id = str(user.get("ID", "")).strip()
+                user_id = normalize_employee_id(user.get("ID"))
                 if not user_id:
                     continue
-
-                user_type = str(user.get("USER_TYPE", "")).strip().lower()
-                if user_type and user_type != "employee":
+                if user_id in seen_ids:
                     continue
+                seen_ids.add(user_id)
 
-                name = f"{user.get('LAST_NAME', '')} {user.get('NAME', '')}".strip()
-                if not name:
-                    name = user.get("EMAIL") or f"User {user_id}"
-
-                result.append({"id": user_id, "name": name})
+                result.append({"id": user_id, "name": self._build_user_name(user, user_id)})
 
             result = sorted(result, key=lambda item: item["name"])
             if self.account:
@@ -169,3 +162,10 @@ class BitrixDataService:
             logger.info("First item FULL DUMP:")
             logger.info(json.dumps(all_items[0], indent=2, default=str))
         return all_items
+
+    @staticmethod
+    def _build_user_name(user: Dict[str, Any], user_id: str) -> str:
+        name = f"{user.get('LAST_NAME', '')} {user.get('NAME', '')}".strip()
+        if name:
+            return name
+        return user.get("EMAIL") or user_id

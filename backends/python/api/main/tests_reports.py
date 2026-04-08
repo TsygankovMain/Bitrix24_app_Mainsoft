@@ -1,13 +1,15 @@
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import Client, SimpleTestCase, TestCase
 from django.utils import timezone
 
+from .bitrix_data_access import BitrixDataService
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
 from .report_queries import build_filtered_timesheet_queryset
 from .report_services import (
     DataProcessingService,
+    FIELD_EMPLOYEE,
     FIELD_PROJECT_NAME,
     FIELD_TASK_ID,
     FIELD_TITLE_HIERARCHY,
@@ -113,6 +115,84 @@ class ReportServiceTest(SimpleTestCase):
 
         self.assertEqual(TimesheetSyncService._extract_items(shaped_as_dict), [{"id": 1}])
         self.assertEqual(TimesheetSyncService._extract_items(shaped_as_list), [{"id": 2}])
+
+    def test_normalization_canonicalizes_bracketed_employee_ids(self):
+        processor = DataProcessingService()
+
+        normalized = processor.normalize_items(
+            [
+                {
+                    FIELD_TASK_ID: "12",
+                    FIELD_PROJECT_NAME: "Project A",
+                    FIELD_TITLE_HIERARCHY: '["Project A", "Task"]',
+                    FIELD_EMPLOYEE: "[1167]",
+                }
+            ]
+        )
+
+        self.assertEqual(normalized[0]["sotrudnik_id"], "1167")
+
+    def test_daily_workload_resolves_names_for_legacy_employee_ids(self):
+        reporter = ReportService()
+
+        report = reporter.generate_daily_workload(
+            [
+                {
+                    "sotrudnik_id": "[1167]",
+                    "project_name": "Project A",
+                    "kolichestvo_chasov": 6,
+                    "id_zadachi": "10",
+                    "nazvanie_zadachi": "Task",
+                    "opisanie": "",
+                    "data": "2026-04-02T00:00:00+03:00",
+                }
+            ],
+            {"1167": "Иванов Иван"},
+            "2026-04-01",
+            "2026-04-30",
+        )
+
+        self.assertEqual(report["rows"][0]["employee"]["id"], "1167")
+        self.assertEqual(report["rows"][0]["employee"]["name"], "Иванов Иван")
+
+
+class BitrixDataServiceTest(SimpleTestCase):
+    def test_fetch_users_resolves_numeric_and_bracketed_ids(self):
+        client = Mock()
+        client._bitrix_token.call_method.return_value = {
+            "result": [{"ID": "1167", "LAST_NAME": "Иванов", "NAME": "Иван"}]
+        }
+
+        service = BitrixDataService(client, {})
+        result = service.fetch_users(["1167", "[1167]", '["1167"]'])
+
+        self.assertEqual(result["1167"], "Иванов Иван")
+        self.assertEqual(result["[1167]"], "Иванов Иван")
+        self.assertEqual(result['["1167"]'], "Иванов Иван")
+        client._bitrix_token.call_method.assert_called_once_with(
+            "user.get",
+            {"FILTER": {"ID": ["1167"]}},
+        )
+
+    def test_fetch_active_users_keeps_users_without_employee_user_type(self):
+        client = Mock()
+        client._bitrix_token.call_method.return_value = {
+            "result": [
+                {"ID": "1167", "LAST_NAME": "Иванов", "NAME": "Иван"},
+                {"ID": "1199", "EMAIL": "user1199@example.com", "USER_TYPE": "unknown"},
+            ]
+        }
+
+        service = BitrixDataService(client, {})
+        result = service.fetch_active_users()
+
+        self.assertEqual(
+            result,
+            [
+                {"id": "1199", "name": "user1199@example.com"},
+                {"id": "1167", "name": "Иванов Иван"},
+            ],
+        )
 
 
 class QueryStabilityTest(TestCase):
@@ -221,6 +301,41 @@ class QueryStabilityTest(TestCase):
         )
 
         self.assertEqual(list(queryset.values_list("bitrix_id", flat=True)), [kept_item.bitrix_id])
+
+    def test_employee_filter_matches_legacy_bracketed_ids(self):
+        day = timezone.make_aware(datetime(2026, 4, 2, 9, 0))
+        legacy_item = TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=101,
+            task_id="101",
+            employee_id="[1167]",
+            hours=4,
+            project_id="active-id",
+            project_title="Active Project",
+            date_reflection=day,
+        )
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=102,
+            task_id="102",
+            employee_id="1199",
+            hours=4,
+            project_id="active-id",
+            project_title="Active Project",
+            date_reflection=day,
+        )
+
+        queryset = build_filtered_timesheet_queryset(
+            self.account,
+            {
+                "date_from": "2026-04-01",
+                "date_to": "2026-04-30",
+                "employee_ids[]": ["1167"],
+                "employee_mode": "include",
+            },
+        )
+
+        self.assertEqual(list(queryset.values_list("bitrix_id", flat=True)), [legacy_item.bitrix_id])
 
     @patch("main.views.TimesheetSyncService.sync_all", side_effect=RuntimeError("sync failed"))
     @patch("main.views.ConfigurationService.get_configuration_sync", return_value={"sp_entity_type_id": 1, "fields_mapping": {}})

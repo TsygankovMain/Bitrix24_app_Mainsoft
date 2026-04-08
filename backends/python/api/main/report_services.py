@@ -3,6 +3,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from .employee_ids import normalize_employee_id, resolve_employee_name
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +83,7 @@ class DataProcessingService:
             is_billable = str(is_billable_raw).upper() in ["Y", "1", "TRUE"]
 
             emp_raw = item.get(field_employee)
-            if isinstance(emp_raw, list):
-                emp_id = str(emp_raw[0]) if emp_raw else ""
-            elif emp_raw is not None:
-                emp_id = str(emp_raw).strip()
-            else:
-                emp_id = ""
+            emp_id = normalize_employee_id(emp_raw)
 
             normalized.append(
                 {
@@ -167,7 +163,7 @@ class ReportService:
         user_map = user_map or {}
 
         for item in items:
-            emp_id = item["sotrudnik_id"]
+            emp_id = normalize_employee_id(item["sotrudnik_id"])
             proj_name = item["project_name"] or "Без проекта"
 
             hours = item["kolichestvo_chasov"]
@@ -179,7 +175,7 @@ class ReportService:
                 tree[emp_id] = {
                     "type": "employee",
                     "id": emp_id,
-                    "name": user_map.get(emp_id, f"Сотрудник {emp_id}"),
+                    "name": resolve_employee_name(user_map, emp_id),
                     "total_hours": 0.0,
                     "billable_hours": 0.0,
                     "non_billable_hours": 0.0,
@@ -250,7 +246,7 @@ class ReportService:
         user_map = user_map or {}
 
         for item in items:
-            emp_id = item["sotrudnik_id"]
+            emp_id = normalize_employee_id(item["sotrudnik_id"])
             proj_name = item["project_name"] or "Без проекта"
 
             hours = item["kolichestvo_chasov"]
@@ -278,7 +274,7 @@ class ReportService:
                 proj_node["children"][emp_id] = {
                     "type": "employee",
                     "id": emp_id,
-                    "name": user_map.get(emp_id, f"Сотрудник {emp_id}"),
+                    "name": resolve_employee_name(user_map, emp_id),
                     "total_hours": 0.0,
                     "billable_hours": 0.0,
                     "non_billable_hours": 0.0,
@@ -334,7 +330,7 @@ class ReportService:
         user_map = user_map or {}
 
         for item in items:
-            emp_id = item["sotrudnik_id"]
+            emp_id = normalize_employee_id(item["sotrudnik_id"])
             proj_name = item["project_name"] or "Без проекта"
 
             hours = item["kolichestvo_chasov"]
@@ -391,7 +387,7 @@ class ReportService:
                         task_node["employees"][emp_id] = {
                             "type": "employee",
                             "id": emp_id,
-                            "name": user_map.get(emp_id, f"Сотрудник {emp_id}"),
+                            "name": resolve_employee_name(user_map, emp_id),
                             "total_hours": 0.0,
                             "billable_hours": 0.0,
                             "non_billable_hours": 0.0,
@@ -413,7 +409,7 @@ class ReportService:
         report = {}
 
         for item in items:
-            emp_id = item["sotrudnik_id"]
+            emp_id = normalize_employee_id(item["sotrudnik_id"])
             hours = item["kolichestvo_chasov"]
             date_str = item["data"]
 
@@ -464,7 +460,7 @@ class ReportService:
 
         agg = {}
         for item in items:
-            emp_id = item["sotrudnik_id"]
+            emp_id = normalize_employee_id(item["sotrudnik_id"])
             date_str = item["data"]
             if not date_str:
                 continue
@@ -481,7 +477,7 @@ class ReportService:
             if emp_id not in agg:
                 agg[emp_id] = {
                     "id": emp_id,
-                    "name": user_map.get(emp_id, f"User {emp_id}"),
+                    "name": resolve_employee_name(user_map, emp_id, fallback_prefix="User"),
                     "days": {},
                 }
 
@@ -546,7 +542,7 @@ class ReportService:
         total_non_billable = 0.0
 
         for item in items:
-            emp_id = str(item.get("sotrudnik_id") or "")
+            emp_id = normalize_employee_id(item.get("sotrudnik_id"))
             project_name = item.get("project_name") or "Без проекта"
             hours = float(item.get("kolichestvo_chasov") or 0)
             is_billable = bool(item.get("uchitivaem", False))
@@ -574,7 +570,7 @@ class ReportService:
             if emp_id not in project_row["employees"]:
                 project_row["employees"][emp_id] = {
                     "employee_id": emp_id,
-                    "employee_name": user_map.get(emp_id, f"Сотрудник {emp_id}" if emp_id else "Без сотрудника"),
+                    "employee_name": resolve_employee_name(user_map, emp_id),
                     "total_hours": 0.0,
                     "billable_hours": 0.0,
                     "non_billable_hours": 0.0,
@@ -670,7 +666,7 @@ class ReportService:
         fallback_entries = 0
 
         for item in items:
-            emp_id = str(item.get("sotrudnik_id") or "")
+            emp_id = normalize_employee_id(item.get("sotrudnik_id"))
             reflection_dt = self._parse_datetime(item.get("date_reflection"))
             source_created_at = self._parse_datetime(item.get("source_created_at"))
 
@@ -705,7 +701,7 @@ class ReportService:
             if emp_id not in employee_map:
                 employee_map[emp_id] = {
                     "employee_id": emp_id,
-                    "employee_name": user_map.get(emp_id, f"Сотрудник {emp_id}" if emp_id else "Без сотрудника"),
+                    "employee_name": resolve_employee_name(user_map, emp_id),
                     "entry_count": 0,
                     "same_day_count": 0,
                     "late_entries": 0,
@@ -791,7 +787,7 @@ class ReportService:
         total_entries = 0
 
         for item in items:
-            emp_id = str(item.get("sotrudnik_id") or "")
+            emp_id = normalize_employee_id(item.get("sotrudnik_id"))
             project_name = item.get("project_name") or "Без проекта"
             task_id = str(item.get("id_zadachi") or item.get("task_id") or "")
             hours = float(item.get("kolichestvo_chasov") or 0)
@@ -802,7 +798,7 @@ class ReportService:
             if emp_id not in employee_map:
                 employee_map[emp_id] = {
                     "employee_id": emp_id,
-                    "employee_name": user_map.get(emp_id, f"Сотрудник {emp_id}" if emp_id else "Без сотрудника"),
+                    "employee_name": resolve_employee_name(user_map, emp_id),
                     "total_hours": 0.0,
                     "entry_count": 0,
                     "projects": set(),

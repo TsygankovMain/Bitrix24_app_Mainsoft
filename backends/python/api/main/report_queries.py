@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 from django.db.models import Q
 from django.utils import timezone
 
+from .employee_ids import build_employee_id_aliases
 from .models import Bitrix24Account, TimesheetItem
 from .project_board_shared import get_project_card_queryset
 
@@ -38,12 +39,13 @@ def build_filtered_timesheet_queryset(account: Bitrix24Account, params: Mapping[
     queryset = queryset.exclude(Q(project_id__in=archived_ids) | Q(project_title__in=archived_names))
 
     employee_ids = _normalize_multi_value(params.get("employee_ids") or params.get("employee_ids[]"))
+    employee_filter_ids = build_employee_id_aliases(employee_ids)
     employee_mode = str(params.get("employee_mode") or "include")
-    if employee_ids:
+    if employee_filter_ids:
         if employee_mode == "exclude":
-            queryset = queryset.exclude(employee_id__in=employee_ids)
+            queryset = queryset.exclude(employee_id__in=employee_filter_ids)
         else:
-            queryset = queryset.filter(employee_id__in=employee_ids)
+            queryset = queryset.filter(employee_id__in=employee_filter_ids)
 
     project_ids = _normalize_multi_value(params.get("project_ids") or params.get("project_ids[]"))
     project_mode = str(params.get("project_mode") or "include")
