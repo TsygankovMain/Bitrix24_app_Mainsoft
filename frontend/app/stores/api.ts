@@ -201,7 +201,7 @@ export const useApiStore = defineStore(
     }
 
     const getFilterEmployees = async (forceRefresh = false): Promise<FilterOption[]> => {
-      const scope = 'filter-employees-v2'
+      const scope = 'filter-employees-v3'
 
       if (!forceRefresh) {
         const cached = readCache<FilterOption[]>(scope)

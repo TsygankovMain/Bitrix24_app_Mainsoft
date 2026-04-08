@@ -94,27 +94,52 @@ class BitrixDataService:
                 cache.delete(cache_key)
 
         try:
-            response = self.client._bitrix_token.call_method(
-                "user.get",
-                {
-                    "FILTER": {"ACTIVE": "Y"},
-                    "sort": "LAST_NAME",
-                    "order": "ASC",
-                },
-            )
-            users = response.get("result", [])
             result: List[Dict[str, str]] = []
             seen_ids = set()
+            start = 0
 
-            for user in users:
-                user_id = normalize_employee_id(user.get("ID"))
-                if not user_id:
-                    continue
-                if user_id in seen_ids:
-                    continue
-                seen_ids.add(user_id)
+            while True:
+                response = self.client._bitrix_token.call_method(
+                    "user.get",
+                    {
+                        "FILTER": {"ACTIVE": "Y"},
+                        "sort": "LAST_NAME",
+                        "order": "ASC",
+                        "start": start,
+                    },
+                )
+                users = response.get("result", [])
 
-                result.append({"id": user_id, "name": self._build_user_name(user, user_id)})
+                for user in users:
+                    user_id = normalize_employee_id(user.get("ID"))
+                    if not user_id:
+                        continue
+                    if user_id in seen_ids:
+                        continue
+                    seen_ids.add(user_id)
+
+                    result.append({"id": user_id, "name": self._build_user_name(user, user_id)})
+
+                next_value = response.get("next")
+                if next_value not in (None, "", False):
+                    next_start = int(next_value)
+                    if next_start <= start:
+                        break
+                    start = next_start
+                    continue
+
+                total = response.get("total")
+                if total is not None:
+                    next_start = start + len(users)
+                    if next_start >= int(total):
+                        break
+                    start = next_start
+                    continue
+
+                if len(users) < 50:
+                    break
+
+                start += len(users)
 
             result = sorted(result, key=lambda item: item["name"])
             if self.account:

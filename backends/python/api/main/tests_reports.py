@@ -193,6 +193,41 @@ class BitrixDataServiceTest(SimpleTestCase):
                 {"id": "1167", "name": "Иванов Иван"},
             ],
         )
+        client._bitrix_token.call_method.assert_called_once_with(
+            "user.get",
+            {
+                "FILTER": {"ACTIVE": "Y"},
+                "sort": "LAST_NAME",
+                "order": "ASC",
+                "start": 0,
+            },
+        )
+
+    def test_fetch_active_users_paginates_all_pages(self):
+        client = Mock()
+        client._bitrix_token.call_method.side_effect = [
+            {
+                "result": [{"ID": "1167", "LAST_NAME": "Иванов", "NAME": "Иван"}],
+                "total": 2,
+                "next": 1,
+            },
+            {
+                "result": [{"ID": "1199", "LAST_NAME": "Петров", "NAME": "Петр"}],
+                "total": 2,
+            },
+        ]
+
+        service = BitrixDataService(client, {})
+        result = service.fetch_active_users()
+
+        self.assertEqual(
+            result,
+            [
+                {"id": "1167", "name": "Иванов Иван"},
+                {"id": "1199", "name": "Петров Петр"},
+            ],
+        )
+        self.assertEqual(client._bitrix_token.call_method.call_count, 2)
 
 
 class QueryStabilityTest(TestCase):

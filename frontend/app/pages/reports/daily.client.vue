@@ -42,6 +42,27 @@ const domain = ref('') // Store domain for links
 const showModal = ref(false)
 const modalData = ref<any>(null) // { employeeName, date, items: [] }
 
+const {
+    dateFrom,
+    dateTo,
+    filterOptions,
+    selectedEmployees,
+    selectedProjects,
+    employeeFilterMode,
+    projectFilterMode,
+    employeeFilter,
+    projectFilter,
+    loadFilterOptions,
+    initCurrentMonthRange,
+} = useReportFilters()
+
+const { hasGenerated, syncWarning, generateReport } = useReportGenerator({
+    setLoading: (value) => {
+        isLoading.value = value
+    },
+    onError: processErrorGlobal
+})
+
 const normalizedHeaderDays = computed(() =>
     Array.isArray(reportData.value?.header_days) ? reportData.value.header_days : []
 )
@@ -313,23 +334,3 @@ onMounted(async () => {
     box-shadow: 2px 0 5px -2px rgba(0, 0, 0, 0.1);
 }
 </style>
-const {
-    dateFrom,
-    dateTo,
-    filterOptions,
-    selectedEmployees,
-    selectedProjects,
-    employeeFilterMode,
-    projectFilterMode,
-    employeeFilter,
-    projectFilter,
-    loadFilterOptions,
-    initCurrentMonthRange,
-} = useReportFilters()
-
-const { hasGenerated, syncWarning, generateReport } = useReportGenerator({
-    setLoading: (value) => {
-        isLoading.value = value
-    },
-    onError: processErrorGlobal
-})
