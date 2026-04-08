@@ -66,10 +66,13 @@ class DataProcessingService:
             try:
                 task_hierarchy = self._parse_json_list(item.get(field_task_hierarchy))
                 title_hierarchy = self._parse_json_list(item.get(field_title_hierarchy))
-            except Exception:
+                hours = self._to_float(item.get(field_hours))
+                non_billable = self._to_float(item.get(field_non_billable))
+            except ValueError:
+                dropped_count += 1
                 continue
 
-            project_name = item.get(field_project_name)
+            project_name = self._stringify_value(item.get(field_project_name))
             if not project_name:
                 project_name = title_hierarchy[0] if title_hierarchy else "Не определён"
 
@@ -77,9 +80,6 @@ class DataProcessingService:
 
             is_billable_raw = item.get(field_is_billable)
             is_billable = str(is_billable_raw).upper() in ["Y", "1", "TRUE"]
-
-            hours = float(item.get(field_hours) or 0)
-            non_billable = float(item.get(field_non_billable) or 0)
 
             emp_raw = item.get(field_employee)
             if isinstance(emp_raw, list):
@@ -102,7 +102,7 @@ class DataProcessingService:
                     "title_zadach_ierarhiya": title_hierarchy,
                     "nazvanie_zadachi": task_name,
                     "project_name": project_name,
-                    "project_id": str(item.get(field_project_id) or ""),
+                    "project_id": self._stringify_value(item.get(field_project_id)),
                     "data": item.get(field_date) or item.get("createdTime"),
                     "source_created_at": item.get("createdTime"),
                 }
@@ -129,6 +129,30 @@ class DataProcessingService:
             return []
         except json.JSONDecodeError:
             return []
+
+    @staticmethod
+    def _stringify_value(value: Any) -> str:
+        if value in (None, ""):
+            return ""
+        if isinstance(value, list):
+            return str(value[0]).strip() if value else ""
+        return str(value).strip()
+
+    @staticmethod
+    def _to_float(value: Any) -> float:
+        if value in (None, "", False):
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        normalized = str(value).strip().replace(",", ".")
+        if not normalized:
+            return 0.0
+
+        try:
+            return float(normalized)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid numeric value: {value}") from exc
 
 
 class ReportService:

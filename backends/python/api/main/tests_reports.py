@@ -19,6 +19,7 @@ from .services import (
     PROJECT_STAGE_NO_WRITEOFF_90,
     ProjectStageAutomationService,
 )
+from .timesheet_sync_service import TimesheetSyncService
 
 
 class ReportServiceTest(SimpleTestCase):
@@ -82,6 +83,35 @@ class ReportServiceTest(SimpleTestCase):
         self.assertEqual(ts_user1["total"], 8.0)
         self.assertEqual(ts_user1["days"]["1"], 5.0)
         self.assertEqual(ts_user1["days"]["2"], 3.0)
+
+    def test_normalization_skips_items_with_invalid_numeric_fields(self):
+        processor = DataProcessingService()
+
+        invalid_item = {
+            FIELD_TASK_ID: "10",
+            FIELD_PROJECT_NAME: "Broken Project",
+            FIELD_TITLE_HIERARCHY: '["Broken Project", "Task"]',
+            "kolichestvo_chasov": "3,5,1",
+        }
+        valid_item = {
+            FIELD_TASK_ID: "11",
+            FIELD_PROJECT_NAME: "Valid Project",
+            FIELD_TITLE_HIERARCHY: '["Valid Project", "Task"]',
+            "kolichestvo_chasov": "3,5",
+        }
+
+        normalized = processor.normalize_items([invalid_item, valid_item])
+
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["id_zadachi"], "11")
+        self.assertEqual(normalized[0]["kolichestvo_chasov"], 3.5)
+
+    def test_timesheet_sync_extracts_items_from_multiple_response_shapes(self):
+        shaped_as_dict = {"result": {"items": [{"id": 1}]}}
+        shaped_as_list = {"result": [{"id": 2}]}
+
+        self.assertEqual(TimesheetSyncService._extract_items(shaped_as_dict), [{"id": 1}])
+        self.assertEqual(TimesheetSyncService._extract_items(shaped_as_list), [{"id": 2}])
 
 
 class QueryStabilityTest(TestCase):

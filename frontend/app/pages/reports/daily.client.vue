@@ -37,6 +37,7 @@ const dateTo = ref('')
 const isInit = ref(false)
 const hasGenerated = ref(false)
 const domain = ref('') // Store domain for links
+const syncWarning = ref('')
 
 // Filters
 const filterOptions = ref<{ employees: any[], projects: any[] }>({ employees: [], projects: [] })
@@ -95,8 +96,15 @@ async function fetchFilterOptions() {
 
 async function fetchReport() {
     isLoading.value = true
+    syncWarning.value = ''
     try {
-        await apiStore.syncTimesheets()
+        try {
+            await apiStore.syncTimesheets()
+        } catch (error) {
+            $logger.warn('Timesheet sync failed, fallback to stored data', error)
+            syncWarning.value = 'Не удалось обновить данные из Битрикс24. Отчет построен по последней сохраненной синхронизации.'
+        }
+
         const payload = await apiStore.getReportDailyWorkload(
             dateFrom.value, 
             dateTo.value, 
@@ -250,6 +258,10 @@ onMounted(async () => {
                      v-model:mode="projectFilterMode"
                  />
              </div>
+         </div>
+
+         <div v-if="syncWarning" class="ms-panel-warning">
+             {{ syncWarning }}
          </div>
 
          <!-- GRID -->

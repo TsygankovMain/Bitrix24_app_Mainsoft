@@ -76,7 +76,7 @@ class TimesheetSyncService:
                     },
                 )
 
-                items = response.get("result", {}).get("items", [])
+                items = self._extract_items(response)
                 if not items:
                     logger.info("No more items to fetch.")
                     break
@@ -145,3 +145,15 @@ class TimesheetSyncService:
                 )
             except Exception as exc:
                 logger.error("Error saving item %s: %s", item.get("id_elem"), exc)
+
+    @staticmethod
+    def _extract_items(response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        result = response.get("result", [])
+        if isinstance(result, dict):
+            items = result.get("items")
+            if items is None:
+                items = result.get("result", [])
+        else:
+            items = result
+
+        return items if isinstance(items, list) else []
