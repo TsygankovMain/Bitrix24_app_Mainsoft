@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
-from django.test import SimpleTestCase, TestCase
+from django.test import Client, SimpleTestCase, TestCase
 from django.utils import timezone
 
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
@@ -220,6 +221,22 @@ class QueryStabilityTest(TestCase):
         )
 
         self.assertEqual(list(queryset.values_list("bitrix_id", flat=True)), [kept_item.bitrix_id])
+
+    @patch("main.views.TimesheetSyncService.sync_all", side_effect=RuntimeError("sync failed"))
+    @patch("main.views.ConfigurationService.get_configuration_sync", return_value={"sp_entity_type_id": 1, "fields_mapping": {}})
+    def test_sync_endpoint_returns_warning_instead_of_500(self, _config_mock, _sync_mock):
+        token = self.account.create_jwt_token()
+        response = Client().post(
+            "/api/sync-timesheets",
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "warning")
+        self.assertEqual(payload["count"], 0)
+        self.assertIn("warning", payload)
 
 
 class StageAutomationStabilityTest(TestCase):

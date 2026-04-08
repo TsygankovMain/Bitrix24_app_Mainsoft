@@ -9,3 +9,5 @@ DATABASES = {
 }
 
 STATICFILES_DIRS = []
+
+MIDDLEWARE = [item for item in MIDDLEWARE if item != "whitenoise.middleware.WhiteNoiseMiddleware"]

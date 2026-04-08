@@ -646,7 +646,19 @@ def timesheet_sync(request: AuthorizedRequest):
     config = config_service.get_configuration_sync()
     
     service = TimesheetSyncService(request.bitrix24_account.client, request.bitrix24_account, config)
-    count = service.sync_all()
+    try:
+        count = service.sync_all()
+    except Exception as exc:
+        logger.exception("Timesheet sync failed for account %s", request.bitrix24_account.pk)
+        return JsonResponse(
+            {
+                "status": "warning",
+                "count": 0,
+                "warning": "Не удалось обновить данные из Битрикс24. Используются последние сохраненные данные.",
+                "error": str(exc),
+            }
+        )
+
     invalidate_project_runtime_caches(request.bitrix24_account)
     return JsonResponse({"status": "success", "count": count})
 
