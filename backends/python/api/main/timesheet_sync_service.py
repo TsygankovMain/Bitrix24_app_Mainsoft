@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from b24pysdk import Client
 from django.db import transaction
+from django.utils import timezone
 
 from .models import Bitrix24Account, TimesheetItem
 from .report_services import DataProcessingService
@@ -16,6 +17,22 @@ class TimesheetSyncService:
     MAX_RETRIES = 5
     BASE_RETRY_DELAY = 2.0
     THROTTLE_DELAY = 0.5
+    BULK_BATCH_SIZE = 200
+    UPSERT_FIELDS = [
+        "task_id",
+        "employee_id",
+        "hours",
+        "is_billable",
+        "non_billable_hours",
+        "description",
+        "project_title",
+        "project_id",
+        "task_hierarchy_ids",
+        "task_hierarchy_titles",
+        "date_reflection",
+        "source_created_at",
+        "updated_at",
+    ]
 
     def __init__(self, client: Client, account: Bitrix24Account, config: Dict[str, Any]):
         self.client = client
@@ -117,6 +134,9 @@ class TimesheetSyncService:
 
     @transaction.atomic
     def _save_batch(self, normalized_items: List[Dict[str, Any]]) -> None:
+        prepared_items: List[tuple[int, Dict[str, Any]]] = []
+        bitrix_ids: List[int] = []
+
         for item in normalized_items:
             try:
                 bitrix_id = int(item["id_elem"])
@@ -125,26 +145,75 @@ class TimesheetSyncService:
                     logger.warning("Skipping item %s due to missing date", bitrix_id)
                     continue
 
-                TimesheetItem.objects.update_or_create(
-                    bitrix24_account=self.account,
-                    bitrix_id=bitrix_id,
-                    defaults={
-                        "task_id": item["id_zadachi"],
-                        "employee_id": item["sotrudnik_id"],
-                        "hours": item["kolichestvo_chasov"],
-                        "is_billable": item["uchitivaem"],
-                        "non_billable_hours": item["ne_uchitivaemie_chasi"],
-                        "description": item["opisanie"],
-                        "project_title": item["project_name"],
-                        "project_id": item["project_id"],
-                        "task_hierarchy_ids": item["id_zadach_ierarhiya"],
-                        "task_hierarchy_titles": item["title_zadach_ierarhiya"],
-                        "date_reflection": date_reflection,
-                        "source_created_at": item.get("source_created_at"),
-                    },
+                prepared_items.append(
+                    (
+                        bitrix_id,
+                        {
+                            "task_id": item["id_zadachi"],
+                            "employee_id": item["sotrudnik_id"],
+                            "hours": item["kolichestvo_chasov"],
+                            "is_billable": item["uchitivaem"],
+                            "non_billable_hours": item["ne_uchitivaemie_chasi"],
+                            "description": item["opisanie"],
+                            "project_title": item["project_name"],
+                            "project_id": item["project_id"],
+                            "task_hierarchy_ids": item["id_zadach_ierarhiya"],
+                            "task_hierarchy_titles": item["title_zadach_ierarhiya"],
+                            "date_reflection": date_reflection,
+                            "source_created_at": item.get("source_created_at"),
+                        },
+                    )
                 )
+                bitrix_ids.append(bitrix_id)
             except Exception as exc:
                 logger.error("Error saving item %s: %s", item.get("id_elem"), exc)
+
+        if not prepared_items:
+            return
+
+        now = timezone.now()
+        existing_items = {
+            item.bitrix_id: item
+            for item in TimesheetItem.objects.filter(
+                bitrix24_account=self.account,
+                bitrix_id__in=bitrix_ids,
+            )
+        }
+        to_create: List[TimesheetItem] = []
+        to_update: List[TimesheetItem] = []
+
+        for bitrix_id, defaults in prepared_items:
+            existing_item = existing_items.get(bitrix_id)
+            if existing_item is None:
+                to_create.append(
+                    TimesheetItem(
+                        bitrix24_account=self.account,
+                        bitrix_id=bitrix_id,
+                        created_at=now,
+                        updated_at=now,
+                        **defaults,
+                    )
+                )
+                continue
+
+            has_changes = False
+            for field_name, field_value in defaults.items():
+                if getattr(existing_item, field_name) != field_value:
+                    setattr(existing_item, field_name, field_value)
+                    has_changes = True
+
+            if has_changes:
+                existing_item.updated_at = now
+                to_update.append(existing_item)
+
+        if to_create:
+            TimesheetItem.objects.bulk_create(to_create, batch_size=self.BULK_BATCH_SIZE)
+        if to_update:
+            TimesheetItem.objects.bulk_update(
+                to_update,
+                self.UPSERT_FIELDS,
+                batch_size=self.BULK_BATCH_SIZE,
+            )
 
     @staticmethod
     def _extract_items(response: Dict[str, Any]) -> List[Dict[str, Any]]:

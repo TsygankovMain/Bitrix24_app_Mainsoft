@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
-from django.test import Client, SimpleTestCase, TestCase
+from django.http import JsonResponse
+from django.test import Client, RequestFactory, SimpleTestCase, TestCase
 from django.utils import timezone
 
 from .bitrix_data_access import BitrixDataService
+from .middleware import RequestLoggingMiddleware
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
 from .report_queries import build_filtered_timesheet_queryset
 from .report_services import (
@@ -230,6 +232,42 @@ class BitrixDataServiceTest(SimpleTestCase):
         self.assertEqual(client._bitrix_token.call_method.call_count, 2)
 
 
+class RequestLoggingMiddlewareTest(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.middleware = RequestLoggingMiddleware(lambda request: JsonResponse({"ok": True}))
+
+    @patch("main.middleware.RequestLog.objects.create")
+    def test_healthz_request_is_not_written_to_db(self, create_mock):
+        request = self.factory.get("/healthz")
+        self.middleware.process_request(request)
+        response = JsonResponse({"status": "ok"})
+
+        self.middleware.process_response(request, response)
+
+        create_mock.assert_not_called()
+
+    @patch("main.middleware.RequestLog.objects.create")
+    def test_successful_get_request_is_not_written_to_db(self, create_mock):
+        request = self.factory.get("/api/report-daily-workload")
+        self.middleware.process_request(request)
+        response = JsonResponse({"rows": []})
+
+        self.middleware.process_response(request, response)
+
+        create_mock.assert_not_called()
+
+    @patch("main.middleware.RequestLog.objects.create")
+    def test_error_response_is_still_logged(self, create_mock):
+        request = self.factory.get("/api/report-daily-workload")
+        self.middleware.process_request(request)
+        response = JsonResponse({"error": "boom"}, status=500)
+
+        self.middleware.process_response(request, response)
+
+        create_mock.assert_called_once()
+
+
 class QueryStabilityTest(TestCase):
     def setUp(self):
         self.account = Bitrix24Account.objects.create(
@@ -371,6 +409,63 @@ class QueryStabilityTest(TestCase):
         )
 
         self.assertEqual(list(queryset.values_list("bitrix_id", flat=True)), [legacy_item.bitrix_id])
+
+    def test_timesheet_sync_save_batch_updates_and_creates_records(self):
+        existing = TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=401,
+            task_id="401",
+            employee_id="emp-old",
+            hours=1,
+            project_id="project-old",
+            project_title="Old Project",
+            date_reflection=timezone.make_aware(datetime(2026, 4, 1, 9, 0)),
+        )
+        service = TimesheetSyncService(Mock(), self.account, {"fields_mapping": {}})
+
+        service._save_batch(
+            [
+                {
+                    "id_elem": "401",
+                    "id_zadachi": "401",
+                    "sotrudnik_id": "emp-new",
+                    "kolichestvo_chasov": 7.5,
+                    "uchitivaem": True,
+                    "ne_uchitivaemie_chasi": 0.0,
+                    "opisanie": "updated",
+                    "project_name": "New Project",
+                    "project_id": "project-new",
+                    "id_zadach_ierarhiya": ["1"],
+                    "title_zadach_ierarhiya": ["Task"],
+                    "data": timezone.make_aware(datetime(2026, 4, 2, 9, 0)),
+                    "source_created_at": timezone.make_aware(datetime(2026, 4, 2, 10, 0)),
+                },
+                {
+                    "id_elem": "402",
+                    "id_zadachi": "402",
+                    "sotrudnik_id": "emp-created",
+                    "kolichestvo_chasov": 3.0,
+                    "uchitivaem": False,
+                    "ne_uchitivaemie_chasi": 3.0,
+                    "opisanie": "created",
+                    "project_name": "Created Project",
+                    "project_id": "project-created",
+                    "id_zadach_ierarhiya": [],
+                    "title_zadach_ierarhiya": [],
+                    "data": timezone.make_aware(datetime(2026, 4, 3, 9, 0)),
+                    "source_created_at": None,
+                },
+            ]
+        )
+
+        existing.refresh_from_db()
+        created = TimesheetItem.objects.get(bitrix24_account=self.account, bitrix_id=402)
+
+        self.assertEqual(existing.employee_id, "emp-new")
+        self.assertEqual(existing.project_title, "New Project")
+        self.assertEqual(existing.hours, 7.5)
+        self.assertEqual(created.employee_id, "emp-created")
+        self.assertEqual(created.project_id, "project-created")
 
     @patch("main.views.TimesheetSyncService.sync_all", side_effect=RuntimeError("sync failed"))
     @patch("main.views.ConfigurationService.get_configuration_sync", return_value={"sp_entity_type_id": 1, "fields_mapping": {}})

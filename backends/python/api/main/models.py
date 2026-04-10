@@ -233,6 +233,9 @@ class RequestLog(models.Model):
         managed = True
         db_table = "request_log"
         ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["timestamp"], name="request_log_ts_idx"),
+        ]
 
 
 class SystemLog(models.Model):
@@ -247,3 +250,6 @@ class SystemLog(models.Model):
         managed = True
         db_table = "system_log"
         ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=["timestamp"], name="system_log_ts_idx"),
+        ]
