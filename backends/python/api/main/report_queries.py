@@ -11,6 +11,8 @@ from .project_board_shared import get_project_card_queryset
 
 TREE_REPORT_FIELDS = (
     "employee_id",
+    "project_item_id",
+    "project_id",
     "project_title",
     "hours",
     "task_hierarchy_ids",
@@ -34,9 +36,12 @@ def build_filtered_timesheet_queryset(account: Bitrix24Account, params: Mapping[
         queryset = queryset.filter(date_reflection__lt=_next_day_start(date_to))
 
     archived_cards = get_project_card_queryset(account).filter(is_archived=True)
+    archived_item_ids = archived_cards.exclude(project_item_id__isnull=True).exclude(project_item_id="").values("project_item_id")
     archived_ids = archived_cards.exclude(project_id__isnull=True).exclude(project_id="").values("project_id")
     archived_names = archived_cards.exclude(project_name__isnull=True).exclude(project_name="").values("project_name")
-    queryset = queryset.exclude(Q(project_id__in=archived_ids) | Q(project_title__in=archived_names))
+    queryset = queryset.exclude(
+        Q(project_item_id__in=archived_item_ids) | Q(project_id__in=archived_ids) | Q(project_title__in=archived_names)
+    )
 
     employee_ids = _normalize_multi_value(params.get("employee_ids") or params.get("employee_ids[]"))
     employee_filter_ids = build_employee_id_aliases(employee_ids)
@@ -50,7 +55,7 @@ def build_filtered_timesheet_queryset(account: Bitrix24Account, params: Mapping[
     project_ids = _normalize_multi_value(params.get("project_ids") or params.get("project_ids[]"))
     project_mode = str(params.get("project_mode") or "include")
     if project_ids:
-        project_q = Q(project_id__in=project_ids) | Q(project_title__in=project_ids)
+        project_q = Q(project_item_id__in=project_ids) | Q(project_id__in=project_ids) | Q(project_title__in=project_ids)
         if project_mode == "exclude":
             queryset = queryset.exclude(project_q)
         else:
@@ -63,12 +68,55 @@ def materialize_rows(queryset, fields: Sequence[str]) -> List[Dict[str, Any]]:
     return list(queryset.values(*fields).iterator())
 
 
-def build_tree_report_items(rows: Iterable[Dict[str, Any]], include_task_id: bool = False) -> List[Dict[str, Any]]:
+def build_project_title_lookups(account: Bitrix24Account) -> tuple[Dict[str, str], Dict[str, str]]:
+    cards = get_project_card_queryset(account).exclude(project_name__isnull=True).exclude(project_name="")
+    by_item = {
+        str(card.project_item_id).strip(): card.project_name
+        for card in cards
+        if card.project_item_id
+    }
+    by_group = {
+        str(card.project_id).strip(): card.project_name
+        for card in cards
+        if card.project_id
+    }
+    return by_item, by_group
+
+
+def resolve_project_name_for_row(
+    row: Mapping[str, Any],
+    project_name_by_item: Optional[Mapping[str, str]] = None,
+    project_name_by_group: Optional[Mapping[str, str]] = None,
+) -> str:
+    project_item_id = str(row.get("project_item_id") or "").strip()
+    if project_item_id and project_name_by_item:
+        mapped = project_name_by_item.get(project_item_id)
+        if mapped:
+            return mapped
+
+    project_id = str(row.get("project_id") or "").strip()
+    if project_id and project_name_by_group:
+        mapped = project_name_by_group.get(project_id)
+        if mapped:
+            return mapped
+
+    fallback_name = str(row.get("project_title") or "").strip()
+    if fallback_name:
+        return fallback_name
+    return "Не определён"
+
+
+def build_tree_report_items(
+    rows: Iterable[Dict[str, Any]],
+    include_task_id: bool = False,
+    project_name_by_item: Optional[Mapping[str, str]] = None,
+    project_name_by_group: Optional[Mapping[str, str]] = None,
+) -> List[Dict[str, Any]]:
     items = []
     for row in rows:
         item = {
             "sotrudnik_id": row["employee_id"],
-            "project_name": row["project_title"],
+            "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
             "kolichestvo_chasov": row["hours"],
             "id_zadach_ierarhiya": row["task_hierarchy_ids"],
             "title_zadach_ierarhiya": row["task_hierarchy_titles"],

@@ -30,7 +30,14 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
-from .report_queries import TREE_REPORT_FIELDS, build_filtered_timesheet_queryset, build_tree_report_items, materialize_rows
+from .report_queries import (
+    TREE_REPORT_FIELDS,
+    build_filtered_timesheet_queryset,
+    build_project_title_lookups,
+    build_tree_report_items,
+    materialize_rows,
+    resolve_project_name_for_row,
+)
 
 __all__ = [
     "root",
@@ -698,7 +705,12 @@ def report_employee_project(request: AuthorizedRequest):
     rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
-    items = build_tree_report_items(rows)
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    items = build_tree_report_items(
+        rows,
+        project_name_by_item=project_name_by_item,
+        project_name_by_group=project_name_by_group,
+    )
 
     report_service = ReportService()
     report = report_service.generate_employee_projects(items, user_map)
@@ -714,7 +726,12 @@ def report_project_employee(request: AuthorizedRequest):
     rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
-    items = build_tree_report_items(rows)
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    items = build_tree_report_items(
+        rows,
+        project_name_by_item=project_name_by_item,
+        project_name_by_group=project_name_by_group,
+    )
 
     report_service = ReportService()
     report = report_service.generate_project_employees(items, user_map)
@@ -730,7 +747,13 @@ def report_project_task_employee(request: AuthorizedRequest):
     rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
-    items = build_tree_report_items(rows, include_task_id=True)
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    items = build_tree_report_items(
+        rows,
+        include_task_id=True,
+        project_name_by_item=project_name_by_item,
+        project_name_by_group=project_name_by_group,
+    )
 
     report_service = ReportService()
     report = report_service.generate_project_task_employees(items, user_map)
@@ -744,8 +767,11 @@ def report_project_task_employee(request: AuthorizedRequest):
 @auth_required
 def report_revenue_leakage(request: AuthorizedRequest):
     queryset = _get_filtered_timesheet_queryset(request)
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
     rows = list(queryset.values(
         'employee_id',
+        'project_item_id',
+        'project_id',
         'project_title',
         'hours',
         'is_billable',
@@ -756,7 +782,7 @@ def report_revenue_leakage(request: AuthorizedRequest):
 
     items = [{
         "sotrudnik_id": row["employee_id"],
-        "project_name": row["project_title"],
+        "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
         "kolichestvo_chasov": row["hours"],
         "uchitivaem": row["is_billable"],
     } for row in rows]
@@ -1057,13 +1083,27 @@ def report_daily_workload(request: AuthorizedRequest):
             "project_mode": request.GET.get("project_mode", "include"),
         },
     )
-    rows = materialize_rows(queryset, ("employee_id", "project_title", "hours", "task_id", "task_hierarchy_titles", "description", "date_reflection"))
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    rows = materialize_rows(
+        queryset,
+        (
+            "employee_id",
+            "project_item_id",
+            "project_id",
+            "project_title",
+            "hours",
+            "task_id",
+            "task_hierarchy_titles",
+            "description",
+            "date_reflection",
+        ),
+    )
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
     items = [
         {
             "sotrudnik_id": row["employee_id"],
-            "project_name": row["project_title"],
+            "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
             "kolichestvo_chasov": row["hours"],
             "id_zadachi": row["task_id"],
             "nazvanie_zadachi": row["task_hierarchy_titles"][-1] if row.get("task_hierarchy_titles") else "No Title",
