@@ -2,6 +2,7 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed, watch } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
+import type { ProjectSpaValidationPayload } from '~/types/config'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -70,6 +71,8 @@ const mapping = ref<Record<string, string>>({})
 const projectMapping = ref<Record<string, string>>({})
 const selectedProjectSpId = ref<number | null>(null)
 const projectSpFields = ref<any[]>([])
+const projectSpaValidation = ref<ProjectSpaValidationPayload | null>(null)
+const isValidatingProjectSpa = ref(false)
 
 async function loadData() {
     isLoading.value = true
@@ -91,12 +94,24 @@ async function loadData() {
             selectedProjectSpId.value = Number(cfg.project_sp_entity_type_id)
             projectMapping.value = { ...(cfg.project_fields_mapping || {}) }
             await loadProjectSpFields(Number(cfg.project_sp_entity_type_id))
+            await validateProjectSpa()
         }
     } catch (e) {
         processErrorGlobal(e)
     } finally {
         isLoading.value = false
         isInit.value = true
+    }
+}
+
+async function validateProjectSpa() {
+    isValidatingProjectSpa.value = true
+    try {
+        projectSpaValidation.value = await apiStore.getProjectSpaValidation()
+    } catch (e) {
+        processErrorGlobal(e)
+    } finally {
+        isValidatingProjectSpa.value = false
     }
 }
 
@@ -495,7 +510,79 @@ onMounted(async () => {
                         @click="() => { if (selectedProjectSpId) loadProjectSpFields(selectedProjectSpId) }"
                         :disabled="!selectedProjectSpId || isLoading"
                       />
+                      <B24Button
+                        label="Проверить Project SPA"
+                        color="default"
+                        size="sm"
+                        @click="validateProjectSpa"
+                        :loading="isValidatingProjectSpa"
+                        :disabled="!selectedProjectSpId || isValidatingProjectSpa"
+                      />
                   </div>
+              </div>
+          </B24Card>
+
+          <B24Card title="Проверка связности Project SPA" v-if="selectedProjectSpId" class="ms-surface">
+              <div v-if="projectSpaValidation" class="space-y-3 text-sm">
+                  <div class="ms-note" :class="projectSpaValidation.is_valid ? 'ms-note-success' : 'ms-note-danger'">
+                      {{ projectSpaValidation.is_valid ? 'Валидация пройдена: контур Project SPA готов.' : 'Есть проблемы конфигурации Project SPA.' }}
+                  </div>
+
+                  <div class="grid gap-2 md:grid-cols-3">
+                      <div class="ms-panel-muted">
+                          <div class="text-xs text-slate-500">Элементов в Project SPA</div>
+                          <div class="text-lg font-semibold text-slate-900">{{ projectSpaValidation.linkage_issues.total_items }}</div>
+                      </div>
+                      <div class="ms-panel-muted">
+                          <div class="text-xs text-slate-500">Без связи с группой</div>
+                          <div class="text-lg font-semibold text-amber-600">{{ projectSpaValidation.linkage_issues.missing_group_link_count }}</div>
+                      </div>
+                      <div class="ms-panel-muted">
+                          <div class="text-xs text-slate-500">Конфликтов group_id</div>
+                          <div class="text-lg font-semibold text-rose-600">{{ projectSpaValidation.linkage_issues.duplicate_group_link_count }}</div>
+                      </div>
+                  </div>
+
+                  <div v-if="projectSpaValidation.access_error" class="ms-note ms-note-danger">
+                      Ошибка доступа к Project SPA: {{ projectSpaValidation.access_error }}
+                  </div>
+
+                  <div v-if="projectSpaValidation.missing_mapping_keys.length > 0" class="ms-panel-muted">
+                      <div class="font-semibold text-slate-900">Не заполнены обязательные маппинги</div>
+                      <div class="mt-1 text-xs text-slate-600">
+                          {{ projectSpaValidation.missing_mapping_keys.join(', ') }}
+                      </div>
+                  </div>
+
+                  <div v-if="projectSpaValidation.missing_fields_in_sp.length > 0" class="ms-panel-muted">
+                      <div class="font-semibold text-slate-900">Маппинги указывают на несуществующие поля</div>
+                      <div class="mt-1 space-y-1 text-xs text-slate-600">
+                          <div v-for="row in projectSpaValidation.missing_fields_in_sp" :key="`missing-field-${row.key}`">
+                              {{ row.key }} → {{ row.mapped_field }}
+                          </div>
+                      </div>
+                  </div>
+
+                  <div v-if="projectSpaValidation.type_mismatches.length > 0" class="ms-panel-muted">
+                      <div class="font-semibold text-slate-900">Несоответствие типов полей</div>
+                      <div class="mt-1 space-y-1 text-xs text-slate-600">
+                          <div v-for="row in projectSpaValidation.type_mismatches" :key="`type-mismatch-${row.key}`">
+                              {{ row.key }} → {{ row.mapped_field }} (ожидалось: {{ row.expected_type }}, фактически: {{ row.actual_type }})
+                          </div>
+                      </div>
+                  </div>
+
+                  <div v-if="projectSpaValidation.warnings.length > 0" class="ms-panel-muted">
+                      <div class="font-semibold text-slate-900">Предупреждения</div>
+                      <div class="mt-1 space-y-1 text-xs text-slate-600">
+                          <div v-for="(warning, index) in projectSpaValidation.warnings" :key="`project-warning-${index}`">
+                              {{ warning }}
+                          </div>
+                      </div>
+                  </div>
+              </div>
+              <div v-else class="ms-empty-state">
+                  Нажмите «Проверить Project SPA», чтобы увидеть статус маппинга и связности.
               </div>
           </B24Card>
 

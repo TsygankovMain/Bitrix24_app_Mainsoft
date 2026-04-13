@@ -12,7 +12,7 @@ import type {
   RevenueLeakageReport,
   TimeEntryDisciplineReport,
 } from '~/types/report'
-import type { AppConfigurationPayload } from '~/types/config'
+import type { AppConfigurationPayload, ProjectSpaValidationPayload } from '~/types/config'
 import type { ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 
 export const useApiStore = defineStore(
@@ -593,6 +593,12 @@ export const useApiStore = defineStore(
       })
     }
 
+    const getProjectSpaValidation = async (): Promise<ProjectSpaValidationPayload> => {
+      return await $api('/api/project-spa/validation', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
     const createSmartProcess = async (): Promise<{ status: string; config: any }> => {
       console.log('📡 [API] createSmartProcess: calling POST /api/smart-processes/create')
       console.log('📡 [API] Token present:', !!tokenJWT.value, 'Token length:', tokenJWT.value?.length)
@@ -694,6 +700,7 @@ export const useApiStore = defineStore(
       saveConfiguration,
       getSmartProcesses,
       getSpFields,
+      getProjectSpaValidation,
       getRequestLogs,
       getSystemLogs,
       createSmartProcess,
