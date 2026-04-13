@@ -225,6 +225,116 @@ def _collect_project_spa_linkage_issues(sync_service: ProjectSyncService, entity
     }
 
 
+def _build_project_spa_validation_payload(
+    config_service: ConfigurationService,
+    account,
+    config: dict,
+):
+    try:
+        entity_type_id = int(config.get("project_sp_entity_type_id") or 0)
+    except (TypeError, ValueError):
+        entity_type_id = 0
+    project_mapping = config.get("project_fields_mapping") or {}
+    if not isinstance(project_mapping, dict):
+        project_mapping = {}
+
+    required_keys = list(PROJECT_SPA_REQUIRED_MAPPING.keys())
+    missing_mapping_keys = []
+    missing_fields_in_sp = []
+    type_mismatches = []
+    warnings = []
+    access_error = None
+    linkage_issues = {
+        "total_items": 0,
+        "missing_group_link_count": 0,
+        "duplicate_group_link_count": 0,
+        "duplicate_group_links": [],
+    }
+
+    if not entity_type_id:
+        return {
+            "is_configured": False,
+            "is_valid": False,
+            "entity_type_id": 0,
+            "required_mapping_keys": required_keys,
+            "missing_mapping_keys": required_keys,
+            "missing_fields_in_sp": [],
+            "type_mismatches": [],
+            "access_error": "Не выбран Смарт-процесс ПРОЕКТ в настройках.",
+            "warnings": ["Project SPA не настроен."],
+            "linkage_issues": linkage_issues,
+        }
+
+    fields_meta = config_service.get_sp_fields_sync(entity_type_id)
+    fields_by_id = {str(field.get("id") or ""): field for field in fields_meta if field.get("id")}
+    fields_by_id_lower = {key.lower(): value for key, value in fields_by_id.items()}
+
+    for mapping_key, expected_type in PROJECT_SPA_REQUIRED_MAPPING.items():
+        mapped_field = str(project_mapping.get(mapping_key) or "").strip()
+        if not mapped_field:
+            missing_mapping_keys.append(mapping_key)
+            continue
+
+        field_meta = fields_by_id.get(mapped_field) or fields_by_id_lower.get(mapped_field.lower())
+        if not field_meta:
+            missing_fields_in_sp.append({"key": mapping_key, "mapped_field": mapped_field})
+            continue
+
+        actual_type = field_meta.get("type")
+        if not _is_project_field_type_compatible(expected_type, actual_type):
+            type_mismatches.append(
+                {
+                    "key": mapping_key,
+                    "mapped_field": mapped_field,
+                    "expected_type": expected_type,
+                    "actual_type": _normalize_field_type(actual_type),
+                }
+            )
+
+    try:
+        account.client._bitrix_token.call_method(
+            "crm.item.list",
+            {"entityTypeId": entity_type_id, "select": ["id"], "start": 0},
+        )
+    except Exception as exc:
+        access_error = str(exc)
+
+    try:
+        sync_service = ProjectSyncService(account.client, account)
+        linkage_issues = _collect_project_spa_linkage_issues(sync_service, entity_type_id, project_mapping)
+    except Exception as exc:
+        warnings.append(f"Не удалось проверить связность Project SPA: {exc}")
+
+    if linkage_issues["missing_group_link_count"] > 0:
+        warnings.append(
+            f"Есть проекты без bitrix_group_id: {linkage_issues['missing_group_link_count']}."
+        )
+    if linkage_issues["duplicate_group_link_count"] > 0:
+        warnings.append(
+            f"Есть конфликты group_id -> project_item_id: {linkage_issues['duplicate_group_link_count']}."
+        )
+
+    is_valid = (
+        not missing_mapping_keys
+        and not missing_fields_in_sp
+        and not type_mismatches
+        and access_error is None
+    )
+
+    return {
+        "is_configured": True,
+        "is_valid": is_valid,
+        "entity_type_id": entity_type_id,
+        "required_mapping_keys": required_keys,
+        "missing_mapping_keys": missing_mapping_keys,
+        "missing_fields_in_sp": missing_fields_in_sp,
+        "type_mismatches": type_mismatches,
+        "access_error": access_error,
+        "warnings": warnings,
+        "linkage_issues": linkage_issues,
+    }
+
+
 def _load_request_json(request: AuthorizedRequest):
     try:
         return json.loads(request.body or "{}")
@@ -797,14 +907,39 @@ def get_configuration(request: AuthorizedRequest):
 @log_errors("save_configuration")
 @auth_required
 def save_configuration(request: AuthorizedRequest):
-    import json
     service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     try:
         body = json.loads(request.body)
         config = body.get('config', {})
+        if not isinstance(config, dict):
+            return JsonResponse({"error": "Некорректный формат конфигурации."}, status=400)
+
+        project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
+        try:
+            should_validate_project_spa = int(config.get("project_sp_entity_type_id") or 0) > 0
+        except (TypeError, ValueError):
+            should_validate_project_spa = False
+        if should_validate_project_spa and not project_validation.get("is_valid"):
+            return JsonResponse(
+                {
+                    "status": "validation_error",
+                    "error": "Конфигурация Project SPA невалидна. Исправьте ошибки и повторите сохранение.",
+                    "validation": project_validation,
+                },
+                status=400,
+            )
+
         service.save_configuration_sync(config)
         invalidate_project_runtime_caches(request.bitrix24_account)
-        return JsonResponse({"status": "success"})
+
+        response_payload = {"status": "success"}
+        if should_validate_project_spa:
+            sync_result = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account).sync()
+            response_payload["project_sync"] = sync_result
+
+        return JsonResponse(response_payload)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
@@ -850,111 +985,8 @@ def get_sp_fields(request: AuthorizedRequest):
 def get_project_spa_validation(request: AuthorizedRequest):
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     config = config_service.get_configuration_sync()
-
-    entity_type_id = int(config.get("project_sp_entity_type_id") or 0)
-    project_mapping = config.get("project_fields_mapping") or {}
-    if not isinstance(project_mapping, dict):
-        project_mapping = {}
-
-    required_keys = list(PROJECT_SPA_REQUIRED_MAPPING.keys())
-    missing_mapping_keys = []
-    missing_fields_in_sp = []
-    type_mismatches = []
-    warnings = []
-    access_error = None
-    linkage_issues = {
-        "total_items": 0,
-        "missing_group_link_count": 0,
-        "duplicate_group_link_count": 0,
-        "duplicate_group_links": [],
-    }
-
-    if not entity_type_id:
-        return JsonResponse(
-            {
-                "is_configured": False,
-                "is_valid": False,
-                "entity_type_id": 0,
-                "required_mapping_keys": required_keys,
-                "missing_mapping_keys": required_keys,
-                "missing_fields_in_sp": [],
-                "type_mismatches": [],
-                "access_error": "Не выбран Смарт-процесс ПРОЕКТ в настройках.",
-                "warnings": ["Project SPA не настроен."],
-                "linkage_issues": linkage_issues,
-            }
-        )
-
-    fields_meta = config_service.get_sp_fields_sync(entity_type_id)
-    fields_by_id = {str(field.get("id") or ""): field for field in fields_meta if field.get("id")}
-    fields_by_id_lower = {key.lower(): value for key, value in fields_by_id.items()}
-
-    for mapping_key, expected_type in PROJECT_SPA_REQUIRED_MAPPING.items():
-        mapped_field = str(project_mapping.get(mapping_key) or "").strip()
-        if not mapped_field:
-            missing_mapping_keys.append(mapping_key)
-            continue
-
-        field_meta = fields_by_id.get(mapped_field) or fields_by_id_lower.get(mapped_field.lower())
-        if not field_meta:
-            missing_fields_in_sp.append({"key": mapping_key, "mapped_field": mapped_field})
-            continue
-
-        actual_type = field_meta.get("type")
-        if not _is_project_field_type_compatible(expected_type, actual_type):
-            type_mismatches.append(
-                {
-                    "key": mapping_key,
-                    "mapped_field": mapped_field,
-                    "expected_type": expected_type,
-                    "actual_type": _normalize_field_type(actual_type),
-                }
-            )
-
-    try:
-        request.bitrix24_account.client._bitrix_token.call_method(
-            "crm.item.list",
-            {"entityTypeId": entity_type_id, "select": ["id"], "start": 0},
-        )
-    except Exception as exc:
-        access_error = str(exc)
-
-    try:
-        sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
-        linkage_issues = _collect_project_spa_linkage_issues(sync_service, entity_type_id, project_mapping)
-    except Exception as exc:
-        warnings.append(f"Не удалось проверить связность Project SPA: {exc}")
-
-    if linkage_issues["missing_group_link_count"] > 0:
-        warnings.append(
-            f"Есть проекты без bitrix_group_id: {linkage_issues['missing_group_link_count']}."
-        )
-    if linkage_issues["duplicate_group_link_count"] > 0:
-        warnings.append(
-            f"Есть конфликты group_id -> project_item_id: {linkage_issues['duplicate_group_link_count']}."
-        )
-
-    is_valid = (
-        not missing_mapping_keys
-        and not missing_fields_in_sp
-        and not type_mismatches
-        and access_error is None
-    )
-
-    return JsonResponse(
-        {
-            "is_configured": True,
-            "is_valid": is_valid,
-            "entity_type_id": entity_type_id,
-            "required_mapping_keys": required_keys,
-            "missing_mapping_keys": missing_mapping_keys,
-            "missing_fields_in_sp": missing_fields_in_sp,
-            "type_mismatches": type_mismatches,
-            "access_error": access_error,
-            "warnings": warnings,
-            "linkage_issues": linkage_issues,
-        }
-    )
+    payload = _build_project_spa_validation_payload(config_service, request.bitrix24_account, config)
+    return JsonResponse(payload)
 
 
 @xframe_options_exempt

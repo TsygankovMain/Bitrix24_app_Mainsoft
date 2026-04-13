@@ -179,6 +179,44 @@ function resolveTaskTitle(taskId: string | null | undefined, hierarchy?: { title
     return ''
 }
 
+function hasMeaningfulValue(value: unknown): boolean {
+    if (value === null || value === undefined) {
+        return false
+    }
+    if (typeof value === 'string') {
+        return value.trim().length > 0
+    }
+    return true
+}
+
+function validateProjectBindingForSave(
+    fields: Record<string, any>,
+    hierarchy?: {
+        projectId?: string | null
+        projectTitle?: string
+    } | null
+): string | null {
+    if (!config.value) {
+        return 'Не удалось загрузить конфигурацию приложения.'
+    }
+
+    if (!hierarchy?.projectId) {
+        return 'Задача не привязана к проектной группе. Списание без проекта запрещено.'
+    }
+
+    const projectItemField = config.value.FIELDS.PROJECT_ITEM_ID
+    if (!projectItemField) {
+        return 'В настройках не задано поле «ID элемента проекта SPA». Обратитесь к администратору.'
+    }
+
+    if (!hasMeaningfulValue(fields[projectItemField])) {
+        const projectLabel = hierarchy.projectTitle ? `«${hierarchy.projectTitle}»` : `group_id ${hierarchy.projectId}`
+        return `Для задачи не найден связанный проект в Project SPA (${projectLabel}). Проверьте связь group_id → project_item_id в карточке проекта.`
+    }
+
+    return null
+}
+
 async function getProjectCardByProjectId(projectId?: string | null) {
     const normalizedProjectId = String(projectId || '').trim()
     if (!normalizedProjectId) {
@@ -446,9 +484,16 @@ async function saveCurrentItem() {
         }
         
         // Always collect hierarchy (for both new and existing entries)
+        let hierarchy: Awaited<ReturnType<typeof getTaskHierarchy>> | null = null
         if (taskIdToSave) {
-            const hierarchy = await getTaskHierarchy(taskIdToSave)
+            hierarchy = await getTaskHierarchy(taskIdToSave)
             await enrichFieldsWithProjectContext(fields, taskIdToSave, hierarchy)
+        }
+        const bindingError = validateProjectBindingForSave(fields, hierarchy)
+        if (bindingError) {
+            alert(`⚠️ ${bindingError}`)
+            isLoading.value = false
+            return
         }
         
         if (editingItem.value.id) {
@@ -498,6 +543,11 @@ async function splitItem() {
         // Create new split entry with full hierarchy
         const newConsidered = editingItem.value.splitInvert ? !editingItem.value.isConsidered : editingItem.value.isConsidered
         const splitTaskId = findTaskIdForItem(editingItem.value.id, taskTree.value)
+        if (!splitTaskId) {
+            alert('⚠️ Не удалось определить задачу для разделяемой записи.')
+            isLoading.value = false
+            return
+        }
         
         const splitFields: any = {
             TITLE: editingItem.value.description + ' (разделено)',
@@ -510,9 +560,13 @@ async function splitItem() {
         }
         
         // Collect hierarchy for the split entry
-        if (splitTaskId) {
-            const hierarchy = await getTaskHierarchy(splitTaskId)
-            await enrichFieldsWithProjectContext(splitFields, splitTaskId, hierarchy)
+        const hierarchy = await getTaskHierarchy(splitTaskId)
+        await enrichFieldsWithProjectContext(splitFields, splitTaskId, hierarchy)
+        const bindingError = validateProjectBindingForSave(splitFields, hierarchy)
+        if (bindingError) {
+            alert(`⚠️ ${bindingError}`)
+            isLoading.value = false
+            return
         }
 
         await ($b24 as any).callMethod('crm.item.add', {

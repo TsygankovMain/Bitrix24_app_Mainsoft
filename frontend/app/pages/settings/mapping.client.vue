@@ -144,6 +144,7 @@ async function loadSpFields(entityTypeId: number) {
 
 async function handleSave() {
     isSaving.value = true
+    statusMessage.value = null
     try {
         const newConfig = {
             ...config.value,
@@ -153,11 +154,34 @@ async function handleSave() {
             project_fields_mapping: projectMapping.value,
             is_configured: true
         }
-        await apiStore.saveConfiguration(newConfig)
-        // alert('Настройки успешно сохранены') // Optional: might be annoying if we redirect immediately.
-        // Let's keep a small delay or just redirect. User asked for "exit to settings".
+        const saveResult = await apiStore.saveConfiguration(newConfig)
+
+        const syncInfo = saveResult?.project_sync
+        if (syncInfo && typeof syncInfo === 'object') {
+            const syncMode = String((syncInfo as Record<string, unknown>).sync_mode || '')
+            const synced = Number((syncInfo as Record<string, unknown>).synced || 0)
+            const created = Number((syncInfo as Record<string, unknown>).created || 0)
+            const updated = Number((syncInfo as Record<string, unknown>).updated || 0)
+            showStatus(
+                'success',
+                `Настройки сохранены. Первичный sync (${syncMode || 'n/a'}): ${synced}, создано: ${created}, обновлено: ${updated}.`
+            )
+        } else {
+            showStatus('success', 'Настройки сохранены.')
+        }
+
+        if (selectedProjectSpId.value) {
+            await validateProjectSpa()
+        }
         router.push('/settings')
-    } catch (e) {
+    } catch (e: any) {
+        const errData = e?.data
+        if (errData?.validation) {
+            projectSpaValidation.value = errData.validation as ProjectSpaValidationPayload
+            const errorText = errData?.error || 'Конфигурация Project SPA не прошла валидацию.'
+            showStatus('error', errorText)
+            return
+        }
         processErrorGlobal(e)
     } finally {
         isSaving.value = false

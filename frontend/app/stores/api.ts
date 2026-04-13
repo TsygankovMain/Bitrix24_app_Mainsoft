@@ -15,6 +15,14 @@ import type {
 import type { AppConfigurationPayload, ProjectSpaValidationPayload } from '~/types/config'
 import type { ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 
+type SaveConfigurationResponse = {
+  status?: string
+  config?: AppConfigurationPayload
+  project_sync?: Record<string, unknown>
+  validation?: ProjectSpaValidationPayload
+  error?: string
+}
+
 export const useApiStore = defineStore(
   'api',
   () => {
@@ -571,7 +579,7 @@ export const useApiStore = defineStore(
       }, forceRefresh)
     }
 
-    const saveConfiguration = async (config: AppConfigurationPayload): Promise<{ status?: string; config?: AppConfigurationPayload }> => {
+    const saveConfiguration = async (config: AppConfigurationPayload): Promise<SaveConfigurationResponse> => {
       const result = await $api('/api/configuration/save', {
         method: 'POST',
         headers: { Authorization: `Bearer ${tokenJWT.value}` },
