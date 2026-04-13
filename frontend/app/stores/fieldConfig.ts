@@ -24,6 +24,7 @@ const BACKEND_MAPPING: Record<string, string> = {
     'id_zadach_ierarhiya': 'TASK_HIERARCHY',
     'title_zadach_ierarhiya': 'TITLE_HIERARCHY',
     'project_id': 'PROJECT_ID',
+    'project_item_id': 'PROJECT_ITEM_ID',
     'project_title': 'PROJECT_TITLE',
     'data': 'DATE',
     'task_name': 'TASK_NAME',

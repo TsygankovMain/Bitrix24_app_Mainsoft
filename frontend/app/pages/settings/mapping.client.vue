@@ -40,6 +40,7 @@ const APP_FIELDS = [
   { key: 'opisanie', label: 'Описание', type: 'string', desc: 'Комментарий к списанию' },
   { key: 'project_title', label: 'Название Проекта', type: 'string', desc: 'Название проекта (из задачи или группы)' },
   { key: 'project_id', label: 'ID Проекта', type: 'integer', desc: 'ID проекта (группы)' },
+  { key: 'project_item_id', label: 'ID элемента проекта SPA', type: 'integer', desc: 'ID карточки проекта в Smart Process ПРОЕКТ' },
   { key: 'data', label: 'Дата', type: 'date', desc: 'Дата, за которую списано время' },
   { key: 'id_zadach_ierarhiya', label: 'Иерархия ID', type: 'string (JSON)', desc: 'JSON массив ID родительских задач' },
   { key: 'title_zadach_ierarhiya', label: 'Иерархия Названий', type: 'string (JSON)', desc: 'JSON массив названий родительских задач' },
@@ -48,8 +49,27 @@ const APP_FIELDS = [
   { key: 'client_inn', label: 'ИНН клиента', type: 'string', desc: 'ИНН клиента (из задачи)' },
 ]
 
+const PROJECT_FIELDS = [
+  { key: 'title', label: 'Название проекта', type: 'string', desc: 'Название карточки проекта в SPA ПРОЕКТ' },
+  { key: 'bitrix_group_id', label: 'ID группы Bitrix', type: 'integer', desc: 'Связь проекта с Bitrix group/project' },
+  { key: 'manual_stage', label: 'Ручная стадия', type: 'string', desc: 'Управляемая человеком стадия проекта' },
+  { key: 'effective_stage', label: 'Итоговая стадия', type: 'string', desc: 'Авто/итоговая стадия для доски и сигналов' },
+  { key: 'is_support', label: 'Support-флаг', type: 'boolean', desc: 'Проект в режиме поддержки' },
+  { key: 'project_hours_budget', label: 'Бюджет часов', type: 'double', desc: 'Плановый объем часов проекта' },
+  { key: 'hourly_rate', label: 'Ставка часа', type: 'double', desc: 'Коммерческая ставка проекта' },
+  { key: 'curator_id', label: 'Куратор', type: 'employee', desc: 'Ответственный пользователь Bitrix24' },
+  { key: 'company_id', label: 'Компания', type: 'crm_company', desc: 'Клиентская компания проекта' },
+  { key: 'our_legal_entity_id', label: 'Наше юрлицо', type: 'crm_company', desc: 'Наша компания, от которой ведется проект' },
+  { key: 'start_date', label: 'Дата старта', type: 'date', desc: 'План/факт старта проекта' },
+  { key: 'finish_date', label: 'Дата окончания', type: 'date', desc: 'План/факт завершения проекта' },
+  { key: 'is_archived', label: 'Архив', type: 'boolean', desc: 'Флаг архивности проекта' },
+]
+
 // Mapping State: AppFieldKey -> BitrixFieldID
 const mapping = ref<Record<string, string>>({})
+const projectMapping = ref<Record<string, string>>({})
+const selectedProjectSpId = ref<number | null>(null)
+const projectSpFields = ref<any[]>([])
 
 async function loadData() {
     isLoading.value = true
@@ -67,11 +87,28 @@ async function loadData() {
             mapping.value = { ...cfg.fields_mapping }
             await loadSpFields(cfg.sp_entity_type_id)
         }
+        if (cfg.project_sp_entity_type_id) {
+            selectedProjectSpId.value = Number(cfg.project_sp_entity_type_id)
+            projectMapping.value = { ...(cfg.project_fields_mapping || {}) }
+            await loadProjectSpFields(Number(cfg.project_sp_entity_type_id))
+        }
     } catch (e) {
         processErrorGlobal(e)
     } finally {
         isLoading.value = false
         isInit.value = true
+    }
+}
+
+async function loadProjectSpFields(entityTypeId: number) {
+    isLoading.value = true
+    try {
+        const res = await apiStore.getSpFields(entityTypeId)
+        projectSpFields.value = res.fields || []
+    } catch (e) {
+        processErrorGlobal(e)
+    } finally {
+        isLoading.value = false
     }
 }
 
@@ -97,6 +134,8 @@ async function handleSave() {
             ...config.value,
             sp_entity_type_id: selectedSpId.value,
             fields_mapping: mapping.value,
+            project_sp_entity_type_id: selectedProjectSpId.value,
+            project_fields_mapping: projectMapping.value,
             is_configured: true
         }
         await apiStore.saveConfiguration(newConfig)
@@ -112,6 +151,13 @@ async function handleSave() {
 
 function getFieldOptions(appFieldType: string) {
     return spFields.value.map(f => ({
+        label: `${f.title} (${f.type})`,
+        value: f.id
+    }))
+}
+
+function getProjectFieldOptions(appFieldType: string) {
+    return projectSpFields.value.map(f => ({
         label: `${f.title} (${f.type})`,
         value: f.id
     }))
@@ -189,6 +235,7 @@ async function handleCreateFields() {
         { key: 'opisanie', suffix: 'DESCRIPTION', label: 'Описание', type: 'string' },
         { key: 'project_title', suffix: 'PROJECT', label: 'Проект', type: 'string' },
         { key: 'project_id', suffix: 'PROJECT_ID', label: 'ID Проекта', type: 'integer' },
+        { key: 'project_item_id', suffix: 'PROJECT_ITEM_ID', label: 'ID элемента проекта SPA', type: 'integer' },
         { key: 'data', suffix: 'DATE', label: 'Дата отражения', type: 'date' },
         { key: 'id_zadach_ierarhiya', suffix: 'HIER_IDS', label: 'Иерархия ID', type: 'string', multiple: true },
         { key: 'title_zadach_ierarhiya', suffix: 'HIER_TITLES', label: 'Иерархия Названий', type: 'string', multiple: true },
@@ -422,6 +469,60 @@ onMounted(async () => {
               </div>
           </B24Card>
 
+          <B24Card title="Смарт-процесс ПРОЕКТ (мастер-данные)" class="ms-surface">
+              <div class="w-full space-y-4">
+                  <div>
+                      <label class="mb-1 block text-sm font-semibold text-slate-800">Смарт-процесс проектов</label>
+                      <select
+                        v-model="selectedProjectSpId"
+                        class="block w-full sm:text-sm"
+                      >
+                          <option :value="null">-- Не выбрано --</option>
+                          <option v-for="sp in smartProcesses" :key="`project-${sp.id}`" :value="sp.entityTypeId">
+                              {{ sp.title }} (ID: {{ sp.entityTypeId }})
+                          </option>
+                      </select>
+                      <p class="mt-1 text-xs text-slate-500">
+                          Этот процесс используется как source of truth по карточке проекта.
+                      </p>
+                  </div>
+
+                  <div class="flex flex-wrap gap-2">
+                      <B24Button
+                        label="Подгрузить поля проекта"
+                        color="primary"
+                        size="sm"
+                        @click="() => { if (selectedProjectSpId) loadProjectSpFields(selectedProjectSpId) }"
+                        :disabled="!selectedProjectSpId || isLoading"
+                      />
+                  </div>
+              </div>
+          </B24Card>
+
+          <B24Card title="Доступные поля Project SPA" v-if="selectedProjectSpId" class="ms-surface">
+             <div v-if="projectSpFields.length > 0" class="ms-table-shell max-h-60 overflow-y-auto">
+                 <table class="ms-table">
+                     <thead class="sticky top-0">
+                         <tr>
+                             <th>Название</th>
+                             <th>Код (ID)</th>
+                             <th>Тип</th>
+                         </tr>
+                     </thead>
+                     <tbody class="text-sm">
+                         <tr v-for="field in projectSpFields" :key="`project-field-${field.id}`">
+                             <td class="font-medium text-slate-900">{{ field.title }}</td>
+                             <td class="font-mono text-xs text-slate-500">{{ field.id }}</td>
+                             <td class="text-slate-500">{{ field.type }}</td>
+                         </tr>
+                     </tbody>
+                 </table>
+             </div>
+             <div v-else class="ms-empty-state">
+                 Поля еще не загружены. Нажмите "Подгрузить поля проекта".
+             </div>
+          </B24Card>
+
           <!-- Field List (Read-Only) -->
           <B24Card title="Доступные поля сущности" v-if="selectedSpId" class="ms-surface">
              <div v-if="spFields.length > 0" class="ms-table-shell max-h-60 overflow-y-auto">
@@ -475,6 +576,43 @@ onMounted(async () => {
                                   >
                                       <option :value="undefined">-- Не сопоставлено --</option>
                                       <option v-for="opt in getFieldOptions(field.type)" :key="opt.value" :value="opt.value">
+                                          {{ opt.label }}
+                                      </option>
+                                  </select>
+                              </td>
+                          </tr>
+                      </tbody>
+                  </table>
+              </div>
+          </B24Card>
+
+          <B24Card title="Сопоставление полей проекта (Project SPA)" v-if="selectedProjectSpId" class="ms-surface">
+              <div class="ms-table-shell">
+                  <table class="ms-table">
+                      <thead>
+                          <tr>
+                              <th class="w-1/2">
+                                  Поле проекта в приложении
+                              </th>
+                              <th class="w-1/2">
+                                  Поле в Project SPA
+                              </th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                          <tr v-for="field in PROJECT_FIELDS" :key="`project-map-${field.key}`">
+                              <td>
+                                  <div class="text-sm font-medium text-slate-900">{{ field.label }}</div>
+                                  <div class="text-xs text-slate-500">{{ field.desc }}</div>
+                                  <div class="mt-1 text-xs text-lime-700">Тип: {{ field.type }}</div>
+                              </td>
+                              <td>
+                                  <select
+                                    v-model="projectMapping[field.key]"
+                                    class="block w-full sm:text-sm"
+                                  >
+                                      <option :value="undefined">-- Не сопоставлено --</option>
+                                      <option v-for="opt in getProjectFieldOptions(field.type)" :key="opt.value" :value="opt.value">
                                           {{ opt.label }}
                                       </option>
                                   </select>

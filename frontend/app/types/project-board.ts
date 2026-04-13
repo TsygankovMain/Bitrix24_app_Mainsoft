@@ -28,6 +28,7 @@ export interface ProjectBoardDirectoryOption {
 
 export interface ProjectBoardCardRecord {
   id: string
+  project_item_id: string | null
   project_id: string
   project_name: string
   stage: ProjectBoardStage | string

@@ -233,6 +233,10 @@ async function enrichFieldsWithProjectContext(
 
         if (hierarchy.projectId) {
             const projectCard = await getProjectCardByProjectId(hierarchy.projectId)
+            const projectItemId = String(projectCard?.project_item_id || '').trim()
+            if (projectItemId) {
+                assignMappedField(fields, config.value.FIELDS.PROJECT_ITEM_ID, projectItemId)
+            }
             const myCompanyId = String(projectCard?.our_legal_entity_id || '').trim()
             if (myCompanyId) {
                 fields.mycompanyId = /^\d+$/.test(myCompanyId) ? Number(myCompanyId) : myCompanyId

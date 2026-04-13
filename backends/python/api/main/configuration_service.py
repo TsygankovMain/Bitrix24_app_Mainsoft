@@ -79,6 +79,8 @@ class ConfigurationService:
         return {
             'sp_entity_type_id': 0, # 0 means not configured
             'fields_mapping': {},
+            'project_sp_entity_type_id': 0,
+            'project_fields_mapping': {},
             'is_configured': False,
             'hourly_rate': 0,
             'legal_entity_directory': {

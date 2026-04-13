@@ -124,6 +124,7 @@ class ProjectCardService:
             fallback_cards.append(
                 {
                     "id": f"fallback-{project_id}",
+                    "project_item_id": None,
                     "project_id": project_id,
                     "project_name": project_name,
                     "stage": stage,
@@ -420,6 +421,7 @@ class ProjectCardService:
     def serialize_card(self, card: ProjectCard) -> Dict[str, Any]:
         return {
             "id": str(card.id),
+            "project_item_id": card.project_item_id,
             "project_id": card.project_id,
             "project_name": card.project_name,
             "stage": card.stage,

@@ -12,6 +12,7 @@ FIELD_TASK_HIERARCHY = "id_zadach_ierarhiya"
 FIELD_TITLE_HIERARCHY = "title_zadach_ierarhiya"
 FIELD_PROJECT_NAME = "project_title"
 FIELD_PROJECT_ID = "project_id"
+FIELD_PROJECT_ITEM_ID = "project_item_id"
 FIELD_IS_BILLABLE = "uchitivaem"
 FIELD_HOURS = "kolichestvo_chasov"
 FIELD_NON_BILLABLE_HOURS = "ne_uchitivaemie_chasi"
@@ -25,6 +26,7 @@ DEFAULT_FIELDS_MAPPING = {
     FIELD_TITLE_HIERARCHY: FIELD_TITLE_HIERARCHY,
     "project_title": FIELD_PROJECT_NAME,
     FIELD_PROJECT_ID: FIELD_PROJECT_ID,
+    FIELD_PROJECT_ITEM_ID: FIELD_PROJECT_ITEM_ID,
     FIELD_IS_BILLABLE: FIELD_IS_BILLABLE,
     FIELD_HOURS: FIELD_HOURS,
     FIELD_NON_BILLABLE_HOURS: FIELD_NON_BILLABLE_HOURS,
@@ -52,6 +54,7 @@ class DataProcessingService:
         field_title_hierarchy = get_f(FIELD_TITLE_HIERARCHY)
         field_project_name = get_f("project_title")
         field_project_id = get_f(FIELD_PROJECT_ID)
+        field_project_item_id = get_f(FIELD_PROJECT_ITEM_ID)
         field_is_billable = get_f(FIELD_IS_BILLABLE)
         field_hours = get_f(FIELD_HOURS)
         field_non_billable = get_f(FIELD_NON_BILLABLE_HOURS)
@@ -99,6 +102,7 @@ class DataProcessingService:
                     "nazvanie_zadachi": task_name,
                     "project_name": project_name,
                     "project_id": self._stringify_value(item.get(field_project_id)),
+                    "project_item_id": self._stringify_value(item.get(field_project_item_id)),
                     "data": item.get(field_date) or item.get("createdTime"),
                     "source_created_at": item.get("createdTime"),
                 }

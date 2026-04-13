@@ -158,6 +158,7 @@ class InstallationService:
             'opisanie': ('B24APP_DESCRIPTION', 'Описание', 'string'),
             'project_title': ('B24APP_PROJECT', 'Проект', 'string'),
             'project_id': ('B24APP_PROJECT_ID', 'ID Проекта', 'integer'),
+            'project_item_id': ('B24APP_PROJECT_ITEM_ID', 'ID элемента проекта SPA', 'integer'),
             'data': ('B24APP_DATE', 'Дата отражения', 'date'),
             'id_zadach_ierarhiya': ('B24APP_TASK_HIER_IDS', 'Иерархия ID', 'string'),
             'title_zadach_ierarhiya': ('B24APP_TASK_HIER_TITLES', 'Иерархия Названий', 'string'),

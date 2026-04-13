@@ -164,6 +164,7 @@ class TimesheetItem(models.Model):
     non_billable_hours = models.FloatField(default=0.0)
     description = models.TextField(null=True, blank=True)
     project_id = models.CharField(max_length=50, null=True, blank=True)
+    project_item_id = models.CharField(max_length=50, null=True, blank=True, db_index=True)
     project_title = models.CharField(max_length=255, null=True, blank=True)
     task_hierarchy_ids = models.JSONField(default=list)
     task_hierarchy_titles = models.JSONField(default=list)
@@ -188,6 +189,7 @@ class TimesheetItem(models.Model):
 class ProjectCard(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     bitrix24_account = models.ForeignKey(Bitrix24Account, on_delete=models.CASCADE, related_name="project_cards")
+    project_item_id = models.CharField(max_length=50, null=True, blank=True, db_index=True)
     project_id = models.CharField(max_length=50, db_index=True)
     project_name = models.CharField(max_length=255)
     stage = models.CharField(max_length=50, db_index=True)
@@ -215,7 +217,10 @@ class ProjectCard(models.Model):
     class Meta:
         managed = True
         db_table = "project_card"
-        unique_together = ("bitrix24_account", "project_id")
+        unique_together = (
+            ("bitrix24_account", "project_id"),
+            ("bitrix24_account", "project_item_id"),
+        )
 
 
 class RequestLog(models.Model):
