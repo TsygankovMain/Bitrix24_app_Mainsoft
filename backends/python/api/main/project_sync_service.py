@@ -1,13 +1,14 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from b24pysdk import Client
+from django.db.models import Q
 from django.utils import timezone
 
 from .bitrix_data_access import BitrixDataService
 from .configuration_service import ConfigurationService
-from .models import Bitrix24Account, ProjectCard
+from .models import Bitrix24Account, ProjectCard, TimesheetItem
 from .project_board_service import ProjectCardService
 from .project_board_shared import (
     PROJECT_STAGE_IN_WORK,
@@ -29,27 +30,37 @@ class ProjectSyncService:
         self.account = account
         self.card_service = ProjectCardService(client, account)
 
-    def sync(self) -> Dict[str, Any]:
+    def sync(self, incremental_since_minutes: Optional[int] = None) -> Dict[str, Any]:
         warning: Optional[str] = None
         sync_mode = "groups"
         skipped_missing_group_link = 0
+        skipped_conflict_linking = 0
         schema_ready = ensure_project_card_schema()
-        by_project_id, by_project_title = self.card_service.collect_writeoff_maps()
+        by_project_item_id, by_project_id, by_project_title = self.card_service.collect_writeoff_maps()
         created = 0
         updated = 0
         synced_total = 0
+        incremental_from: Optional[datetime] = None
+        incremental_minutes = 0
+        try:
+            incremental_minutes = int(incremental_since_minutes or 0)
+        except (TypeError, ValueError):
+            incremental_minutes = 0
+        if incremental_minutes > 0:
+            incremental_from = timezone.now() - timedelta(minutes=incremental_minutes)
 
         project_sp_entity_type_id, project_fields_mapping = self._load_project_sp_config()
 
         if project_sp_entity_type_id:
             try:
-                project_items = self.fetch_project_sp_items(project_sp_entity_type_id)
-                sync_mode = "project_spa"
+                project_items = self.fetch_project_sp_items(project_sp_entity_type_id, updated_since=incremental_from)
+                sync_mode = "project_spa_incremental" if incremental_from else "project_spa"
                 synced_total = len(project_items)
                 if schema_ready:
-                    created, updated, skipped_missing_group_link = self._sync_from_project_sp_items(
+                    created, updated, skipped_missing_group_link, skipped_conflict_linking = self._sync_from_project_sp_items(
                         project_items,
                         project_fields_mapping,
+                        by_project_item_id,
                         by_project_id,
                         by_project_title,
                     )
@@ -63,6 +74,12 @@ class ProjectSyncService:
                         f"Часть проектов из SPA не синхронизирована: {skipped_missing_group_link} "
                         "элементов без связи с Bitrix group/project."
                     )
+                if skipped_conflict_linking > 0:
+                    conflict_warning = (
+                        f"Пропущены конфликтные связи group_id <-> project_item_id: {skipped_conflict_linking}. "
+                        "Исправьте дубликаты в Project SPA."
+                    )
+                    warning = f"{warning} {conflict_warning}".strip() if warning else conflict_warning
             except Exception as exc:
                 logger.warning("Project SPA sync failed, falling back to group sync: %s", exc)
                 warning = (
@@ -70,7 +87,7 @@ class ProjectSyncService:
                     "Применен fallback по группам Bitrix24."
                 )
 
-        if sync_mode != "project_spa":
+        if not sync_mode.startswith("project_spa"):
             try:
                 groups = self.fetch_project_groups()
             except Exception as exc:
@@ -104,8 +121,11 @@ class ProjectSyncService:
             "created": created,
             "updated": updated,
             "skipped_missing_group_link": skipped_missing_group_link,
+            "skipped_conflict_linking": skipped_conflict_linking,
             **daily_check,
         }
+        if incremental_from:
+            result["incremental_from"] = incremental_from.isoformat()
         if warning:
             result["warning"] = warning
 
@@ -197,14 +217,15 @@ class ProjectSyncService:
         self,
         project_items: List[Dict[str, Any]],
         mapping: Dict[str, str],
+        by_project_item_id: Dict[str, datetime],
         by_project_id: Dict[str, datetime],
         by_project_title: Dict[str, datetime],
-    ) -> Tuple[int, int, int]:
+    ) -> Tuple[int, int, int, int]:
         if not ensure_project_card_schema():
-            return 0, 0, 0
+            return 0, 0, 0, 0
 
         normalized_items = [
-            self.normalize_project_item(project_item, mapping, by_project_id, by_project_title)
+            self.normalize_project_item(project_item, mapping, by_project_item_id, by_project_id, by_project_title)
             for project_item in project_items
         ]
 
@@ -218,12 +239,29 @@ class ProjectSyncService:
         created = 0
         updated = 0
         skipped_missing_group_link = 0
+        skipped_conflict_linking = 0
+        group_to_items: Dict[str, set] = {}
+        item_to_groups: Dict[str, set] = {}
+        for normalized in normalized_items:
+            bitrix_group_id = normalized.get("project_id")
+            project_item_id = normalized.get("project_item_id")
+            if not bitrix_group_id or not project_item_id:
+                continue
+            group_to_items.setdefault(bitrix_group_id, set()).add(project_item_id)
+            item_to_groups.setdefault(project_item_id, set()).add(bitrix_group_id)
+        conflicting_groups = {group_id for group_id, item_ids in group_to_items.items() if len(item_ids) > 1}
+        conflicting_items = {item_id for item_id, group_ids in item_to_groups.items() if len(group_ids) > 1}
+        for item_id in conflicting_items:
+            conflicting_groups.update(item_to_groups.get(item_id, set()))
 
         for normalized in normalized_items:
             project_item_id = normalized.get("project_item_id")
             bitrix_group_id = normalized.get("project_id")
             if not bitrix_group_id:
                 skipped_missing_group_link += 1
+                continue
+            if bitrix_group_id in conflicting_groups or (project_item_id and project_item_id in conflicting_items):
+                skipped_conflict_linking += 1
                 continue
 
             existing: Optional[ProjectCard] = None
@@ -301,21 +339,33 @@ class ProjectSyncService:
                 if existing.project_item_id:
                     existing_by_item[existing.project_item_id] = existing
 
-        return created, updated, skipped_missing_group_link
+        return created, updated, skipped_missing_group_link, skipped_conflict_linking
 
-    def fetch_project_sp_items(self, entity_type_id: int) -> List[Dict[str, Any]]:
+    def fetch_project_sp_items(self, entity_type_id: int, updated_since: Optional[datetime] = None) -> List[Dict[str, Any]]:
         start = 0
         items: List[Dict[str, Any]] = []
+        filter_enabled = updated_since is not None
+        filter_payload = {">updatedTime": updated_since.isoformat()} if updated_since else None
 
         while True:
-            response = self.client._bitrix_token.call_method(
-                "crm.item.list",
-                {
-                    "entityTypeId": int(entity_type_id),
-                    "select": ["id", "title", "createdTime", "updatedTime", "*", "UF_*"],
-                    "start": start,
-                },
-            )
+            request_payload: Dict[str, Any] = {
+                "entityTypeId": int(entity_type_id),
+                "select": ["id", "title", "createdTime", "updatedTime", "*", "UF_*"],
+                "start": start,
+            }
+            if filter_enabled and filter_payload:
+                request_payload["filter"] = filter_payload
+
+            try:
+                response = self.client._bitrix_token.call_method("crm.item.list", request_payload)
+            except Exception as exc:
+                if filter_enabled:
+                    logger.warning("Incremental Project SPA filter failed, retrying full list: %s", exc)
+                    filter_enabled = False
+                    start = 0
+                    items = []
+                    continue
+                raise
             batch, next_value = self.extract_items_from_response(response)
             if not batch:
                 break
@@ -328,7 +378,10 @@ class ProjectSyncService:
 
     def _load_project_sp_config(self) -> Tuple[int, Dict[str, str]]:
         config = ConfigurationService(self.client, self.account).get_configuration_sync()
-        entity_type_id = int(config.get("project_sp_entity_type_id") or 0)
+        try:
+            entity_type_id = int(config.get("project_sp_entity_type_id") or 0)
+        except (TypeError, ValueError):
+            entity_type_id = 0
         mapping = config.get("project_fields_mapping") or {}
         if not isinstance(mapping, dict):
             mapping = {}
@@ -338,6 +391,7 @@ class ProjectSyncService:
         self,
         item: Dict[str, Any],
         mapping: Dict[str, str],
+        by_project_item_id: Dict[str, datetime],
         by_project_id: Dict[str, datetime],
         by_project_title: Dict[str, datetime],
     ) -> Dict[str, Any]:
@@ -385,9 +439,9 @@ class ProjectSyncService:
             self._get_mapped_value(item, mapping, "finish_date", "UF_CRM_FINISH_DATE", "ufCrmFinishDate", "projectDateFinish", "PROJECT_DATE_FINISH")
         )
 
-        last_writeoff_at = None
+        last_writeoff_at = by_project_item_id.get(project_item_id) if project_item_id else None
         if project_id:
-            last_writeoff_at = by_project_id.get(project_id)
+            last_writeoff_at = last_writeoff_at or by_project_id.get(project_id)
         if last_writeoff_at is None and project_name:
             last_writeoff_at = by_project_title.get(project_name)
         last_writeoff_days = (timezone.localdate() - last_writeoff_at.date()).days if last_writeoff_at else 0
@@ -417,6 +471,62 @@ class ProjectSyncService:
             "project_end_date": finish_date,
             "last_writeoff_at": last_writeoff_at,
             "last_writeoff_days": last_writeoff_days,
+        }
+
+    def backfill_timesheet_project_items(self, batch_size: int = 1000) -> Dict[str, Any]:
+        if not ensure_project_card_schema():
+            return {"status": "skipped", "updated": 0, "unresolved": 0, "scanned": 0}
+
+        project_cards = (
+            get_project_card_queryset(self.account)
+            .exclude(project_item_id__isnull=True)
+            .exclude(project_item_id="")
+            .values("project_id", "project_name", "project_item_id")
+        )
+        by_project_id = {
+            self._clean_str(card.get("project_id")): self._clean_str(card.get("project_item_id"))
+            for card in project_cards
+            if self._clean_str(card.get("project_id")) and self._clean_str(card.get("project_item_id"))
+        }
+        by_project_name = {
+            self._clean_str(card.get("project_name")): self._clean_str(card.get("project_item_id"))
+            for card in project_cards
+            if self._clean_str(card.get("project_name")) and self._clean_str(card.get("project_item_id"))
+        }
+
+        queryset = TimesheetItem.objects.filter(bitrix24_account=self.account).filter(
+            Q(project_item_id__isnull=True) | Q(project_item_id="")
+        )
+        scanned = 0
+        updated = 0
+        unresolved = 0
+        pending: List[TimesheetItem] = []
+
+        for item in queryset.iterator(chunk_size=batch_size):
+            scanned += 1
+            project_item_id = (
+                by_project_id.get(self._clean_str(item.project_id))
+                or by_project_name.get(self._clean_str(item.project_title))
+            )
+            if not project_item_id:
+                unresolved += 1
+                continue
+            item.project_item_id = project_item_id
+            pending.append(item)
+            if len(pending) >= batch_size:
+                TimesheetItem.objects.bulk_update(pending, ["project_item_id"])
+                updated += len(pending)
+                pending = []
+
+        if pending:
+            TimesheetItem.objects.bulk_update(pending, ["project_item_id"])
+            updated += len(pending)
+
+        return {
+            "status": "success",
+            "scanned": scanned,
+            "updated": updated,
+            "unresolved": unresolved,
         }
 
     def fetch_project_groups(self) -> List[Dict[str, Any]]:

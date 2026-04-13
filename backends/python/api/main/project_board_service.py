@@ -111,7 +111,7 @@ class ProjectCardService:
         return payload
 
     def get_fallback_board_data(self) -> Dict[str, Any]:
-        by_project_id, by_project_title = self.collect_writeoff_maps()
+        _, by_project_id, by_project_title = self.collect_writeoff_maps()
         fallback_cards = []
 
         for group in build_local_project_groups(self.account):
@@ -311,6 +311,8 @@ class ProjectCardService:
         card.our_legal_entity_id = next_legal_entity_id
         card.our_legal_entity_name = next_legal_entity_name
         card.save()
+        spa_warning = self._sync_project_card_to_project_spa(card)
+        warning = self._merge_warning(warning, spa_warning)
         invalidate_project_runtime_caches(self.account)
 
         return {"card": self.serialize_card(card), "warning": warning}
@@ -326,8 +328,9 @@ class ProjectCardService:
         card.manual_stage = stage
         card.stage_source = "manual"
         card.save(update_fields=["stage", "manual_stage", "stage_source", "stage_updated_at", "updated_at"])
+        warning = self._sync_project_card_to_project_spa(card)
         invalidate_project_runtime_caches(self.account)
-        return self.serialize_card(card)
+        return {"card": self.serialize_card(card), "warning": warning}
 
     def archive_project(self, project_id: str, is_archived: bool) -> Dict[str, Any]:
         if not ensure_project_card_schema():
@@ -349,19 +352,23 @@ class ProjectCardService:
             warning = f"Локальный архив обновлен, но Битрикс24 вернул ошибку: {exc}"
             logger.warning("Project archive Bitrix sync failed for %s: %s", card.project_id, exc)
 
+        spa_warning = self._sync_project_card_to_project_spa(card)
+        warning = self._merge_warning(warning, spa_warning)
         return {"card": self.serialize_card(card), "warning": warning}
 
     def refresh_writeoff_stats(self) -> None:
         if not ensure_project_card_schema():
             return
 
-        by_project_id, by_project_title = self.collect_writeoff_maps()
+        by_project_item_id, by_project_id, by_project_title = self.collect_writeoff_maps()
         cards = list(get_project_card_queryset(self.account))
         today = timezone.localdate()
         updated_cards: List[ProjectCard] = []
 
         for card in cards:
-            last_writeoff_at = by_project_id.get(card.project_id)
+            last_writeoff_at = by_project_item_id.get(card.project_item_id) if card.project_item_id else None
+            if last_writeoff_at is None:
+                last_writeoff_at = by_project_id.get(card.project_id)
             if last_writeoff_at is None and card.project_name:
                 last_writeoff_at = by_project_title.get(card.project_name)
             last_writeoff_days = (today - last_writeoff_at.date()).days if last_writeoff_at else 0
@@ -374,9 +381,22 @@ class ProjectCardService:
         if updated_cards:
             ProjectCard.objects.bulk_update(updated_cards, ["last_writeoff_at", "last_writeoff_days"])
 
-    def collect_writeoff_maps(self) -> Tuple[Dict[str, datetime], Dict[str, datetime]]:
+    def collect_writeoff_maps(self) -> Tuple[Dict[str, datetime], Dict[str, datetime], Dict[str, datetime]]:
+        by_project_item_id: Dict[str, datetime] = {}
         by_project_id: Dict[str, datetime] = {}
         by_project_title: Dict[str, datetime] = {}
+
+        item_rows = (
+            TimesheetItem.objects.filter(bitrix24_account=self.account)
+            .exclude(project_item_id__isnull=True)
+            .exclude(project_item_id="")
+            .values("project_item_id")
+            .annotate(last_writeoff_at=Max("date_reflection"))
+        )
+        for row in item_rows:
+            project_item_id = self._clean_str(row.get("project_item_id"))
+            if project_item_id and row.get("last_writeoff_at"):
+                by_project_item_id[project_item_id] = row["last_writeoff_at"]
 
         id_rows = (
             TimesheetItem.objects.filter(bitrix24_account=self.account)
@@ -402,7 +422,7 @@ class ProjectCardService:
             if project_title and row.get("last_writeoff_at"):
                 by_project_title[project_title] = row["last_writeoff_at"]
 
-        return by_project_id, by_project_title
+        return by_project_item_id, by_project_id, by_project_title
 
     def get_companies(self) -> List[Dict[str, Any]]:
         return self._fetch_references_with_cache(
@@ -637,12 +657,25 @@ class ProjectCardService:
         queryset = TimesheetItem.objects.filter(bitrix24_account=self.account, date_reflection__gte=datetime.combine(recent_from, datetime.min.time(), tzinfo=timezone.get_current_timezone()))
 
         archived_cards = get_project_card_queryset(self.account).filter(is_archived=True)
+        archived_project_item_ids = archived_cards.exclude(project_item_id__isnull=True).exclude(project_item_id="").values("project_item_id")
         archived_project_ids = archived_cards.exclude(project_id__isnull=True).exclude(project_id="").values("project_id")
         archived_project_names = archived_cards.exclude(project_name__isnull=True).exclude(project_name="").values("project_name")
-        queryset = queryset.exclude(project_id__in=archived_project_ids).exclude(project_title__in=archived_project_names)
+        queryset = queryset.exclude(project_item_id__in=archived_project_item_ids).exclude(project_id__in=archived_project_ids).exclude(project_title__in=archived_project_names)
+
+        cards = get_project_card_queryset(self.account).exclude(project_name__isnull=True).exclude(project_name="")
+        project_name_by_item = {
+            self._clean_str(card.project_item_id): card.project_name
+            for card in cards
+            if self._clean_str(card.project_item_id)
+        }
+        project_name_by_group = {
+            self._clean_str(card.project_id): card.project_name
+            for card in cards
+            if self._clean_str(card.project_id)
+        }
 
         rows = list(
-            queryset.values("project_id", "project_title").annotate(
+            queryset.values("project_item_id", "project_id", "project_title").annotate(
                 total_hours=Sum("hours"),
                 non_billable_hours=Sum(
                     Case(
@@ -663,14 +696,22 @@ class ProjectCardService:
 
         normalized: List[Dict[str, Any]] = []
         for row in rows:
-            project_name = row.get("project_title") or f"Проект {row.get('project_id') or 'без названия'}"
+            project_item_id = self._clean_str(row.get("project_item_id"))
+            project_id = self._clean_str(row.get("project_id"))
+            project_name = (
+                (project_name_by_item.get(project_item_id) if project_item_id else None)
+                or (project_name_by_group.get(project_id) if project_id else None)
+                or row.get("project_title")
+                or f"Проект {project_id or project_item_id or 'без названия'}"
+            )
             total_hours = float(row.get("total_hours") or 0.0)
             non_billable_hours = float(row.get("non_billable_hours") or 0.0)
             if total_hours <= 0 or non_billable_hours <= 0:
                 continue
             normalized.append(
                 {
-                    "project_id": self._clean_str(row.get("project_id")),
+                    "project_id": project_id,
+                    "project_item_id": project_item_id,
                     "project_name": project_name,
                     "total_hours": round(total_hours, 2),
                     "billable_hours": round(float(row.get("billable_hours") or 0.0), 2),
@@ -681,6 +722,80 @@ class ProjectCardService:
 
         normalized.sort(key=lambda item: (item["non_billable_hours"], item["loss_rate"]), reverse=True)
         return normalized[:limit]
+
+    def _sync_project_card_to_project_spa(self, card: ProjectCard) -> Optional[str]:
+        config = self._load_config()
+        try:
+            entity_type_id = int(config.get("project_sp_entity_type_id") or 0)
+        except (TypeError, ValueError):
+            entity_type_id = 0
+        mapping = config.get("project_fields_mapping") or {}
+        if not entity_type_id or not isinstance(mapping, dict) or not mapping:
+            return None
+
+        if not card.project_item_id:
+            return (
+                f"Карточка проекта «{card.project_name}» сохранена локально, "
+                "но не имеет project_item_id для синхронизации в Project SPA."
+            )
+
+        fields = self._build_project_spa_update_fields(card, mapping)
+        if not fields:
+            return None
+
+        try:
+            self.client._bitrix_token.call_method(
+                "crm.item.update",
+                {
+                    "entityTypeId": entity_type_id,
+                    "id": self._to_bitrix_id(card.project_item_id),
+                    "fields": fields,
+                },
+            )
+        except Exception as exc:
+            logger.warning("Project SPA update failed for project %s (item %s): %s", card.project_id, card.project_item_id, exc)
+            return f"Изменения сохранены локально, но не синхронизированы в Project SPA: {exc}"
+
+        return None
+
+    def _build_project_spa_update_fields(self, card: ProjectCard, mapping: Dict[str, Any]) -> Dict[str, Any]:
+        fields: Dict[str, Any] = {}
+
+        self._assign_mapped_spa_field(fields, mapping, "title", card.project_name)
+        self._assign_mapped_spa_field(fields, mapping, "bitrix_group_id", self._to_bitrix_id(card.project_id))
+        self._assign_mapped_spa_field(fields, mapping, "manual_stage", card.manual_stage or card.stage)
+        self._assign_mapped_spa_field(fields, mapping, "effective_stage", card.stage)
+        self._assign_mapped_spa_field(fields, mapping, "is_support", "Y" if card.is_support else "N")
+        self._assign_mapped_spa_field(fields, mapping, "project_hours_budget", card.project_hours_budget)
+        self._assign_mapped_spa_field(fields, mapping, "hourly_rate", card.hourly_rate)
+        self._assign_mapped_spa_field(fields, mapping, "curator_id", self._to_bitrix_id(card.curator_user_id))
+        self._assign_mapped_spa_field(fields, mapping, "company_id", self._to_bitrix_id(card.company_id))
+        self._assign_mapped_spa_field(fields, mapping, "our_legal_entity_id", self._to_bitrix_id(card.our_legal_entity_id))
+        self._assign_mapped_spa_field(fields, mapping, "start_date", card.project_start_date.isoformat() if card.project_start_date else None)
+        self._assign_mapped_spa_field(fields, mapping, "finish_date", card.project_end_date.isoformat() if card.project_end_date else None)
+        self._assign_mapped_spa_field(fields, mapping, "is_archived", "Y" if card.is_archived else "N")
+
+        return fields
+
+    @staticmethod
+    def _assign_mapped_spa_field(target: Dict[str, Any], mapping: Dict[str, Any], mapping_key: str, value: Any) -> None:
+        field_code = str(mapping.get(mapping_key) or "").strip() if isinstance(mapping, dict) else ""
+        if not field_code or value in (None, ""):
+            return
+        target[field_code] = value
+
+    @staticmethod
+    def _to_bitrix_id(value: Any) -> Any:
+        value_str = ProjectCardService._clean_str(value)
+        if not value_str:
+            return None
+        return int(value_str) if value_str.isdigit() else value_str
+
+    @staticmethod
+    def _merge_warning(primary: Optional[str], secondary: Optional[str]) -> Optional[str]:
+        if primary and secondary:
+            return f"{primary} {secondary}".strip()
+        return primary or secondary
 
     def _get_card(self, project_id: str) -> ProjectCard:
         return ProjectCard.objects.get(bitrix24_account=self.account, project_id=str(project_id))

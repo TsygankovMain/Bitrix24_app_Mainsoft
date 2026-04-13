@@ -78,6 +78,7 @@ __all__ = [
     "get_smart_processes",
     "get_sp_fields",
     "get_project_spa_validation",
+    "run_project_spa_backfill",
     "get_request_logs",
     "get_system_logs",
     "create_smart_process",
@@ -200,11 +201,12 @@ def _is_project_field_type_compatible(expected_type, actual_type):
 def _collect_project_spa_linkage_issues(sync_service: ProjectSyncService, entity_type_id: int, project_mapping: dict):
     items = sync_service.fetch_project_sp_items(entity_type_id)
     normalized = [
-        sync_service.normalize_project_item(item, project_mapping, {}, {})
+        sync_service.normalize_project_item(item, project_mapping, {}, {}, {})
         for item in items
     ]
 
     duplicate_map = defaultdict(set)
+    duplicate_item_map = defaultdict(set)
     missing_group_link_count = 0
     for item in normalized:
         bitrix_group_id = str(item.get("project_id") or "").strip()
@@ -214,6 +216,7 @@ def _collect_project_spa_linkage_issues(sync_service: ProjectSyncService, entity
             continue
         if project_item_id:
             duplicate_map[bitrix_group_id].add(project_item_id)
+            duplicate_item_map[project_item_id].add(bitrix_group_id)
 
     duplicate_links = [
         {
@@ -223,12 +226,22 @@ def _collect_project_spa_linkage_issues(sync_service: ProjectSyncService, entity
         for group_id, project_item_ids in duplicate_map.items()
         if len(project_item_ids) > 1
     ]
+    duplicate_item_links = [
+        {
+            "project_item_id": project_item_id,
+            "bitrix_group_ids": sorted(group_ids),
+        }
+        for project_item_id, group_ids in duplicate_item_map.items()
+        if len(group_ids) > 1
+    ]
 
     return {
         "total_items": len(normalized),
         "missing_group_link_count": missing_group_link_count,
         "duplicate_group_link_count": len(duplicate_links),
         "duplicate_group_links": duplicate_links,
+        "duplicate_project_item_link_count": len(duplicate_item_links),
+        "duplicate_project_item_links": duplicate_item_links,
     }
 
 
@@ -251,11 +264,14 @@ def _build_project_spa_validation_payload(
     type_mismatches = []
     warnings = []
     access_error = None
+    write_access_error = None
     linkage_issues = {
         "total_items": 0,
         "missing_group_link_count": 0,
         "duplicate_group_link_count": 0,
         "duplicate_group_links": [],
+        "duplicate_project_item_link_count": 0,
+        "duplicate_project_item_links": [],
     }
 
     if not entity_type_id:
@@ -268,6 +284,7 @@ def _build_project_spa_validation_payload(
             "missing_fields_in_sp": [],
             "type_mismatches": [],
             "access_error": "Не выбран Смарт-процесс ПРОЕКТ в настройках.",
+            "write_access_error": "Не выбран Смарт-процесс ПРОЕКТ в настройках.",
             "warnings": ["Project SPA не настроен."],
             "linkage_issues": linkage_issues,
         }
@@ -307,6 +324,38 @@ def _build_project_spa_validation_payload(
         access_error = str(exc)
 
     try:
+        sample_items_response = account.client._bitrix_token.call_method(
+            "crm.item.list",
+            {"entityTypeId": entity_type_id, "select": ["id", "title"], "start": 0},
+        )
+        sample_items = sample_items_response.get("result", [])
+        if isinstance(sample_items, dict):
+            sample_items = sample_items.get("items") or sample_items.get("result") or []
+        sample_id = None
+        for row in sample_items or []:
+            sample_id = row.get("id") or row.get("ID")
+            if sample_id:
+                break
+        if sample_id:
+            account.client._bitrix_token.call_method(
+                "crm.item.update",
+                {
+                    "entityTypeId": entity_type_id,
+                    "id": int(sample_id) if str(sample_id).isdigit() else sample_id,
+                    "fields": {},
+                },
+            )
+        else:
+            warnings.append("Права на обновление не проверены: в Project SPA нет элементов для no-op update.")
+    except Exception as exc:
+        exc_text = str(exc)
+        benign_markers = ("fields", "empty", "пуст")
+        if any(marker in exc_text.lower() for marker in benign_markers):
+            warnings.append("Права на обновление подтверждены частично: no-op update не принял пустой payload.")
+        else:
+            write_access_error = exc_text
+
+    try:
         sync_service = ProjectSyncService(account.client, account)
         linkage_issues = _collect_project_spa_linkage_issues(sync_service, entity_type_id, project_mapping)
     except Exception as exc:
@@ -320,12 +369,17 @@ def _build_project_spa_validation_payload(
         warnings.append(
             f"Есть конфликты group_id -> project_item_id: {linkage_issues['duplicate_group_link_count']}."
         )
+    if linkage_issues["duplicate_project_item_link_count"] > 0:
+        warnings.append(
+            f"Есть конфликты project_item_id -> group_id: {linkage_issues['duplicate_project_item_link_count']}."
+        )
 
     is_valid = (
         not missing_mapping_keys
         and not missing_fields_in_sp
         and not type_mismatches
         and access_error is None
+        and write_access_error is None
     )
 
     return {
@@ -337,6 +391,7 @@ def _build_project_spa_validation_payload(
         "missing_fields_in_sp": missing_fields_in_sp,
         "type_mismatches": type_mismatches,
         "access_error": access_error,
+        "write_access_error": write_access_error,
         "warnings": warnings,
         "linkage_issues": linkage_issues,
     }
@@ -613,7 +668,24 @@ def get_homepage_portfolio(request: AuthorizedRequest):
 @auth_required
 def sync_project_board(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
-    return JsonResponse(service.sync())
+    incremental_raw = request.GET.get("incremental_since_minutes")
+    incremental_since_minutes = None
+    if incremental_raw:
+        try:
+            incremental_since_minutes = int(incremental_raw)
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "incremental_since_minutes must be integer"}, status=400)
+    return JsonResponse(service.sync(incremental_since_minutes=incremental_since_minutes))
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("run_project_spa_backfill")
+@auth_required
+def run_project_spa_backfill(request: AuthorizedRequest):
+    service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(service.backfill_timesheet_project_items())
 
 
 @xframe_options_exempt
@@ -654,8 +726,8 @@ def update_project_board_stage(request: AuthorizedRequest):
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
 
     try:
-        card = service.update_stage(str(project_id), str(stage))
-        return JsonResponse({"card": card})
+        result = service.update_stage(str(project_id), str(stage))
+        return JsonResponse(result)
     except ProjectCard.DoesNotExist:
         return JsonResponse({"error": "Проект не найден"}, status=404)
     except Exception as exc:
@@ -960,8 +1032,11 @@ def save_configuration(request: AuthorizedRequest):
 
         response_payload = {"status": "success"}
         if should_validate_project_spa:
-            sync_result = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account).sync()
+            project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
+            sync_result = project_sync_service.sync()
+            backfill_result = project_sync_service.backfill_timesheet_project_items()
             response_payload["project_sync"] = sync_result
+            response_payload["timesheet_backfill"] = backfill_result
 
         return JsonResponse(response_payload)
     except json.JSONDecodeError:

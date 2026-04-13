@@ -157,14 +157,17 @@ async function handleSave() {
         const saveResult = await apiStore.saveConfiguration(newConfig)
 
         const syncInfo = saveResult?.project_sync
+        const backfillInfo = saveResult?.timesheet_backfill
         if (syncInfo && typeof syncInfo === 'object') {
             const syncMode = String((syncInfo as Record<string, unknown>).sync_mode || '')
             const synced = Number((syncInfo as Record<string, unknown>).synced || 0)
             const created = Number((syncInfo as Record<string, unknown>).created || 0)
             const updated = Number((syncInfo as Record<string, unknown>).updated || 0)
+            const backfillUpdated = typeof backfillInfo === 'object' ? Number((backfillInfo as Record<string, unknown>).updated || 0) : 0
+            const backfillUnresolved = typeof backfillInfo === 'object' ? Number((backfillInfo as Record<string, unknown>).unresolved || 0) : 0
             showStatus(
                 'success',
-                `Настройки сохранены. Первичный sync (${syncMode || 'n/a'}): ${synced}, создано: ${created}, обновлено: ${updated}.`
+                `Настройки сохранены. Первичный sync (${syncMode || 'n/a'}): ${synced}, создано: ${created}, обновлено: ${updated}. Backfill меток: обновлено ${backfillUpdated}, без связки ${backfillUnresolved}.`
             )
         } else {
             showStatus('success', 'Настройки сохранены.')
@@ -552,7 +555,7 @@ onMounted(async () => {
                       {{ projectSpaValidation.is_valid ? 'Валидация пройдена: контур Project SPA готов.' : 'Есть проблемы конфигурации Project SPA.' }}
                   </div>
 
-                  <div class="grid gap-2 md:grid-cols-3">
+                  <div class="grid gap-2 md:grid-cols-4">
                       <div class="ms-panel-muted">
                           <div class="text-xs text-slate-500">Элементов в Project SPA</div>
                           <div class="text-lg font-semibold text-slate-900">{{ projectSpaValidation.linkage_issues.total_items }}</div>
@@ -565,10 +568,17 @@ onMounted(async () => {
                           <div class="text-xs text-slate-500">Конфликтов group_id</div>
                           <div class="text-lg font-semibold text-rose-600">{{ projectSpaValidation.linkage_issues.duplicate_group_link_count }}</div>
                       </div>
+                      <div class="ms-panel-muted">
+                          <div class="text-xs text-slate-500">Конфликтов project_item_id</div>
+                          <div class="text-lg font-semibold text-rose-600">{{ projectSpaValidation.linkage_issues.duplicate_project_item_link_count }}</div>
+                      </div>
                   </div>
 
                   <div v-if="projectSpaValidation.access_error" class="ms-note ms-note-danger">
                       Ошибка доступа к Project SPA: {{ projectSpaValidation.access_error }}
+                  </div>
+                  <div v-if="projectSpaValidation.write_access_error" class="ms-note ms-note-danger">
+                      Ошибка прав на обновление Project SPA: {{ projectSpaValidation.write_access_error }}
                   </div>
 
                   <div v-if="projectSpaValidation.missing_mapping_keys.length > 0" class="ms-panel-muted">
@@ -592,6 +602,18 @@ onMounted(async () => {
                       <div class="mt-1 space-y-1 text-xs text-slate-600">
                           <div v-for="row in projectSpaValidation.type_mismatches" :key="`type-mismatch-${row.key}`">
                               {{ row.key }} → {{ row.mapped_field }} (ожидалось: {{ row.expected_type }}, фактически: {{ row.actual_type }})
+                          </div>
+                      </div>
+                  </div>
+
+                  <div v-if="projectSpaValidation.linkage_issues.duplicate_project_item_links.length > 0" class="ms-panel-muted">
+                      <div class="font-semibold text-slate-900">Конфликты project_item_id → group_id</div>
+                      <div class="mt-1 space-y-1 text-xs text-slate-600">
+                          <div
+                            v-for="row in projectSpaValidation.linkage_issues.duplicate_project_item_links"
+                            :key="`dup-item-${row.project_item_id}`"
+                          >
+                              {{ row.project_item_id }} → {{ row.bitrix_group_ids.join(', ') }}
                           </div>
                       </div>
                   </div>

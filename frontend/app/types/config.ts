@@ -27,11 +27,18 @@ export interface ProjectSpaDuplicateLink {
   project_item_ids: string[]
 }
 
+export interface ProjectSpaDuplicateItemLink {
+  project_item_id: string
+  bitrix_group_ids: string[]
+}
+
 export interface ProjectSpaLinkageIssues {
   total_items: number
   missing_group_link_count: number
   duplicate_group_link_count: number
   duplicate_group_links: ProjectSpaDuplicateLink[]
+  duplicate_project_item_link_count: number
+  duplicate_project_item_links: ProjectSpaDuplicateItemLink[]
 }
 
 export interface ProjectSpaValidationPayload {
@@ -43,6 +50,7 @@ export interface ProjectSpaValidationPayload {
   missing_fields_in_sp: ProjectSpaMissingField[]
   type_mismatches: ProjectSpaTypeMismatch[]
   access_error?: string | null
+  write_access_error?: string | null
   warnings: string[]
   linkage_issues: ProjectSpaLinkageIssues
 }

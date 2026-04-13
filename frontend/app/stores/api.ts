@@ -19,6 +19,7 @@ type SaveConfigurationResponse = {
   status?: string
   config?: AppConfigurationPayload
   project_sync?: Record<string, unknown>
+  timesheet_backfill?: Record<string, unknown>
   validation?: ProjectSpaValidationPayload
   error?: string
 }
@@ -436,8 +437,11 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const syncProjectCards = async (): Promise<any> => {
-      const result = await $api('/api/project-board/sync', {
+    const syncProjectCards = async (incrementalSinceMinutes?: number): Promise<any> => {
+      const query = incrementalSinceMinutes && incrementalSinceMinutes > 0
+        ? `?incremental_since_minutes=${encodeURIComponent(String(incrementalSinceMinutes))}`
+        : ''
+      const result = await $api(`/api/project-board/sync${query}`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
@@ -497,6 +501,17 @@ export const useApiStore = defineStore(
         }
       })
       clearCache('project-board', 'homepage-portfolio')
+      return result
+    }
+
+    const runProjectSpaBackfill = async (): Promise<any> => {
+      const result = await $api('/api/project-spa/backfill-timesheet', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
       return result
     }
 
@@ -697,6 +712,7 @@ export const useApiStore = defineStore(
       updateProjectStage,
       archiveProject,
       runProjectBoardDailyCheck,
+      runProjectSpaBackfill,
       getCompaniesForProjectBinding,
       getBitrixInternalLists,
       getFilterOptions,
