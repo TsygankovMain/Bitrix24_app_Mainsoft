@@ -240,7 +240,7 @@ const archivedCards = computed(() =>
 const stageColumns = computed(() =>
   (boardData.value?.stages || []).map(stage => ({
     ...stage,
-    cards: activeCards.value.filter(card => card.stage === stage.id)
+    cards: activeCards.value.filter(card => card.stage === stage.title || card.stage === stage.id)
   }))
 )
 
@@ -465,9 +465,10 @@ async function handleDropCard(payload: { projectId: string; stage: string }) {
   }
 
   const currentCard = allCards.value.find(card => card.project_id === payload.projectId)
+  const resolvedStageTitle = boardData.value?.stages.find(stage => String(stage.id) === payload.stage)?.title || payload.stage
   draggedProjectId.value = null
 
-  if (!currentCard || currentCard.stage === payload.stage) {
+  if (!currentCard || currentCard.stage === payload.stage || currentCard.stage === resolvedStageTitle) {
     return
   }
 
@@ -475,7 +476,7 @@ async function handleDropCard(payload: { projectId: string; stage: string }) {
     const response = await apiStore.updateProjectStage(payload.projectId, payload.stage)
     if (response.card) {
       applyUpdatedCard(response.card)
-      showStatus('success', `Проект переведен в статус «${payload.stage}».`)
+      showStatus('success', `Проект переведен в статус «${resolvedStageTitle}».`)
     }
   } catch (error) {
     processErrorGlobal(error)

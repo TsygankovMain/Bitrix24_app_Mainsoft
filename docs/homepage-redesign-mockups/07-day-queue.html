@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Day Queue</title>
+  <link rel="stylesheet" href="./assets/homepage-mockups.css" />
+  <style>
+    .queue-shell {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .queue-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .queue-tab {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      padding: 9px 12px;
+      font-weight: 700;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .queue-tab.active {
+      background: var(--blue-soft);
+      color: var(--blue);
+      border-color: rgba(47, 111, 237, 0.3);
+    }
+
+    .queue-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      background: #fff;
+      display: grid;
+      gap: 8px;
+      cursor: pointer;
+      transition: border-color 0.15s ease, transform 0.15s ease;
+    }
+
+    .queue-card:hover {
+      transform: translateY(-1px);
+      border-color: var(--line-strong);
+    }
+
+    .queue-card.active {
+      border-color: rgba(47, 111, 237, 0.38);
+      box-shadow: 0 12px 26px rgba(47, 111, 237, 0.1);
+    }
+
+    .queue-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .queue-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .queue-metrics .metric-mini {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-muted);
+      padding: 10px 12px;
+    }
+
+    .metric-mini .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .metric-mini .value {
+      font-size: 19px;
+      font-weight: 800;
+    }
+
+    @media (max-width: 1240px) {
+      .queue-shell {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="eyebrow">Concept 07 / Compact</div>
+        <h1>Day Queue</h1>
+        <p>Главная как очередь дня: пользователь сразу видит, что нужно сделать сейчас, потом и позже.</p>
+      </div>
+      <nav class="nav-links">
+        <a class="nav-link" href="./index.html">Все концепты</a>
+        <a class="nav-link" href="./06-focus-start.html">06</a>
+        <a class="nav-link active" href="./07-day-queue.html">07</a>
+        <a class="nav-link" href="./08-clear-operator.html">08</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="section-head">
+        <div>
+          <h2>Сегодняшний фокус</h2>
+          <p>Три вкладки вместо длинной портальной витрины: сегодня, риски, запланированные действия.</p>
+        </div>
+        <div class="hero-actions">
+          <button class="button primary">Запустить сценарий</button>
+          <button class="button secondary">Открыть настройки</button>
+        </div>
+      </div>
+      <div class="queue-metrics">
+        <div class="metric-mini"><div class="label">Критично сегодня</div><div class="value">3</div></div>
+        <div class="metric-mini"><div class="label">Рисковые проекты</div><div class="value">6</div></div>
+        <div class="metric-mini"><div class="label">Отчеты по кнопке</div><div class="value">4</div></div>
+      </div>
+    </section>
+
+    <div class="queue-shell">
+      <section class="panel">
+        <div class="queue-tabs" id="queueTabs"></div>
+        <div class="list" id="queueList"></div>
+      </section>
+
+      <aside class="detail-card">
+        <div class="badges" id="queueBadges"></div>
+        <div>
+          <h3 id="queueTitle">Выбери задачу</h3>
+          <p class="muted" id="queueDesc">Детали по выбранному сценарию.</p>
+        </div>
+        <div class="detail-meta" id="queueMeta"></div>
+        <div class="inline-actions">
+          <button class="button primary small" id="queueMainAction">Открыть</button>
+          <button class="button secondary small">Добавить в избранное</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    const tabs = [
+      { id: "today", title: "Сегодня", tone: "blue" },
+      { id: "risk", title: "Риски", tone: "amber" },
+      { id: "next", title: "Дальше", tone: "green" }
+    ];
+
+    const queueData = {
+      today: [
+        { id: "t1", title: "Сформировать отчет по проектам", desc: "Проверить последние 7 дней по активным проектам.", stat: "12 проектов", tone: "blue", action: "Открыть отчет" },
+        { id: "t2", title: "Проверить 2 карточки с новыми рисками", desc: "Delta CRM и Legacy portal помечены как нестабильные.", stat: "2 карточки", tone: "amber", action: "Открыть карточки" },
+        { id: "t3", title: "Сверить загрузку команды", desc: "Ежедневная нагрузка: отклонения по двум сотрудникам.", stat: "2 отклонения", tone: "red", action: "Открыть нагрузку" }
+      ],
+      risk: [
+        { id: "r1", title: "Нет списаний 1 месяц", desc: "4 проекта требуют проверки у куратора.", stat: "4 проекта", tone: "amber", action: "Открыть список" },
+        { id: "r2", title: "Нет списаний 3 месяца", desc: "2 проекта в зоне высокого риска потерь.", stat: "2 проекта", tone: "red", action: "Открыть список" },
+        { id: "r3", title: "Не привязана компания", desc: "У 3 проектов не заполнено юрлицо в карточке.", stat: "3 проекта", tone: "purple", action: "Исправить привязку" }
+      ],
+      next: [
+        { id: "n1", title: "Обновить пресет отчетов", desc: "Сохранить новый набор фильтров для отдела внедрения.", stat: "1 пресет", tone: "green", action: "Открыть пресеты" },
+        { id: "n2", title: "Сверить стадии в СП", desc: "Проверить 5 проектов после синхронизации стадий.", stat: "5 проектов", tone: "sky", action: "Открыть board" },
+        { id: "n3", title: "Почистить архивные карточки", desc: "Перенести завершенные проекты в архив.", stat: "6 карточек", tone: "teal", action: "Открыть архив" }
+      ]
+    };
+
+    let currentTab = tabs[0].id;
+    let currentItem = queueData[currentTab][0];
+
+    function renderTabs() {
+      document.getElementById("queueTabs").innerHTML = tabs
+        .map((tab) => `<button class="queue-tab ${tab.id === currentTab ? "active" : ""}" data-tab="${tab.id}">${tab.title}</button>`)
+        .join("");
+      document.querySelectorAll("[data-tab]").forEach((node) => {
+        node.addEventListener("click", () => {
+          currentTab = node.dataset.tab;
+          currentItem = queueData[currentTab][0];
+          renderTabs();
+          renderList();
+          renderDetails();
+        });
+      });
+    }
+
+    function renderList() {
+      const list = queueData[currentTab] || [];
+      document.getElementById("queueList").innerHTML = list
+        .map(
+          (item) => `
+            <article class="queue-card ${item.id === currentItem.id ? "active" : ""}" data-item="${item.id}">
+              <div class="title-row">
+                <h4>${item.title}</h4>
+                <span class="badge ${item.tone}">${item.stat}</span>
+              </div>
+              <p>${item.desc}</p>
+            </article>
+          `
+        )
+        .join("");
+
+      document.querySelectorAll("[data-item]").forEach((node) => {
+        node.addEventListener("click", () => {
+          currentItem = list.find((item) => item.id === node.dataset.item) || list[0];
+          renderList();
+          renderDetails();
+        });
+      });
+    }
+
+    function renderDetails() {
+      document.getElementById("queueTitle").textContent = currentItem.title;
+      document.getElementById("queueDesc").textContent = currentItem.desc;
+      document.getElementById("queueBadges").innerHTML = `
+        <span class="badge ${currentItem.tone}">${tabs.find((tab) => tab.id === currentTab).title}</span>
+        <span class="badge blue">${currentItem.stat}</span>
+      `;
+      document.getElementById("queueMeta").innerHTML = `
+        <div class="meta-block"><div class="meta-label">Сценарий</div><div class="meta-value">${tabs.find((tab) => tab.id === currentTab).title}</div></div>
+        <div class="meta-block"><div class="meta-label">Объем</div><div class="meta-value">${currentItem.stat}</div></div>
+        <div class="meta-block"><div class="meta-label">Результат</div><div class="meta-value">Контроль выполнен</div></div>
+        <div class="meta-block"><div class="meta-label">Действие</div><div class="meta-value">${currentItem.action}</div></div>
+      `;
+      document.getElementById("queueMainAction").textContent = currentItem.action;
+    }
+
+    renderTabs();
+    renderList();
+    renderDetails();
+  </script>
+</body>
+</html>

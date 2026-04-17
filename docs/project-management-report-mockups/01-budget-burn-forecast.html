@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Освоение проектного объема</title>
+  <link rel="stylesheet" href="./assets/report-mockups.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="eyebrow">Report / Budget Burn</div>
+        <h1>Освоение проектного объема</h1>
+        <p>Экран для еженедельного контроля активных проектов: сколько объема уже съедено, где проект уходит в перерасход и у каких проектов объем закончится раньше дедлайна.</p>
+      </div>
+      <nav class="nav-links">
+        <a class="nav-link" href="./index.html">Обзор</a>
+        <a class="nav-link active" href="./01-budget-burn-forecast.html">Освоение объема</a>
+        <a class="nav-link" href="./02-portfolio-risk-radar.html">Риск-радар</a>
+        <a class="nav-link" href="./03-curator-load-and-risk.html">Портфель кураторов</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow">Управленческий вопрос</div>
+          <h2 style="margin:12px 0 8px;font-size:30px;line-height:1.1;">Где мы уже почти сожгли проектный объем и какие проекты надо пересогласовать до срыва?</h2>
+          <p style="margin:0;color:var(--muted);max-width:920px;">Опирается на `project_hours_budget`, `hourly_rate`, фактические часы и текущий темп списаний. Support-проекты остаются в таблице, но не участвуют в burn-логике как бюджетные проекты.</p>
+        </div>
+        <div class="hero-actions">
+          <div class="tabs" id="period-tabs">
+            <button class="tab" data-period="recent7DaysHours">7 дней</button>
+            <button class="tab active" data-period="recent28DaysHours">28 дней</button>
+            <button class="tab" data-period="recent90DaysHours">90 дней</button>
+          </div>
+          <button class="button secondary" id="show-top-risk">Только near-burn</button>
+          <button class="button ghost" id="reset-filters">Сбросить фильтры</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="metrics" id="metrics"></section>
+
+    <div class="layout" style="margin-top:18px;">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Проекты по burn rate</h2>
+            <p>Клик по строке открывает правую панель с прогнозом выгорания и управленческими действиями.</p>
+          </div>
+          <div class="legend">
+            <span><i class="dot success"></i> В контроле</span>
+            <span><i class="dot warning"></i> Near-burn</span>
+            <span><i class="dot danger"></i> Перерасход / дедлайн под риском</span>
+          </div>
+        </div>
+
+        <div class="filter-row">
+          <div class="field">
+            <label for="search">Поиск проекта</label>
+            <input id="search" type="text" placeholder="Название, компания, куратор" />
+          </div>
+          <div class="field">
+            <label for="stage">Стадия</label>
+            <select id="stage">
+              <option value="all">Все стадии</option>
+              <option value="В работе">В работе</option>
+              <option value="В просчете">В просчете</option>
+              <option value="Нет списаний 1 месяц">Нет списаний 1 месяц</option>
+              <option value="Нет списаний 3 месяца">Нет списаний 3 месяца</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="curator">Куратор</label>
+            <select id="curator"></select>
+          </div>
+          <div class="field">
+            <label for="support-mode">Режим</label>
+            <select id="support-mode">
+              <option value="all">Все проекты</option>
+              <option value="delivery">Только delivery</option>
+              <option value="support">Только support</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <div class="table-scroll">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Проект</th>
+                  <th>Освоение</th>
+                  <th>Объем / остаток</th>
+                  <th>Ставка / деньги</th>
+                  <th>Темп</th>
+                  <th>Прогноз</th>
+                </tr>
+              </thead>
+              <tbody id="burn-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <aside class="side-card" id="side-panel"></aside>
+    </div>
+
+    <p class="footer-note">Рекомендуемая роль отчета: еженедельный портфельный review + финансовая ревизия перед встречей с delivery/кураторами.</p>
+  </div>
+
+  <script src="./assets/report-mockups.js"></script>
+  <script>
+    const data = window.ProjectReportMockData;
+    const state = {
+      period: 'recent28DaysHours',
+      search: '',
+      stage: 'all',
+      curator: 'all',
+      supportMode: 'all',
+      topRiskOnly: false,
+      selectedId: null,
+    };
+
+    const elements = {
+      metrics: document.getElementById('metrics'),
+      rows: document.getElementById('burn-rows'),
+      side: document.getElementById('side-panel'),
+      search: document.getElementById('search'),
+      stage: document.getElementById('stage'),
+      curator: document.getElementById('curator'),
+      supportMode: document.getElementById('support-mode'),
+      periodTabs: Array.from(document.querySelectorAll('#period-tabs .tab')),
+      topRisk: document.getElementById('show-top-risk'),
+      reset: document.getElementById('reset-filters'),
+    };
+
+    function getProjects() {
+      return data.projects
+        .map((project) => {
+          const burnRatio = data.getBurnRatio(project);
+          const remainingHours = data.getRemainingHours(project);
+          const remainingValue = data.getRemainingValue(project);
+          const forecastDays = data.getForecastDays(project, state.period);
+          const forecastDate = data.getProjectedExhaustDate(project, state.period);
+          const risk = data.getRiskBreakdown(project);
+          const deadlineDelta = data.getDeadlineDelta(project);
+          const burnClass = project.support
+            ? 'muted'
+            : burnRatio === null
+              ? 'warning'
+              : burnRatio > 1.05 || (deadlineDelta !== null && deadlineDelta < 0)
+                ? 'danger'
+                : burnRatio >= 0.85 || (forecastDays !== null && forecastDays <= 21)
+                  ? 'warning'
+                  : 'success';
+
+          return {
+            ...project,
+            burnRatio,
+            remainingHours,
+            remainingValue,
+            forecastDays,
+            forecastDate,
+            risk,
+            deadlineDelta,
+            burnClass,
+          };
+        })
+        .filter((project) => {
+          const haystack = [project.name, project.company, project.curator].join(' ').toLowerCase();
+          if (state.search && !haystack.includes(state.search.toLowerCase())) return false;
+          if (state.stage !== 'all' && project.stage !== state.stage) return false;
+          if (state.curator !== 'all' && (project.curator || 'Без куратора') !== state.curator) return false;
+          if (state.supportMode === 'delivery' && project.support) return false;
+          if (state.supportMode === 'support' && !project.support) return false;
+          if (state.topRiskOnly && !(project.burnClass === 'warning' || project.burnClass === 'danger')) return false;
+          return true;
+        })
+        .sort((a, b) => {
+          const aRatio = a.burnRatio ?? -1;
+          const bRatio = b.burnRatio ?? -1;
+          if (bRatio !== aRatio) return bRatio - aRatio;
+          return b.risk.score - a.risk.score;
+        });
+    }
+
+    function renderMetrics(projects) {
+      const delivery = projects.filter((project) => !project.support && project.budgetHours);
+      const overBudget = delivery.filter((project) => (project.burnRatio || 0) > 1.05);
+      const nearBurn = delivery.filter((project) => (project.burnRatio || 0) >= 0.85 && (project.burnRatio || 0) <= 1.05);
+      const remainingValue = delivery.reduce((sum, project) => sum + Number(project.remainingValue || 0), 0);
+      const forecastProblems = delivery.filter((project) => project.forecastDays !== null && project.deadlineDelta !== null && project.forecastDays < project.deadlineDelta);
+
+      elements.metrics.innerHTML = `
+        <article class="metric info">
+          <div class="label">Delivery-проектов</div>
+          <div class="value">${delivery.length}</div>
+          <div class="sub">В расчет входят только проекты с объемом</div>
+        </article>
+        <article class="metric warning">
+          <div class="label">Near-burn</div>
+          <div class="value">${nearBurn.length}</div>
+          <div class="sub">Освоено 85%+ проектного объема</div>
+        </article>
+        <article class="metric danger">
+          <div class="label">Перерасход</div>
+          <div class="value">${overBudget.length}</div>
+          <div class="sub">Проекты уже вышли за лимит часов</div>
+        </article>
+        <article class="metric success">
+          <div class="label">Остаток портфеля</div>
+          <div class="value">${data.formatMoney(remainingValue)}</div>
+          <div class="sub">${forecastProblems.length} проектов с прогнозом выгорания раньше дедлайна</div>
+        </article>
+      `;
+    }
+
+    function renderRows(projects) {
+      if (!projects.length) {
+        elements.rows.innerHTML = '<tr><td colspan="6"><div class="state-empty">Фильтры отрезали все проекты. Ослабь условия и проверь портфель еще раз.</div></td></tr>';
+        return;
+      }
+
+      elements.rows.innerHTML = projects.map((project) => {
+        const selected = state.selectedId === project.id ? 'selected' : '';
+        const burnPercent = project.burnRatio === null ? '—' : data.formatPercent(project.burnRatio * 100);
+        const width = project.burnRatio === null ? 8 : Math.min(100, Math.max(8, project.burnRatio * 100));
+        const recentHours = data.getRecentHours(project, state.period);
+        const forecastText = project.support
+          ? 'Support-проект'
+          : project.forecastDate
+            ? `${data.formatDate(project.forecastDate.toISOString().slice(0, 10))} · ${project.forecastDays} дн.`
+            : 'Недостаточно темпа';
+
+        return `
+          <tr class="${selected}" data-id="${project.id}">
+            <td>
+              <div class="value-stack">
+                <strong>${project.name}</strong>
+                <span>${project.company || 'Компания не привязана'} · ${project.curator || 'Без куратора'}</span>
+                <span><span class="pill ${project.support ? 'muted' : 'info'}">${project.stage}</span></span>
+              </div>
+            </td>
+            <td>
+              <div class="value-stack">
+                <strong>${burnPercent}</strong>
+                <span class="bar-track"><span class="bar-fill ${project.burnClass}" style="width:${width}%"></span></span>
+                <span>${project.support ? 'Без budget-модели' : 'Факт против проектного объема'}</span>
+              </div>
+            </td>
+            <td>
+              <div class="value-stack">
+                <strong>${project.support ? 'Support' : data.formatHours(project.budgetHours)}</strong>
+                <span>${project.support ? data.formatHours(project.spentHours) + ' уже отражено' : data.formatHours(project.remainingHours) + ' осталось'}</span>
+              </div>
+            </td>
+            <td>
+              <div class="value-stack">
+                <strong>${data.formatMoneyRate(project.hourlyRate)}</strong>
+                <span>${project.support ? data.formatMoney(data.getSpentValue(project)) + ' факт' : data.formatMoney(project.remainingValue) + ' остаток'}</span>
+              </div>
+            </td>
+            <td>
+              <div class="value-stack">
+                <strong>${data.formatHours(recentHours)}</strong>
+                <span>За ${state.period === 'recent7DaysHours' ? '7' : state.period === 'recent28DaysHours' ? '28' : '90'} дней</span>
+              </div>
+            </td>
+            <td>
+              <div class="value-stack">
+                <strong>${forecastText}</strong>
+                <span>${project.deadlineDelta === null ? 'Без дедлайна' : (project.deadlineDelta < 0 ? 'Дедлайн просрочен' : 'До дедлайна ' + project.deadlineDelta + ' дн.')}</span>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      Array.from(elements.rows.querySelectorAll('tr[data-id]')).forEach((row) => {
+        row.addEventListener('click', () => {
+          state.selectedId = row.dataset.id;
+          render();
+        });
+      });
+    }
+
+    function renderSide(projects) {
+      const selected = projects.find((project) => project.id === state.selectedId) || projects[0];
+      state.selectedId = selected ? selected.id : null;
+      if (!selected) {
+        elements.side.innerHTML = '<div class="state-empty">Нет проекта для отображения.</div>';
+        return;
+      }
+
+      const actions = [];
+      if (!selected.support && selected.burnRatio !== null && selected.burnRatio >= 0.85 && selected.burnRatio <= 1.05) actions.push('Пересогласовать объем или сократить ближайший scope.');
+      if (!selected.support && selected.burnRatio !== null && selected.burnRatio > 1.05) actions.push('Зафиксировать перерасход отдельно и согласовать его с куратором и руководителем.');
+      if (!selected.support && selected.forecastDays !== null && selected.deadlineDelta !== null && selected.forecastDays < selected.deadlineDelta) actions.push('До дедлайна объем закончится раньше срока. Нужна корректировка плана уже сейчас.');
+      if (!selected.support && !selected.budgetHours) actions.push('Заполнить проектный объем часов. Без него управлять burn практически невозможно.');
+      if (Number(selected.hourlyRate || 0) <= 0) actions.push('Заполнить ставку часа проекта, иначе теряется финансовый смысл отчета.');
+      if (!selected.companyBound) actions.push('Привязать компанию, чтобы проект не выпадал из клиентской управленческой аналитики.');
+      if (!actions.length) actions.push('Проект находится в рабочем диапазоне. Достаточно еженедельного контроля и сравнения burn с дедлайном.');
+
+      elements.side.innerHTML = `
+        <section class="side-section">
+          <h3>${selected.name}</h3>
+          <div class="kv">
+            <div class="kv-row"><span>Компания</span><strong>${selected.company || 'Не задана'}</strong></div>
+            <div class="kv-row"><span>Куратор</span><strong>${selected.curator || 'Не задан'}</strong></div>
+            <div class="kv-row"><span>Стадия</span><strong>${selected.stage}</strong></div>
+            <div class="kv-row"><span>Последнее списание</span><strong>${selected.lastWriteoffDays} дн. назад</strong></div>
+          </div>
+        </section>
+        <section class="side-section">
+          <h3>Финансовый контур</h3>
+          <div class="kv">
+            <div class="kv-row"><span>Проектный объем</span><strong>${selected.support ? 'Support' : data.formatHours(selected.budgetHours)}</strong></div>
+            <div class="kv-row"><span>Факт часов</span><strong>${data.formatHours(selected.spentHours)}</strong></div>
+            <div class="kv-row"><span>Ставка</span><strong>${data.formatMoneyRate(selected.hourlyRate)}</strong></div>
+            <div class="kv-row"><span>Факт в деньгах</span><strong>${data.formatMoney(data.getSpentValue(selected))}</strong></div>
+            <div class="kv-row"><span>Остаток</span><strong>${selected.support ? 'Не считается' : data.formatMoney(selected.remainingValue)}</strong></div>
+          </div>
+        </section>
+        <section class="side-section">
+          <h3>Прогноз и действие</h3>
+          <div class="kv">
+            <div class="kv-row"><span>Дедлайн</span><strong>${data.formatDate(selected.endDate)}</strong></div>
+            <div class="kv-row"><span>Прогноз burn-out</span><strong>${selected.forecastDate ? data.formatDate(selected.forecastDate.toISOString().slice(0, 10)) : 'Недостаточно данных'}</strong></div>
+            <div class="kv-row"><span>Risk-score</span><strong>${selected.risk.score} / 100</strong></div>
+          </div>
+          <ol class="note-list" style="margin-top:12px;">
+            ${actions.map((action) => `<li>${action}</li>`).join('')}
+          </ol>
+        </section>
+      `;
+    }
+
+    function renderCurators() {
+      const curators = Array.from(new Set(data.projects.map((project) => project.curator || 'Без куратора'))).sort();
+      elements.curator.innerHTML = '<option value="all">Все кураторы</option>' + curators.map((curator) => `<option value="${curator}">${curator}</option>`).join('');
+    }
+
+    function render() {
+      const projects = getProjects();
+      renderMetrics(projects);
+      renderRows(projects);
+      renderSide(projects);
+      elements.topRisk.textContent = state.topRiskOnly ? 'Показать весь портфель' : 'Только near-burn';
+      elements.periodTabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.period === state.period));
+    }
+
+    elements.search.addEventListener('input', (event) => {
+      state.search = event.target.value;
+      render();
+    });
+    elements.stage.addEventListener('change', (event) => {
+      state.stage = event.target.value;
+      render();
+    });
+    elements.curator.addEventListener('change', (event) => {
+      state.curator = event.target.value;
+      render();
+    });
+    elements.supportMode.addEventListener('change', (event) => {
+      state.supportMode = event.target.value;
+      render();
+    });
+    elements.periodTabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        state.period = tab.dataset.period;
+        render();
+      });
+    });
+    elements.topRisk.addEventListener('click', () => {
+      state.topRiskOnly = !state.topRiskOnly;
+      render();
+    });
+    elements.reset.addEventListener('click', () => {
+      state.search = '';
+      state.stage = 'all';
+      state.curator = 'all';
+      state.supportMode = 'all';
+      state.topRiskOnly = false;
+      state.period = 'recent28DaysHours';
+      elements.search.value = '';
+      elements.stage.value = 'all';
+      elements.curator.value = 'all';
+      elements.supportMode.value = 'all';
+      render();
+    });
+
+    renderCurators();
+    render();
+  </script>
+</body>
+</html>

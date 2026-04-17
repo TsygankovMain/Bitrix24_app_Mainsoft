@@ -33,7 +33,7 @@ class ConfigurationService:
             if 'timestamp_config' in result and result['timestamp_config']:
                 try:
                     config = json.loads(result['timestamp_config'])
-                    config = self._merge_with_defaults(config)
+                    config = self.normalize_configuration_sync(config)
                     self._config_cache = config
                     # logger.info(f"Loaded config: {config}")
                     return config
@@ -52,13 +52,39 @@ class ConfigurationService:
         """
         Synchronously save configuration to app.option.
         """
-        config = self._merge_with_defaults(config)
+        config = self.normalize_configuration_sync(config)
         json_config = json.dumps(config, ensure_ascii=False)
         self.client._bitrix_token.call_method('app.option.set', {
             'options': {'timestamp_config': json_config}
         })
         self._config_cache = config
         logger.info("Configuration saved successfully")
+
+    def normalize_configuration_sync(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Normalize config so backend keeps backward compatibility with old project stage mappings.
+        """
+        normalized = self._merge_with_defaults(config)
+        normalized_project_mapping = self._normalize_project_fields_mapping(
+            normalized.get('project_fields_mapping')
+        )
+        root_stage_value = (
+            normalized.get('stage_id')
+            or normalized.get('stage')
+            or normalized.get('project_stage')
+            or normalized.get('effective_stage')
+            or normalized.get('manual_stage')
+        )
+        root_stage_value = str(root_stage_value or '').strip()
+        if root_stage_value:
+            normalized_project_mapping['stage_id'] = root_stage_value
+            normalized_project_mapping['stage'] = root_stage_value
+            normalized_project_mapping['project_stage'] = root_stage_value
+            normalized_project_mapping['manual_stage'] = root_stage_value
+            normalized_project_mapping['effective_stage'] = root_stage_value
+
+        normalized['project_fields_mapping'] = normalized_project_mapping
+        return normalized
 
     def _merge_with_defaults(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         defaults = self._get_default_configuration()
@@ -71,6 +97,28 @@ class ConfigurationService:
         merged['legal_entity_directory'] = merged_directory
 
         return merged
+
+    @staticmethod
+    def _normalize_project_fields_mapping(mapping: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not isinstance(mapping, dict):
+            return {}
+
+        normalized = dict(mapping)
+        stage_value = (
+            normalized.get('stage_id')
+            or normalized.get('stage')
+            or normalized.get('project_stage')
+            or normalized.get('effective_stage')
+            or normalized.get('manual_stage')
+        )
+        stage_value = str(stage_value or '').strip()
+        if stage_value:
+            normalized['stage_id'] = stage_value
+            normalized['stage'] = stage_value
+            normalized['project_stage'] = stage_value
+            normalized['manual_stage'] = stage_value
+            normalized['effective_stage'] = stage_value
+        return normalized
 
     def _get_default_configuration(self) -> Dict[str, Any]:
         """
@@ -200,6 +248,16 @@ class ConfigurationService:
              except Exception as e:
                  logger.error(f"Fallback failed: {e}")
 
+        system_field_fallbacks = {
+            'TITLE': {'title': 'TITLE', 'type': 'string', 'isReadOnly': True},
+            'ASSIGNED_BY_ID': {'title': 'ASSIGNED_BY_ID', 'type': 'employee', 'isReadOnly': True},
+            'STAGE_ID': {'title': 'STAGE_ID', 'type': 'crm_status', 'isReadOnly': True},
+            'ID': {'title': 'ID', 'type': 'integer', 'isReadOnly': True},
+        }
+        for sys_key, sys_meta in system_field_fallbacks.items():
+            if sys_key not in fields:
+                fields[sys_key] = dict(sys_meta)
+
         result = []
         for key, field in fields.items():
             result.append({
@@ -211,3 +269,84 @@ class ConfigurationService:
             })
             
         return result
+
+    def get_project_spa_stages_sync(self, entity_type_id: int) -> Dict[str, Any]:
+        """
+        Return stage list for a configured Project SPA.
+        """
+        type_response = self.client._bitrix_token.call_method(
+            'crm.type.getByEntityTypeId',
+            {'entityTypeId': entity_type_id},
+        )
+        type_data = type_response.get('result', {}) or {}
+        stage_entity_candidates = self._collect_stage_entity_ids(type_data, entity_type_id)
+
+        last_error = None
+        for stage_entity_id in stage_entity_candidates:
+            try:
+                stages_response = self.client._bitrix_token.call_method(
+                    'crm.status.list',
+                    {
+                        'order': {'SORT': 'ASC'},
+                        'filter': {'ENTITY_ID': stage_entity_id},
+                    },
+                )
+                stages = stages_response.get('result', [])
+                if not isinstance(stages, list):
+                    stages = []
+                return {
+                    'entity_type_id': entity_type_id,
+                    'type': type_data,
+                    'stage_entity_id': stage_entity_id,
+                    'stages': [
+                        {
+                            'id': row.get('STATUS_ID') or row.get('ID') or '',
+                            'name': row.get('NAME') or row.get('NAME_INIT') or row.get('STATUS_ID') or row.get('ID') or '',
+                            'sort': int(row.get('SORT') or 0),
+                            'system': str(row.get('SYSTEM') or '').upper() == 'Y',
+                            'semantics': row.get('SEMANTICS') or (row.get('EXTRA') or {}).get('SEMANTICS'),
+                            'color': row.get('COLOR') or (row.get('EXTRA') or {}).get('COLOR'),
+                        }
+                        for row in stages
+                    ],
+                }
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Stage list load failed for %s: %s", stage_entity_id, exc)
+
+        raise last_error or RuntimeError(f"Не удалось загрузить стадии Project SPA для entityTypeId={entity_type_id}")
+
+    @staticmethod
+    def _collect_stage_entity_ids(type_data: Dict[str, Any], entity_type_id: int) -> List[str]:
+        candidates: List[str] = []
+
+        def add_candidate(value: Any) -> None:
+            candidate = str(value or '').strip()
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        def walk(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, nested_value in value.items():
+                    key_lower = str(key).lower()
+                    if key_lower in {'statusentityid', 'stageentityid', 'status_entity_id', 'stage_entity_id'}:
+                        add_candidate(nested_value)
+                    elif key_lower in {'entityid', 'entity_id'}:
+                        nested_candidate = str(nested_value or '').strip()
+                        if nested_candidate.upper().startswith('DYNAMIC_'):
+                            add_candidate(nested_candidate)
+                    walk(nested_value)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+
+        walk(type_data)
+        add_candidate(f"DYNAMIC_{entity_type_id}_STAGE")
+        type_id = type_data.get('id')
+        if type_id not in (None, '', entity_type_id):
+            add_candidate(f"DYNAMIC_{type_id}_STAGE")
+        add_candidate(f"DYNAMIC_{entity_type_id}")
+        if type_id not in (None, '', entity_type_id):
+            add_candidate(f"DYNAMIC_{type_id}")
+
+        return candidates

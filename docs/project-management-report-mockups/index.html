@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project Management Report Mockups</title>
+  <link rel="stylesheet" href="./assets/report-mockups.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="eyebrow">Mainsoft / Project Reports</div>
+        <h1>Новые управленческие отчеты по проектам</h1>
+        <p>Три экрана, которые используют уже существующие проектные поля: проектный объем, ставка часа, стадии, куратора, даты, компанию, юрлицо и активность списаний.</p>
+      </div>
+      <nav class="nav-links">
+        <a class="nav-link active" href="./index.html">Обзор</a>
+        <a class="nav-link" href="./01-budget-burn-forecast.html">Освоение объема</a>
+        <a class="nav-link" href="./02-portfolio-risk-radar.html">Риск-радар</a>
+        <a class="nav-link" href="./03-curator-load-and-risk.html">Портфель кураторов</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow">Почему именно эти 3</div>
+          <h2 style="margin:12px 0 8px;font-size:30px;line-height:1.1;">Это не отчеты “про данные”, а отчеты “про решения”.</h2>
+          <p style="margin:0;color:var(--muted);max-width:900px;">Каждый экран отвечает на конкретный управленческий вопрос: где заканчивается объем, какие проекты требуют вмешательства прямо сейчас и у кого из кураторов портфель начинает разваливаться.</p>
+        </div>
+        <div class="metrics">
+          <article class="metric info">
+            <div class="label">Решение 1</div>
+            <div class="value">Burn</div>
+            <div class="sub">Увидеть, какие проекты съедают объем быстрее плана</div>
+          </article>
+          <article class="metric warning">
+            <div class="label">Решение 2</div>
+            <div class="value">Risk</div>
+            <div class="sub">Понять, какие проекты надо эскалировать сегодня</div>
+          </article>
+          <article class="metric success">
+            <div class="label">Решение 3</div>
+            <div class="value">Curators</div>
+            <div class="sub">Сбалансировать кураторскую нагрузку и зону контроля</div>
+          </article>
+          <article class="metric danger">
+            <div class="label">Источник</div>
+            <div class="value">100%</div>
+            <div class="sub">Используются только уже существующие поля проекта и списаний</div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="split">
+      <article class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>1. Отчет “Освоение проектного объема”</h2>
+            <p>Главный финансово-операционный экран. Показывает burn rate, остаток часов, остаток денег и прогноз даты выгорания объема.</p>
+          </div>
+          <a class="button primary" href="./01-budget-burn-forecast.html">Открыть мокап</a>
+        </div>
+        <div class="stack-list">
+          <div class="mini-card"><strong>Какое решение дает</strong><span>Кого тормозить, кому пересогласовывать объем, где перерасход уже случился.</span></div>
+          <div class="mini-card"><strong>Ключевые поля</strong><span>`project_hours_budget`, `hourly_rate`, фактические часы, `last_writeoff_days`, дедлайн.</span></div>
+          <div class="mini-card"><strong>Когда полезен</strong><span>Еженедельная ревизия активных проектов и ежемесячная защита портфеля.</span></div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>2. Отчет “Риск-радар портфеля”</h2>
+            <p>Собирает в один риск-скор: отсутствие списаний, дедлайн, перерасход, незаполненные коммерческие поля, отсутствие куратора.</p>
+          </div>
+          <a class="button primary" href="./02-portfolio-risk-radar.html">Открыть мокап</a>
+        </div>
+        <div class="stack-list">
+          <div class="mini-card"><strong>Какое решение дает</strong><span>Какие проекты эскалировать, какие перевести в режим ручного контроля, какие вернуть в рабочий ритм.</span></div>
+          <div class="mini-card"><strong>Ключевые поля</strong><span>`stage`, `last_writeoff_days`, `project_end_date`, `hourly_rate`, `company`, `curator`, `our_legal_entity`.</span></div>
+          <div class="mini-card"><strong>Когда полезен</strong><span>Ежедневный или еженедельный штаб по портфелю.</span></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top:18px;">
+      <div class="panel-header">
+        <div>
+          <h2>3. Отчет “Портфель кураторов”</h2>
+          <p>Агрегирует проекты по куратору: нагрузка, доля риск-проектов, давление дедлайнов, пробелы в коммерческих полях и прогноз остатка портфеля в деньгах.</p>
+        </div>
+        <a class="button primary" href="./03-curator-load-and-risk.html">Открыть мокап</a>
+      </div>
+      <div class="matrix">
+        <div class="matrix-card">
+          <h4>Что видно сразу</h4>
+          <div class="timeline-list">
+            <div class="timeline-item"><strong>Кто перегружен</strong><span>Много активных проектов и высокий риск-средний балл.</span></div>
+            <div class="timeline-item"><strong>Где провалены настройки</strong><span>Нет ставок, объемов, компании или юрлица.</span></div>
+          </div>
+        </div>
+        <div class="matrix-card">
+          <h4>Какое решение дает</h4>
+          <div class="timeline-list">
+            <div class="timeline-item"><strong>Перераспределить портфель</strong><span>Переназначить проекты между кураторами до срыва.</span></div>
+            <div class="timeline-item"><strong>Поднять управленческую планку</strong><span>Точечно требовать заполнения проектных полей и планов.</span></div>
+          </div>
+        </div>
+        <div class="matrix-card">
+          <h4>Почему это лучше обычной сводки</h4>
+          <div class="timeline-list">
+            <div class="timeline-item"><strong>Не просто “сколько проектов”</strong><span>А сколько из них реально опасны и сколько денег висит у каждого куратора.</span></div>
+            <div class="timeline-item"><strong>Не только delivery</strong><span>Но и качество управления проектными данными.</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <p class="footer-note">Все mockups локальные и интерактивные. Для просмотра откройте любой HTML-файл прямо из папки `docs/project-management-report-mockups`.</p>
+  </div>
+</body>
+</html>

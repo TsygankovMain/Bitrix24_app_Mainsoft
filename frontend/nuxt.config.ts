@@ -27,6 +27,10 @@ export default defineNuxtConfig({
 
   compatibilityDate: '2025-07-16',
 
+  experimental: {
+    asyncEntry: false
+  },
+
   app: {
     head: {
       title: 'Starter',
@@ -46,6 +50,30 @@ export default defineNuxtConfig({
 
   vite: {
     plugins: [
+      {
+        name: 'mainsoft-fs-entry-rewrite',
+        transformIndexHtml(html) {
+          return html.replaceAll('/_nuxt/Users/', '/_nuxt/@fs/Users/')
+        },
+        configureServer(server) {
+          const rewriteFsEntry = (req: any, _res: any, next: () => void) => {
+            const url = req.url || ''
+            if (url.startsWith('/_nuxt/Users/')) {
+              req.url = url.replace('/_nuxt/Users/', '/_nuxt/@fs/Users/')
+            }
+            next()
+          }
+
+          // Place rewrite before Vite static middlewares.
+          // Nuxt dev may emit module URLs like "/_nuxt/Users/.../entry.async.js"
+          // and Vite only serves them correctly via "/_nuxt/@fs/Users/...".
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ;(server.middlewares as any).stack.unshift({
+            route: '',
+            handle: rewriteFsEntry
+          })
+        },
+      },
       tailwindcss()
     ],
     build: {
@@ -53,6 +81,11 @@ export default defineNuxtConfig({
       minify: true
     },
     server: {
+      allowedHosts: [
+        'localhost',
+        '127.0.0.1',
+        'wanly-evolved-lionfish.cloudpub.ru'
+      ],
       proxy: {
         '/api': { target: process.env.SERVER_HOST || 'http://api-need_set:8000', changeOrigin: true }
       }

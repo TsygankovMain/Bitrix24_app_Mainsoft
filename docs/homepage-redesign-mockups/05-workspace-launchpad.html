@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workspace Launchpad</title>
+  <link rel="stylesheet" href="./assets/homepage-mockups.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="eyebrow">Concept 05</div>
+        <h1>Workspace Launchpad</h1>
+        <p>Главная страница как персональный launchpad: избранное, наблюдаемые проекты, быстрый поиск и управляемые разделы.</p>
+      </div>
+      <nav class="nav-links">
+        <a class="nav-link" href="./index.html">Все концепты</a>
+        <a class="nav-link" href="./01-command-center.html">01</a>
+        <a class="nav-link" href="./02-priorities-first.html">02</a>
+        <a class="nav-link" href="./03-portfolio-home.html">03</a>
+        <a class="nav-link" href="./04-role-cockpit.html">04</a>
+        <a class="nav-link active" href="./05-workspace-launchpad.html">05</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="section-head">
+        <div>
+          <h2>Как работает концепт</h2>
+          <p>Пользователь сам собирает рабочее место из нужных инструментов. Это снижает шум, но требует аккуратного набора базовых дефолтов.</p>
+        </div>
+        <div class="hero-actions">
+          <input id="toolSearch" class="input" type="search" placeholder="Поиск инструмента или проекта" style="min-width:320px;" />
+          <button class="button secondary" id="resetWorkspaceButton">Сбросить рабочее место</button>
+        </div>
+      </div>
+      <div class="metrics" id="workspaceMetrics"></div>
+    </section>
+
+    <div class="workspace-grid">
+      <div class="stack">
+        <section class="panel">
+          <div class="section-toggle" data-target="favoritesBody">
+            <div>
+              <strong>Избранное</strong>
+              <div class="caption">Личные быстрые точки входа</div>
+            </div>
+            <span class="badge blue" id="favoritesCount">0</span>
+          </div>
+          <div class="section-body" id="favoritesBody">
+            <div class="tile-grid" id="favoritesGrid" style="margin-top:14px;"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-toggle" data-target="watchBody">
+            <div>
+              <strong>Наблюдаемые проекты</strong>
+              <div class="caption">То, что пользователь хочет держать в поле зрения</div>
+            </div>
+            <span class="badge amber">watchlist</span>
+          </div>
+          <div class="section-body" id="watchBody">
+            <div class="list" id="watchList" style="margin-top:14px;"></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="stack">
+        <section class="panel">
+          <div class="section-toggle" data-target="toolsBody">
+            <div>
+              <strong>Все инструменты</strong>
+              <div class="caption">Поиск, пинning и быстрый запуск</div>
+            </div>
+            <span class="badge green">workspace</span>
+          </div>
+          <div class="section-body" id="toolsBody">
+            <div class="tile-grid" id="toolsGrid" style="margin-top:14px;"></div>
+          </div>
+        </section>
+
+        <aside class="detail-card">
+          <div class="badges" id="workspaceBadges"></div>
+          <div>
+            <h3 id="workspaceTitle">Выбери инструмент</h3>
+            <p class="muted" id="workspaceDesc">Справа показывается карточка выбранного инструмента или проекта.</p>
+          </div>
+          <div class="detail-meta" id="workspaceMeta"></div>
+          <div class="inline-actions">
+            <button class="button primary small" id="workspaceOpenButton">Открыть</button>
+            <button class="button secondary small" id="workspacePinButton">Закрепить</button>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      Сильная сторона: гибкость и персонализация. Риск: без хороших дефолтов пользователь может не понять, как собирать рабочее место, и экран потеряет направляющую функцию.
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const tools = [
+      { id: 't1', title: 'Project Board', kind: 'Инструмент', note: 'Board, timeline и архив проектов', tone: 'green' },
+      { id: 't2', title: 'Потери выручки', kind: 'Отчет', note: 'Где копятся non-billable часы', tone: 'red' },
+      { id: 't3', title: 'Дисциплина времени', kind: 'Отчет', note: 'Кто вносит часы задним числом', tone: 'amber' },
+      { id: 't4', title: 'Фокус и распыление', kind: 'Отчет', note: 'Насколько команда переключается между проектами', tone: 'blue' },
+      { id: 't5', title: 'Ежедневная нагрузка', kind: 'Отчет', note: 'Матрица часов по дням', tone: 'sky' },
+      { id: 't6', title: 'Учет по проектам/задачам', kind: 'Отчет', note: 'Проект → Задача → Сотрудник → Метки', tone: 'teal' },
+      { id: 't7', title: 'Настройки', kind: 'Сервис', note: 'Маппинг и системная конфигурация', tone: 'purple' },
+      { id: 't8', title: 'Юзергайд', kind: 'Сервис', note: 'Инструкция и описание полей', tone: 'blue' }
+    ]
+
+    const watchProjects = [
+      { id: 'p1', title: 'ACME внедрение', status: 'В работе', signal: '2 дня с последнего списания' },
+      { id: 'p2', title: 'Delta CRM', status: 'Нет списаний 1 месяц', signal: '34 дня без списаний' },
+      { id: 'p3', title: 'Gamma support', status: 'Поддержка', signal: '5 дней с последнего списания' }
+    ]
+
+    const defaultPins = new Set(['t1', 't2', 't5'])
+    let pinned = new Set(defaultPins)
+    let query = ''
+    let activeItem = tools[0]
+    const toast = document.getElementById('toast')
+
+    function showToast(message) {
+      toast.textContent = message
+      toast.classList.add('show')
+      clearTimeout(showToast.timer)
+      showToast.timer = setTimeout(() => toast.classList.remove('show'), 1900)
+    }
+
+    function renderMetrics() {
+      document.getElementById('workspaceMetrics').innerHTML = `
+        <article class="metric"><div class="label">Избранное</div><div class="value">${pinned.size}</div><div class="caption">Закрепленные точки входа</div></article>
+        <article class="metric"><div class="label">Инструментов</div><div class="value">${tools.length}</div><div class="caption">Доступно в launchpad</div></article>
+        <article class="metric"><div class="label">Наблюдаемых проектов</div><div class="value">${watchProjects.length}</div><div class="caption">В личной watchlist</div></article>
+        <article class="metric"><div class="label">Поисковый режим</div><div class="value">${query ? 'filtered' : 'all'}</div><div class="caption">Сейчас на экране</div></article>
+      `
+    }
+
+    function visibleTools() {
+      return tools.filter((tool) => !query || `${tool.title} ${tool.kind} ${tool.note}`.toLowerCase().includes(query.toLowerCase()))
+    }
+
+    function toolCard(tool, withPin = true) {
+      return `
+        <article class="tile" data-tool="${tool.id}">
+          <div class="title-row">
+            <div class="icon ${tool.tone}">${tool.title.slice(0, 2).toUpperCase()}</div>
+            ${withPin ? `<button class="pin ${pinned.has(tool.id) ? 'active' : ''}" data-pin="${tool.id}">★</button>` : ''}
+          </div>
+          <div>
+            <h4>${tool.title}</h4>
+            <p class="caption">${tool.note}</p>
+          </div>
+          <div class="badges">
+            <span class="badge ${tool.tone}">${tool.kind}</span>
+          </div>
+        </article>
+      `
+    }
+
+    function renderTools() {
+      document.getElementById('favoritesGrid').innerHTML = tools.filter((tool) => pinned.has(tool.id)).map((tool) => toolCard(tool, true)).join('') || '<div class="detail-card"><strong>Избранное пусто</strong><div class="muted">Закрепи инструменты из общего списка.</div></div>'
+      document.getElementById('toolsGrid').innerHTML = visibleTools().map((tool) => toolCard(tool, true)).join('')
+      document.getElementById('favoritesCount').textContent = pinned.size
+
+      document.querySelectorAll('[data-tool]').forEach((node) => {
+        node.addEventListener('click', (event) => {
+          if (event.target.closest('[data-pin]')) return
+          activeItem = tools.find((tool) => tool.id === node.dataset.tool)
+          renderDetail()
+        })
+      })
+
+      document.querySelectorAll('[data-pin]').forEach((button) => {
+        button.addEventListener('click', (event) => {
+          event.stopPropagation()
+          const id = button.dataset.pin
+          if (pinned.has(id)) pinned.delete(id)
+          else pinned.add(id)
+          renderMetrics()
+          renderTools()
+          renderDetail()
+          showToast('Избранное обновлено')
+        })
+      })
+    }
+
+    function renderWatch() {
+      document.getElementById('watchList').innerHTML = watchProjects.map((project) => `
+        <article class="list-item" data-project="${project.id}">
+          <div class="title-row">
+            <div>
+              <h4>${project.title}</h4>
+              <div class="caption">${project.signal}</div>
+            </div>
+            <span class="badge amber">${project.status}</span>
+          </div>
+        </article>
+      `).join('')
+
+      document.querySelectorAll('[data-project]').forEach((node) => {
+        node.addEventListener('click', () => {
+          const project = watchProjects.find((item) => item.id === node.dataset.project)
+          activeItem = {
+            id: project.id,
+            title: project.title,
+            kind: 'Проект',
+            note: project.signal,
+            tone: 'green',
+            status: project.status
+          }
+          renderDetail()
+        })
+      })
+    }
+
+    function renderDetail() {
+      document.getElementById('workspaceTitle').textContent = activeItem.title
+      document.getElementById('workspaceDesc').textContent = activeItem.note
+      document.getElementById('workspaceBadges').innerHTML = `
+        <span class="badge ${activeItem.tone || 'blue'}">${activeItem.kind}</span>
+        ${activeItem.id.startsWith('t') ? `<span class="badge ${pinned.has(activeItem.id) ? 'amber' : 'blue'}">${pinned.has(activeItem.id) ? 'В избранном' : 'Не закреплен'}</span>` : `<span class="badge amber">${activeItem.status || 'Проект'}</span>`}
+      `
+      document.getElementById('workspaceMeta').innerHTML = `
+        <div class="meta-block"><div class="meta-label">Тип</div><div class="meta-value">${activeItem.kind}</div></div>
+        <div class="meta-block"><div class="meta-label">Статус</div><div class="meta-value">${activeItem.status || (pinned.has(activeItem.id) ? 'Закреплен' : 'Доступен')}</div></div>
+        <div class="meta-block"><div class="meta-label">Описание</div><div class="meta-value">${activeItem.note}</div></div>
+        <div class="meta-block"><div class="meta-label">Действие</div><div class="meta-value">${activeItem.id.startsWith('t') ? 'Запуск инструмента' : 'Открытие карточки проекта'}</div></div>
+      `
+      document.getElementById('workspacePinButton').textContent = activeItem.id.startsWith('t') && pinned.has(activeItem.id) ? 'Открепить' : 'Закрепить'
+    }
+
+    function bindSectionToggles() {
+      document.querySelectorAll('.section-toggle').forEach((toggle) => {
+        toggle.addEventListener('click', () => {
+          toggle.classList.toggle('collapsed')
+          showToast('Секция свернута или развернута')
+        })
+      })
+    }
+
+    document.getElementById('toolSearch').addEventListener('input', (event) => {
+      query = event.target.value
+      renderMetrics()
+      renderTools()
+      showToast(query ? 'Показаны результаты поиска' : 'Список инструментов сброшен')
+    })
+
+    document.getElementById('workspaceOpenButton').addEventListener('click', () => showToast(`Открыт элемент: ${activeItem.title}`))
+    document.getElementById('workspacePinButton').addEventListener('click', () => {
+      if (!activeItem.id.startsWith('t')) {
+        showToast('Для проектов используется watchlist, а не избранное')
+        return
+      }
+      if (pinned.has(activeItem.id)) pinned.delete(activeItem.id)
+      else pinned.add(activeItem.id)
+      renderMetrics()
+      renderTools()
+      renderDetail()
+      showToast('Избранное обновлено')
+    })
+
+    document.getElementById('resetWorkspaceButton').addEventListener('click', () => {
+      pinned = new Set(defaultPins)
+      query = ''
+      document.getElementById('toolSearch').value = ''
+      activeItem = tools[0]
+      renderMetrics()
+      renderTools()
+      renderWatch()
+      renderDetail()
+      showToast('Рабочее место сброшено к дефолтному виду')
+    })
+
+    renderMetrics()
+    renderTools()
+    renderWatch()
+    renderDetail()
+    bindSectionToggles()
+  </script>
+</body>
+</html>

@@ -6,7 +6,7 @@
 
 Текущая рабочая связка проекта:
 
-- frontend: `Nuxt 3`
+- frontend: `Nuxt 4`
 - backend: `Django`
 - database: `PostgreSQL`
 - интеграция с Bitrix24: `@bitrix24/b24jssdk` и `b24pysdk`
@@ -20,7 +20,7 @@ Bitrix24
   └── iframe / placement приложения
            │
            ▼
-Frontend (Nuxt 3)
+Frontend (Nuxt 4)
   ├── embedded-вкладка в задаче
   ├── отчеты
   ├── настройки
@@ -136,8 +136,20 @@ PostgreSQL
   - `/api/install`
   - `/api/getToken`
 - filters/reports:
+  - `/api/get-filter-options`
   - `/api/get-filter-employees`
   - `/api/get-filter-projects`
+  - `/api/homepage/portfolio`
+  - `/api/project-board`
+  - `/api/project-board/meta`
+  - `/api/project-board/card`
+  - `/api/project-board/companies`
+  - `/api/project-board/sync`
+  - `/api/project-board/update`
+  - `/api/project-board/update-stage`
+  - `/api/project-board/archive`
+  - `/api/project-board/run-daily-check`
+  - `/api/project-spa/backfill-timesheet`
   - `/api/report-employee-project`
   - `/api/report-project-employee`
   - `/api/report-daily-workload`
@@ -152,10 +164,14 @@ PostgreSQL
 - configuration:
   - `/api/configuration`
   - `/api/configuration/save`
+  - `/api/bitrix/internal-lists`
   - `/api/smart-processes`
   - `/api/smart-processes/fields`
+  - `/api/project-spa/validation`
+  - `/api/project-spa/stages`
   - `/api/smart-processes/create`
-  - `/api/smart-processes/create-fields`
+  - `/api/smart-processes/create-fields` (legacy API, используется для совместимости)
+  - `/api/smart-processes/create-field`
 - logs:
   - `/api/logs/requests`
   - `/api/logs/system`
@@ -250,6 +266,7 @@ Store:
 
 - читает конфиг через `app.option.get`;
 - преобразует backend-ключи в frontend-константы;
+- автоматически пытается доопределить критичные маппинги, если они отсутствуют в конфиге;
 - отдает объект `configObject` для `embedded.vue` и `task.vue`.
 
 ## 8. Frontend stores и утилиты
@@ -345,6 +362,15 @@ make queue-down
 
 Основной compose-файл локальной разработки: `local-dev.yaml`.
 
+### 11.1. Особенности dev-режима через CloudPub
+
+Для запуска приложения через внешний cloudpub-домен используются настройки в `frontend/nuxt.config.ts`:
+
+- `vite.server.allowedHosts` должен содержать внешний домен;
+- в dev-режиме есть rewrite для путей вида `/_nuxt/Users/...` в `/_nuxt/@fs/Users/...` (нужно для корректной отдачи Vite-модулей через туннель).
+
+Если домен не добавлен в `allowedHosts`, Vite возвращает ошибку `Blocked request. This host is not allowed`.
+
 ## 12. Production и деплой
 
 Production-сборка выполняется через корневой `Dockerfile`:
@@ -368,4 +394,5 @@ Production-сборка выполняется через корневой `Dock
 
 - [README](../README.md)
 - [INSTALLATION_GUIDE.md](./INSTALLATION_GUIDE.md)
+- [LOCAL_DEV_TROUBLESHOOTING.md](./LOCAL_DEV_TROUBLESHOOTING.md)
 - [Application_Documentation.md](../Application_Documentation.md)

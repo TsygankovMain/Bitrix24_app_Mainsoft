@@ -47,23 +47,38 @@ export const useAppInit = (loggerTitle?: string) => {
     $logger.info('InitApp start')
     await initLang($b24, localesI18n, setLocale)
 
-    await initB24Helper(
-      $b24,
-      [
+    if (!isInitB24Helper.value) {
+      const loadTypes = [
         LoadDataType.App,
         LoadDataType.AppOptions,
         LoadDataType.UserOptions,
         LoadDataType.Currency,
         LoadDataType.Profile
       ]
-    )
-    isInitB24Helper.value = true
+      try {
+        await initB24Helper($b24, loadTypes)
+      } catch (error) {
+        // Network can be unstable in embedded mode; retry once before failing hard.
+        $logger.warn('InitApp initB24Helper first attempt failed, retrying once')
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        await initB24Helper($b24, loadTypes)
+      }
+      isInitB24Helper.value = true
+    } else {
+      // Reuse helper data on client-side route changes to avoid duplicate SDK bootstrap calls.
+      $logger.log('InitApp reuse existing B24 helper')
+    }
+
+    const helper = getB24Helper()
+    if (!helper) {
+      throw new Error('B24 helper is not initialized')
+    }
 
     const data = {
-      appInfo: getB24Helper().appInfo,
-      appSettings: getB24Helper().appOptions,
-      userSettings: getB24Helper().userOptions,
-      profileData: getB24Helper().profileInfo,
+      appInfo: helper.appInfo,
+      appSettings: helper.appOptions,
+      userSettings: helper.userOptions,
+      profileData: helper.profileInfo,
     }
     $logger.log('Init data >>', data)
 

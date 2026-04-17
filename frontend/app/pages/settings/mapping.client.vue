@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import { onMounted, ref, computed, watch } from 'vue'
-import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
-import type { ProjectSpaValidationPayload } from '~/types/config'
+import { onMounted, ref } from 'vue'
+import type {
+  AppConfigurationPayload,
+  MappingFieldDefinition,
+  ProjectSpaValidationPayload,
+  SmartProcessFieldOption,
+  SmartProcessOption,
+} from '~/types/config'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -22,17 +27,17 @@ const isLoading = ref(false)
 const isSaving = ref(false)
 const isInit = ref(false)
 const isCreatingSP = ref(false)
-const isCreatingFields = ref(false)
+const creatingMappedField = ref<string | null>(null)
 const statusMessage = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 
 // Data
-const smartProcesses = ref<any[]>([])
+const smartProcesses = ref<SmartProcessOption[]>([])
 const selectedSpId = ref<number | null>(null)
-const spFields = ref<any[]>([]) // Fields of the selected SP
-const config = ref<any>({})
+const spFields = ref<SmartProcessFieldOption[]>([]) // Fields of the selected SP
+const config = ref<AppConfigurationPayload>({})
 
 // App Fields Definition
-const APP_FIELDS = [
+const APP_FIELDS: MappingFieldDefinition[] = [
   { key: 'id_zadachi', label: 'ID Задачи', type: 'integer', desc: 'ID задачи, к которой относится запись' },
   { key: 'sotrudnik', label: 'Сотрудник', type: 'employee', desc: 'Пользователь, списавший время' },
   { key: 'kolichestvo_chasov', label: 'Количество часов', type: 'double', desc: 'Числовое значение часов' },
@@ -40,7 +45,13 @@ const APP_FIELDS = [
   { key: 'ne_uchitivaemie_chasi', label: 'Неучитываемые часы', type: 'double', desc: 'Часы, которые не идут в оплату' },
   { key: 'opisanie', label: 'Описание', type: 'string', desc: 'Комментарий к списанию' },
   { key: 'project_title', label: 'Название Проекта', type: 'string', desc: 'Название проекта (из задачи или группы)' },
-  { key: 'project_id', label: 'ID Проекта', type: 'integer', desc: 'ID проекта (группы)' },
+  {
+    key: 'project_id',
+    label: 'ID Проекта',
+    type: 'integer | string',
+    desc: 'ID проекта (группы). Можно привязать как числовое, так и строковое поле.',
+    acceptedTypes: ['integer', 'string'],
+  },
   { key: 'project_item_id', label: 'ID элемента проекта SPA', type: 'integer', desc: 'ID карточки проекта в Smart Process ПРОЕКТ' },
   { key: 'data', label: 'Дата', type: 'date', desc: 'Дата, за которую списано время' },
   { key: 'id_zadach_ierarhiya', label: 'Иерархия ID', type: 'string (JSON)', desc: 'JSON массив ID родительских задач' },
@@ -50,11 +61,27 @@ const APP_FIELDS = [
   { key: 'client_inn', label: 'ИНН клиента', type: 'string', desc: 'ИНН клиента (из задачи)' },
 ]
 
-const PROJECT_FIELDS = [
+const APP_CREATABLE_FIELD_KEYS = new Set(APP_FIELDS.map(field => field.key))
+
+const PROJECT_STAGE_FIELD_KEY = 'stage'
+const LEGACY_PROJECT_STAGE_KEYS = ['manual_stage', 'effective_stage'] as const
+
+const PROJECT_FIELDS: MappingFieldDefinition[] = [
   { key: 'title', label: 'Название проекта', type: 'string', desc: 'Название карточки проекта в SPA ПРОЕКТ' },
-  { key: 'bitrix_group_id', label: 'ID группы Bitrix', type: 'integer', desc: 'Связь проекта с Bitrix group/project' },
-  { key: 'manual_stage', label: 'Ручная стадия', type: 'string', desc: 'Управляемая человеком стадия проекта' },
-  { key: 'effective_stage', label: 'Итоговая стадия', type: 'string', desc: 'Авто/итоговая стадия для доски и сигналов' },
+  {
+    key: 'bitrix_group_id',
+    label: 'ID группы Bitrix',
+    type: 'integer | string',
+    desc: 'Связь проекта с Bitrix group/project. Допускается числовое или строковое поле.',
+    acceptedTypes: ['integer', 'string'],
+  },
+  {
+    key: PROJECT_STAGE_FIELD_KEY,
+    label: 'Стадия проекта',
+    type: 'stage',
+    desc: 'Единое типовое поле стадии проекта из Smart Process.',
+    acceptedTypes: ['crm_status', 'status', 'stage'],
+  },
   { key: 'is_support', label: 'Support-флаг', type: 'boolean', desc: 'Проект в режиме поддержки' },
   { key: 'project_hours_budget', label: 'Бюджет часов', type: 'double', desc: 'Плановый объем часов проекта' },
   { key: 'hourly_rate', label: 'Ставка часа', type: 'double', desc: 'Коммерческая ставка проекта' },
@@ -66,13 +93,107 @@ const PROJECT_FIELDS = [
   { key: 'is_archived', label: 'Архив', type: 'boolean', desc: 'Флаг архивности проекта' },
 ]
 
+const PROJECT_CREATABLE_FIELD_KEYS = new Set(PROJECT_FIELDS.filter(field => field.key !== 'title' && field.key !== PROJECT_STAGE_FIELD_KEY).map(field => field.key))
+const CREATE_OPTION_PREFIX = '__create__:'
+
 // Mapping State: AppFieldKey -> BitrixFieldID
 const mapping = ref<Record<string, string>>({})
 const projectMapping = ref<Record<string, string>>({})
 const selectedProjectSpId = ref<number | null>(null)
-const projectSpFields = ref<any[]>([])
+const projectSpFields = ref<SmartProcessFieldOption[]>([])
 const projectSpaValidation = ref<ProjectSpaValidationPayload | null>(null)
 const isValidatingProjectSpa = ref(false)
+
+function normalizeMappingState(source?: Record<string, string> | null) {
+  return Object.entries(source || {}).reduce<Record<string, string>>((acc, [key, value]) => {
+    if (!value) {
+      return acc
+    }
+
+    acc[key] = String(value)
+    return acc
+  }, {})
+}
+
+function getLegacyStageValue(configSource: AppConfigurationPayload) {
+  const projectFields = configSource.project_fields_mapping || {}
+  const candidates = [
+    projectFields.stage_id,
+    projectFields[PROJECT_STAGE_FIELD_KEY],
+    projectFields.project_stage,
+    projectFields.effective_stage,
+    projectFields.manual_stage,
+    configSource.stage_id,
+    configSource[PROJECT_STAGE_FIELD_KEY],
+    configSource.project_stage,
+    configSource.effective_stage,
+    configSource.manual_stage,
+  ]
+
+  return candidates.map(value => String(value || '').trim()).find(value => value.length > 0) || ''
+}
+
+function normalizeProjectMappingState(configSource: AppConfigurationPayload) {
+  const next = normalizeMappingState(configSource.project_fields_mapping || {})
+  const stageValue = getLegacyStageValue(configSource)
+
+  for (const legacyKey of ['stage_id', ...LEGACY_PROJECT_STAGE_KEYS, 'project_stage', PROJECT_STAGE_FIELD_KEY]) {
+    delete next[legacyKey]
+  }
+
+  if (stageValue) {
+    next[PROJECT_STAGE_FIELD_KEY] = stageValue
+  }
+
+  return next
+}
+
+function serializeProjectMappingState(source: Record<string, string>) {
+  const next = normalizeMappingState(source)
+  const stageValue = String(
+    next.stage_id ||
+    next[PROJECT_STAGE_FIELD_KEY] ||
+    next.project_stage ||
+    next.effective_stage ||
+    next.manual_stage ||
+    ''
+  ).trim()
+
+  for (const legacyKey of ['stage_id', ...LEGACY_PROJECT_STAGE_KEYS, 'project_stage', PROJECT_STAGE_FIELD_KEY]) {
+    delete next[legacyKey]
+  }
+
+  if (stageValue) {
+    next.stage_id = stageValue
+    next[PROJECT_STAGE_FIELD_KEY] = stageValue
+    next.manual_stage = stageValue
+    next.effective_stage = stageValue
+    next.project_stage = stageValue
+  }
+
+  return next
+}
+
+function mergeCreatedFieldMapping(
+  currentMapping: Record<string, string>,
+  serverMapping: Record<string, string> | undefined,
+  fieldKey: string,
+  fallbackValue?: string | number | null
+) {
+  const next = { ...normalizeMappingState(currentMapping) }
+  const serverValue = serverMapping?.[fieldKey]
+  const normalizedFallback = fallbackValue === undefined || fallbackValue === null
+    ? ''
+    : String(fallbackValue).trim()
+
+  if (serverValue !== undefined && serverValue !== null && String(serverValue).trim()) {
+    next[fieldKey] = String(serverValue)
+  } else if (normalizedFallback) {
+    next[fieldKey] = normalizedFallback
+  }
+
+  return next
+}
 
 async function loadData() {
     isLoading.value = true
@@ -86,13 +207,13 @@ async function loadData() {
         
         // 3. Set Initial State
         if (cfg.sp_entity_type_id) {
-            selectedSpId.value = cfg.sp_entity_type_id
-            mapping.value = { ...cfg.fields_mapping }
-            await loadSpFields(cfg.sp_entity_type_id)
+            selectedSpId.value = Number(cfg.sp_entity_type_id)
+            mapping.value = normalizeMappingState(cfg.fields_mapping || {})
+            await loadSpFields(Number(cfg.sp_entity_type_id))
         }
         if (cfg.project_sp_entity_type_id) {
             selectedProjectSpId.value = Number(cfg.project_sp_entity_type_id)
-            projectMapping.value = { ...(cfg.project_fields_mapping || {}) }
+            projectMapping.value = normalizeProjectMappingState(cfg)
             await loadProjectSpFields(Number(cfg.project_sp_entity_type_id))
             await validateProjectSpa()
         }
@@ -146,12 +267,18 @@ async function handleSave() {
     isSaving.value = true
     statusMessage.value = null
     try {
+        const serializedProjectMapping = serializeProjectMappingState(projectMapping.value)
         const newConfig = {
             ...config.value,
             sp_entity_type_id: selectedSpId.value,
             fields_mapping: mapping.value,
             project_sp_entity_type_id: selectedProjectSpId.value,
-            project_fields_mapping: projectMapping.value,
+            project_fields_mapping: serializedProjectMapping,
+            stage_id: serializedProjectMapping.stage_id || null,
+            stage: serializedProjectMapping.stage || null,
+            project_stage: serializedProjectMapping.stage || null,
+            manual_stage: serializedProjectMapping.manual_stage || null,
+            effective_stage: serializedProjectMapping.effective_stage || null,
             is_configured: true
         }
         const saveResult = await apiStore.saveConfiguration(newConfig)
@@ -191,18 +318,84 @@ async function handleSave() {
     }
 }
 
-function getFieldOptions(appFieldType: string) {
-    return spFields.value.map(f => ({
-        label: `${f.title} (${f.type})`,
-        value: f.id
-    }))
+function getCreateOptionValue(mappingType: 'timesheet' | 'project', fieldKey: string) {
+    return `${CREATE_OPTION_PREFIX}${mappingType}:${fieldKey}`
 }
 
-function getProjectFieldOptions(appFieldType: string) {
-    return projectSpFields.value.map(f => ({
+function canCreateMappedField(mappingType: 'timesheet' | 'project', fieldKey: string) {
+    return mappingType === 'timesheet'
+        ? APP_CREATABLE_FIELD_KEYS.has(fieldKey)
+        : PROJECT_CREATABLE_FIELD_KEYS.has(fieldKey)
+}
+
+function normalizeAcceptedType(value?: string | null) {
+    return String(value || '').trim().toLowerCase()
+}
+
+function isFieldTypeCompatible(field: MappingFieldDefinition, optionType?: string | null) {
+    if (!field.acceptedTypes?.length) {
+        return true
+    }
+
+    const accepted = new Set(field.acceptedTypes.map(type => normalizeAcceptedType(type)))
+    const actualType = normalizeAcceptedType(optionType)
+    if (!actualType) {
+        return false
+    }
+
+    if (accepted.has(actualType)) {
+        return true
+    }
+
+    if (accepted.has('string') && ['text', 'char'].includes(actualType)) {
+        return true
+    }
+    if (accepted.has('integer') && ['int'].includes(actualType)) {
+        return true
+    }
+    if (accepted.has('crm_status') && ['status', 'stage'].includes(actualType)) {
+        return true
+    }
+
+    return false
+}
+
+function getFieldOptions(field: MappingFieldDefinition) {
+    const currentValue = String(mapping.value[field.key] || '').trim()
+    const options = spFields.value
+      .filter(option => isFieldTypeCompatible(field, option.type) || String(option.id || '').trim() === currentValue)
+      .map(f => ({
         label: `${f.title} (${f.type})`,
         value: f.id
-    }))
+      }))
+
+    if (canCreateMappedField('timesheet', field.key)) {
+        options.push({
+            label: `+ Создать поле «${field.label}»`,
+            value: getCreateOptionValue('timesheet', field.key)
+        })
+    }
+
+    return options
+}
+
+function getProjectFieldOptions(field: MappingFieldDefinition) {
+    const currentValue = String(projectMapping.value[field.key] || '').trim()
+    const options = projectSpFields.value
+      .filter(option => isFieldTypeCompatible(field, option.type) || String(option.id || '').trim() === currentValue)
+      .map(f => ({
+        label: `${f.title} (${f.type})`,
+        value: f.id
+      }))
+
+    if (canCreateMappedField('project', field.key)) {
+        options.push({
+            label: `+ Создать поле «${field.label}»`,
+            value: getCreateOptionValue('project', field.key)
+        })
+    }
+
+    return options
 }
 
 function showStatus(type: 'success' | 'error', text: string) {
@@ -213,24 +406,24 @@ function showStatus(type: 'success' | 'error', text: string) {
 async function handleCreateSmartProcess() {
     isCreatingSP.value = true
     statusMessage.value = null
-    console.log('🔧 [CreateSP] Starting...')
     try {
         const result = await apiStore.createSmartProcess()
-        console.log('✅ [CreateSP] Response:', JSON.stringify(result, null, 2))
         const newConfig = result.config
-        config.value = newConfig
-        selectedSpId.value = newConfig.sp_entity_type_id
+        config.value = { ...config.value, ...newConfig }
+        selectedSpId.value = Number(newConfig.sp_entity_type_id)
+        mapping.value = normalizeMappingState(newConfig.fields_mapping || {})
+        if (newConfig.sp_entity_type_id) {
+            await loadSpFields(Number(newConfig.sp_entity_type_id))
+        }
         // Reload SP list
         const spRes = await apiStore.getSmartProcesses()
         smartProcesses.value = spRes.types || []
-        showStatus('success', `Смарт-процесс создан (ID: ${newConfig.sp_entity_type_id})`)
+        const warnings = result.field_warnings?.length ? ` Предупреждения: ${result.field_warnings.join('; ')}` : ''
+        showStatus(
+          'success',
+          `Смарт-процесс создан и автоматически заполнен полями (ID: ${newConfig.sp_entity_type_id}, полей: ${result.created_fields_count || 0}).${warnings}`
+        )
     } catch (e: any) {
-        console.error('❌ [CreateSP] Error:', e)
-        console.error('❌ [CreateSP] e.data:', e?.data)
-        console.error('❌ [CreateSP] e.message:', e?.message)
-        console.error('❌ [CreateSP] e.statusCode:', e?.statusCode)
-        console.error('❌ [CreateSP] e.statusMessage:', e?.statusMessage)
-        console.error('❌ [CreateSP] e.response:', e?.response)
         const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
         showStatus('error', `Ошибка: ${errMsg}`)
     } finally {
@@ -238,172 +431,73 @@ async function handleCreateSmartProcess() {
     }
 }
 
-async function handleCreateFields() {
-    if (!selectedSpId.value) {
-        console.warn('⚠️ [CreateFields] No SP selected!')
-        return
-    }
-    if (!$b24) {
-        showStatus('error', 'B24 SDK не инициализирован. Обновите страницу.')
+async function handleCreateMappedField(mappingType: 'timesheet' | 'project', fieldKey: string, fieldLabel: string) {
+    const entityTypeId = mappingType === 'timesheet' ? Number(selectedSpId.value || 0) : Number(selectedProjectSpId.value || 0)
+    if (!entityTypeId) {
+        showStatus('error', 'Сначала выберите смарт-процесс.')
         return
     }
 
-    isCreatingFields.value = true
+    creatingMappedField.value = `${mappingType}:${fieldKey}`
     statusMessage.value = null
-    const entityTypeId = selectedSpId.value
-    console.log('🔧 [CreateFields] Starting for entityTypeId:', entityTypeId)
+    try {
+        const result = await apiStore.createMappedField(entityTypeId, fieldKey, mappingType)
+        config.value = { ...config.value, ...result.config }
 
-    // IMPORTANT: userfieldconfig.add requires the SPA's ordinal `id`, NOT `entityTypeId`
-    // e.g. if entityTypeId=1040, the actual id might be 87 (like in ufCrm87_xxx)
-    // Find the real id from the smartProcesses list
-    const spInfo = smartProcesses.value.find((sp: any) => sp.entityTypeId === entityTypeId)
-    const spaOrdinalId = spInfo?.id
-    console.log('🔧 [CreateFields] SPA ordinal id:', spaOrdinalId, 'entityTypeId:', entityTypeId)
-    console.log('🔧 [CreateFields] Full SP info:', JSON.stringify(spInfo))
+        if (mappingType === 'timesheet') {
+            mapping.value = mergeCreatedFieldMapping(mapping.value, result.config.fields_mapping, fieldKey, result.field_id)
+            config.value.fields_mapping = { ...mapping.value }
+            await loadSpFields(entityTypeId)
+        } else {
+            projectMapping.value = mergeCreatedFieldMapping(
+                projectMapping.value,
+                result.config.project_fields_mapping,
+                fieldKey,
+                result.field_id
+            )
+            config.value.project_fields_mapping = serializeProjectMappingState(projectMapping.value)
+            await loadProjectSpFields(entityTypeId)
+            await validateProjectSpa()
+        }
 
-    if (!spaOrdinalId) {
-        showStatus('error', `Не удалось определить внутренний ID для entityTypeId=${entityTypeId}. Перезагрузите страницу.`)
-        isCreatingFields.value = false
+        const warnings = result.field_warnings?.length ? ` Предупреждения: ${result.field_warnings.join('; ')}` : ''
+        showStatus('success', `Поле «${fieldLabel}» создано и сразу привязано к маппингу.${warnings}`)
+    } catch (e: any) {
+        const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
+        showStatus('error', `Ошибка создания поля «${fieldLabel}»: ${errMsg}`)
+    } finally {
+        creatingMappedField.value = null
+    }
+}
+
+async function handleMappingSelectChange(
+    event: Event,
+    mappingType: 'timesheet' | 'project',
+    fieldKey: string,
+    fieldLabel: string,
+) {
+    const select = event.target as HTMLSelectElement | null
+    const nextValue = select?.value || ''
+
+    if (nextValue === getCreateOptionValue(mappingType, fieldKey)) {
+        await handleCreateMappedField(mappingType, fieldKey, fieldLabel)
         return
     }
 
-    // Field suffix names (Bitrix will create as UF_CRM_{id}_{suffix})
-    const FIELDS_TO_CREATE = [
-        { key: 'id_zadachi', suffix: 'TASK_ID', label: 'ID Задачи', type: 'integer' },
-        { key: 'sotrudnik', suffix: 'EMPLOYEE', label: 'Сотрудник', type: 'employee' },
-        { key: 'kolichestvo_chasov', suffix: 'HOURS', label: 'Количество часов', type: 'double' },
-        { key: 'uchitivaem', suffix: 'IS_BILLABLE', label: 'Учитываем?', type: 'boolean' },
-        { key: 'ne_uchitivaemie_chasi', suffix: 'NON_BILLABLE', label: 'Неучитываемые часы', type: 'double' },
-        { key: 'opisanie', suffix: 'DESCRIPTION', label: 'Описание', type: 'string' },
-        { key: 'project_title', suffix: 'PROJECT', label: 'Проект', type: 'string' },
-        { key: 'project_id', suffix: 'PROJECT_ID', label: 'ID Проекта', type: 'integer' },
-        { key: 'project_item_id', suffix: 'PROJECT_ITEM_ID', label: 'ID элемента проекта SPA', type: 'integer' },
-        { key: 'data', suffix: 'DATE', label: 'Дата отражения', type: 'date' },
-        { key: 'id_zadach_ierarhiya', suffix: 'HIER_IDS', label: 'Иерархия ID', type: 'string', multiple: true },
-        { key: 'title_zadach_ierarhiya', suffix: 'HIER_TITLES', label: 'Иерархия Названий', type: 'string', multiple: true },
-        { key: 'task_name', suffix: 'TASK_NAME', label: 'Название задачи', type: 'string' },
-        { key: 'our_inn', suffix: 'OUR_INN', label: 'Наш ИНН', type: 'string' },
-        { key: 'client_inn', suffix: 'CLIENT_INN', label: 'ИНН клиента', type: 'string' },
-    ]
-
-    // Convert UF_CRM_10_TASK_ID → ufCrm10TaskId (camelCase for REST API)
-    function ufToCamelCase(ufName: string): string {
-        // UF_CRM_10_TASK_ID → split by _ → ['UF', 'CRM', '10', 'TASK', 'ID']
-        const parts = ufName.split('_')
-        return parts.map((part, i) => {
-            if (i === 0) return part.toLowerCase() // 'uf'
-            // Capitalize first letter, rest lowercase
-            return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
-        }).join('')
-        // Result: ufCrm10TaskId
-    }
-
-    const newMapping: Record<string, string> = {}
-    const errors: string[] = []
-    let created = 0
-
-    for (const field of FIELDS_TO_CREATE) {
-        showStatus('success', `Создание поля ${created + 1}/${FIELDS_TO_CREATE.length}: ${field.label}...`)
-
-        // Build full fieldName: UF_CRM_{spaId}_{suffix}
-        const fullFieldName = `UF_CRM_${spaOrdinalId}_${field.suffix}`
-
-        try {
-            console.log(`📝 [CreateFields] Creating: ${field.key} -> fieldName=${fullFieldName}, type=${field.type}, entityId=CRM_${spaOrdinalId}, multiple=${!!field.multiple}`)
-
-            // Build field params
-            const fieldParams: Record<string, any> = {
-                entityId: `CRM_${spaOrdinalId}`,
-                fieldName: fullFieldName,
-                userTypeId: field.type,
-                editFormLabel: { ru: field.label, en: field.label },
-                listColumnLabel: { ru: field.label, en: field.label },
-                filterLabel: { ru: field.label, en: field.label },
-            }
-            if (field.multiple) {
-                fieldParams.multiple = 'Y'
-            }
-
-            // @ts-ignore - callMethod typing
-            const result = await $b24!.callMethod('userfieldconfig.add', {
-                moduleId: 'crm',
-                field: fieldParams,
-            })
-
-            // Extract created field name from response
-            const data = result.getData()
-            console.log(`✅ [CreateFields] ${field.key} raw response:`, JSON.stringify(data))
-
-            // Try all possible response structures from b24jssdk
-            const createdFieldName = data?.result?.field?.fieldName 
-                || data?.field?.fieldName 
-                || data?.fieldName
-                || (typeof data === 'object' && data !== null ? Object.values(data)?.[0]?.fieldName : null)
-
-            if (createdFieldName) {
-                // Convert to camelCase for REST API: UF_CRM_10_TASK_ID → ufCrm10TaskId
-                const camelName = ufToCamelCase(createdFieldName)
-                newMapping[field.key] = camelName
-                console.log(`✅ [CreateFields] ${field.key}: ${createdFieldName} → ${camelName}`)
-            } else {
-                // Fallback: convert our fullFieldName to camelCase
-                const camelName = ufToCamelCase(fullFieldName)
-                console.warn(`⚠️ [CreateFields] ${field.key}: fieldName not in response, using fallback: ${fullFieldName} → ${camelName}`)
-                console.warn(`⚠️ [CreateFields] Full data keys:`, data ? Object.keys(data) : 'null')
-                newMapping[field.key] = camelName
-                errors.push(`${field.label}: создано, но нет fieldName в ответе`)
-            }
-            created++
-
-        } catch (e: any) {
-            const errMsg = e?.message || e?.toString() || 'Unknown error'
-            console.error(`❌ [CreateFields] ${field.key} FAILED:`, e)
-            console.error(`❌ [CreateFields] Error details:`, JSON.stringify(e, null, 2))
-
-            // Check if field already exists
-            if (errMsg.includes('already') || errMsg.includes('exist') || errMsg.includes('уже')) {
-                console.log(`ℹ️ [CreateFields] ${field.key} already exists, skipping`)
-                newMapping[field.key] = ufToCamelCase(fullFieldName)
-                errors.push(`${field.label}: уже существует`)
-                created++
-            } else {
-                errors.push(`${field.label}: ${errMsg}`)
-                newMapping[field.key] = ufToCamelCase(fullFieldName) // fallback
-            }
-        }
-
-        // Small delay between API calls to avoid rate limiting
-        await new Promise(r => setTimeout(r, 300))
-    }
-
-    // Save mapping to config
-    try {
-        console.log('💾 [CreateFields] Saving mapping:', newMapping)
-        const newConfig = {
-            ...config.value,
-            sp_entity_type_id: entityTypeId,
-            fields_mapping: newMapping,
-            is_configured: true,
-        }
-        await apiStore.saveConfiguration(newConfig)
-        config.value = newConfig
-        mapping.value = { ...newMapping }
-
-        // Reload fields list
-        await loadSpFields(entityTypeId)
-
-        if (errors.length === 0) {
-            showStatus('success', `✅ Создано ${created} из ${FIELDS_TO_CREATE.length} полей. Маппинг сохранён.`)
+    if (mappingType === 'timesheet') {
+        if (nextValue) {
+            mapping.value[fieldKey] = nextValue
         } else {
-            showStatus('error', `Создано ${created}/${FIELDS_TO_CREATE.length}. Предупреждения: ${errors.join('; ')}`)
+            delete mapping.value[fieldKey]
         }
-        console.log('✅ [CreateFields] Done! Mapping saved to config.')
-    } catch (saveErr: any) {
-        console.error('❌ [CreateFields] Failed to save config:', saveErr)
-        showStatus('error', `Поля созданы, но не удалось сохранить маппинг: ${saveErr?.message}`)
+        return
     }
 
-    isCreatingFields.value = false
+    if (nextValue) {
+        projectMapping.value[fieldKey] = nextValue
+    } else {
+        delete projectMapping.value[fieldKey]
+    }
 }
 
 onMounted(async () => {
@@ -494,18 +588,10 @@ onMounted(async () => {
                                 :loading="isCreatingSP"
                                 :disabled="(!!selectedSpId && selectedSpId !== 0) || isCreatingSP"
                             />
-                            <B24Button 
-                                label="Создать все поля" 
-                                color="primary" 
-                                size="sm"
-                                @click="handleCreateFields" 
-                                :loading="isCreatingFields"
-                                :disabled="!selectedSpId || isCreatingFields"
-                            />
                         </div>
                         <p class="text-sm text-slate-600">
                             Выберите процесс и нажмите "Подгрузить", чтобы получить список полей.
-                            Или создайте новый процесс и поля кнопками выше.
+                            Кнопка создания смарт-процесса сразу создаёт сам процесс, обязательные поля и базовый маппинг.
                         </p>
                   </div>
               </div>
@@ -704,11 +790,13 @@ onMounted(async () => {
                               </td>
                               <td>
                                   <select 
-                                    v-model="mapping[field.key]"
+                                    :value="mapping[field.key] || ''"
                                     class="block w-full sm:text-sm"
+                                    :disabled="creatingMappedField === `timesheet:${field.key}`"
+                                    @change="(event) => handleMappingSelectChange(event, 'timesheet', field.key, field.label)"
                                   >
-                                      <option :value="undefined">-- Не сопоставлено --</option>
-                                      <option v-for="opt in getFieldOptions(field.type)" :key="opt.value" :value="opt.value">
+                                      <option value="">-- Не сопоставлено --</option>
+                                      <option v-for="opt in getFieldOptions(field)" :key="opt.value" :value="opt.value">
                                           {{ opt.label }}
                                       </option>
                                   </select>
@@ -741,11 +829,13 @@ onMounted(async () => {
                               </td>
                               <td>
                                   <select
-                                    v-model="projectMapping[field.key]"
+                                    :value="projectMapping[field.key] || ''"
                                     class="block w-full sm:text-sm"
+                                    :disabled="creatingMappedField === `project:${field.key}`"
+                                    @change="(event) => handleMappingSelectChange(event, 'project', field.key, field.label)"
                                   >
-                                      <option :value="undefined">-- Не сопоставлено --</option>
-                                      <option v-for="opt in getProjectFieldOptions(field.type)" :key="opt.value" :value="opt.value">
+                                      <option value="">-- Не сопоставлено --</option>
+                                      <option v-for="opt in getProjectFieldOptions(field)" :key="opt.value" :value="opt.value">
                                           {{ opt.label }}
                                       </option>
                                   </select>

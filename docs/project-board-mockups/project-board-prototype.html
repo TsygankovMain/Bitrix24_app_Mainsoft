@@ -1,0 +1,1964 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project Board Prototype</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --panel-muted: #f8fafc;
+      --line: #d8e1eb;
+      --line-strong: #c7d2de;
+      --text: #17212b;
+      --muted: #66758a;
+      --blue: #2f6fed;
+      --blue-soft: #eef4ff;
+      --teal-soft: #ecfdf5;
+      --teal-text: #0f766e;
+      --amber-soft: #fffbeb;
+      --amber-text: #b45309;
+      --red-soft: #fef2f2;
+      --red-text: #c2410c;
+      --purple-soft: #f5f3ff;
+      --purple-text: #7c3aed;
+      --green-soft: #effdf4;
+      --green-text: #15803d;
+      --shadow-sm: 0 8px 20px rgba(15, 23, 42, 0.06);
+      --shadow-lg: 0 20px 50px rgba(15, 23, 42, 0.12);
+      --radius-lg: 18px;
+      --radius-md: 14px;
+      --radius-sm: 10px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(47, 111, 237, 0.08), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(20, 184, 166, 0.08), transparent 26%),
+        var(--bg);
+    }
+
+    body.drawer-open {
+      overflow: hidden;
+    }
+
+    button,
+    select,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    .shell {
+      max-width: 1640px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #ffffff 0%, #f7fbff 55%, #ffffff 100%);
+      border: 1px solid rgba(199, 210, 222, 0.9);
+      border-radius: 28px;
+      box-shadow: var(--shadow-sm);
+      padding: 24px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 32px;
+      line-height: 1.1;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 920px;
+      line-height: 1.55;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .button {
+      border: 1px solid transparent;
+      border-radius: 12px;
+      padding: 11px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+      box-shadow: none;
+    }
+
+    .button:hover {
+      transform: translateY(-1px);
+    }
+
+    .button-primary {
+      background: var(--blue);
+      color: #fff;
+      box-shadow: 0 12px 24px rgba(47, 111, 237, 0.18);
+    }
+
+    .button-secondary {
+      background: #fff;
+      color: var(--text);
+      border-color: var(--line);
+    }
+
+    .button-ghost {
+      background: transparent;
+      color: var(--muted);
+      border-color: var(--line);
+    }
+
+    .button-danger {
+      background: var(--red-soft);
+      color: var(--red-text);
+      border-color: #fed7d7;
+    }
+
+    .button.small {
+      padding: 8px 12px;
+      font-size: 13px;
+      border-radius: 10px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .metric-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 10px;
+    }
+
+    .metric-value {
+      font-size: 28px;
+      font-weight: 800;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+
+    .metric-caption {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .panel {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow-sm);
+      padding: 18px;
+      margin-top: 18px;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1.3fr auto;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .filters {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      background: var(--panel-muted);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 12px;
+    }
+
+    .filter {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 160px;
+    }
+
+    .filter label,
+    .toggle-group-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .input,
+    .select,
+    .textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 12px;
+      padding: 11px 12px;
+      color: var(--text);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .textarea {
+      min-height: 110px;
+      resize: vertical;
+    }
+
+    .input:focus,
+    .select:focus,
+    .textarea:focus {
+      outline: none;
+      border-color: rgba(47, 111, 237, 0.72);
+      box-shadow: 0 0 0 4px rgba(47, 111, 237, 0.14);
+    }
+
+    .switch-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      min-width: 170px;
+      height: 46px;
+    }
+
+    .view-toggle {
+      display: inline-flex;
+      gap: 8px;
+      background: var(--panel-muted);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 6px;
+    }
+
+    .view-button {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 700;
+      padding: 10px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .view-button.active {
+      background: #fff;
+      color: var(--text);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .board {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .stage {
+      background: var(--panel-muted);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      min-height: 360px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stage-header {
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .stage-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .stage-title {
+      font-weight: 800;
+      font-size: 15px;
+    }
+
+    .stage-subtitle {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .stage-count {
+      min-width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--line);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .stage-body {
+      flex: 1;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .stage-body.drop-target {
+      background: rgba(47, 111, 237, 0.08);
+      border-radius: 18px;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow-sm);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      cursor: pointer;
+    }
+
+    .card[draggable="true"] {
+      cursor: grab;
+    }
+
+    .card.is-dragging {
+      opacity: 0.42;
+      transform: rotate(1.5deg);
+    }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .card-title {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.3;
+    }
+
+    .card-badges,
+    .inline-badges {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .badge.blue {
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .badge.teal {
+      background: var(--teal-soft);
+      color: var(--teal-text);
+    }
+
+    .badge.amber {
+      background: var(--amber-soft);
+      color: var(--amber-text);
+    }
+
+    .badge.red {
+      background: var(--red-soft);
+      color: var(--red-text);
+    }
+
+    .badge.purple {
+      background: var(--purple-soft);
+      color: var(--purple-text);
+    }
+
+    .badge.green {
+      background: var(--green-soft);
+      color: var(--green-text);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .stat {
+      background: var(--panel-muted);
+      border-radius: 14px;
+      padding: 10px 12px;
+      border: 1px solid #edf2f7;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+      font-weight: 700;
+    }
+
+    .stat-value {
+      font-weight: 700;
+      font-size: 15px;
+    }
+
+    .card-footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      padding-top: 4px;
+      border-top: 1px dashed #e4ebf2;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .empty-state {
+      padding: 18px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      border: 1px dashed var(--line-strong);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.65);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 16px;
+    }
+
+    .timeline-header {
+      display: grid;
+      grid-template-columns: 280px repeat(7, minmax(90px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .timeline-month,
+    .timeline-name-head {
+      background: var(--panel-muted);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .timeline-row {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .timeline-project {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+      padding: 14px;
+      box-shadow: var(--shadow-sm);
+      cursor: pointer;
+    }
+
+    .timeline-lane {
+      position: relative;
+      min-height: 84px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background:
+        linear-gradient(to right, rgba(216, 225, 235, 0.7) 1px, transparent 1px) 0 0 / calc(100% / 7) 100%,
+        #fff;
+      overflow: hidden;
+    }
+
+    .timeline-bar {
+      position: absolute;
+      top: 18px;
+      height: 48px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 16px;
+      font-weight: 700;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .timeline-bar .small-note {
+      font-size: 12px;
+      opacity: 0.84;
+    }
+
+    .archive-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .archive-item {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      display: grid;
+      grid-template-columns: 1.2fr 1fr auto;
+      gap: 16px;
+      align-items: center;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .archive-meta {
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .archive-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.34);
+      backdrop-filter: blur(5px);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.18s ease, visibility 0.18s ease;
+      z-index: 30;
+    }
+
+    .overlay.show {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(520px, 100%);
+      height: 100%;
+      background: #fff;
+      box-shadow: var(--shadow-lg);
+      transform: translateX(100%);
+      transition: transform 0.24s ease;
+      z-index: 40;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .drawer.show {
+      transform: translateX(0);
+    }
+
+    .drawer-header {
+      padding: 22px 22px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: flex-start;
+    }
+
+    .drawer-title-wrap {
+      display: grid;
+      gap: 8px;
+    }
+
+    .drawer-title {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.15;
+    }
+
+    .drawer-body {
+      flex: 1;
+      overflow: auto;
+      padding: 18px 22px 22px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .drawer-section {
+      background: var(--panel-muted);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .drawer-section h3 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field.full {
+      grid-column: 1 / -1;
+    }
+
+    .field label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .drawer-footer {
+      padding: 16px 22px 22px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(248, 250, 252, 0.92);
+    }
+
+    .footer-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%) translateY(24px);
+      background: #0f172a;
+      color: #fff;
+      padding: 14px 18px;
+      border-radius: 14px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+      z-index: 60;
+      box-shadow: var(--shadow-lg);
+      font-weight: 700;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .legend-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 1280px) {
+      .metrics {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .board {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .timeline-header {
+        grid-template-columns: 240px repeat(7, minmax(74px, 1fr));
+      }
+
+      .timeline-row {
+        grid-template-columns: 240px 1fr;
+      }
+    }
+
+    @media (max-width: 920px) {
+      .shell {
+        padding: 16px;
+      }
+
+      .hero-top,
+      .toolbar,
+      .archive-item {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+
+      .hero-actions,
+      .archive-actions {
+        justify-content: flex-start;
+      }
+
+      .metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .board {
+        grid-template-columns: 1fr;
+      }
+
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .drawer {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 640px) {
+      h1 {
+        font-size: 26px;
+      }
+
+      .metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .filters {
+        align-items: stretch;
+      }
+
+      .filter,
+      .switch-row {
+        min-width: 100%;
+      }
+
+      .timeline-header,
+      .timeline-row {
+        grid-template-columns: 1fr;
+      }
+
+      .timeline-lane {
+        min-height: 110px;
+      }
+
+      .drawer-footer {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .footer-actions {
+        width: 100%;
+      }
+
+      .footer-actions .button {
+        flex: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="hero-top">
+        <div>
+          <div class="eyebrow">Prototype / Основное приложение</div>
+          <h1>Управление проектами и стадиями</h1>
+          <p>
+            Живой мокап в визуальном стиле текущего приложения. Можно переключать режимы
+            `Доска / Timeline / Архив`, перетаскивать карточки между ручными стадиями,
+            открывать drawer проекта, включать `Поддержка`, архивировать проект и запускать
+            ежедневную автопроверку стадий `Нет списаний`.
+          </p>
+        </div>
+        <div class="hero-actions">
+          <button class="button button-secondary" id="resetDemoButton">Сбросить демо</button>
+          <button class="button button-secondary" id="simulateDayButton">+1 день без списаний</button>
+          <button class="button button-primary" id="runAutomationButton">Автопроверка стадий</button>
+        </div>
+      </div>
+
+      <div class="metrics" id="metrics"></div>
+    </section>
+
+    <section class="panel">
+      <div class="toolbar">
+        <div class="filters">
+          <div class="filter">
+            <label for="searchInput">Поиск проекта</label>
+            <input id="searchInput" class="input" type="search" placeholder="Например, ACME" />
+          </div>
+
+          <div class="filter">
+            <label for="curatorFilter">Куратор</label>
+            <select id="curatorFilter" class="select"></select>
+          </div>
+
+          <div class="filter">
+            <label for="companyFilter">Компания</label>
+            <select id="companyFilter" class="select"></select>
+          </div>
+
+          <div class="filter">
+            <label for="supportFilter">Тип проекта</label>
+            <select id="supportFilter" class="select">
+              <option value="all">Все</option>
+              <option value="support">Только поддержка</option>
+              <option value="project">Только фиксированный объем</option>
+            </select>
+          </div>
+
+          <div class="switch-row">
+            <input id="activeOnlyFilter" type="checkbox" checked />
+            <label for="activeOnlyFilter" style="margin:0;">Только активные проекты</label>
+          </div>
+        </div>
+
+        <div class="view-toggle">
+          <button class="view-button active" data-view="board">Доска</button>
+          <button class="view-button" data-view="timeline">Timeline</button>
+          <button class="view-button" data-view="archive">Архив</button>
+        </div>
+      </div>
+
+      <div id="boardView"></div>
+      <div id="timelineView" class="hidden"></div>
+      <div id="archiveView" class="hidden"></div>
+    </section>
+  </div>
+
+  <div class="overlay" id="overlay"></div>
+
+  <aside class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div class="drawer-title-wrap">
+        <div class="inline-badges" id="drawerBadges"></div>
+        <h2 class="drawer-title" id="drawerTitle">Проект</h2>
+        <div class="hint" id="drawerSubtitle"></div>
+      </div>
+      <button class="button button-ghost small" id="closeDrawerButton">Закрыть</button>
+    </div>
+
+    <div class="drawer-body">
+      <section class="drawer-section">
+        <h3>Карточка проекта</h3>
+        <div class="form-grid">
+          <div class="field">
+            <label for="stageInput">Стадия</label>
+            <select id="stageInput" class="select"></select>
+          </div>
+
+          <div class="field">
+            <label for="archiveInput">Архив</label>
+            <div class="switch-row">
+              <input id="archiveInput" type="checkbox" />
+              <label for="archiveInput" style="margin:0;">Проект архивирован</label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="hoursInput">Проектный объем часов</label>
+            <input id="hoursInput" class="input" type="number" min="0" step="10" />
+          </div>
+
+          <div class="field">
+            <label for="hourlyRateInput">Ставка часа проекта</label>
+            <input id="hourlyRateInput" class="input" type="number" min="0" step="100" />
+          </div>
+
+          <div class="field">
+            <label for="supportInput">Поддержка</label>
+            <div class="switch-row">
+              <input id="supportInput" type="checkbox" />
+              <label for="supportInput" style="margin:0;">Поддержка включена</label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="curatorInput">Куратор проекта</label>
+            <select id="curatorInput" class="select"></select>
+          </div>
+        </div>
+      </section>
+
+      <section class="drawer-section">
+        <h3>Данные из проекта Bitrix24</h3>
+        <div class="form-grid">
+          <div class="field">
+            <label for="startInput">Начало проекта</label>
+            <input id="startInput" class="input" type="date" />
+          </div>
+
+          <div class="field">
+            <label for="endInput">Конец проекта</label>
+            <input id="endInput" class="input" type="date" />
+          </div>
+
+          <div class="field full">
+            <label for="companyInput">Привязка компании</label>
+            <select id="companyInput" class="select"></select>
+          </div>
+        </div>
+        <div class="hint">
+          В реальной реализации даты можно синхронизировать со штатными `PROJECT_DATE_START` и
+          `PROJECT_DATE_FINISH` проекта Bitrix24. Привязка компании и стадия проекта живут на стороне приложения.
+        </div>
+      </section>
+
+      <section class="drawer-section">
+        <h3>Сигналы проекта</h3>
+        <div class="form-grid">
+          <div class="field">
+            <label for="spentHoursOutput">Списано часов</label>
+            <input id="spentHoursOutput" class="input" type="text" disabled />
+          </div>
+          <div class="field">
+            <label for="lastWriteoffOutput">Последнее списание</label>
+            <input id="lastWriteoffOutput" class="input" type="text" disabled />
+          </div>
+          <div class="field full">
+            <label for="commentInput">Комментарий перехода / заметка</label>
+            <textarea id="commentInput" class="textarea" placeholder="Например, проект переведен в успех после завершения внедрения"></textarea>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="drawer-footer">
+      <button class="button button-danger" id="archiveDrawerButton">Архивировать</button>
+      <div class="footer-actions">
+        <button class="button button-secondary" id="cancelDrawerButton">Отмена</button>
+        <button class="button button-primary" id="saveDrawerButton">Сохранить</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const STAGES = [
+      'Новый',
+      'В просчете',
+      'В работе',
+      'Нет списаний 1 месяц',
+      'Нет списаний 3 месяца',
+      'Успех',
+      'Провал'
+    ]
+
+    const MANUAL_STAGES = new Set(['Новый', 'В просчете', 'В работе', 'Успех', 'Провал'])
+    const AUTO_STAGES = new Set(['Нет списаний 1 месяц', 'Нет списаний 3 месяца'])
+    const TERMINAL_STAGES = new Set(['Успех', 'Провал'])
+
+    const STAGE_DESCRIPTIONS = {
+      'Новый': 'Ручная стадия',
+      'В просчете': 'Ручная стадия',
+      'В работе': 'Ручная стадия',
+      'Нет списаний 1 месяц': 'Автоматическая стадия',
+      'Нет списаний 3 месяца': 'Автоматическая стадия',
+      'Успех': 'Финальная ручная стадия',
+      'Провал': 'Финальная ручная стадия'
+    }
+
+    const CURATORS = [
+      { id: 'u1', name: 'Иванов Иван' },
+      { id: 'u2', name: 'Петров Петр' },
+      { id: 'u3', name: 'Сидоров Алексей' },
+      { id: 'u4', name: 'Смирнова Анна' },
+      { id: 'u5', name: 'Козлов Никита' }
+    ]
+
+    const COMPANIES = [
+      { id: 'c1', name: 'ACME LLC' },
+      { id: 'c2', name: 'Beta OOO' },
+      { id: 'c3', name: 'Gamma Inc' },
+      { id: 'c4', name: 'Delta OOO' },
+      { id: 'c5', name: 'Omega Group' },
+      { id: 'c6', name: 'Legacy LLC' }
+    ]
+
+    const INITIAL_PROJECTS = [
+      {
+        id: 'p1',
+        name: 'ACME внедрение',
+        stage: 'В работе',
+        manualStage: 'В работе',
+        archived: false,
+        projectHoursBudget: 1200,
+        spentHours: 438,
+        hourlyRate: 3500,
+        support: false,
+        curatorId: 'u1',
+        start: '2026-04-01',
+        end: '2026-09-30',
+        companyId: 'c1',
+        lastWriteoffDays: 2,
+        archiveDate: '',
+        note: 'Клиент просит еженедельный контроль статусов.'
+      },
+      {
+        id: 'p2',
+        name: 'Beta аудит',
+        stage: 'В просчете',
+        manualStage: 'В просчете',
+        archived: false,
+        projectHoursBudget: 400,
+        spentHours: 0,
+        hourlyRate: 4500,
+        support: false,
+        curatorId: 'u2',
+        start: '2026-04-10',
+        end: '2026-04-25',
+        companyId: 'c2',
+        lastWriteoffDays: 44,
+        archiveDate: '',
+        note: 'Этап оценки перед запуском.'
+      },
+      {
+        id: 'p3',
+        name: 'Gamma support',
+        stage: 'В работе',
+        manualStage: 'В работе',
+        archived: false,
+        projectHoursBudget: null,
+        spentHours: 126,
+        hourlyRate: 5000,
+        support: true,
+        curatorId: 'u3',
+        start: '2026-01-01',
+        end: '2026-12-31',
+        companyId: 'c3',
+        lastWriteoffDays: 5,
+        archiveDate: '',
+        note: 'Поддержка по SLA, фиксированного объема нет.'
+      },
+      {
+        id: 'p4',
+        name: 'Delta CRM',
+        stage: 'Нет списаний 1 месяц',
+        manualStage: 'В работе',
+        archived: false,
+        projectHoursBudget: 800,
+        spentHours: 512,
+        hourlyRate: 4200,
+        support: false,
+        curatorId: 'u4',
+        start: '2026-02-15',
+        end: '2026-06-15',
+        companyId: 'c4',
+        lastWriteoffDays: 34,
+        archiveDate: '',
+        note: 'Автостадия после 30 дней без списаний.'
+      },
+      {
+        id: 'p5',
+        name: 'Legacy portal',
+        stage: 'Нет списаний 3 месяца',
+        manualStage: 'В работе',
+        archived: false,
+        projectHoursBudget: 600,
+        spentHours: 600,
+        hourlyRate: 3000,
+        support: false,
+        curatorId: 'u5',
+        start: '2026-01-10',
+        end: '2026-05-20',
+        companyId: 'c6',
+        lastWriteoffDays: 98,
+        archiveDate: '',
+        note: 'Нужно решить: реанимируем или архивируем.'
+      },
+      {
+        id: 'p6',
+        name: 'Reta launch',
+        stage: 'Успех',
+        manualStage: 'Успех',
+        archived: false,
+        projectHoursBudget: 700,
+        spentHours: 688,
+        hourlyRate: 5000,
+        support: false,
+        curatorId: 'u4',
+        start: '2026-03-01',
+        end: '2026-05-30',
+        companyId: 'c1',
+        lastWriteoffDays: 14,
+        archiveDate: '',
+        note: 'Проект близок к закрытию.'
+      },
+      {
+        id: 'p7',
+        name: 'Sigma pilot',
+        stage: 'Провал',
+        manualStage: 'Провал',
+        archived: false,
+        projectHoursBudget: 220,
+        spentHours: 160,
+        hourlyRate: 2500,
+        support: false,
+        curatorId: 'u2',
+        start: '2026-02-01',
+        end: '2026-03-18',
+        companyId: 'c5',
+        lastWriteoffDays: 49,
+        archiveDate: '',
+        note: 'Пилот остановлен после этапа тестирования.'
+      },
+      {
+        id: 'p8',
+        name: 'Omega migration',
+        stage: 'В работе',
+        manualStage: 'В работе',
+        archived: false,
+        projectHoursBudget: 960,
+        spentHours: 354,
+        hourlyRate: 4000,
+        support: false,
+        curatorId: 'u5',
+        start: '2026-03-01',
+        end: '2026-08-30',
+        companyId: 'c5',
+        lastWriteoffDays: 1,
+        archiveDate: '',
+        note: 'Переезд данных в несколько волн.'
+      },
+      {
+        id: 'p9',
+        name: 'Atlas support',
+        stage: 'В работе',
+        manualStage: 'В работе',
+        archived: true,
+        projectHoursBudget: null,
+        spentHours: 88,
+        hourlyRate: 3900,
+        support: true,
+        curatorId: 'u1',
+        start: '2026-01-01',
+        end: '2026-12-31',
+        companyId: 'c2',
+        lastWriteoffDays: 22,
+        archiveDate: '2026-04-02',
+        note: 'Архивный пример для отдельного режима.'
+      }
+    ]
+
+    const state = {
+      view: 'board',
+      filters: {
+        search: '',
+        curator: 'all',
+        company: 'all',
+        support: 'all',
+        activeOnly: true
+      },
+      projects: [],
+      drawerProjectId: null,
+      draggedProjectId: null
+    }
+
+    const boardView = document.getElementById('boardView')
+    const timelineView = document.getElementById('timelineView')
+    const archiveView = document.getElementById('archiveView')
+    const metricsNode = document.getElementById('metrics')
+    const overlay = document.getElementById('overlay')
+    const drawer = document.getElementById('drawer')
+    const toast = document.getElementById('toast')
+    const searchInput = document.getElementById('searchInput')
+    const curatorFilter = document.getElementById('curatorFilter')
+    const companyFilter = document.getElementById('companyFilter')
+    const supportFilter = document.getElementById('supportFilter')
+    const activeOnlyFilter = document.getElementById('activeOnlyFilter')
+    const drawerTitle = document.getElementById('drawerTitle')
+    const drawerSubtitle = document.getElementById('drawerSubtitle')
+    const drawerBadges = document.getElementById('drawerBadges')
+    const stageInput = document.getElementById('stageInput')
+    const archiveInput = document.getElementById('archiveInput')
+    const hoursInput = document.getElementById('hoursInput')
+    const hourlyRateInput = document.getElementById('hourlyRateInput')
+    const supportInput = document.getElementById('supportInput')
+    const curatorInput = document.getElementById('curatorInput')
+    const startInput = document.getElementById('startInput')
+    const endInput = document.getElementById('endInput')
+    const companyInput = document.getElementById('companyInput')
+    const spentHoursOutput = document.getElementById('spentHoursOutput')
+    const lastWriteoffOutput = document.getElementById('lastWriteoffOutput')
+    const commentInput = document.getElementById('commentInput')
+    const archiveDrawerButton = document.getElementById('archiveDrawerButton')
+
+    function cloneProjects() {
+      return JSON.parse(JSON.stringify(INITIAL_PROJECTS))
+    }
+
+    function getCuratorName(curatorId) {
+      const curator = CURATORS.find((item) => item.id === curatorId)
+      return curator ? curator.name : 'Не назначен'
+    }
+
+    function getCompanyName(companyId) {
+      const company = COMPANIES.find((item) => item.id === companyId)
+      return company ? company.name : 'Не выбрана'
+    }
+
+    function stageTone(stage) {
+      if (stage === 'В работе') return 'blue'
+      if (stage === 'Успех') return 'green'
+      if (stage === 'Провал') return 'red'
+      if (stage === 'В просчете') return 'purple'
+      if (stage === 'Новый') return 'teal'
+      if (AUTO_STAGES.has(stage)) return 'amber'
+      return 'blue'
+    }
+
+    function stageColumnTone(stage) {
+      const tone = stageTone(stage)
+      if (tone === 'green') return { background: '#effdf4', border: '#bbf7d0' }
+      if (tone === 'red') return { background: '#fef2f2', border: '#fecaca' }
+      if (tone === 'amber') return { background: '#fffbeb', border: '#fde68a' }
+      if (tone === 'purple') return { background: '#f5f3ff', border: '#ddd6fe' }
+      if (tone === 'teal') return { background: '#ecfdf5', border: '#99f6e4' }
+      return { background: '#eef4ff', border: '#bfdbfe' }
+    }
+
+    function formatHours(project) {
+      return project.support ? 'support' : `${project.projectHoursBudget || 0}ч`
+    }
+
+    function formatMoney(value) {
+      return `${Number(value || 0).toLocaleString('ru-RU')} ₽`
+    }
+
+    function formatDate(dateString) {
+      if (!dateString) return '—'
+      const date = new Date(dateString)
+      return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    }
+
+    function formatDateShort(dateString) {
+      if (!dateString) return '—'
+      const date = new Date(dateString)
+      return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+    }
+
+    function formatLastWriteoff(days) {
+      if (days === 0) return 'сегодня'
+      if (days === 1) return '1 день назад'
+      if (days < 5) return `${days} дня назад`
+      return `${days} дней назад`
+    }
+
+    function badge(label, tone) {
+      return `<span class="badge ${tone}">${label}</span>`
+    }
+
+    function fillSelect(selectNode, options, placeholder, mapper) {
+      const items = [`<option value="all">${placeholder}</option>`]
+      options.forEach((item) => {
+        const value = mapper ? mapper(item).value : item.id
+        const label = mapper ? mapper(item).label : item.name
+        items.push(`<option value="${value}">${label}</option>`)
+      })
+      selectNode.innerHTML = items.join('')
+    }
+
+    function fillProjectFieldSelect(selectNode, includeEmpty = false) {
+      const items = []
+      if (includeEmpty) items.push('<option value="">Не выбрано</option>')
+      COMPANIES.forEach((item) => {
+        items.push(`<option value="${item.id}">${item.name}</option>`)
+      })
+      selectNode.innerHTML = items.join('')
+    }
+
+    function fillCuratorFieldSelect(selectNode) {
+      selectNode.innerHTML = CURATORS.map((item) => `<option value="${item.id}">${item.name}</option>`).join('')
+    }
+
+    function fillStageFieldSelect(selectNode) {
+      selectNode.innerHTML = STAGES.map((stage) => `<option value="${stage}">${stage}</option>`).join('')
+    }
+
+    function getFilteredProjects() {
+      return state.projects.filter((project) => {
+        if (state.view === 'archive') {
+          if (!project.archived) return false
+        } else if (state.filters.activeOnly && project.archived) {
+          return false
+        }
+
+        if (state.filters.search) {
+          const haystack = `${project.name} ${getCuratorName(project.curatorId)} ${getCompanyName(project.companyId)}`.toLowerCase()
+          if (!haystack.includes(state.filters.search.toLowerCase())) return false
+        }
+
+        if (state.filters.curator !== 'all' && project.curatorId !== state.filters.curator) return false
+        if (state.filters.company !== 'all' && project.companyId !== state.filters.company) return false
+
+        if (state.filters.support === 'support' && !project.support) return false
+        if (state.filters.support === 'project' && project.support) return false
+
+        return true
+      })
+    }
+
+    function getProjectById(projectId) {
+      return state.projects.find((project) => project.id === projectId)
+    }
+
+    function showToast(message) {
+      toast.textContent = message
+      toast.classList.add('show')
+      window.clearTimeout(showToast.timer)
+      showToast.timer = window.setTimeout(() => {
+        toast.classList.remove('show')
+      }, 2200)
+    }
+
+    function computeMetrics() {
+      const activeProjects = state.projects.filter((project) => !project.archived)
+      const archivedProjects = state.projects.filter((project) => project.archived)
+      const autoProjects = activeProjects.filter((project) => AUTO_STAGES.has(project.stage))
+      const supportProjects = activeProjects.filter((project) => project.support)
+      const totalBudget = activeProjects
+        .filter((project) => !project.support)
+        .reduce((sum, project) => sum + Number(project.projectHoursBudget || 0), 0)
+
+      const metricItems = [
+        {
+          label: 'Активные проекты',
+          value: activeProjects.length,
+          caption: 'Без архивных проектов'
+        },
+        {
+          label: 'Автостадии',
+          value: autoProjects.length,
+          caption: 'Нет списаний 1/3 месяца'
+        },
+        {
+          label: 'Поддержка',
+          value: supportProjects.length,
+          caption: 'Проекты без фиксированного объема'
+        },
+        {
+          label: 'Архив',
+          value: archivedProjects.length,
+          caption: 'Не участвуют в отчетах'
+        },
+        {
+          label: 'Плановый объем',
+          value: `${totalBudget}ч`,
+          caption: 'Только активные проекты с бюджетом часов'
+        }
+      ]
+
+      metricsNode.innerHTML = metricItems.map((item) => `
+        <article class="metric-card">
+          <div class="metric-label">${item.label}</div>
+          <div class="metric-value">${item.value}</div>
+          <div class="metric-caption">${item.caption}</div>
+        </article>
+      `).join('')
+    }
+
+    function projectCardMarkup(project) {
+      const tone = stageTone(project.stage)
+      const canDrag = !project.archived
+      const autoBadge = AUTO_STAGES.has(project.stage) ? badge('Автостатус', 'amber') : ''
+      const supportBadge = project.support ? badge('Поддержка', 'purple') : badge(`${project.projectHoursBudget || 0}ч`, 'blue')
+      const archiveBadge = project.archived ? badge('Архив', 'red') : ''
+
+      return `
+        <article class="card" draggable="${canDrag}" data-project-id="${project.id}">
+          <div class="card-head">
+            <div>
+              <h3 class="card-title">${project.name}</h3>
+            </div>
+            <div class="card-badges">
+              ${archiveBadge}
+              ${autoBadge}
+            </div>
+          </div>
+
+          <div class="inline-badges">
+            ${supportBadge}
+            ${badge(formatMoney(project.hourlyRate), tone)}
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat">
+              <div class="stat-label">Куратор</div>
+              <div class="stat-value">${getCuratorName(project.curatorId)}</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Компания</div>
+              <div class="stat-value">${getCompanyName(project.companyId)}</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Даты</div>
+              <div class="stat-value">${formatDateShort(project.start)} - ${formatDateShort(project.end)}</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Списано</div>
+              <div class="stat-value">${project.spentHours}ч</div>
+            </div>
+          </div>
+
+          <div class="card-footer">
+            <span>Последнее списание: ${formatLastWriteoff(project.lastWriteoffDays)}</span>
+            <strong>${project.stage}</strong>
+          </div>
+        </article>
+      `
+    }
+
+    function renderBoard() {
+      const projects = getFilteredProjects()
+      const rows = STAGES.map((stage) => {
+        const style = stageColumnTone(stage)
+        const stageProjects = projects.filter((project) => project.stage === stage)
+        const canDrop = MANUAL_STAGES.has(stage)
+        const cards = stageProjects.length
+          ? stageProjects.map((project) => projectCardMarkup(project)).join('')
+          : `<div class="empty-state">Нет проектов в этой стадии</div>`
+
+        return `
+          <section class="stage" data-stage="${stage}" style="background:${style.background}; border-color:${style.border}">
+            <div class="stage-header">
+              <div class="stage-meta">
+                <div class="stage-title">${stage}</div>
+                <div class="stage-subtitle">${STAGE_DESCRIPTIONS[stage]}</div>
+              </div>
+              <div class="stage-count">${stageProjects.length}</div>
+            </div>
+            <div class="stage-body ${canDrop ? 'droppable' : ''}" data-stage-body="${stage}">
+              ${cards}
+            </div>
+          </section>
+        `
+      }).join('')
+
+      boardView.innerHTML = `
+        <div class="legend">
+          <div class="legend-item"><span class="legend-swatch" style="background:#eef4ff"></span>Ручные рабочие стадии</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:#fffbeb"></span>Автоматические стадии по отсутствию списаний</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:#effdf4"></span>Завершенные стадии</div>
+        </div>
+        <div class="board" id="boardGrid">${rows}</div>
+      `
+
+      attachBoardListeners()
+    }
+
+    function timelineBarMarkup(project, minDate, maxDate) {
+      const totalDuration = Math.max(1, maxDate - minDate)
+      const start = new Date(project.start).getTime()
+      const end = new Date(project.end).getTime()
+      const left = ((start - minDate) / totalDuration) * 100
+      const width = Math.max(8, ((end - start) / totalDuration) * 100)
+      const tone = stageTone(project.stage)
+
+      const palette = {
+        blue: { bg: '#2f6fed', text: '#ffffff' },
+        green: { bg: '#16a34a', text: '#ffffff' },
+        red: { bg: '#ef4444', text: '#ffffff' },
+        amber: { bg: '#f59e0b', text: '#ffffff' },
+        purple: { bg: '#8b5cf6', text: '#ffffff' },
+        teal: { bg: '#14b8a6', text: '#ffffff' }
+      }[tone]
+
+      return `
+        <div class="timeline-bar" data-project-id="${project.id}" style="left:${left}%; width:${width}%; background:${palette.bg}; color:${palette.text};">
+          <span>${project.name}</span>
+          <span class="small-note">${project.support ? 'support' : `${project.projectHoursBudget || 0}ч`}</span>
+        </div>
+      `
+    }
+
+    function renderTimeline() {
+      const projects = getFilteredProjects()
+      const visible = projects.filter((project) => !project.archived)
+
+      if (!visible.length) {
+        timelineView.innerHTML = '<div class="empty-state">Нет проектов для отображения в timeline.</div>'
+        return
+      }
+
+      const startDates = visible.map((project) => new Date(project.start).getTime())
+      const endDates = visible.map((project) => new Date(project.end).getTime())
+      const minDate = Math.min(...startDates)
+      const maxDate = Math.max(...endDates)
+      const months = ['Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт']
+
+      timelineView.innerHTML = `
+        <div class="timeline">
+          <div class="timeline-header">
+            <div class="timeline-name-head">Проект</div>
+            ${months.map((month) => `<div class="timeline-month">${month}</div>`).join('')}
+          </div>
+          ${visible.map((project) => `
+            <div class="timeline-row">
+              <div class="timeline-project" data-project-id="${project.id}">
+                <div class="card-head">
+                  <div>
+                    <h3 class="card-title">${project.name}</h3>
+                    <div class="hint">${project.stage} · ${getCuratorName(project.curatorId)}</div>
+                  </div>
+                  <div class="inline-badges">
+                    ${project.support ? badge('Поддержка', 'purple') : badge(`${project.projectHoursBudget || 0}ч`, 'blue')}
+                  </div>
+                </div>
+              </div>
+              <div class="timeline-lane">
+                ${timelineBarMarkup(project, minDate, maxDate)}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `
+
+      timelineView.querySelectorAll('[data-project-id]').forEach((node) => {
+        node.addEventListener('click', () => openDrawer(node.getAttribute('data-project-id')))
+      })
+    }
+
+    function renderArchive() {
+      const archived = getFilteredProjects().filter((project) => project.archived)
+
+      if (!archived.length) {
+        archiveView.innerHTML = '<div class="empty-state">В архиве пока нет проектов по выбранным фильтрам.</div>'
+        return
+      }
+
+      archiveView.innerHTML = `
+        <div class="archive-list">
+          ${archived.map((project) => `
+            <article class="archive-item">
+              <div>
+                <div class="card-head">
+                  <div>
+                    <h3 class="card-title">${project.name}</h3>
+                    <div class="hint">Архивирован: ${project.archiveDate ? formatDate(project.archiveDate) : '—'}</div>
+                  </div>
+                  <div class="inline-badges">
+                    ${badge(project.stage, stageTone(project.stage))}
+                    ${project.support ? badge('Поддержка', 'purple') : badge(`${project.projectHoursBudget || 0}ч`, 'blue')}
+                  </div>
+                </div>
+              </div>
+              <div class="archive-meta">
+                <span>Куратор: ${getCuratorName(project.curatorId)}</span>
+                <span>Компания: ${getCompanyName(project.companyId)}</span>
+                <span>Последнее списание: ${formatLastWriteoff(project.lastWriteoffDays)}</span>
+              </div>
+              <div class="archive-actions">
+                <button class="button button-secondary small" data-open-project="${project.id}">Открыть</button>
+                <button class="button button-primary small" data-restore-project="${project.id}">Разархивировать</button>
+              </div>
+            </article>
+          `).join('')}
+        </div>
+      `
+
+      archiveView.querySelectorAll('[data-open-project]').forEach((button) => {
+        button.addEventListener('click', () => openDrawer(button.getAttribute('data-open-project')))
+      })
+
+      archiveView.querySelectorAll('[data-restore-project]').forEach((button) => {
+        button.addEventListener('click', () => restoreProject(button.getAttribute('data-restore-project')))
+      })
+    }
+
+    function renderViews() {
+      boardView.classList.toggle('hidden', state.view !== 'board')
+      timelineView.classList.toggle('hidden', state.view !== 'timeline')
+      archiveView.classList.toggle('hidden', state.view !== 'archive')
+
+      activeOnlyFilter.disabled = state.view === 'archive'
+      activeOnlyFilter.closest('.switch-row').style.opacity = state.view === 'archive' ? '0.55' : '1'
+
+      document.querySelectorAll('.view-button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.view === state.view)
+      })
+
+      if (state.view === 'board') renderBoard()
+      if (state.view === 'timeline') renderTimeline()
+      if (state.view === 'archive') renderArchive()
+    }
+
+    function attachBoardListeners() {
+      document.querySelectorAll('.card').forEach((card) => {
+        const projectId = card.getAttribute('data-project-id')
+
+        card.addEventListener('click', (event) => {
+          if (!event.target.closest('button')) openDrawer(projectId)
+        })
+
+        card.addEventListener('dragstart', () => {
+          state.draggedProjectId = projectId
+          card.classList.add('is-dragging')
+        })
+
+        card.addEventListener('dragend', () => {
+          state.draggedProjectId = null
+          card.classList.remove('is-dragging')
+          document.querySelectorAll('.stage-body').forEach((body) => body.classList.remove('drop-target'))
+        })
+      })
+
+      document.querySelectorAll('.droppable').forEach((body) => {
+        body.addEventListener('dragover', (event) => {
+          event.preventDefault()
+          body.classList.add('drop-target')
+        })
+
+        body.addEventListener('dragleave', () => {
+          body.classList.remove('drop-target')
+        })
+
+        body.addEventListener('drop', (event) => {
+          event.preventDefault()
+          body.classList.remove('drop-target')
+          const targetStage = body.getAttribute('data-stage-body')
+          if (!state.draggedProjectId || !targetStage) return
+          moveProjectToStage(state.draggedProjectId, targetStage)
+        })
+      })
+    }
+
+    function moveProjectToStage(projectId, targetStage) {
+      const project = getProjectById(projectId)
+      if (!project) return
+
+      if (!MANUAL_STAGES.has(targetStage)) {
+        showToast('Автоматические стадии не назначаются вручную')
+        return
+      }
+
+      project.stage = targetStage
+      project.manualStage = targetStage
+      renderApp()
+      showToast(`Проект "${project.name}" переведен в стадию "${targetStage}"`)
+    }
+
+    function archiveProject(projectId) {
+      const project = getProjectById(projectId)
+      if (!project) return
+      project.archived = true
+      project.archiveDate = new Date().toISOString().slice(0, 10)
+      closeDrawer()
+      renderApp()
+      showToast(`Проект "${project.name}" отправлен в архив`)
+    }
+
+    function restoreProject(projectId) {
+      const project = getProjectById(projectId)
+      if (!project) return
+      project.archived = false
+      project.archiveDate = ''
+      if (AUTO_STAGES.has(project.stage)) {
+        project.stage = project.manualStage || 'В работе'
+      }
+      closeDrawer()
+      renderApp()
+      showToast(`Проект "${project.name}" возвращен из архива`)
+    }
+
+    function runAutoCheck() {
+      state.projects.forEach((project) => {
+        if (project.archived || TERMINAL_STAGES.has(project.stage)) return
+
+        if (project.lastWriteoffDays >= 90) {
+          project.stage = 'Нет списаний 3 месяца'
+          return
+        }
+
+        if (project.lastWriteoffDays >= 30) {
+          project.stage = 'Нет списаний 1 месяц'
+          return
+        }
+
+        if (AUTO_STAGES.has(project.stage)) {
+          project.stage = project.manualStage || 'В работе'
+        }
+      })
+
+      renderApp()
+      showToast('Ежедневная автопроверка выполнена')
+    }
+
+    function simulateDay() {
+      state.projects.forEach((project) => {
+        project.lastWriteoffDays += 1
+      })
+      renderApp()
+      showToast('Смоделирован еще один день без новых списаний')
+    }
+
+    function syncSupportHoursState() {
+      if (supportInput.checked) {
+        hoursInput.disabled = true
+        hoursInput.style.opacity = '0.55'
+      } else {
+        hoursInput.disabled = false
+        hoursInput.style.opacity = '1'
+      }
+    }
+
+    function openDrawer(projectId) {
+      const project = getProjectById(projectId)
+      if (!project) return
+
+      state.drawerProjectId = projectId
+      drawerTitle.textContent = project.name
+      drawerSubtitle.textContent = `ID проекта ${project.id} · ${getCompanyName(project.companyId)}`
+      drawerBadges.innerHTML = `
+        ${badge(project.stage, stageTone(project.stage))}
+        ${project.support ? badge('Поддержка', 'purple') : badge(`${project.projectHoursBudget || 0}ч`, 'blue')}
+        ${project.archived ? badge('Архив', 'red') : badge('Активный', 'teal')}
+      `
+
+      stageInput.value = project.stage
+      archiveInput.checked = project.archived
+      hoursInput.value = project.projectHoursBudget ?? ''
+      hourlyRateInput.value = project.hourlyRate
+      supportInput.checked = project.support
+      curatorInput.value = project.curatorId
+      startInput.value = project.start
+      endInput.value = project.end
+      companyInput.value = project.companyId
+      spentHoursOutput.value = `${project.spentHours}ч`
+      lastWriteoffOutput.value = formatLastWriteoff(project.lastWriteoffDays)
+      commentInput.value = project.note || ''
+
+      syncSupportHoursState()
+
+      document.body.classList.add('drawer-open')
+      overlay.classList.add('show')
+      drawer.classList.add('show')
+      archiveDrawerButton.textContent = project.archived ? 'Разархивировать' : 'Архивировать'
+    }
+
+    function closeDrawer() {
+      state.drawerProjectId = null
+      document.body.classList.remove('drawer-open')
+      overlay.classList.remove('show')
+      drawer.classList.remove('show')
+    }
+
+    function saveDrawer() {
+      const project = getProjectById(state.drawerProjectId)
+      if (!project) return
+
+      project.stage = stageInput.value
+      if (MANUAL_STAGES.has(stageInput.value)) {
+        project.manualStage = stageInput.value
+      }
+      project.archived = archiveInput.checked
+      project.hourlyRate = Number(hourlyRateInput.value || 0)
+      project.support = supportInput.checked
+      project.projectHoursBudget = project.support ? null : Number(hoursInput.value || 0)
+      project.curatorId = curatorInput.value
+      project.start = startInput.value
+      project.end = endInput.value
+      project.companyId = companyInput.value
+      project.note = commentInput.value.trim()
+
+      if (project.archived && !project.archiveDate) {
+        project.archiveDate = new Date().toISOString().slice(0, 10)
+      }
+      if (!project.archived) {
+        project.archiveDate = ''
+      }
+
+      closeDrawer()
+      renderApp()
+      showToast(`Карточка проекта "${project.name}" сохранена`)
+    }
+
+    function bindGlobalEvents() {
+      document.querySelectorAll('.view-button').forEach((button) => {
+        button.addEventListener('click', () => {
+          state.view = button.dataset.view
+          renderViews()
+        })
+      })
+
+      document.getElementById('runAutomationButton').addEventListener('click', runAutoCheck)
+      document.getElementById('simulateDayButton').addEventListener('click', simulateDay)
+      document.getElementById('resetDemoButton').addEventListener('click', () => {
+        state.projects = cloneProjects()
+        closeDrawer()
+        renderApp()
+        showToast('Демо-данные сброшены')
+      })
+
+      searchInput.addEventListener('input', () => {
+        state.filters.search = searchInput.value
+        renderViews()
+      })
+
+      curatorFilter.addEventListener('change', () => {
+        state.filters.curator = curatorFilter.value
+        renderViews()
+      })
+
+      companyFilter.addEventListener('change', () => {
+        state.filters.company = companyFilter.value
+        renderViews()
+      })
+
+      supportFilter.addEventListener('change', () => {
+        state.filters.support = supportFilter.value
+        renderViews()
+      })
+
+      activeOnlyFilter.addEventListener('change', () => {
+        state.filters.activeOnly = activeOnlyFilter.checked
+        renderViews()
+      })
+
+      overlay.addEventListener('click', closeDrawer)
+      document.getElementById('closeDrawerButton').addEventListener('click', closeDrawer)
+      document.getElementById('cancelDrawerButton').addEventListener('click', closeDrawer)
+      document.getElementById('saveDrawerButton').addEventListener('click', saveDrawer)
+
+      archiveDrawerButton.addEventListener('click', () => {
+        const project = getProjectById(state.drawerProjectId)
+        if (!project) return
+        if (project.archived) restoreProject(project.id)
+        else archiveProject(project.id)
+      })
+
+      supportInput.addEventListener('change', syncSupportHoursState)
+    }
+
+    function renderApp() {
+      computeMetrics()
+      renderViews()
+    }
+
+    function init() {
+      state.projects = cloneProjects()
+
+      fillSelect(curatorFilter, CURATORS, 'Все кураторы')
+      fillSelect(companyFilter, COMPANIES, 'Все компании')
+      fillCuratorFieldSelect(curatorInput)
+      fillProjectFieldSelect(companyInput)
+      fillStageFieldSelect(stageInput)
+      bindGlobalEvents()
+      renderApp()
+    }
+
+    init()
+  </script>
+</body>
+</html>

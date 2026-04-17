@@ -12,7 +12,12 @@ import type {
   RevenueLeakageReport,
   TimeEntryDisciplineReport,
 } from '~/types/report'
-import type { AppConfigurationPayload, ProjectSpaValidationPayload } from '~/types/config'
+import type {
+  AppConfigurationPayload,
+  ProjectSpaValidationPayload,
+  SmartProcessFieldOption,
+  SmartProcessOption,
+} from '~/types/config'
 import type { ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 
 type SaveConfigurationResponse = {
@@ -22,6 +27,21 @@ type SaveConfigurationResponse = {
   timesheet_backfill?: Record<string, unknown>
   validation?: ProjectSpaValidationPayload
   error?: string
+}
+
+type SmartProcessCreateResponse = {
+  status: string
+  config: AppConfigurationPayload
+  created_fields_count?: number
+  field_warnings?: string[]
+}
+
+type MappedFieldCreateResponse = {
+  status: string
+  config: AppConfigurationPayload
+  field_key: string
+  field_id: string
+  field_warnings?: string[]
 }
 
 export const useApiStore = defineStore(
@@ -113,7 +133,7 @@ export const useApiStore = defineStore(
 
     const hasItems = (value: unknown): value is Array<unknown> => Array.isArray(value) && value.length > 0
 
-    const hasProjectBoardMetaPayload = (value: ProjectBoardMetaPayload | null | undefined) => {
+    const hasProjectBoardMetaPayload = (value: ProjectBoardMetaPayload | null | undefined): value is ProjectBoardMetaPayload => {
       if (!value || typeof value !== 'object') {
         return false
       }
@@ -222,7 +242,7 @@ export const useApiStore = defineStore(
         }
       }
 
-      const response = await $api('/api/get-filter-employees', {
+      const response = await $api<{ employees?: FilterOption[] }>('/api/get-filter-employees', {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
@@ -240,7 +260,7 @@ export const useApiStore = defineStore(
 
     const getFilterProjects = async (forceRefresh = false): Promise<FilterOption[]> => {
       return await withBrowserCache('filter-projects', browserCacheTtl.filters, async () => {
-        const response = await $api('/api/get-filter-projects', {
+        const response = await $api<{ projects?: FilterOption[] }>('/api/get-filter-projects', {
           headers: {
             Authorization: `Bearer ${tokenJWT.value}`
           }
@@ -330,7 +350,7 @@ export const useApiStore = defineStore(
     }
 
     const syncTimesheets = async (): Promise<{ status: string; count: number }> => {
-      const result = await $api('/api/sync-timesheets', {
+      const result = await $api<{ status: string, count: number }>('/api/sync-timesheets', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
@@ -375,7 +395,7 @@ export const useApiStore = defineStore(
         clearCache(scope)
       }
 
-      const value = await $api('/api/project-board/meta', {
+      const value = await $api<ProjectBoardMetaPayload>('/api/project-board/meta', {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
@@ -396,7 +416,7 @@ export const useApiStore = defineStore(
         return null
       }
 
-      const response = await $api(`/api/project-board/card?project_id=${encodeURIComponent(normalizedProjectId)}`, {
+      const response = await $api<{ card?: ProjectBoardResponse['cards'][number] | null }>(`/api/project-board/card?project_id=${encodeURIComponent(normalizedProjectId)}`, {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
@@ -517,12 +537,18 @@ export const useApiStore = defineStore(
 
     const getCompaniesForProjectBinding = async (forceRefresh = false): Promise<FilterOption[]> => {
       const meta = await getProjectBoardMeta(forceRefresh)
-      return meta.directories?.companies || meta.companies || []
+      const companies = meta.directories?.companies || meta.companies || []
+      return companies.map(company => ({
+        id: company.id,
+        name: String(company.name ?? ''),
+        inn: company.inn ?? null,
+        search_text: company.search_text ?? null,
+      }))
     }
 
     const getBitrixInternalLists = async (iblockTypeId: string = 'lists', forceRefresh = false): Promise<any[]> => {
       return await withBrowserCache(`bitrix-lists:${iblockTypeId}`, browserCacheTtl.lists, async () => {
-        const response = await $api(`/api/bitrix/internal-lists?iblockTypeId=${encodeURIComponent(iblockTypeId)}`, {
+        const response = await $api<{ lists?: any[] }>(`/api/bitrix/internal-lists?iblockTypeId=${encodeURIComponent(iblockTypeId)}`, {
           headers: {
             Authorization: `Bearer ${tokenJWT.value}`
           }
@@ -595,7 +621,7 @@ export const useApiStore = defineStore(
     }
 
     const saveConfiguration = async (config: AppConfigurationPayload): Promise<SaveConfigurationResponse> => {
-      const result = await $api('/api/configuration/save', {
+      const result = await $api<SaveConfigurationResponse>('/api/configuration/save', {
         method: 'POST',
         headers: { Authorization: `Bearer ${tokenJWT.value}` },
         body: JSON.stringify({ config })
@@ -604,13 +630,13 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const getSmartProcesses = async (): Promise<{ types: any[] }> => {
+    const getSmartProcesses = async (): Promise<{ types: SmartProcessOption[] }> => {
       return await $api('/api/smart-processes', {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
       })
     }
 
-    const getSpFields = async (entityTypeId: number): Promise<{ fields: any[] }> => {
+    const getSpFields = async (entityTypeId: number): Promise<{ fields: SmartProcessFieldOption[] }> => {
       return await $api(`/api/smart-processes/fields?entityTypeId=${entityTypeId}`, {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
       })
@@ -622,50 +648,51 @@ export const useApiStore = defineStore(
       })
     }
 
-    const createSmartProcess = async (): Promise<{ status: string; config: any }> => {
-      console.log('📡 [API] createSmartProcess: calling POST /api/smart-processes/create')
-      console.log('📡 [API] Token present:', !!tokenJWT.value, 'Token length:', tokenJWT.value?.length)
-      try {
-        const result = await $api('/api/smart-processes/create', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${tokenJWT.value}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({})
-        })
-        console.log('📡 [API] createSmartProcess result:', result)
-        return result as { status: string; config: any }
-      } catch (err: any) {
-        console.error('📡 [API] createSmartProcess FAILED:', err)
-        console.error('📡 [API] err.data:', err?.data)
-        console.error('📡 [API] err.status:', err?.status, err?.statusCode)
-        throw err
-      }
+    const createSmartProcess = async (): Promise<SmartProcessCreateResponse> => {
+      const result = await $api('/api/smart-processes/create', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
+      })
+      clearCache('app-configuration')
+      return result as SmartProcessCreateResponse
     }
 
-    const createFields = async (entityTypeId: number): Promise<{ status: string; config: any }> => {
-      console.log('📡 [API] createFields: calling POST /api/smart-processes/create-fields')
-      console.log('📡 [API] entityTypeId:', entityTypeId)
-      console.log('📡 [API] Token present:', !!tokenJWT.value, 'Token length:', tokenJWT.value?.length)
-      console.log('📡 [API] Request body:', JSON.stringify({ entityTypeId }))
-      try {
-        const result = await $api('/api/smart-processes/create-fields', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${tokenJWT.value}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ entityTypeId })
+    const createFields = async (entityTypeId: number): Promise<SmartProcessCreateResponse> => {
+      const result = await $api('/api/smart-processes/create-fields', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ entityTypeId })
+      })
+      clearCache('app-configuration')
+      return result as SmartProcessCreateResponse
+    }
+
+    const createMappedField = async (
+      entityTypeId: number,
+      fieldKey: string,
+      mappingType: 'timesheet' | 'project'
+    ): Promise<MappedFieldCreateResponse> => {
+      const result = await $api('/api/smart-processes/create-field', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          entityTypeId,
+          fieldKey,
+          mappingType
         })
-        console.log('📡 [API] createFields result:', result)
-        return result as { status: string; config: any }
-      } catch (err: any) {
-        console.error('📡 [API] createFields FAILED:', err)
-        console.error('📡 [API] err.data:', err?.data)
-        console.error('📡 [API] err.status:', err?.status, err?.statusCode)
-        throw err
-      }
+      })
+      clearCache('app-configuration')
+      return result as MappedFieldCreateResponse
     }
 
     const getRequestLogs = async (page: number = 1, limit: number = 50): Promise<any> => {
@@ -728,7 +755,8 @@ export const useApiStore = defineStore(
       getRequestLogs,
       getSystemLogs,
       createSmartProcess,
-      createFields
+      createFields,
+      createMappedField
     }
   }
 )

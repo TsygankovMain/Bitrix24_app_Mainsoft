@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Риск-радар портфеля</title>
+  <link rel="stylesheet" href="./assets/report-mockups.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="eyebrow">Report / Risk Radar</div>
+        <h1>Риск-радар портфеля</h1>
+        <p>Ежедневный экран эскалации. Он собирает в один контур риски по дедлайну, списаниям, перерасходу и качеству проектных данных, чтобы руководитель видел не просто проблемные проекты, а причину, по которой проект опасен.</p>
+      </div>
+      <nav class="nav-links">
+        <a class="nav-link" href="./index.html">Обзор</a>
+        <a class="nav-link" href="./01-budget-burn-forecast.html">Освоение объема</a>
+        <a class="nav-link active" href="./02-portfolio-risk-radar.html">Риск-радар</a>
+        <a class="nav-link" href="./03-curator-load-and-risk.html">Портфель кураторов</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow">Управленческий вопрос</div>
+          <h2 style="margin:12px 0 8px;font-size:30px;line-height:1.1;">Какие проекты требуют вмешательства сегодня и почему именно они попали в красную зону?</h2>
+          <p style="margin:0;color:var(--muted);max-width:920px;">Отчет не конкурирует с burn-отчетом. Он нужен для оперативного штаба: видит тишину по списаниям, дедлайны, отсутствие ставки или объема, пустые проектные поля и некорректные переходы по стадиям.</p>
+        </div>
+        <div class="hero-actions">
+          <div class="tabs" id="level-tabs">
+            <button class="tab active" data-level="all">Все риски</button>
+            <button class="tab" data-level="Высокий">Высокий</button>
+            <button class="tab" data-level="Средний">Средний</button>
+            <button class="tab" data-level="Низкий">Низкий</button>
+          </div>
+          <button class="button secondary" id="show-stale">Только без списаний 30+ дней</button>
+          <button class="button ghost" id="reset-filters">Сбросить фильтры</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="metrics" id="metrics"></section>
+
+    <div class="layout" style="margin-top:18px;">
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Матрица риска</h2>
+            <p>Клик по карточке открывает правую панель с разбором причин и рекомендуемым вмешательством.</p>
+          </div>
+          <div class="legend">
+            <span><i class="dot danger"></i> Нужна эскалация сегодня</span>
+            <span><i class="dot warning"></i> Требуется внимание на неделе</span>
+            <span><i class="dot success"></i> Наблюдение без немедленных действий</span>
+          </div>
+        </div>
+
+        <div class="filter-row">
+          <div class="field">
+            <label for="search">Поиск проекта</label>
+            <input id="search" type="text" placeholder="Название, компания, куратор" />
+          </div>
+          <div class="field">
+            <label for="curator">Куратор</label>
+            <select id="curator"></select>
+          </div>
+          <div class="field">
+            <label for="theme">Тема риска</label>
+            <select id="theme">
+              <option value="all">Все темы</option>
+              <option value="inactivity">Нет списаний</option>
+              <option value="deadline">Дедлайн</option>
+              <option value="budget">Бюджет / ставка</option>
+              <option value="governance">Заполнение полей</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="stage">Стадия</label>
+            <select id="stage">
+              <option value="all">Все стадии</option>
+              <option value="Новый">Новый</option>
+              <option value="В просчете">В просчете</option>
+              <option value="В работе">В работе</option>
+              <option value="Нет списаний 1 месяц">Нет списаний 1 месяц</option>
+              <option value="Нет списаний 3 месяца">Нет списаний 3 месяца</option>
+              <option value="Успех">Успех</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="matrix" id="risk-matrix"></div>
+      </section>
+
+      <aside class="side-card" id="side-panel"></aside>
+    </div>
+
+    <p class="footer-note">Рекомендуемая роль отчета: ежедневный или еженедельный штаб по портфелю. Он помогает быстро договориться, что нужно эскалировать, а что достаточно поставить на контроль.</p>
+  </div>
+
+  <script src="./assets/report-mockups.js"></script>
+  <script>
+    const data = window.ProjectReportMockData;
+    const state = {
+      level: 'all',
+      search: '',
+      curator: 'all',
+      theme: 'all',
+      stage: 'all',
+      staleOnly: false,
+      selectedId: null,
+    };
+
+    const elements = {
+      metrics: document.getElementById('metrics'),
+      matrix: document.getElementById('risk-matrix'),
+      side: document.getElementById('side-panel'),
+      search: document.getElementById('search'),
+      curator: document.getElementById('curator'),
+      theme: document.getElementById('theme'),
+      stage: document.getElementById('stage'),
+      levelTabs: Array.from(document.querySelectorAll('#level-tabs .tab')),
+      stale: document.getElementById('show-stale'),
+      reset: document.getElementById('reset-filters'),
+    };
+
+    function projectMatchesTheme(project, risk) {
+      if (state.theme === 'all') return true;
+      if (state.theme === 'inactivity') return project.lastWriteoffDays >= 30 || /списаний/.test(risk.reasons.join(' '));
+      if (state.theme === 'deadline') return risk.deadlineDelta !== null && risk.deadlineDelta <= 14;
+      if (state.theme === 'budget') return (risk.burnRatio !== null && risk.burnRatio >= 0.85) || !project.budgetHours || Number(project.hourlyRate || 0) <= 0;
+      if (state.theme === 'governance') return !project.companyBound || !project.curator || !project.ourLegalEntity;
+      return true;
+    }
+
+    function getProjects() {
+      return data.projects
+        .map((project) => ({
+          ...project,
+          risk: data.getRiskBreakdown(project),
+        }))
+        .filter((project) => {
+          const haystack = [project.name, project.company, project.curator].join(' ').toLowerCase();
+          if (state.search && !haystack.includes(state.search.toLowerCase())) return false;
+          if (state.level !== 'all' && project.risk.level !== state.level) return false;
+          if (state.curator !== 'all' && (project.curator || 'Без куратора') !== state.curator) return false;
+          if (state.stage !== 'all' && project.stage !== state.stage) return false;
+          if (state.staleOnly && project.lastWriteoffDays < 30) return false;
+          if (!projectMatchesTheme(project, project.risk)) return false;
+          return true;
+        })
+        .sort((a, b) => b.risk.score - a.risk.score || b.lastWriteoffDays - a.lastWriteoffDays);
+    }
+
+    function renderMetrics(projects) {
+      const high = projects.filter((project) => project.risk.level === 'Высокий');
+      const stale = projects.filter((project) => project.lastWriteoffDays >= 30);
+      const overdue = projects.filter((project) => project.risk.deadlineDelta !== null && project.risk.deadlineDelta < 0 && !['Успех', 'Провал'].includes(project.stage));
+      const badData = projects.filter((project) => !project.companyBound || !project.curator || !project.ourLegalEntity || (!project.support && !project.budgetHours) || Number(project.hourlyRate || 0) <= 0);
+
+      elements.metrics.innerHTML = `
+        <article class="metric danger">
+          <div class="label">Высокий риск</div>
+          <div class="value">${high.length}</div>
+          <div class="sub">Проекты, где уже нужен ручной менеджмент</div>
+        </article>
+        <article class="metric warning">
+          <div class="label">Тишина по списаниям</div>
+          <div class="value">${stale.length}</div>
+          <div class="sub">30+ дней без движения по времени</div>
+        </article>
+        <article class="metric danger">
+          <div class="label">Просрочен дедлайн</div>
+          <div class="value">${overdue.length}</div>
+          <div class="sub">Проекты, где срок уже наступил</div>
+        </article>
+        <article class="metric info">
+          <div class="label">Плохая полнота данных</div>
+          <div class="value">${badData.length}</div>
+          <div class="sub">Нет ключевых полей для управленческой прозрачности</div>
+        </article>
+      `;
+    }
+
+    function cardHtml(project) {
+      const riskClass = data.getRiskClass(project.risk.level);
+      const selected = project.id === state.selectedId;
+      const deadlineText = project.risk.deadlineDelta === null
+        ? 'Дедлайн не задан'
+        : project.risk.deadlineDelta < 0
+          ? `Просрочка ${Math.abs(project.risk.deadlineDelta)} дн.`
+          : `До дедлайна ${project.risk.deadlineDelta} дн.`;
+      const reasonText = project.risk.reasons.length ? project.risk.reasons.slice(0, 2).join(' · ') : 'Явных триггеров риска нет';
+
+      return `
+        <button class="mini-card" data-id="${project.id}" style="text-align:left;cursor:pointer;border-color:${selected ? '#2f6fed' : 'var(--line)'};box-shadow:${selected ? '0 0 0 2px rgba(47,111,237,0.15)' : 'none'};">
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+            <div class="value-stack">
+              <strong>${project.name}</strong>
+              <span>${project.company || 'Компания не привязана'}</span>
+            </div>
+            <span class="pill ${riskClass}">${project.risk.level}</span>
+          </div>
+          <div style="margin-top:10px;display:grid;gap:6px;">
+            <div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted);">
+              <span>Risk score</span>
+              <strong style="color:var(--text);">${project.risk.score}</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted);">
+              <span>Списания</span>
+              <strong style="color:var(--text);">${project.lastWriteoffDays} дн. назад</strong>
+            </div>
+            <div style="display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--muted);">
+              <span>Дедлайн</span>
+              <strong style="color:var(--text);">${deadlineText}</strong>
+            </div>
+            <span style="font-size:13px;color:var(--muted);">${reasonText}</span>
+          </div>
+        </button>
+      `;
+    }
+
+    function renderMatrix(projects) {
+      const groups = {
+        'Высокий': projects.filter((project) => project.risk.level === 'Высокий'),
+        'Средний': projects.filter((project) => project.risk.level === 'Средний'),
+        'Низкий': projects.filter((project) => project.risk.level === 'Низкий'),
+      };
+
+      elements.matrix.innerHTML = Object.entries(groups).map(([level, list]) => {
+        const riskClass = data.getRiskClass(level);
+        return `
+          <div class="matrix-card" style="min-height:520px;display:grid;grid-template-rows:auto 1fr;gap:12px;">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
+              <h4 style="margin:0;">${level} риск</h4>
+              <span class="pill ${riskClass}">${list.length}</span>
+            </div>
+            <div class="stack-list">
+              ${list.length ? list.map(cardHtml).join('') : '<div class="state-empty" style="padding:18px;">В этой зоне сейчас пусто.</div>'}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      elements.matrix.querySelectorAll('[data-id]').forEach((node) => {
+        node.addEventListener('click', () => {
+          state.selectedId = node.dataset.id;
+          render();
+        });
+      });
+    }
+
+    function getActions(project) {
+      const actions = [];
+      if (project.lastWriteoffDays >= 30) actions.push('Поднять статус на ревью и запросить у куратора причину отсутствия списаний.');
+      if (project.risk.deadlineDelta !== null && project.risk.deadlineDelta < 0) actions.push('Зафиксировать новый план завершения или перевести проект в терминальную стадию.');
+      if (project.risk.burnRatio !== null && project.risk.burnRatio > 1.05) actions.push('Пересогласовать объем или остановить дальнейшее списание без решения по бюджету.');
+      if (!project.companyBound || !project.curator || !project.ourLegalEntity || (!project.support && !project.budgetHours) || Number(project.hourlyRate || 0) <= 0) {
+        actions.push('Дозаполнить коммерческие поля проекта: компания, куратор, юрлицо, объем и ставка.');
+      }
+      if (project.stage === 'В просчете' && project.spentHours > 10) actions.push('Проверить, почему проект уже ест часы, но все еще находится в стадии просчета.');
+      if (!actions.length) actions.push('Оставить на наблюдении, но не эскалировать сейчас.');
+      return actions;
+    }
+
+    function renderSide(projects) {
+      const current = projects.find((project) => project.id === state.selectedId) || projects[0];
+      if (!current) {
+        elements.side.innerHTML = '<div class="side-section"><div class="state-empty">Нет проектов под текущие фильтры.</div></div>';
+        return;
+      }
+
+      state.selectedId = current.id;
+      const actions = getActions(current);
+      const missing = [
+        !current.companyBound ? 'Компания' : null,
+        !current.curator ? 'Куратор' : null,
+        !current.ourLegalEntity ? 'Юрлицо' : null,
+        !current.support && !current.budgetHours ? 'Объем часов' : null,
+        Number(current.hourlyRate || 0) <= 0 ? 'Ставка часа' : null,
+      ].filter(Boolean);
+
+      elements.side.innerHTML = `
+        <div class="side-section">
+          <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+            <div>
+              <h3>${current.name}</h3>
+              <p style="margin:6px 0 0;color:var(--muted);">${current.company || 'Компания не привязана'} · ${current.curator || 'Без куратора'}</p>
+            </div>
+            <span class="pill ${data.getRiskClass(current.risk.level)}">${current.risk.level}</span>
+          </div>
+          <div class="kv" style="margin-top:14px;">
+            <div class="kv-row"><span>Risk score</span><strong>${current.risk.score}</strong></div>
+            <div class="kv-row"><span>Стадия</span><strong>${current.stage}</strong></div>
+            <div class="kv-row"><span>Последнее списание</span><strong>${current.lastWriteoffDays} дн. назад</strong></div>
+            <div class="kv-row"><span>Дедлайн</span><strong>${data.formatDate(current.endDate)}</strong></div>
+          </div>
+        </div>
+
+        <div class="side-section">
+          <h3>Причины риска</h3>
+          <ul class="note-list">
+            ${(current.risk.reasons.length ? current.risk.reasons : ['Явных причин риска по модели не найдено']).map((reason) => `<li>${reason}</li>`).join('')}
+          </ul>
+        </div>
+
+        <div class="side-section">
+          <h3>Коммерческая полнота</h3>
+          <div class="kv">
+            <div class="kv-row"><span>Ставка</span><strong>${data.formatMoneyRate(current.hourlyRate)}</strong></div>
+            <div class="kv-row"><span>Объем</span><strong>${current.support ? 'Support' : data.formatHours(current.budgetHours)}</strong></div>
+            <div class="kv-row"><span>Юрлицо</span><strong>${current.ourLegalEntity || '—'}</strong></div>
+          </div>
+          <p style="margin:12px 0 0;color:var(--muted);font-size:13px;">${missing.length ? `Не заполнено: ${missing.join(', ')}.` : 'Ключевые коммерческие поля заполнены.'}</p>
+        </div>
+
+        <div class="side-section">
+          <h3>Рекомендованные действия</h3>
+          <ol class="note-list" style="padding-left:18px;">
+            ${actions.map((action) => `<li>${action}</li>`).join('')}
+          </ol>
+        </div>
+      `;
+    }
+
+    function render() {
+      const projects = getProjects();
+      renderMetrics(projects);
+      renderMatrix(projects);
+      renderSide(projects);
+    }
+
+    function initFilters() {
+      const curators = Array.from(new Set(data.projects.map((project) => project.curator || 'Без куратора'))).sort();
+      elements.curator.innerHTML = ['<option value="all">Все кураторы</option>']
+        .concat(curators.map((curator) => `<option value="${curator}">${curator}</option>`))
+        .join('');
+
+      elements.search.addEventListener('input', (event) => {
+        state.search = event.target.value.trim();
+        render();
+      });
+      elements.curator.addEventListener('change', (event) => {
+        state.curator = event.target.value;
+        render();
+      });
+      elements.theme.addEventListener('change', (event) => {
+        state.theme = event.target.value;
+        render();
+      });
+      elements.stage.addEventListener('change', (event) => {
+        state.stage = event.target.value;
+        render();
+      });
+      elements.levelTabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          state.level = tab.dataset.level;
+          elements.levelTabs.forEach((item) => item.classList.toggle('active', item === tab));
+          render();
+        });
+      });
+      elements.stale.addEventListener('click', () => {
+        state.staleOnly = !state.staleOnly;
+        elements.stale.classList.toggle('primary', state.staleOnly);
+        elements.stale.classList.toggle('secondary', !state.staleOnly);
+        render();
+      });
+      elements.reset.addEventListener('click', () => {
+        state.level = 'all';
+        state.search = '';
+        state.curator = 'all';
+        state.theme = 'all';
+        state.stage = 'all';
+        state.staleOnly = false;
+        state.selectedId = null;
+        elements.search.value = '';
+        elements.curator.value = 'all';
+        elements.theme.value = 'all';
+        elements.stage.value = 'all';
+        elements.stale.classList.remove('primary');
+        elements.stale.classList.add('secondary');
+        elements.levelTabs.forEach((item) => item.classList.toggle('active', item.dataset.level === 'all'));
+        render();
+      });
+    }
+
+    initFilters();
+    render();
+  </script>
+</body>
+</html>

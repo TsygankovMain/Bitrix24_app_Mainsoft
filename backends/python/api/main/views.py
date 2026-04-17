@@ -78,11 +78,13 @@ __all__ = [
     "get_smart_processes",
     "get_sp_fields",
     "get_project_spa_validation",
+    "get_project_spa_stages",
     "run_project_spa_backfill",
     "get_request_logs",
     "get_system_logs",
     "create_smart_process",
     "create_fields",
+    "create_mapped_field",
     "export_raw_data",
 ]
 
@@ -162,8 +164,8 @@ def _build_project_filter_options(request: AuthorizedRequest):
 
 PROJECT_SPA_REQUIRED_MAPPING = {
     "title": "string",
-    "bitrix_group_id": "integer",
-    "manual_stage": "string",
+    "bitrix_group_id": "project_identifier",
+    "stage_id": "stage",
     "is_support": "boolean",
     "project_hours_budget": "double",
     "hourly_rate": "double",
@@ -183,6 +185,8 @@ PROJECT_SPA_TYPE_ALIASES = {
     "employee": {"employee", "user", "crm_status"},
     "crm_company": {"crm_company", "crm", "string"},
     "date": {"date", "datetime"},
+    "project_identifier": {"integer", "int", "string", "text", "char"},
+    "stage": {"string", "text", "char", "crm_status", "status"},
 }
 
 
@@ -250,6 +254,7 @@ def _build_project_spa_validation_payload(
     account,
     config: dict,
 ):
+    config = config_service.normalize_configuration_sync(config)
     try:
         entity_type_id = int(config.get("project_sp_entity_type_id") or 0)
     except (TypeError, ValueError):
@@ -1012,6 +1017,8 @@ def save_configuration(request: AuthorizedRequest):
         if not isinstance(config, dict):
             return JsonResponse({"error": "Некорректный формат конфигурации."}, status=400)
 
+        config = service.normalize_configuration_sync(config)
+
         project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
         try:
             should_validate_project_spa = int(config.get("project_sp_entity_type_id") or 0) > 0
@@ -1091,6 +1098,29 @@ def get_project_spa_validation(request: AuthorizedRequest):
 
 
 @xframe_options_exempt
+@require_GET
+@log_errors("get_project_spa_stages")
+@auth_required
+def get_project_spa_stages(request: AuthorizedRequest):
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    entity_type_id_raw = request.GET.get("entityTypeId") or config.get("project_sp_entity_type_id") or 0
+    try:
+        entity_type_id = int(entity_type_id_raw)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Некорректный entityTypeId"}, status=400)
+
+    if not entity_type_id:
+        return JsonResponse({"error": "Не выбран Смарт-процесс ПРОЕКТ"}, status=400)
+
+    try:
+        payload = config_service.get_project_spa_stages_sync(entity_type_id)
+        return JsonResponse({"status": "success", **payload})
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+@xframe_options_exempt
 @csrf_exempt
 @require_POST
 @log_errors("create_smart_process")
@@ -1099,8 +1129,8 @@ def create_smart_process(request: AuthorizedRequest):
     """Create a new Smart Process from settings page."""
     try:
         service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
-        config = service.create_smart_process_only()
-        return JsonResponse({"status": "success", "config": config})
+        result = service.create_smart_process_only()
+        return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
     except Exception as e:
@@ -1122,8 +1152,35 @@ def create_fields(request: AuthorizedRequest):
             return JsonResponse({"error": "Не указан ID смарт-процесса"}, status=400)
 
         service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
-        config = service.create_fields_only(int(sp_id))
-        return JsonResponse({"status": "success", "config": config})
+        result = service.create_fields_only(int(sp_id))
+        return JsonResponse({"status": "success", **result})
+    except InstallationError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("create_mapped_field")
+@auth_required
+def create_mapped_field(request: AuthorizedRequest):
+    import json as json_module
+    try:
+        body = json_module.loads(request.body)
+        sp_id = body.get('entityTypeId')
+        field_key = body.get('fieldKey')
+        mapping_type = body.get('mappingType') or 'timesheet'
+
+        if not sp_id:
+            return JsonResponse({"error": "Не указан ID смарт-процесса"}, status=400)
+        if not field_key:
+            return JsonResponse({"error": "Не указан ключ поля"}, status=400)
+
+        service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
+        result = service.create_single_field(int(sp_id), str(field_key), str(mapping_type))
+        return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
     except Exception as e:

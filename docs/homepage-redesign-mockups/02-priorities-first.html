@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Priorities First</title>
+  <link rel="stylesheet" href="./assets/homepage-mockups.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="eyebrow">Concept 02</div>
+        <h1>Priorities First</h1>
+        <p>Главная страница как список приоритетов и маршрутов. Пользователь начинает не с выбора отчета, а с ответа на вопрос: что нужно сделать сейчас.</p>
+      </div>
+      <nav class="nav-links">
+        <a class="nav-link" href="./index.html">Все концепты</a>
+        <a class="nav-link" href="./01-command-center.html">01</a>
+        <a class="nav-link active" href="./02-priorities-first.html">02</a>
+        <a class="nav-link" href="./03-portfolio-home.html">03</a>
+        <a class="nav-link" href="./04-role-cockpit.html">04</a>
+        <a class="nav-link" href="./05-workspace-launchpad.html">05</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="section-head">
+        <div>
+          <h2>Логика концепта</h2>
+          <p>Подходит, если хочешь превратить главную страницу в точку ежедневного действия, а не в навигационный каталог.</p>
+        </div>
+        <div class="hero-actions">
+          <div class="tabs" id="roleTabs">
+            <button class="tab active" data-role="head">Руководитель</button>
+            <button class="tab" data-role="pm">PM</button>
+            <button class="tab" data-role="ops">Операционный контур</button>
+          </div>
+          <label class="badge blue" style="cursor:pointer;">
+            <input type="checkbox" id="hideDoneToggle" style="margin-right:8px;" />
+            Скрыть отмеченное
+          </label>
+        </div>
+      </div>
+      <div class="metrics" id="priorityMetrics"></div>
+    </section>
+
+    <div class="grid-2">
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h3>Что важно сейчас</h3>
+            <p>Каждая карточка раскрывает конкретный маршрут действий, а не просто ведет в отчет.</p>
+          </div>
+        </div>
+        <div class="list" id="priorityList"></div>
+      </section>
+
+      <aside class="detail-card">
+        <div class="badges" id="priorityBadges"></div>
+        <div>
+          <h3 id="priorityTitle">Выбери приоритет</h3>
+          <p class="muted" id="priorityDesc">Справа показывается маршрут реализации: куда пойти, что посмотреть и какое решение принять.</p>
+        </div>
+        <div class="stack" id="priorityRoute"></div>
+        <div class="inline-actions">
+          <button class="button primary small" id="priorityOpenButton">Открыть маршрут</button>
+          <button class="button secondary small" id="priorityDoneButton">Отметить как обработанное</button>
+        </div>
+      </aside>
+    </div>
+
+    <div class="grid-2">
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h3>Быстрые маршруты</h3>
+            <p>Навигация остается, но вторична по отношению к приоритетам.</p>
+          </div>
+        </div>
+        <div class="tile-grid" id="routeTiles"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <div>
+            <h3>Лента изменений</h3>
+            <p>Показывает, что изменилось со вчера и почему экран предлагает именно такие приоритеты.</p>
+          </div>
+        </div>
+        <div class="feed" id="feedList"></div>
+      </section>
+    </div>
+
+    <div class="footer-note">
+      Сильная сторона: очень понятный ежедневный сценарий. Риск: если бизнес-правила приоритетов не будут качественными, экран быстро потеряет доверие.
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const roleData = {
+      head: {
+        metrics: [['Приоритетов', '5', 'На сегодня'], ['Критичных', '2', 'Требуют решения'], ['Открытых маршрутов', '4', 'На команду'], ['Вчера закрыто', '3', 'Управленческих кейса']],
+        feed: [
+          'Delta CRM автоматически перешел в "Нет списаний 1 месяц".',
+          'У ACME рост неучтенных часов до 27%.',
+          'Иванов обновил 14 записей задним числом.'
+        ],
+        priorities: [
+          {
+            id: 'h1',
+            title: 'Разобрать 2 проекта без списаний',
+            tone: 'amber',
+            owner: 'Portfolio',
+            route: ['Открыть Project Board', 'Снять фильтр по активным проектам', 'Проверить Delta CRM и Legacy portal', 'Решить: вернуть в работу или архивировать']
+          },
+          {
+            id: 'h2',
+            title: 'Проверить перерасход неучтенных часов по ACME',
+            tone: 'red',
+            owner: 'Финансы',
+            route: ['Открыть "Потери выручки"', 'Отфильтровать ACME', 'Проверить сотрудников и задачи', 'Принять решение по учету/неучету часов']
+          },
+          {
+            id: 'h3',
+            title: 'Уточнить просадку по дисциплине внесения',
+            tone: 'purple',
+            owner: 'Команда',
+            route: ['Открыть "Дисциплина времени"', 'Сравнить лидеров и аутсайдеров', 'Подготовить список сотрудников с lag > 3 дней']
+          }
+        ]
+      },
+      pm: {
+        metrics: [['Приоритетов', '4', 'На текущий день'], ['Критичных', '1', 'Сразу в работу'], ['Требуют проверки', '3', 'По проектам'], ['Вчера закрыто', '2', 'PM-маршрута']],
+        feed: [
+          'Beta аудит не имеет новых списаний 44 дня.',
+          'Omega migration ускорился по учтенным часам.',
+          'У PM-контуров 3 просроченных follow-up.'
+        ],
+        priorities: [
+          {
+            id: 'p1',
+            title: 'Вернуть Beta аудит в рабочий контур',
+            tone: 'amber',
+            owner: 'Портфель проектов',
+            route: ['Открыть карточку проекта', 'Проверить реальный статус работ', 'Если проект активен — вернуть в "В работе"', 'Запросить отражение часов']
+          },
+          {
+            id: 'p2',
+            title: 'Проверить Gamma support как поддержку без лимита',
+            tone: 'blue',
+            owner: 'Support',
+            route: ['Открыть Project Board', 'Убедиться, что включен флаг "Поддержка"', 'Сверить ставку часа и куратора', 'Проверить списания за неделю']
+          }
+        ]
+      },
+      ops: {
+        metrics: [['Приоритетов', '6', 'Операционные кейсы'], ['Критичных', '3', 'Нужно вмешательство'], ['Скрытых проблем', '4', 'По меткам и данным'], ['Вчера закрыто', '5', 'Сервисных вопросов']],
+        feed: [
+          'В 2 проектах company binding еще не заполнен.',
+          'У 1 проекта конфликт ручной и автостадии.',
+          'Синхронизация завершилась с 1 warning.'
+        ],
+        priorities: [
+          {
+            id: 'o1',
+            title: 'Дозаполнить company binding для 2 проектов',
+            tone: 'blue',
+            owner: 'Справочники',
+            route: ['Открыть Project Board', 'Найти проекты без компании', 'Заполнить компанию в drawer', 'Сохранить карточки']
+          },
+          {
+            id: 'o2',
+            title: 'Разобрать конфликт ручной и автостадии',
+            tone: 'red',
+            owner: 'Системная логика',
+            route: ['Открыть проект из сигнала', 'Проверить manual_stage', 'Сверить last writeoff', 'Запустить daily-check вручную']
+          }
+        ]
+      }
+    }
+
+    const routes = ['Project Board', 'Потери выручки', 'Дисциплина времени', 'Ежедневная нагрузка', 'Фокус и распыление', 'Настройки']
+    let currentRole = 'head'
+    let activeItem = roleData.head.priorities[0]
+    const doneMap = new Set()
+
+    const toast = document.getElementById('toast')
+
+    function showToast(message) {
+      toast.textContent = message
+      toast.classList.add('show')
+      clearTimeout(showToast.timer)
+      showToast.timer = setTimeout(() => toast.classList.remove('show'), 1900)
+    }
+
+    function renderMetrics() {
+      document.getElementById('priorityMetrics').innerHTML = roleData[currentRole].metrics.map(([label, value, caption]) => `
+        <article class="metric">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+          <div class="caption">${caption}</div>
+        </article>
+      `).join('')
+    }
+
+    function getVisiblePriorities() {
+      const hideDone = document.getElementById('hideDoneToggle').checked
+      return roleData[currentRole].priorities.filter((item) => !hideDone || !doneMap.has(item.id))
+    }
+
+    function renderPriorities() {
+      const priorities = getVisiblePriorities()
+      if (!priorities.length) {
+        document.getElementById('priorityList').innerHTML = '<div class="detail-card"><strong>Все приоритеты обработаны</strong><div class="muted">Попробуй выключить фильтр или сменить роль.</div></div>'
+        return
+      }
+
+      if (!priorities.find((item) => item.id === activeItem.id)) {
+        activeItem = priorities[0]
+      }
+
+      document.getElementById('priorityList').innerHTML = priorities.map((item) => `
+        <article class="list-item ${activeItem.id === item.id ? 'active' : ''}" data-id="${item.id}">
+          <div class="title-row">
+            <div>
+              <h4>${item.title}</h4>
+              <div class="caption">${item.owner}</div>
+            </div>
+            <span class="badge ${item.tone}">${doneMap.has(item.id) ? 'Готово' : 'В фокусе'}</span>
+          </div>
+        </article>
+      `).join('')
+
+      document.querySelectorAll('#priorityList [data-id]').forEach((node) => {
+        node.addEventListener('click', () => {
+          activeItem = roleData[currentRole].priorities.find((item) => item.id === node.dataset.id)
+          renderPriorities()
+          renderDetail()
+        })
+      })
+    }
+
+    function renderDetail() {
+      document.getElementById('priorityTitle').textContent = activeItem.title
+      document.getElementById('priorityDesc').textContent = 'Маршрут действий состоит из 3-4 конкретных шагов, а не из безадресного перехода в отчет.'
+      document.getElementById('priorityBadges').innerHTML = `
+        <span class="badge ${activeItem.tone}">${activeItem.owner}</span>
+        <span class="badge blue">${doneMap.has(activeItem.id) ? 'Обработано' : 'Требует решения'}</span>
+      `
+      document.getElementById('priorityRoute').innerHTML = activeItem.route.map((step, index) => `
+        <div class="feed-item">
+          <div class="feed-top">
+            <strong>Шаг ${index + 1}</strong>
+            <span class="badge sky">Маршрут</span>
+          </div>
+          <div class="caption">${step}</div>
+        </div>
+      `).join('')
+      document.getElementById('priorityDoneButton').textContent = doneMap.has(activeItem.id) ? 'Вернуть в работу' : 'Отметить как обработанное'
+    }
+
+    function renderRoutes() {
+      document.getElementById('routeTiles').innerHTML = routes.map((title) => `
+        <article class="tile" data-route="${title}">
+          <div class="icon blue">${title.slice(0, 2).toUpperCase()}</div>
+          <div>
+            <h4>${title}</h4>
+            <p class="caption">Быстрый переход из контекста главной страницы.</p>
+          </div>
+        </article>
+      `).join('')
+
+      document.querySelectorAll('[data-route]').forEach((node) => {
+        node.addEventListener('click', () => showToast(`Открыт маршрут: ${node.dataset.route}`))
+      })
+    }
+
+    function renderFeed() {
+      document.getElementById('feedList').innerHTML = roleData[currentRole].feed.map((item) => `
+        <article class="feed-item">
+          <div class="feed-top">
+            <strong>Изменение</strong>
+            <span class="badge purple">Сегодня</span>
+          </div>
+          <div class="caption">${item}</div>
+        </article>
+      `).join('')
+    }
+
+    function switchRole(role) {
+      currentRole = role
+      activeItem = roleData[currentRole].priorities[0]
+      document.querySelectorAll('#roleTabs .tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.role === role))
+      renderMetrics()
+      renderPriorities()
+      renderDetail()
+      renderFeed()
+      showToast(`Контур переключен: ${role}`)
+    }
+
+    renderMetrics()
+    renderPriorities()
+    renderDetail()
+    renderRoutes()
+    renderFeed()
+
+    document.querySelectorAll('#roleTabs .tab').forEach((button) => {
+      button.addEventListener('click', () => switchRole(button.dataset.role))
+    })
+
+    document.getElementById('hideDoneToggle').addEventListener('change', renderPriorities)
+
+    document.getElementById('priorityOpenButton').addEventListener('click', () => {
+      showToast(`Открыт маршрут по приоритету "${activeItem.title}"`)
+    })
+
+    document.getElementById('priorityDoneButton').addEventListener('click', () => {
+      if (doneMap.has(activeItem.id)) {
+        doneMap.delete(activeItem.id)
+      } else {
+        doneMap.add(activeItem.id)
+      }
+      renderPriorities()
+      renderDetail()
+      showToast('Статус приоритета обновлен')
+    })
+  </script>
+</body>
+</html>

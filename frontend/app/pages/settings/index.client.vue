@@ -51,6 +51,19 @@
             <B24Button class="mt-4" label="Панель отладки" color="default" @click="router.push('/settings/debug')" />
           </div>
         </div>
+
+        <div class="ms-panel">
+          <h3 class="text-base font-semibold text-slate-900">Служебные разделы</h3>
+          <p class="mt-2 text-sm text-slate-500">
+            Технические экраны вынесены из главной страницы и доступны отсюда.
+          </p>
+          <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <B24Button label="Сырые данные" color="default" @click="router.push('/reports/raw-data')" />
+            <B24Button label="Отладка отчетов" color="default" @click="router.push('/reports/debug')" />
+            <B24Button label="Отладка настроек" color="default" @click="router.push('/settings/debug')" />
+            <B24Button label="Опции слайдера" color="default" @click="router.push('/slider/app-options')" />
+          </div>
+        </div>
       </div>
     </div>
   </div>

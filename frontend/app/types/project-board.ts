@@ -44,8 +44,10 @@ export interface ProjectBoardCardRecord {
   project_end_date: string | null
   company_id: string | null
   company_name: string | null
+  company_inn?: string | null
   our_legal_entity_id: string | null
   our_legal_entity_name: string | null
+  our_legal_entity_inn?: string | null
   last_writeoff_at: string | null
   last_writeoff_days: number
   stage_source: 'manual' | 'auto' | string

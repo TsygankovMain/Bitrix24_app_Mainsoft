@@ -165,6 +165,44 @@ function assignMappedField(target: Record<string, any>, fieldCode: string | unde
     target[fieldCode] = value
 }
 
+function resolveInnFieldCode(kind: 'OUR_INN' | 'CLIENT_INN'): string {
+    if (!config.value) {
+        return ''
+    }
+
+    return String(
+        config.value.SPA_FIELDS?.[kind]
+        || config.value.FIELDS?.[kind]
+        || ''
+    ).trim()
+}
+
+function extractCreatedItemId(rawData: any): string | null {
+    const result = rawData?.result
+    if (!result) {
+        return null
+    }
+
+    if (typeof result === 'string' || typeof result === 'number') {
+        const normalized = String(result).trim()
+        return normalized || null
+    }
+
+    if (typeof result === 'object') {
+        const directId = String(result.id || result.itemId || '').trim()
+        if (directId) {
+            return directId
+        }
+
+        const nestedItemId = String(result.item?.id || result.item?.ID || '').trim()
+        if (nestedItemId) {
+            return nestedItemId
+        }
+    }
+
+    return null
+}
+
 function resolveTaskTitle(taskId: string | null | undefined, hierarchy?: { titlePath?: string[] | null } | null) {
     const node = findTaskNodeById(taskId, taskTree.value)
     if (node?.taskTitle) {
@@ -174,6 +212,44 @@ function resolveTaskTitle(taskId: string | null | undefined, hierarchy?: { title
     const hierarchyTitles = hierarchy?.titlePath || []
     if (hierarchyTitles.length > 0) {
         return String(hierarchyTitles[hierarchyTitles.length - 1] || '')
+    }
+
+    return ''
+}
+
+async function resolveTaskTitleSafe(taskId: string | null | undefined, hierarchy?: { titlePath?: string[] | null } | null) {
+    const fromTreeOrHierarchy = resolveTaskTitle(taskId, hierarchy)
+    if (fromTreeOrHierarchy.trim().length > 0) {
+        return fromTreeOrHierarchy.trim()
+    }
+
+    const normalizedTaskId = String(taskId || '').trim()
+    if (!normalizedTaskId || !$b24) {
+        return ''
+    }
+
+    try {
+        const taskRes = await ($b24 as any).callMethod('tasks.task.get', {
+            taskId: normalizedTaskId,
+            select: ['ID', 'TITLE'],
+        })
+        const taskData = taskRes?.getData?.()
+        const taskObj = taskData?.result?.task || taskData?.task || null
+        const fetchedTitle = String(
+            taskObj?.title || taskObj?.TITLE || taskObj?.Title || ''
+        ).trim()
+        if (fetchedTitle) {
+            console.info('[Embedded][TASK_NAME] Fallback title loaded from tasks.task.get', {
+                taskId: normalizedTaskId,
+                fetchedTitle,
+            })
+            return fetchedTitle
+        }
+    } catch (error) {
+        console.warn('[Embedded][TASK_NAME] Failed to load title fallback', {
+            taskId: normalizedTaskId,
+            error,
+        })
     }
 
     return ''
@@ -231,6 +307,16 @@ async function getProjectCardByProjectId(projectId?: string | null) {
         const card = await apiStore.getProjectBoardCard(normalizedProjectId)
         if (card) {
             projectCardCache.set(normalizedProjectId, card)
+            console.info('[Embedded][INN] Project card loaded', {
+                projectId: normalizedProjectId,
+                projectItemId: card.project_item_id,
+                companyId: card.company_id,
+                companyInn: card.company_inn,
+                legalEntityId: card.our_legal_entity_id,
+                legalEntityInn: card.our_legal_entity_inn,
+            })
+        } else {
+            console.warn('[Embedded][INN] Project card is empty', { projectId: normalizedProjectId })
         }
         return card
     } catch (error) {
@@ -255,7 +341,31 @@ async function enrichFieldsWithProjectContext(
         return
     }
 
+    const taskNameFieldCode = String(config.value.FIELDS?.TASK_NAME || '').trim()
+    if (!taskNameFieldCode) {
+        console.warn('[Embedded][TASK_NAME] Missing TASK_NAME field mapping', {
+            fields: config.value.FIELDS,
+        })
+    }
+
     if (hierarchy) {
+        const projectCard = hierarchy.projectId ? await getProjectCardByProjectId(hierarchy.projectId) : null
+        const projectOurInn = String(projectCard?.our_legal_entity_inn || '').trim()
+        const projectClientInn = String(projectCard?.company_inn || '').trim()
+        const resolvedOurInn = projectOurInn || String(hierarchy.ourInn || '').trim()
+        const resolvedClientInn = projectClientInn || String(hierarchy.clientInn || '').trim()
+        const ourInnFieldCode = resolveInnFieldCode('OUR_INN')
+        const clientInnFieldCode = resolveInnFieldCode('CLIENT_INN')
+
+        if (!ourInnFieldCode || !clientInnFieldCode) {
+            console.warn('[Embedded][INN] Missing INN field mapping', {
+                ourInnFieldCode,
+                clientInnFieldCode,
+                spaFields: config.value.SPA_FIELDS,
+                fields: config.value.FIELDS,
+            })
+        }
+
         assignMappedField(fields, config.value.FIELDS.TASK_HIERARCHY, hierarchy.idPath)
         assignMappedField(fields, config.value.FIELDS.TITLE_HIERARCHY, hierarchy.titlePath)
 
@@ -264,13 +374,12 @@ async function enrichFieldsWithProjectContext(
             assignMappedField(fields, config.value.FIELDS.PROJECT_TITLE, hierarchy.projectTitle)
         }
 
-        const resolvedTaskName = resolveTaskTitle(taskId, hierarchy)
-        assignMappedField(fields, config.value.FIELDS.TASK_NAME, resolvedTaskName)
-        assignMappedField(fields, config.value.SPA_FIELDS.OUR_INN, hierarchy.ourInn)
-        assignMappedField(fields, config.value.SPA_FIELDS.CLIENT_INN, hierarchy.clientInn)
+        const resolvedTaskName = await resolveTaskTitleSafe(taskId, hierarchy)
+        assignMappedField(fields, taskNameFieldCode || undefined, resolvedTaskName)
+        assignMappedField(fields, ourInnFieldCode || undefined, resolvedOurInn)
+        assignMappedField(fields, clientInnFieldCode || undefined, resolvedClientInn)
 
         if (hierarchy.projectId) {
-            const projectCard = await getProjectCardByProjectId(hierarchy.projectId)
             const projectItemId = String(projectCard?.project_item_id || '').trim()
             if (projectItemId) {
                 assignMappedField(fields, config.value.FIELDS.PROJECT_ITEM_ID, projectItemId)
@@ -280,11 +389,33 @@ async function enrichFieldsWithProjectContext(
                 fields.mycompanyId = /^\d+$/.test(myCompanyId) ? Number(myCompanyId) : myCompanyId
             }
         }
+
+        console.info('[Embedded][INN] Prepared fields from project context', {
+            taskId,
+            projectId: hierarchy.projectId || null,
+            projectItemId: String(projectCard?.project_item_id || '').trim(),
+            taskNameFieldCode,
+            resolvedTaskName,
+            payloadTaskName: taskNameFieldCode ? fields[taskNameFieldCode] : undefined,
+            ourInnFieldCode,
+            clientInnFieldCode,
+            resolvedOurInn,
+            resolvedClientInn,
+            payloadOurInn: ourInnFieldCode ? fields[ourInnFieldCode] : undefined,
+            payloadClientInn: clientInnFieldCode ? fields[clientInnFieldCode] : undefined,
+            mycompanyId: fields.mycompanyId,
+        })
         return
     }
 
-    const resolvedTaskName = resolveTaskTitle(taskId, hierarchy)
-    assignMappedField(fields, config.value.FIELDS.TASK_NAME, resolvedTaskName)
+    const resolvedTaskName = await resolveTaskTitleSafe(taskId, hierarchy)
+    assignMappedField(fields, taskNameFieldCode || undefined, resolvedTaskName)
+    console.info('[Embedded][TASK_NAME] Prepared fields without hierarchy', {
+        taskId: String(taskId || '').trim(),
+        taskNameFieldCode,
+        resolvedTaskName,
+        payloadTaskName: taskNameFieldCode ? fields[taskNameFieldCode] : undefined,
+    })
 }
 
 // --- ACTIONS ---
@@ -499,6 +630,20 @@ async function saveCurrentItem() {
         if (editingItem.value.id) {
             // Update existing
             console.log('💾 [Embedded] Updating item fields:', fields)
+            console.info('[Embedded][INN] Save payload summary', {
+                mode: 'update',
+                itemId: editingItem.value.id,
+                taskId: taskIdToSave,
+                taskNameFieldCode: String(config.value.FIELDS?.TASK_NAME || '').trim(),
+                payloadTaskName: fields[String(config.value.FIELDS?.TASK_NAME || '').trim()],
+                ourInnFieldCode: resolveInnFieldCode('OUR_INN'),
+                clientInnFieldCode: resolveInnFieldCode('CLIENT_INN'),
+                payloadOurInn: fields[resolveInnFieldCode('OUR_INN')],
+                payloadClientInn: fields[resolveInnFieldCode('CLIENT_INN')],
+                payloadMycompanyId: fields.mycompanyId,
+                projectItemFieldCode: config.value.FIELDS.PROJECT_ITEM_ID,
+                payloadProjectItemId: fields[config.value.FIELDS.PROJECT_ITEM_ID],
+            })
             await ($b24 as any).callMethod('crm.item.update', {
                 entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
                 id: editingItem.value.id,
@@ -507,10 +652,55 @@ async function saveCurrentItem() {
         } else {
             // Create new
             console.log('💾 [Embedded] Creating new item fields:', fields)
-            await ($b24 as any).callMethod('crm.item.add', {
+            console.info('[Embedded][INN] Save payload summary', {
+                mode: 'create',
+                taskId: taskIdToSave,
+                taskNameFieldCode: String(config.value.FIELDS?.TASK_NAME || '').trim(),
+                payloadTaskName: fields[String(config.value.FIELDS?.TASK_NAME || '').trim()],
+                ourInnFieldCode: resolveInnFieldCode('OUR_INN'),
+                clientInnFieldCode: resolveInnFieldCode('CLIENT_INN'),
+                payloadOurInn: fields[resolveInnFieldCode('OUR_INN')],
+                payloadClientInn: fields[resolveInnFieldCode('CLIENT_INN')],
+                payloadMycompanyId: fields.mycompanyId,
+                projectItemFieldCode: config.value.FIELDS.PROJECT_ITEM_ID,
+                payloadProjectItemId: fields[config.value.FIELDS.PROJECT_ITEM_ID],
+            })
+            const createRes = await ($b24 as any).callMethod('crm.item.add', {
                 entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
                 fields: fields
             })
+            const createdItemId = extractCreatedItemId(createRes?.getData?.())
+            console.info('[Embedded][INN] Create result', {
+                createdItemId,
+                rawResult: createRes?.getData?.()?.result,
+            })
+
+            const ourInnFieldCode = resolveInnFieldCode('OUR_INN')
+            const clientInnFieldCode = resolveInnFieldCode('CLIENT_INN')
+            if (createdItemId && (ourInnFieldCode || clientInnFieldCode)) {
+                try {
+                    const verifyRes = await ($b24 as any).callMethod('crm.item.get', {
+                        entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
+                        id: createdItemId,
+                    })
+                    const verifyItem = verifyRes?.getData?.()?.result?.item || verifyRes?.getData?.()?.item || {}
+                    console.info('[Embedded][INN] Verify saved item', {
+                        createdItemId,
+                        taskNameFieldCode: String(config.value.FIELDS?.TASK_NAME || '').trim(),
+                        savedTaskName: verifyItem?.[String(config.value.FIELDS?.TASK_NAME || '').trim()],
+                        ourInnFieldCode,
+                        clientInnFieldCode,
+                        savedOurInn: ourInnFieldCode ? verifyItem?.[ourInnFieldCode] : undefined,
+                        savedClientInn: clientInnFieldCode ? verifyItem?.[clientInnFieldCode] : undefined,
+                        savedMycompanyId: verifyItem?.mycompanyId,
+                    })
+                } catch (verifyError) {
+                    console.warn('[Embedded][INN] Failed to verify created item', {
+                        createdItemId,
+                        error: verifyError,
+                    })
+                }
+            }
         }
         
         await reloadWorkspace()
@@ -572,6 +762,16 @@ async function splitItem() {
         await ($b24 as any).callMethod('crm.item.add', {
             entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
             fields: splitFields
+        })
+        console.info('[Embedded][INN] Split create payload summary', {
+            splitTaskId,
+            ourInnFieldCode: resolveInnFieldCode('OUR_INN'),
+            clientInnFieldCode: resolveInnFieldCode('CLIENT_INN'),
+            payloadOurInn: splitFields[resolveInnFieldCode('OUR_INN')],
+            payloadClientInn: splitFields[resolveInnFieldCode('CLIENT_INN')],
+            payloadMycompanyId: splitFields.mycompanyId,
+            projectItemFieldCode: config.value.FIELDS.PROJECT_ITEM_ID,
+            payloadProjectItemId: splitFields[config.value.FIELDS.PROJECT_ITEM_ID],
         })
 
         await reloadWorkspace()

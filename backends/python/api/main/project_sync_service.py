@@ -37,6 +37,7 @@ class ProjectSyncService:
         skipped_conflict_linking = 0
         schema_ready = ensure_project_card_schema()
         by_project_item_id, by_project_id, by_project_title = self.card_service.collect_writeoff_maps()
+        stage_lookup = self.card_service.get_project_stage_lookup()
         created = 0
         updated = 0
         synced_total = 0
@@ -63,6 +64,7 @@ class ProjectSyncService:
                         by_project_item_id,
                         by_project_id,
                         by_project_title,
+                        stage_lookup,
                     )
                 else:
                     warning = (
@@ -220,12 +222,13 @@ class ProjectSyncService:
         by_project_item_id: Dict[str, datetime],
         by_project_id: Dict[str, datetime],
         by_project_title: Dict[str, datetime],
+        stage_lookup: Dict[str, Dict[str, Any]],
     ) -> Tuple[int, int, int, int]:
         if not ensure_project_card_schema():
             return 0, 0, 0, 0
 
         normalized_items = [
-            self.normalize_project_item(project_item, mapping, by_project_item_id, by_project_id, by_project_title)
+            self.normalize_project_item(project_item, mapping, by_project_item_id, by_project_id, by_project_title, stage_lookup)
             for project_item in project_items
         ]
 
@@ -394,6 +397,7 @@ class ProjectSyncService:
         by_project_item_id: Dict[str, datetime],
         by_project_id: Dict[str, datetime],
         by_project_title: Dict[str, datetime],
+        stage_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         project_item_id = self._clean_str(item.get("id") or item.get("ID"))
         group_value = self._get_mapped_value(item, mapping, "bitrix_group_id", "UF_CRM_BITRIX_GROUP_ID", "ufCrmBitrixGroupId")
@@ -415,7 +419,18 @@ class ProjectSyncService:
         )
         manual_stage = self._extract_scalar(self._get_mapped_value(item, mapping, "manual_stage", "UF_CRM_STAGE_MANUAL", "ufCrmStageManual"))
         effective_stage = self._extract_scalar(
-            self._get_mapped_value(item, mapping, "effective_stage", "UF_CRM_EFFECTIVE_STAGE", "ufCrmEffectiveStage", "stageId", "STAGE_ID")
+            self._get_mapped_value(
+                item,
+                mapping,
+                "stage_id",
+                "stage",
+                "effective_stage",
+                "UF_CRM_STAGE_ID",
+                "UF_CRM_EFFECTIVE_STAGE",
+                "ufCrmEffectiveStage",
+                "stageId",
+                "STAGE_ID",
+            )
         )
         is_archived = ProjectCardService._to_bool(
             self._get_mapped_value(item, mapping, "is_archived", "UF_CRM_IS_ARCHIVED", "ufCrmIsArchived"),
@@ -446,9 +461,16 @@ class ProjectSyncService:
             last_writeoff_at = by_project_title.get(project_name)
         last_writeoff_days = (timezone.localdate() - last_writeoff_at.date()).days if last_writeoff_at else 0
 
-        normalized_manual_stage = manual_stage or (PROJECT_STAGE_IN_WORK if last_writeoff_at else PROJECT_STAGE_NEW)
-        normalized_effective_stage = effective_stage or normalized_manual_stage
+        normalized_manual_stage = self.card_service.resolve_project_stage_title(manual_stage, stage_lookup) if manual_stage else None
+        normalized_effective_stage = self.card_service.resolve_project_stage_title(effective_stage, stage_lookup) if effective_stage else None
+        if normalized_manual_stage is None:
+            normalized_manual_stage = normalized_effective_stage or (PROJECT_STAGE_IN_WORK if last_writeoff_at else PROJECT_STAGE_NEW)
+        if normalized_effective_stage is None:
+            normalized_effective_stage = normalized_manual_stage
         stage_source = "auto" if normalized_effective_stage != normalized_manual_stage else "manual"
+
+        company_id, company_name = self.card_service._resolve_company_reference(company_id, company_name)
+        legal_entity_id, legal_entity_name = self.card_service._resolve_legal_entity_reference(legal_entity_id, legal_entity_name)
 
         return {
             "project_item_id": project_item_id,

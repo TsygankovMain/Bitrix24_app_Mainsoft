@@ -84,19 +84,13 @@ class ProjectCardService:
             return self.get_fallback_board_data()
 
         self.refresh_writeoff_stats()
+        config = self._load_config()
+        stage_options = self.get_project_stage_options(config)
         cards = list(get_project_card_queryset(self.account).order_by("is_archived", "project_name"))
         active_cards = [card for card in cards if not card.is_archived]
 
         payload = {
-            "stages": [
-                {
-                    "id": stage,
-                    "title": stage,
-                    "kind": "auto" if stage in PROJECT_AUTO_STAGES else "manual",
-                    "can_drop": stage in PROJECT_MANUAL_STAGES,
-                }
-                for stage in PROJECT_STAGE_ORDER
-            ],
+            "stages": stage_options,
             "cards": [self.serialize_card(card) for card in cards],
             "summary": {
                 "total_count": len(cards),
@@ -140,8 +134,10 @@ class ProjectCardService:
                     "project_end_date": None,
                     "company_id": None,
                     "company_name": None,
+                    "company_inn": None,
                     "our_legal_entity_id": None,
                     "our_legal_entity_name": None,
+                    "our_legal_entity_inn": None,
                     "last_writeoff_at": last_writeoff_at.isoformat() if last_writeoff_at else None,
                     "last_writeoff_days": last_writeoff_days,
                     "stage_source": "manual",
@@ -151,15 +147,7 @@ class ProjectCardService:
             )
 
         payload = {
-            "stages": [
-                {
-                    "id": stage,
-                    "title": stage,
-                    "kind": "auto" if stage in PROJECT_AUTO_STAGES else "manual",
-                    "can_drop": stage in PROJECT_MANUAL_STAGES,
-                }
-                for stage in PROJECT_STAGE_ORDER
-            ],
+            "stages": self._build_legacy_stage_options(),
             "cards": sorted(fallback_cards, key=lambda card: card["project_name"]),
             "summary": {
                 "total_count": len(fallback_cards),
@@ -278,9 +266,8 @@ class ProjectCardService:
 
         if next_curator_user_id and not next_curator_name:
             next_curator_name = BitrixDataService(self.client, {}, self.account).fetch_users([next_curator_user_id]).get(next_curator_user_id)
-        if next_legal_entity_id and not next_legal_entity_name:
-            selected = next((item for item in self.get_legal_entities() if str(item["id"]) == str(next_legal_entity_id)), None)
-            next_legal_entity_name = selected["name"] if selected else card.our_legal_entity_name
+        next_company_id, next_company_name = self._resolve_company_reference(next_company_id, next_company_name)
+        next_legal_entity_id, next_legal_entity_name = self._resolve_legal_entity_reference(next_legal_entity_id, next_legal_entity_name)
 
         bitrix_payload: Dict[str, Any] = {"GROUP_ID": int(card.project_id)}
         if next_project_name != card.project_name:
@@ -321,7 +308,11 @@ class ProjectCardService:
         if not ensure_project_card_schema():
             raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
         if stage not in PROJECT_MANUAL_STAGES:
-            raise ValueError("Недопустимая стадия для ручного перевода")
+            stage_lookup = self.get_project_stage_lookup()
+            resolved_stage = self.resolve_project_stage_title(stage, stage_lookup)
+            if not resolved_stage or resolved_stage in PROJECT_AUTO_STAGES or not self._is_supported_stage(resolved_stage, stage_lookup):
+                raise ValueError("Недопустимая стадия для ручного перевода")
+            stage = resolved_stage
 
         card = self._get_card(project_id)
         card.stage = stage
@@ -439,13 +430,42 @@ class ProjectCardService:
         )
 
     def serialize_card(self, card: ProjectCard) -> Dict[str, Any]:
+        stage_lookup = self.get_project_stage_lookup()
+        company_id, company_name, company_inn = self._resolve_reference_details(
+            card.company_id,
+            card.company_name,
+            self.get_companies(),
+        )
+        legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details(
+            card.our_legal_entity_id,
+            card.our_legal_entity_name,
+            self.get_legal_entities(),
+        )
+
+        if company_id and not company_inn:
+            logger.warning(
+                "[ProjectBoard][INN] Missing client INN for domain=%s project_id=%s company_id=%s company_name=%s",
+                self.account.domain_url,
+                card.project_id,
+                company_id,
+                company_name,
+            )
+        if legal_entity_id and not legal_entity_inn:
+            logger.warning(
+                "[ProjectBoard][INN] Missing legal entity INN for domain=%s project_id=%s legal_entity_id=%s legal_entity_name=%s",
+                self.account.domain_url,
+                card.project_id,
+                legal_entity_id,
+                legal_entity_name,
+            )
+
         return {
             "id": str(card.id),
             "project_item_id": card.project_item_id,
             "project_id": card.project_id,
             "project_name": card.project_name,
-            "stage": card.stage,
-            "manual_stage": card.manual_stage,
+            "stage": self.resolve_project_stage_title(card.stage, stage_lookup),
+            "manual_stage": self.resolve_project_stage_title(card.manual_stage, stage_lookup) if card.manual_stage else None,
             "is_archived": card.is_archived,
             "archived_at": card.archived_at.isoformat() if card.archived_at else None,
             "project_hours_budget": card.project_hours_budget,
@@ -455,16 +475,46 @@ class ProjectCardService:
             "curator_name": card.curator_name,
             "project_start_date": card.project_start_date.isoformat() if card.project_start_date else None,
             "project_end_date": card.project_end_date.isoformat() if card.project_end_date else None,
-            "company_id": card.company_id,
-            "company_name": card.company_name,
-            "our_legal_entity_id": card.our_legal_entity_id,
-            "our_legal_entity_name": card.our_legal_entity_name,
+            "company_id": company_id,
+            "company_name": company_name,
+            "company_inn": company_inn,
+            "our_legal_entity_id": legal_entity_id,
+            "our_legal_entity_name": legal_entity_name,
+            "our_legal_entity_inn": legal_entity_inn,
             "last_writeoff_at": card.last_writeoff_at.isoformat() if card.last_writeoff_at else None,
             "last_writeoff_days": card.last_writeoff_days,
             "stage_source": card.stage_source,
             "created_at": card.created_at.isoformat() if card.created_at else None,
             "updated_at": card.updated_at.isoformat() if card.updated_at else None,
         }
+
+    def _resolve_reference_details(
+        self,
+        reference_id: Any,
+        reference_name: Any = None,
+        options: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        resolved_id = self._clean_str(reference_id)
+        resolved_name = self._clean_str(reference_name)
+        resolved_inn: Optional[str] = None
+
+        if not resolved_id:
+            return resolved_id, resolved_name, resolved_inn
+
+        lookup_name = None
+        if options:
+            for option in options:
+                option_id = self._clean_str(option.get("id"))
+                if option_id != resolved_id:
+                    continue
+                lookup_name = self._clean_str(option.get("name"))
+                resolved_inn = self._clean_str(option.get("inn"))
+                break
+
+        if not resolved_name or resolved_name == resolved_id:
+            resolved_name = lookup_name or resolved_name or resolved_id
+
+        return resolved_id, resolved_name, resolved_inn
 
     def _load_config(self) -> Dict[str, Any]:
         return ConfigurationService(self.client, self.account).get_configuration_sync()
@@ -497,6 +547,200 @@ class ProjectCardService:
                 }
             )
         return result
+
+    def _build_legacy_stage_options(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "id": stage,
+                "title": stage,
+                "kind": "auto" if stage in PROJECT_AUTO_STAGES else "manual",
+                "can_drop": stage in PROJECT_MANUAL_STAGES,
+            }
+            for stage in PROJECT_STAGE_ORDER
+        ]
+
+    def get_project_stage_options(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        cache_key = build_account_cache_key(self.account, "project-board-stages")
+        cached = cache.get(cache_key)
+        if self._has_reference_options(cached):
+            return cached
+        if cached == []:
+            cache.delete(cache_key)
+
+        options = self._fetch_project_stage_options(config)
+        if not options:
+            options = self._build_legacy_stage_options()
+
+        cache.set(cache_key, options, BITRIX_REFERENCE_CACHE_TTL)
+        return options
+
+    def get_project_stage_lookup(self, config: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:
+        stage_options = self.get_project_stage_options(config)
+        by_id: Dict[str, Dict[str, Any]] = {}
+        by_title: Dict[str, Dict[str, Any]] = {}
+        for option in stage_options:
+            option_id = self._clean_str(option.get("id"))
+            option_title = self._clean_str(option.get("title"))
+            if option_id and option_id not in by_id:
+                by_id[option_id] = option
+            if option_title and option_title not in by_title:
+                by_title[option_title] = option
+        return {"by_id": by_id, "by_title": by_title}
+
+    def resolve_project_stage_title(self, value: Any, stage_lookup: Optional[Dict[str, Dict[str, Any]]] = None) -> Optional[str]:
+        stage_value = self._clean_str(value)
+        if not stage_value:
+            return None
+        lookup = stage_lookup or self.get_project_stage_lookup()
+        resolved = lookup.get("by_title", {}).get(stage_value)
+        if resolved:
+            return self._clean_str(resolved.get("title")) or stage_value
+        resolved = lookup.get("by_id", {}).get(stage_value)
+        if resolved:
+            return self._clean_str(resolved.get("title")) or stage_value
+        return stage_value
+
+    def resolve_project_stage_id(self, value: Any, stage_lookup: Optional[Dict[str, Dict[str, Any]]] = None) -> Optional[str]:
+        stage_value = self._clean_str(value)
+        if not stage_value:
+            return None
+        lookup = stage_lookup or self.get_project_stage_lookup()
+        resolved = lookup.get("by_id", {}).get(stage_value)
+        if resolved:
+            return self._clean_str(resolved.get("id")) or stage_value
+        resolved = lookup.get("by_title", {}).get(stage_value)
+        if resolved:
+            return self._clean_str(resolved.get("id")) or stage_value
+        return stage_value
+
+    def _is_supported_stage(self, stage: Optional[str], stage_lookup: Optional[Dict[str, Dict[str, Any]]] = None) -> bool:
+        stage_value = self._clean_str(stage)
+        if not stage_value:
+            return False
+        if stage_value in PROJECT_MANUAL_STAGES or stage_value in PROJECT_AUTO_STAGES:
+            return True
+        lookup = stage_lookup or self.get_project_stage_lookup()
+        return stage_value in lookup.get("by_title", {}) or stage_value in lookup.get("by_id", {})
+
+    def _fetch_project_stage_options(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        if config is None:
+            config = self._load_config()
+        try:
+            entity_type_id = int((config or {}).get("project_sp_entity_type_id") or 0)
+        except (TypeError, ValueError):
+            entity_type_id = 0
+        if not entity_type_id:
+            return []
+
+        categories: List[Dict[str, Any]] = []
+        try:
+            response = self.client._bitrix_token.call_method("crm.category.list", {"entityTypeId": entity_type_id})
+            result = response.get("result", [])
+            if isinstance(result, dict):
+                categories = result.get("categories") or result.get("items") or result.get("result") or []
+            elif isinstance(result, list):
+                categories = result
+        except Exception as exc:
+            logger.warning("Project stage categories fetch failed for %s: %s", entity_type_id, exc)
+
+        category_id = None
+        if categories:
+            selected_category = next(
+                (
+                    category
+                    for category in categories
+                    if str(category.get("isDefault") or category.get("IS_DEFAULT") or "").strip().lower() in {"1", "y", "yes", "true"}
+                ),
+                next(
+                    (
+                        category
+                        for category in categories
+                        if str(category.get("id") or category.get("ID") or category.get("categoryId") or "").strip() in {"0", ""}
+                    ),
+                    categories[0],
+                ),
+            )
+            category_id = self._clean_str(selected_category.get("id") or selected_category.get("ID") or selected_category.get("categoryId"))
+        if category_id is None:
+            category_id = "0"
+
+        stage_entity_id = f"DYNAMIC_{entity_type_id}_STAGE_{category_id}"
+        try:
+            statuses = self._fetch_paginated(
+                "crm.status.list",
+                {"filter": {"ENTITY_ID": stage_entity_id}, "order": {"SORT": "ASC"}},
+            )
+        except Exception as exc:
+            logger.warning("Project stage status fetch failed for %s: %s", stage_entity_id, exc)
+            statuses = []
+
+        if not statuses and category_id != "0":
+            try:
+                statuses = self._fetch_paginated(
+                    "crm.status.list",
+                    {"filter": {"ENTITY_ID": f"DYNAMIC_{entity_type_id}_STAGE_0"}, "order": {"SORT": "ASC"}},
+                )
+            except Exception as exc:
+                logger.warning("Fallback project stage status fetch failed for %s: %s", entity_type_id, exc)
+                statuses = []
+
+        options: List[Dict[str, Any]] = []
+        seen_ids = set()
+        for status in statuses:
+            status_id = self._clean_str(status.get("STATUS_ID") or status.get("statusId") or status.get("id") or status.get("ID"))
+            title = self._clean_str(status.get("NAME") or status.get("name") or status.get("TITLE") or status.get("title") or status_id)
+            if not status_id or status_id in seen_ids or not title:
+                continue
+            seen_ids.add(status_id)
+            semantics = self._clean_str(status.get("SEMANTICS") or status.get("semantics"))
+            options.append(
+                {
+                    "id": status_id,
+                    "title": title,
+                    "kind": "manual",
+                    "can_drop": semantics not in {"S", "F"},
+                    "semantics": semantics,
+                    "sort": status.get("SORT"),
+                }
+            )
+
+        for stage in PROJECT_AUTO_STAGES:
+            if stage in seen_ids or stage in {item["title"] for item in options}:
+                continue
+            options.append(
+                {
+                    "id": stage,
+                    "title": stage,
+                    "kind": "auto",
+                    "can_drop": False,
+                }
+            )
+
+        return options
+
+    def _resolve_company_reference(self, company_id: Any, company_name: Any = None) -> Tuple[Optional[str], Optional[str]]:
+        resolved_id = self._clean_str(company_id)
+        resolved_name = self._clean_str(company_name)
+        if resolved_name and resolved_name != resolved_id:
+            return resolved_id, resolved_name
+        if not resolved_id:
+            return resolved_id, resolved_name
+
+        lookup = {self._clean_str(item.get("id")): self._clean_str(item.get("name")) for item in self.get_companies()}
+        lookup_name = lookup.get(resolved_id)
+        return resolved_id, lookup_name or resolved_name or resolved_id
+
+    def _resolve_legal_entity_reference(self, entity_id: Any, entity_name: Any = None) -> Tuple[Optional[str], Optional[str]]:
+        resolved_id = self._clean_str(entity_id)
+        resolved_name = self._clean_str(entity_name)
+        if resolved_name and resolved_name != resolved_id:
+            return resolved_id, resolved_name
+        if not resolved_id:
+            return resolved_id, resolved_name
+
+        lookup = {self._clean_str(item.get("id")): self._clean_str(item.get("name")) for item in self.get_legal_entities()}
+        lookup_name = lookup.get(resolved_id)
+        return resolved_id, lookup_name or resolved_name or resolved_id
 
     @staticmethod
     def _merge_reference_options(*option_groups: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -760,11 +1004,15 @@ class ProjectCardService:
 
     def _build_project_spa_update_fields(self, card: ProjectCard, mapping: Dict[str, Any]) -> Dict[str, Any]:
         fields: Dict[str, Any] = {}
+        stage_lookup = self.get_project_stage_lookup()
 
         self._assign_mapped_spa_field(fields, mapping, "title", card.project_name)
         self._assign_mapped_spa_field(fields, mapping, "bitrix_group_id", self._to_bitrix_id(card.project_id))
-        self._assign_mapped_spa_field(fields, mapping, "manual_stage", card.manual_stage or card.stage)
-        self._assign_mapped_spa_field(fields, mapping, "effective_stage", card.stage)
+        stage_mapping_key = self._resolve_stage_mapping_key(mapping)
+        if stage_mapping_key:
+            stage_source_value = card.manual_stage if card.stage_source == "auto" else (card.stage or card.manual_stage)
+            mapped_stage_value = self.resolve_project_stage_id(stage_source_value, stage_lookup)
+            self._assign_mapped_spa_field(fields, mapping, stage_mapping_key, mapped_stage_value)
         self._assign_mapped_spa_field(fields, mapping, "is_support", "Y" if card.is_support else "N")
         self._assign_mapped_spa_field(fields, mapping, "project_hours_budget", card.project_hours_budget)
         self._assign_mapped_spa_field(fields, mapping, "hourly_rate", card.hourly_rate)
@@ -783,6 +1031,15 @@ class ProjectCardService:
         if not field_code or value in (None, ""):
             return
         target[field_code] = value
+
+    @staticmethod
+    def _resolve_stage_mapping_key(mapping: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(mapping, dict):
+            return None
+        for key in ("stage_id", "stage", "effective_stage", "manual_stage"):
+            if str(mapping.get(key) or "").strip():
+                return key
+        return None
 
     @staticmethod
     def _to_bitrix_id(value: Any) -> Any:

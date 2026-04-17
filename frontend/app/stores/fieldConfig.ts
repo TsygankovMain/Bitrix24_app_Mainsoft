@@ -32,6 +32,25 @@ const BACKEND_MAPPING: Record<string, string> = {
     'client_inn': 'CLIENT_INN',
 }
 
+const AUTO_DETECT_MAPPING_RULES: Record<string, { labels: string[]; codeHints: string[] }> = {
+    task_name: {
+        labels: ['Название задачи'],
+        codeHints: ['TASK_NAME'],
+    },
+    our_inn: {
+        labels: ['Наш ИНН', 'ИНН нашей компании', 'ИНН исполнителя'],
+        codeHints: ['OUR_INN'],
+    },
+    client_inn: {
+        labels: ['ИНН клиента', 'Клиентский ИНН'],
+        codeHints: ['CLIENT_INN'],
+    },
+    project_item_id: {
+        labels: ['ID элемента проекта SPA', 'ID элемента проекта', 'Project item id'],
+        codeHints: ['PROJECT_ITEM_ID'],
+    },
+}
+
 export interface FieldConfigState {
     entityTypeId: number
     fields: Record<string, string>  // e.g. { TASK_ID: 'ufCrm87_xxx', HOURS: 'ufCrm87_yyy', ... }
@@ -85,6 +104,7 @@ export const useFieldConfigStore = defineStore(
                     const rawConfig = JSON.parse(rawConfigStr)
                     console.log('[FieldConfig] Parsed config:', JSON.stringify(rawConfig).substring(0, 200))
                     applyRawConfig(rawConfig)
+                    await autoDetectMissingMappings($b24, rawConfig)
                 } else {
                     console.warn('[FieldConfig] No timestamp_config found in response. Data keys:', data ? Object.keys(data) : 'null')
                     loadError.value = 'Конфигурация не найдена. Зайдите в Настройки → Маппинг и настройте поля.'
@@ -94,6 +114,180 @@ export const useFieldConfigStore = defineStore(
                 loadError.value = e.message || 'Ошибка загрузки конфигурации'
             } finally {
                 isLoaded.value = true
+            }
+        }
+
+        function normalizeLabel(value: unknown) {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/\s+/g, ' ')
+        }
+
+        function extractSpFieldsMap(raw: any): Record<string, any> {
+            const result = raw?.result
+            if (result && typeof result === 'object' && result.fields && typeof result.fields === 'object') {
+                return result.fields
+            }
+            if (raw?.fields && typeof raw.fields === 'object') {
+                return raw.fields
+            }
+            if (result && typeof result === 'object') {
+                return result
+            }
+            return {}
+        }
+
+        function getFieldMetaTitle(meta: any) {
+            return String(
+                meta?.title
+                || meta?.TITLE
+                || meta?.formLabel
+                || meta?.FORM_LABEL
+                || meta?.listLabel
+                || meta?.LIST_LABEL
+                || meta?.label
+                || meta?.LABEL
+                || ''
+            ).trim()
+        }
+
+        function matchFieldByRule(
+            spFieldsList: Array<{ id: string; title: string; meta: any }>,
+            backendKey: string,
+        ) {
+            const rule = AUTO_DETECT_MAPPING_RULES[backendKey]
+            if (!rule) {
+                return null
+            }
+
+            const expectedLabels = rule.labels.map(normalizeLabel).filter(Boolean)
+            const codeHints = rule.codeHints.map(hint => normalizeLabel(hint).replace(/_/g, '')).filter(Boolean)
+
+            const exactByLabel = spFieldsList.find((field) => {
+                const title = normalizeLabel(field.title)
+                return expectedLabels.some((expected) => expected && title === expected)
+            })
+            if (exactByLabel) {
+                return exactByLabel
+            }
+
+            const containsByLabel = spFieldsList.find((field) => {
+                const title = normalizeLabel(field.title)
+                return expectedLabels.some((expected) => expected && title.includes(expected))
+            })
+            if (containsByLabel) {
+                return containsByLabel
+            }
+
+            const byHint = spFieldsList.find((field) => {
+                const fieldIdNormalized = normalizeLabel(field.id).replace(/_/g, '')
+                const titleNormalized = normalizeLabel(field.title).replace(/_/g, '')
+                const logicalNameNormalized = normalizeLabel(
+                    field.meta?.name
+                    || field.meta?.NAME
+                    || field.meta?.fieldName
+                    || field.meta?.FIELD_NAME
+                    || ''
+                ).replace(/_/g, '')
+
+                return codeHints.some((hint) =>
+                    hint
+                    && (
+                        fieldIdNormalized.includes(hint)
+                        || titleNormalized.includes(hint)
+                        || logicalNameNormalized.includes(hint)
+                    )
+                )
+            })
+            if (byHint) {
+                return byHint
+            }
+
+            return null
+        }
+
+        async function autoDetectMissingMappings($b24: B24Frame, rawConfig: AppConfigurationPayload) {
+            const spEntityTypeId = Number(rawConfig?.sp_entity_type_id || 0)
+            if (!spEntityTypeId) {
+                console.log('[FieldConfig] Auto-detect skipped: no sp_entity_type_id')
+                return
+            }
+
+            const rawFieldsMapping = { ...(rawConfig?.fields_mapping || {}) }
+            const missingKeys = Object.keys(AUTO_DETECT_MAPPING_RULES).filter((backendKey) => {
+                const mappedField = String(rawFieldsMapping[backendKey] || '').trim()
+                return mappedField.length === 0
+            })
+
+            console.log('[FieldConfig] Auto-detect start', {
+                spEntityTypeId,
+                missingKeys,
+            })
+
+            if (missingKeys.length === 0) {
+                return
+            }
+
+            try {
+                // @ts-ignore - callMethod typing
+                const fieldsRes = await $b24.callMethod('crm.item.fields', { entityTypeId: spEntityTypeId })
+                const fieldsData = fieldsRes?.getData?.()
+                const spFieldsMap = extractSpFieldsMap(fieldsData)
+                const spFieldsList = Object.entries(spFieldsMap).map(([fieldId, meta]) => ({
+                    id: String(fieldId || ''),
+                    title: getFieldMetaTitle(meta),
+                    type: String((meta as any)?.type || (meta as any)?.TYPE || ''),
+                    meta,
+                }))
+
+                const discoveredMapping: Record<string, string> = {}
+
+                for (const backendKey of missingKeys) {
+                    const matchedField = matchFieldByRule(spFieldsList, backendKey)
+                    if (matchedField?.id) {
+                        discoveredMapping[backendKey] = matchedField.id
+                    }
+                }
+
+                if (!Object.keys(discoveredMapping).length) {
+                    console.warn('[FieldConfig] Auto-detect could not resolve missing mappings', {
+                        missingKeys,
+                        spEntityTypeId,
+                        availableFieldTitles: spFieldsList
+                            .map(field => field.title || field.id)
+                            .filter(Boolean)
+                            .slice(0, 60),
+                    })
+                    return
+                }
+
+                const mergedRawMapping = {
+                    ...rawFieldsMapping,
+                    ...discoveredMapping,
+                }
+                const mergedFrontendMapping = { ...fields.value }
+                for (const [backendKey, fieldId] of Object.entries(discoveredMapping)) {
+                    const frontendKey = BACKEND_MAPPING[backendKey]
+                    if (frontendKey && fieldId) {
+                        mergedFrontendMapping[frontendKey] = String(fieldId)
+                    }
+                }
+
+                fields.value = mergedFrontendMapping
+                console.info('[FieldConfig] Auto-detected missing mappings', {
+                    spEntityTypeId,
+                    discoveredMapping,
+                })
+
+                // Keep config object in sync in runtime (without forced write to app.option.set).
+                rawConfig.fields_mapping = mergedRawMapping
+            } catch (error) {
+                console.warn('[FieldConfig] Auto-detect missing mappings failed', {
+                    spEntityTypeId,
+                    missingKeys,
+                    error,
+                })
             }
         }
 

@@ -4,10 +4,38 @@ export interface AppConfigurationPayload {
   hourly_rate?: number | string | null
   fields_mapping?: Record<string, string>
   project_fields_mapping?: Record<string, string>
+  stage_id?: string | null
+  stage?: string | null
+  project_stage?: string | null
+  manual_stage?: string | null
+  effective_stage?: string | null
   task_fields?: Record<string, string>
   spa_fields?: Record<string, string>
   clickableLabelsEnabled?: boolean
   [key: string]: unknown
+}
+
+export interface SmartProcessOption {
+  id: string | number
+  entityTypeId: number
+  title: string
+  [key: string]: unknown
+}
+
+export interface SmartProcessFieldOption {
+  id: string | number
+  title: string
+  type: string
+  [key: string]: unknown
+}
+
+export interface MappingFieldDefinition {
+  key: string
+  label: string
+  type: string
+  desc: string
+  allowCreate?: boolean
+  acceptedTypes?: string[]
 }
 
 export interface ProjectSpaTypeMismatch {

@@ -166,6 +166,40 @@ const closeModal = () => {
     isModalOpen.value = false
 }
 
+function resolveInnFieldCode(kind: 'OUR_INN' | 'CLIENT_INN'): string {
+    return String(
+        fieldConfigStore.spaFields?.[kind]
+        || fieldConfigStore.fields?.[kind]
+        || ''
+    ).trim()
+}
+
+function extractCreatedItemId(rawData: any): string | null {
+    const result = rawData?.result
+    if (!result) {
+        return null
+    }
+
+    if (typeof result === 'string' || typeof result === 'number') {
+        const normalized = String(result).trim()
+        return normalized || null
+    }
+
+    if (typeof result === 'object') {
+        const directId = String(result.id || result.itemId || '').trim()
+        if (directId) {
+            return directId
+        }
+
+        const nestedItemId = String(result.item?.id || result.item?.ID || '').trim()
+        if (nestedItemId) {
+            return nestedItemId
+        }
+    }
+
+    return null
+}
+
 async function getCurrentProjectCard() {
     const normalizedGroupId = String(currentGroupId.value || '').trim()
     if (!normalizedGroupId) {
@@ -180,6 +214,16 @@ async function getCurrentProjectCard() {
         const card = await apiStore.getProjectBoardCard(normalizedGroupId)
         if (card) {
             projectCardCache.set(normalizedGroupId, card)
+            console.info('[ProjectReport][INN] Project card loaded', {
+                groupId: normalizedGroupId,
+                projectItemId: card.project_item_id,
+                companyId: card.company_id,
+                companyInn: card.company_inn,
+                legalEntityId: card.our_legal_entity_id,
+                legalEntityInn: card.our_legal_entity_inn,
+            })
+        } else {
+            console.warn('[ProjectReport][INN] Project card is empty', { groupId: normalizedGroupId })
         }
         return card
     } catch (error) {
@@ -215,6 +259,25 @@ const handleSaveMeeting = async () => {
 
         const projectCard = await getCurrentProjectCard()
         const myCompanyId = String(projectCard?.our_legal_entity_id || '').trim()
+        const projectOurInn = String(projectCard?.our_legal_entity_inn || '').trim()
+        const projectClientInn = String(projectCard?.company_inn || '').trim()
+        const taskNameFieldCode = String(F.TASK_NAME || '').trim()
+        const ourInnFieldCode = resolveInnFieldCode('OUR_INN')
+        const clientInnFieldCode = resolveInnFieldCode('CLIENT_INN')
+
+        if (!ourInnFieldCode || !clientInnFieldCode) {
+            console.warn('[ProjectReport][INN] Missing INN field mapping', {
+                ourInnFieldCode,
+                clientInnFieldCode,
+                spaFields: fieldConfigStore.spaFields,
+                fields: fieldConfigStore.fields,
+            })
+        }
+        if (!taskNameFieldCode) {
+            console.warn('[ProjectReport][TASK_NAME] Missing TASK_NAME field mapping', {
+                fields: fieldConfigStore.fields,
+            })
+        }
 
         const fields: Record<string, any> = {
             title: formData.value.description.substring(0, 255),
@@ -236,12 +299,60 @@ const handleSaveMeeting = async () => {
         if (myCompanyId) {
             fields.mycompanyId = /^\d+$/.test(myCompanyId) ? Number(myCompanyId) : myCompanyId
         }
+        if (ourInnFieldCode && projectOurInn) {
+            fields[ourInnFieldCode] = projectOurInn
+        }
+        if (clientInnFieldCode && projectClientInn) {
+            fields[clientInnFieldCode] = projectClientInn
+        }
+
+        console.info('[ProjectReport][INN] Save payload summary', {
+            groupId: currentGroupId.value,
+            taskNameFieldCode,
+            payloadTaskName: taskNameFieldCode ? fields[taskNameFieldCode] : undefined,
+            ourInnFieldCode,
+            clientInnFieldCode,
+            payloadOurInn: ourInnFieldCode ? fields[ourInnFieldCode] : undefined,
+            payloadClientInn: clientInnFieldCode ? fields[clientInnFieldCode] : undefined,
+            payloadMycompanyId: fields.mycompanyId,
+        })
 
         // @ts-ignore
-        await $b24!.callMethod('crm.item.add', {
+        const createRes = await $b24!.callMethod('crm.item.add', {
             entityTypeId: entityTypeId.value,
             fields
         })
+        const createdItemId = extractCreatedItemId(createRes?.getData?.())
+        console.info('[ProjectReport][INN] Create result', {
+            createdItemId,
+            rawResult: createRes?.getData?.()?.result,
+        })
+
+        if (createdItemId && (ourInnFieldCode || clientInnFieldCode)) {
+            try {
+                // @ts-ignore
+                const verifyRes = await $b24!.callMethod('crm.item.get', {
+                    entityTypeId: entityTypeId.value,
+                    id: createdItemId,
+                })
+                const verifyItem = verifyRes?.getData?.()?.result?.item || verifyRes?.getData?.()?.item || {}
+                console.info('[ProjectReport][INN] Verify saved item', {
+                    createdItemId,
+                    taskNameFieldCode,
+                    savedTaskName: taskNameFieldCode ? verifyItem?.[taskNameFieldCode] : undefined,
+                    ourInnFieldCode,
+                    clientInnFieldCode,
+                    savedOurInn: ourInnFieldCode ? verifyItem?.[ourInnFieldCode] : undefined,
+                    savedClientInn: clientInnFieldCode ? verifyItem?.[clientInnFieldCode] : undefined,
+                    savedMycompanyId: verifyItem?.mycompanyId,
+                })
+            } catch (verifyError) {
+                console.warn('[ProjectReport][INN] Failed to verify created item', {
+                    createdItemId,
+                    error: verifyError,
+                })
+            }
+        }
 
         closeModal()
         await fetchData()

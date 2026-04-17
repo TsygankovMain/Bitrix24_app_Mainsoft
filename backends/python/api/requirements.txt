@@ -1,6 +1,7 @@
 Django
 psycopg2-binary
 django-cors-headers
+whitenoise
 PyJWT
 gunicorn
 environs

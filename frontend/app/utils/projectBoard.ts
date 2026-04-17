@@ -2,9 +2,16 @@ import type {
   ProjectBoardCardRecord,
   ProjectBoardResponse,
   ProjectBoardStage,
-} from '~/types/project-board'
+} from '../types/project-board'
 
-export * from '~/types/project-board'
+export type {
+  ProjectBoardCardRecord,
+  ProjectBoardDirectoryOption,
+  ProjectBoardMetaPayload,
+  ProjectBoardResponse,
+  ProjectBoardStage,
+  ProjectBoardSummary,
+} from '../types/project-board'
 
 export const PROJECT_STAGE_META = {
   'Новый': {
@@ -37,12 +44,53 @@ export const PROJECT_STAGE_META = {
   }
 } as const
 
+const PROJECT_STAGE_FALLBACK_PALETTE = [
+  {
+    badge: 'bg-sky-100 text-sky-700',
+    column: 'from-sky-50 to-white',
+  },
+  {
+    badge: 'bg-emerald-100 text-emerald-700',
+    column: 'from-emerald-50 to-white',
+  },
+  {
+    badge: 'bg-amber-100 text-amber-700',
+    column: 'from-amber-50 to-white',
+  },
+  {
+    badge: 'bg-cyan-100 text-cyan-700',
+    column: 'from-cyan-50 to-white',
+  },
+  {
+    badge: 'bg-fuchsia-100 text-fuchsia-700',
+    column: 'from-fuchsia-50 to-white',
+  },
+  {
+    badge: 'bg-slate-200 text-slate-700',
+    column: 'from-slate-100 to-white',
+  },
+] as const
+
+function getFallbackStageMeta(stage: string) {
+  const normalized = String(stage || '').trim()
+  const defaultMeta = PROJECT_STAGE_FALLBACK_PALETTE[PROJECT_STAGE_FALLBACK_PALETTE.length - 1] ?? {
+    badge: 'bg-slate-200 text-slate-700',
+    column: 'from-slate-100 to-white',
+  }
+  if (!normalized) {
+    return defaultMeta
+  }
+
+  const hash = Array.from(normalized).reduce((acc, char) => acc + char.charCodeAt(0), 0)
+  return PROJECT_STAGE_FALLBACK_PALETTE[hash % PROJECT_STAGE_FALLBACK_PALETTE.length] ?? defaultMeta
+}
+
 export function getStageBadgeClass(stage: string) {
-  return PROJECT_STAGE_META[stage as ProjectBoardStage]?.badge || 'bg-slate-100 text-slate-700'
+  return PROJECT_STAGE_META[stage as ProjectBoardStage]?.badge || getFallbackStageMeta(stage).badge
 }
 
 export function getStageColumnClass(stage: string) {
-  return PROJECT_STAGE_META[stage as ProjectBoardStage]?.column || 'from-slate-50 to-white'
+  return PROJECT_STAGE_META[stage as ProjectBoardStage]?.column || getFallbackStageMeta(stage).column
 }
 
 export function formatProjectDate(value?: string | null) {
@@ -89,6 +137,9 @@ export function parseProjectDateValue(value?: string | null) {
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     const [year, month, day] = value.split('-').map(Number)
+    if (year === undefined || month === undefined || day === undefined) {
+      return new Date(value)
+    }
     return new Date(year, month - 1, day)
   }
 

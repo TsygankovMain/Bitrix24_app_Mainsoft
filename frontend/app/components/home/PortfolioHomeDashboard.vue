@@ -34,7 +34,7 @@ type SnapshotData = {
     inactive_90_count: number
   }
   cards: ProjectBoardCardRecord[]
-  stages: Array<{ id: string, title: string }>
+  stages: Array<{ id: string, title: string, kind?: string, can_drop?: boolean }>
   curators: CuratorOption[]
   risk_cards: ProjectBoardCardRecord[]
   top_loss_projects: LeakageRow[]
@@ -60,7 +60,19 @@ const searchQuery = ref('')
 const signalsOnly = ref(false)
 const selectedProjectId = ref('')
 
-const previewStages = ['В просчете', 'В работе', 'Нет списаний 1 месяц', 'Нет списаний 3 месяца']
+const previewStages = computed(() => {
+  const stages = props.data?.stages || []
+  if (stages.length > 0) {
+    return stages
+  }
+
+  return [
+    { id: 'В просчете', title: 'В просчете' },
+    { id: 'В работе', title: 'В работе' },
+    { id: 'Нет списаний 1 месяц', title: 'Нет списаний 1 месяц' },
+    { id: 'Нет списаний 3 месяца', title: 'Нет списаний 3 месяца' },
+  ]
+})
 
 const filteredCards = computed(() => {
   const cards = props.data?.cards || []
@@ -90,10 +102,10 @@ const filteredCards = computed(() => {
 })
 
 const boardColumns = computed(() =>
-  previewStages.map(stage => ({
-    id: stage,
-    title: stage,
-    cards: filteredCards.value.filter(card => card.stage === stage),
+  previewStages.value.map(stage => ({
+    id: stage.id,
+    title: stage.title,
+    cards: filteredCards.value.filter(card => card.stage === stage.title),
   }))
 )
 
@@ -276,7 +288,11 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
           По текущим фильтрам проектов не найдено.
         </div>
 
-        <div v-else-if="previewMode === 'board'" class="mt-5 grid gap-4 xl:grid-cols-4">
+        <div
+          v-else-if="previewMode === 'board'"
+          class="mt-5 grid gap-4"
+          :style="{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }"
+        >
           <section
             v-for="column in boardColumns"
             :key="column.id"

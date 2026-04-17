@@ -100,8 +100,11 @@ function handleSave() {
               <span :class="['inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold', stageBadgeClass]">
                 {{ card.stage }}
               </span>
-              <span class="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-                Ручная стадия: {{ card.manual_stage || 'Не задана' }}
+              <span
+                v-if="card.stage_source === 'auto' && card.manual_stage && card.manual_stage !== card.stage"
+                class="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700"
+              >
+                Базовая стадия SPA: {{ card.manual_stage }}
               </span>
             </div>
           </div>
