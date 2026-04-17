@@ -184,17 +184,39 @@ class ConfigurationService:
         """
         Get list of all Smart Processes (dynamic types).
         """
-        response = self.client._bitrix_token.call_method('crm.type.list', {'filter': {}})
-        types = response.get('result', {}).get('types', [])
-        
-        # Format for frontend
-        result = []
-        for t in types:
+        try:
+            response = self.client._bitrix_token.call_method('crm.type.list', {'filter': {}})
+        except Exception as exc:
+            logger.error("get_smart_processes_sync: crm.type.list failed: %s", exc)
+            return []
+
+        raw_result = response.get('result', [])
+        if isinstance(raw_result, dict):
+            raw_types = raw_result.get('types') or raw_result.get('items') or []
+        elif isinstance(raw_result, list):
+            raw_types = raw_result
+        else:
+            raw_types = []
+
+        result: List[Dict[str, Any]] = []
+        for raw_type in raw_types:
+            if not isinstance(raw_type, dict):
+                continue
+
+            entity_type_id = raw_type.get('entityTypeId') or raw_type.get('ENTITY_TYPE_ID')
+            type_id = raw_type.get('id') or raw_type.get('ID') or entity_type_id
+            title = raw_type.get('title') or raw_type.get('TITLE') or f"SPA {entity_type_id or type_id}"
+
+            if not entity_type_id:
+                continue
+
             result.append({
-                'id': t['id'],
-                'entityTypeId': t['entityTypeId'],
-                'title': t['title'],
+                'id': type_id,
+                'entityTypeId': int(entity_type_id),
+                'title': str(title),
             })
+
+        logger.info("get_smart_processes_sync: loaded %s smart processes", len(result))
         return result
 
     def get_sp_fields_sync(self, entity_type_id: int) -> List[Dict[str, Any]]:

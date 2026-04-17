@@ -198,12 +198,21 @@ function mergeCreatedFieldMapping(
 async function loadData() {
     isLoading.value = true
     try {
-        const [cfg, spRes] = await Promise.all([
+        const [cfgRes, spRes] = await Promise.allSettled([
             apiStore.getConfiguration(),
             apiStore.getSmartProcesses()
         ])
+
+        if (cfgRes.status !== 'fulfilled') {
+            throw cfgRes.reason
+        }
+
+        const cfg = cfgRes.value
         config.value = cfg
-        smartProcesses.value = spRes.types || []
+        smartProcesses.value = spRes.status === 'fulfilled' ? (spRes.value.types || []) : []
+        if (spRes.status !== 'fulfilled') {
+            showStatus('error', 'Не удалось загрузить список смарт-процессов. Конфигурация загружена, попробуйте обновить страницу.')
+        }
         
         // 3. Set Initial State
         if (cfg.sp_entity_type_id) {
