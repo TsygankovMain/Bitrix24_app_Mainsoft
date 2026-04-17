@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from b24pysdk import Client
 from django.core.cache import cache
+from django.db import ProgrammingError
 from django.db.models import Case, F, FloatField, Max, Sum, Value, When
 from django.utils import timezone
 
@@ -515,17 +516,24 @@ class ProjectCardService:
         by_project_id: Dict[str, datetime] = {}
         by_project_title: Dict[str, datetime] = {}
 
-        item_rows = (
-            TimesheetItem.objects.filter(bitrix24_account=self.account)
-            .exclude(project_item_id__isnull=True)
-            .exclude(project_item_id="")
-            .values("project_item_id")
-            .annotate(last_writeoff_at=Max("date_reflection"))
-        )
-        for row in item_rows:
-            project_item_id = self._clean_str(row.get("project_item_id"))
-            if project_item_id and row.get("last_writeoff_at"):
-                by_project_item_id[project_item_id] = row["last_writeoff_at"]
+        try:
+            item_rows = (
+                TimesheetItem.objects.filter(bitrix24_account=self.account)
+                .exclude(project_item_id__isnull=True)
+                .exclude(project_item_id="")
+                .values("project_item_id")
+                .annotate(last_writeoff_at=Max("date_reflection"))
+            )
+            for row in item_rows:
+                project_item_id = self._clean_str(row.get("project_item_id"))
+                if project_item_id and row.get("last_writeoff_at"):
+                    by_project_item_id[project_item_id] = row["last_writeoff_at"]
+        except ProgrammingError as exc:
+            logger.warning(
+                "collect_writeoff_maps: project_item_id is unavailable for account %s, fallback to project_id/title maps: %s",
+                self.account.pk,
+                exc,
+            )
 
         id_rows = (
             TimesheetItem.objects.filter(bitrix24_account=self.account)

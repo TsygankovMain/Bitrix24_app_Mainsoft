@@ -41,6 +41,7 @@ PROJECT_STAGE_ORDER = [
 ]
 
 PROJECT_CARD_TABLE_NAME = ProjectCard._meta.db_table
+TIMESHEET_ITEM_TABLE_NAME = TimesheetItem._meta.db_table
 PROJECT_CARD_SCHEMA_CACHE_KEY = "mainsoft:v2:project-card-schema-ready"
 PROJECT_CARD_SCHEMA_TTL = 60
 BITRIX_REFERENCE_CACHE_TTL = 60 * 30
@@ -84,7 +85,23 @@ def ensure_project_card_schema(force_refresh: bool = False) -> bool:
             return cached
 
     try:
-        is_available = PROJECT_CARD_TABLE_NAME in connection.introspection.table_names()
+        table_names = set(connection.introspection.table_names())
+        if PROJECT_CARD_TABLE_NAME not in table_names or TIMESHEET_ITEM_TABLE_NAME not in table_names:
+            is_available = False
+        else:
+            with connection.cursor() as cursor:
+                project_card_columns = {
+                    col.name for col in connection.introspection.get_table_description(cursor, PROJECT_CARD_TABLE_NAME)
+                }
+                timesheet_columns = {
+                    col.name for col in connection.introspection.get_table_description(cursor, TIMESHEET_ITEM_TABLE_NAME)
+                }
+
+            # Board/sync features require linkage columns from migration 0009.
+            is_available = (
+                "project_item_id" in project_card_columns
+                and "project_item_id" in timesheet_columns
+            )
     except Exception as exc:
         logger.warning("ProjectCard schema check failed: %s", exc)
         is_available = False

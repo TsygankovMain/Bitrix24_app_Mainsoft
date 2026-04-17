@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
 from django.core.cache import cache
+from django.db import ProgrammingError
 from django.http import JsonResponse
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase
 from django.utils import timezone
@@ -18,6 +19,7 @@ from .report_services import (
     FIELD_TITLE_HIERARCHY,
     ReportService,
 )
+from .project_board_shared import PROJECT_CARD_SCHEMA_CACHE_KEY, ensure_project_card_schema
 from .services import (
     PROJECT_STAGE_ESTIMATE,
     PROJECT_STAGE_IN_WORK,
@@ -699,6 +701,56 @@ class ProjectBoardEndpointStabilityTest(TestCase):
         self.assertEqual(payload.get("cards"), [])
         self.assertEqual(payload.get("summary", {}).get("total_count"), 0)
         self.assertTrue(payload.get("warning"))
+
+    @patch("main.project_board_shared.connection.introspection.get_table_description")
+    @patch("main.project_board_shared.connection.introspection.table_names")
+    def test_ensure_project_card_schema_returns_false_when_project_item_columns_missing(
+        self,
+        table_names_mock,
+        table_description_mock,
+    ):
+        class _Col:
+            def __init__(self, name: str):
+                self.name = name
+
+        table_names_mock.return_value = ["project_card", "timesheet_item"]
+        table_description_mock.side_effect = [
+            [_Col("id"), _Col("project_id"), _Col("project_name")],  # project_card without project_item_id
+            [_Col("id"), _Col("project_id"), _Col("project_title")],  # timesheet_item without project_item_id
+        ]
+
+        cache.delete(PROJECT_CARD_SCHEMA_CACHE_KEY)
+        self.assertFalse(ensure_project_card_schema(force_refresh=True))
+
+    def test_collect_writeoff_maps_falls_back_when_project_item_column_missing(self):
+        now = timezone.make_aware(datetime(2026, 4, 10, 10, 0))
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=9001,
+            task_id="9001",
+            employee_id="u-1",
+            hours=2.5,
+            project_id="p-legacy",
+            project_title="Legacy Project",
+            date_reflection=now,
+        )
+
+        service = ProjectCardService(Mock(), self.account)
+        original_filter = TimesheetItem.objects.filter
+        call_counter = {"count": 0}
+
+        def filter_side_effect(*args, **kwargs):
+            call_counter["count"] += 1
+            if call_counter["count"] == 1:
+                raise ProgrammingError('column "timesheet_item"."project_item_id" does not exist')
+            return original_filter(*args, **kwargs)
+
+        with patch("main.project_board_service.TimesheetItem.objects.filter", side_effect=filter_side_effect):
+            by_item, by_project_id, by_project_title = service.collect_writeoff_maps()
+
+        self.assertEqual(by_item, {})
+        self.assertIn("p-legacy", by_project_id)
+        self.assertIn("Legacy Project", by_project_title)
 
 
 class HomepagePortfolioStabilityTest(TestCase):
