@@ -47,9 +47,32 @@ type MappedFieldCreateResponse = {
 export const useApiStore = defineStore(
   'api',
   () => {
+    const normalizeApiBaseUrl = (rawValue: unknown): string => {
+      const raw = String(rawValue || '').trim()
+      if (!raw) {
+        return ''
+      }
+
+      if (raw.startsWith('/')) {
+        return withoutTrailingSlash(raw)
+      }
+
+      if (/^https?:\/\//i.test(raw)) {
+        return withoutTrailingSlash(raw)
+      }
+
+      if (raw.startsWith('//')) {
+        return withoutTrailingSlash(`https:${raw}`)
+      }
+
+      // Production safety net: Bitrix app settings are often entered as host without scheme.
+      // Treat such value as https host to keep API requests absolute and avoid SPA HTML fallback.
+      return withoutTrailingSlash(`https://${raw}`)
+    }
+
     let $b24: null | B24Frame = null
     const config = useRuntimeConfig()
-    const apiUrl = withoutTrailingSlash(config.public.apiUrl)
+    const apiUrl = normalizeApiBaseUrl(config.public.apiUrl)
 
     const tokenJWT = ref('')
 

@@ -24,7 +24,9 @@ ENV VIRTUAL_HOST=${VIRTUAL_HOST}
 ENV NUXT_PUBLIC_APP_URL=${VIRTUAL_HOST}
 ENV NUXT_PUBLIC_API_URL=${NUXT_PUBLIC_API_URL}
 RUN if [ -z "$VIRTUAL_HOST" ]; then echo "VIRTUAL_HOST build arg is required"; exit 1; fi \
-    && export NUXT_PUBLIC_API_URL="${NUXT_PUBLIC_API_URL:-$VIRTUAL_HOST}" \
+    && case "$VIRTUAL_HOST" in http://*|https://*) NORMALIZED_HOST="$VIRTUAL_HOST" ;; *) NORMALIZED_HOST="https://$VIRTUAL_HOST" ;; esac \
+    && export NUXT_PUBLIC_APP_URL="$NORMALIZED_HOST" \
+    && export NUXT_PUBLIC_API_URL="${NUXT_PUBLIC_API_URL:-$NORMALIZED_HOST}" \
     && pnpm run generate
 
 # Stage 2: Final Backend Image
