@@ -374,13 +374,13 @@ class InstallationService:
 
         # 3. Bind Placements
         try:
-             # self.client._bitrix_token.call_method('placement.bind', {
-             #     'PLACEMENT': 'TASK_VIEW_TAB',
-             #     'HANDLER': handler_url,
-             #     'TITLE': 'Учет времени',
-             #     'DESCRIPTION': 'Приложение для отражения часов'
-             # })
-             logger.info("Skipped binding TASK_VIEW_TAB (Disabled by user request)")
+             self.client._bitrix_token.call_method('placement.bind', {
+                 'PLACEMENT': 'TASK_VIEW_TAB',
+                 'HANDLER': handler_url,
+                 'TITLE': 'Учет времени',
+                 'DESCRIPTION': 'Приложение для отражения часов'
+             })
+             logger.info("Bound TASK_VIEW_TAB")
         except Exception as e:
              logger.error(f"Failed to bind TASK_VIEW_TAB: {e}")
 

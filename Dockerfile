@@ -16,9 +16,16 @@ RUN pnpm install --no-frozen-lockfile
 COPY frontend/ .
 
 # Build static site (Nuxt generate)
-# IMPORTANT: Must set app URL for build-time baking of runtimeConfig
-ENV NUXT_PUBLIC_APP_URL="https://tsygankovmain-bitrix24-app-mainsoft-6536.twc1.net"
-RUN pnpm run generate
+# Production URLs are baked into the generated frontend, so the host
+# must be supplied at build time for every release.
+ARG VIRTUAL_HOST=""
+ARG NUXT_PUBLIC_API_URL=""
+ENV VIRTUAL_HOST=${VIRTUAL_HOST}
+ENV NUXT_PUBLIC_APP_URL=${VIRTUAL_HOST}
+ENV NUXT_PUBLIC_API_URL=${NUXT_PUBLIC_API_URL}
+RUN if [ -z "$VIRTUAL_HOST" ]; then echo "VIRTUAL_HOST build arg is required"; exit 1; fi \
+    && export NUXT_PUBLIC_API_URL="${NUXT_PUBLIC_API_URL:-$VIRTUAL_HOST}" \
+    && pnpm run generate
 
 # Stage 2: Final Backend Image
 FROM python:3.11-slim
@@ -57,8 +64,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/healthz || exit 1
 
 # Environment variables
+ARG VIRTUAL_HOST=""
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV BUILD_TARGET=production
+ENV VIRTUAL_HOST=${VIRTUAL_HOST}
 
 # Entrypoint
 CMD ["/app/start.sh"]

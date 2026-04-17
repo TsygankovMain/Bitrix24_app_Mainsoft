@@ -6,19 +6,23 @@ from config import config
 BASE_DIR = Path(__file__).resolve().parent
 
 SECRET_KEY = config.jwt_secret
-DEBUG = True
-ALLOWED_HOSTS = ["*"]
+DEBUG = config.debug
 
-VIRTUAL_HOST = config.app_base_url
-
-if not VIRTUAL_HOST.startswith(("http://", "https://")):
+VIRTUAL_HOST = (config.app_base_url or "").strip()
+if VIRTUAL_HOST and not VIRTUAL_HOST.startswith(("http://", "https://")):
     VIRTUAL_HOST = f"https://{VIRTUAL_HOST}"
 
-if VIRTUAL_HOST:
-    CSRF_TRUSTED_ORIGINS = [VIRTUAL_HOST]
+parsed_virtual_host = urlparse(VIRTUAL_HOST) if VIRTUAL_HOST else None
 
-# Allow all hosts for Timeweb Cloud Apps deployment
-ALLOWED_HOSTS = ["*"]
+default_allowed_hosts = ["localhost", "127.0.0.1"]
+if DEBUG:
+    default_allowed_hosts.extend(["api", "frontend"])
+if parsed_virtual_host and parsed_virtual_host.hostname:
+    default_allowed_hosts.append(parsed_virtual_host.hostname)
+
+ALLOWED_HOSTS = sorted(set([*default_allowed_hosts, *config.allowed_hosts]))
+
+CSRF_TRUSTED_ORIGINS = [VIRTUAL_HOST] if VIRTUAL_HOST else []
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -86,7 +90,7 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "api/static/"
+STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "static"
 STATICFILES_DIRS = [
     BASE_DIR / "frontend_build",
@@ -96,7 +100,11 @@ WHITENOISE_ROOT = BASE_DIR / "frontend_build"
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOWED_ORIGINS = [] if DEBUG else sorted(set([*CSRF_TRUSTED_ORIGINS, *config.cors_allowed_origins]))
+CORS_ALLOWED_ORIGIN_REGEXES = [] if DEBUG else [
+    r"^https://.*\.bitrix24\.[A-Za-z.]+$",
+]
 X_FRAME_OPTIONS = 'ALLOWALL'
 XS_SHARING_ALLOWED_METHODS = ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE']
 

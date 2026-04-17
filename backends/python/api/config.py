@@ -1,8 +1,13 @@
 from dataclasses import dataclass
+from typing import List
 from environs import Env
 
 env = Env()
 env.read_env() # Search for .env file
+
+
+def parse_csv_env(value: str) -> List[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 @dataclass
@@ -30,6 +35,8 @@ class Config:
 
     # VIRTUAL_HOST
     app_base_url: str
+    allowed_hosts: List[str]
+    cors_allowed_origins: List[str]
 
     # Support line
     support_openline_code: str
@@ -49,7 +56,9 @@ def load_config() -> Config:
         jwt_algorithm=env.str("JWT_ALGORITHM", "HS256"),
         client_id=env.str("CLIENT_ID", "client_id"),
         client_secret=env.str("CLIENT_SECRET", "client_secret"),
-        app_base_url=env.str("VIRTUAL_HOST", "app_base_url"),
+        app_base_url=env.str("VIRTUAL_HOST", ""),
+        allowed_hosts=parse_csv_env(env.str("DJANGO_ALLOWED_HOSTS", "")),
+        cors_allowed_origins=parse_csv_env(env.str("CORS_ALLOWED_ORIGINS", "")),
         support_openline_code=env.str("SUPPORT_OPENLINE_CODE", "2106d29de50818f3e0e36bd949f54f37"),
     )
 

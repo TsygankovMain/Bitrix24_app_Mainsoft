@@ -31,7 +31,7 @@ onMounted(() => {
         ;(window as any).BX24.init(function() {
             const currentUrl = window.location.href
             const baseUrl = currentUrl.substring(0, currentUrl.lastIndexOf('/'))
-            const handlerUrl = baseUrl + '/embedded'
+            const handlerUrl = baseUrl
 
             ;(window as any).BX24.callMethod('placement.bind', {
                 PLACEMENT: 'TASK_VIEW_TAB',
@@ -280,5 +280,4 @@ onMounted(() => {
 }
 .retry-btn:hover { background: #fef2f2; }
 </style>
-
 

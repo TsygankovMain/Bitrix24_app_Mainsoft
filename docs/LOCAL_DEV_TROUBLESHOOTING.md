@@ -1,56 +1,65 @@
-# Локальная диагностика dev-контура (Bitrix24 + CloudPub)
+# Local Dev Troubleshooting
 
-Короткий runbook для случаев, когда локальная версия приложения перестает открываться после перезапуска.
+Этот документ относится только к локальной разработке.
 
-## 1. Базовая проверка окружения
+Если приложение уже развернуто в production, используйте:
 
-1. Проверьте, что в `.env` заполнены:
-- `CLIENT_ID`
-- `CLIENT_SECRET`
-- `VIRTUAL_HOST`
-- `JWT_SECRET`
-- `CLOUDPUB_TOKEN`
-2. Перезапустите окружение:
-- `make down`
-- `make dev-python`
-3. Проверьте логи:
-- `make logs`
+- [DEPLOY_README.md](../DEPLOY_README.md)
+- [PRODUCTION_ROLLOUT_GUIDE.md](./PRODUCTION_ROLLOUT_GUIDE.md)
+
+## 1. Базовая проверка local-dev
+
+Проверьте:
+
+- `.env` создан из `.env.example`;
+- заполнены `CLIENT_ID`, `CLIENT_SECRET`, `JWT_SECRET`, `VIRTUAL_HOST`, `DB_*`;
+- если используется внешний tunnel, задан `CLOUDPUB_TOKEN`;
+- поднято окружение `make dev-python`.
 
 ## 2. Ошибка `Blocked request. This host is not allowed`
 
-Причина: Vite не разрешает внешний домен.
+Это dev-only ошибка Vite.
 
-Что делать:
-1. Добавьте cloudpub-домен в `frontend/nuxt.config.ts` в `vite.server.allowedHosts`.
-2. Перезапустите окружение (`make down`, `make dev-python`).
-3. Сделайте hard reload в браузере.
+Что проверить:
+
+1. внешний dev host добавлен в `NUXT_ALLOWED_HOSTS` или разрешен в `frontend/nuxt.config.ts`;
+2. окружение перезапущено;
+3. выполнен hard reload.
 
 ## 3. Ошибка `404` на `/_nuxt/Users/.../entry.async.js`
 
-Причина: при туннеле часть запросов приходит без `@fs`.
+Это тоже dev-only история, связанная с Vite и `@fs`.
 
 Что делать:
-1. Убедитесь, что в локальной версии есть rewrite `/_nuxt/Users/...` -> `/_nuxt/@fs/Users/...`:
-- `frontend/nuxt.config.ts`
-- `frontend/server/middleware/nuxt-fs-rewrite.ts`
-2. Перезапустите окружение.
-3. Откройте страницу в режиме hard reload.
+
+1. проверить, что включен rewrite `/_nuxt/Users/... -> /_nuxt/@fs/Users/...`;
+2. убедиться, что используется актуальная локальная версия `frontend/nuxt.config.ts`;
+3. перезапустить dev frontend.
 
 ## 4. Ошибка `500` на `/api/getToken`
 
-Проверьте:
-1. Контейнер `api` поднят и доступен.
-2. `CLIENT_ID/CLIENT_SECRET` соответствуют текущему локальному приложению Bitrix24.
-3. В Bitrix24 для локального приложения корректны:
-- URL приложения (`https://<домен>/`)
-- URL установки (`https://<домен>/install`)
+Проверить:
 
-## 5. Какие данные запрашивать у пользователя для диагностики
+- поднят ли backend;
+- корректны ли `CLIENT_ID/CLIENT_SECRET`;
+- совпадает ли локальный внешний URL приложения с Bitrix24 settings;
+- не истекла ли авторизация приложения на портале.
 
-1. Скриншот вкладки Network по запросу `/embedded` или `/api/getToken`.
-2. Статус-код, URL и ответ `Preview/Response`.
-3. Скриншот вкладки Console.
-4. Если есть проблемы с сетью (гостиница, публичный Wi-Fi):
-- включить VPN и повторить запуск;
-- повторить запуск через мобильный интернет;
-- отправить скриншот результатов.
+## 5. Если локальная версия открывается нестабильно
+
+Проверить по порядку:
+
+1. `make down`
+2. `make dev-python`
+3. `make logs`
+4. hard reload в браузере
+5. открыть `Network` и проверить:
+   - `/api/getToken`
+   - `/_nuxt/*`
+   - `/embedded`
+
+## 6. Что важно помнить
+
+- CloudPub нужен только для local dev;
+- production-баги и local tunnel-баги теперь нужно различать отдельно;
+- если проблема воспроизводится только через tunnel, это не повод менять production-контур.

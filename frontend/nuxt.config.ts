@@ -1,6 +1,39 @@
 import tailwindcss from '@tailwindcss/vite'
 import { contentLocales } from './i18n/i18n.map'
 
+const isDev = process.env.NODE_ENV !== 'production'
+const publicAppUrl = process.env.NUXT_PUBLIC_APP_URL || process.env.VIRTUAL_HOST || ''
+const publicApiUrl = process.env.NUXT_PUBLIC_API_URL || publicAppUrl || ''
+const devAllowedHosts = [
+  'localhost',
+  '127.0.0.1',
+  ...String(process.env.NUXT_ALLOWED_HOSTS || '')
+    .split(',')
+    .map(host => host.trim())
+    .filter(Boolean)
+]
+
+const mainsoftFsEntryRewrite = {
+  name: 'mainsoft-fs-entry-rewrite',
+  transformIndexHtml(html: string) {
+    return html.replaceAll('/_nuxt/Users/', '/_nuxt/@fs/Users/')
+  },
+  configureServer(server: any) {
+    const rewriteFsEntry = (req: any, _res: any, next: () => void) => {
+      const url = req.url || ''
+      if (url.startsWith('/_nuxt/Users/')) {
+        req.url = url.replace('/_nuxt/Users/', '/_nuxt/@fs/Users/')
+      }
+      next()
+    }
+
+    server.middlewares.stack.unshift({
+      route: '',
+      handle: rewriteFsEntry
+    })
+  },
+}
+
 export default defineNuxtConfig({
   modules: [
     '@bitrix24/b24ui-nuxt',
@@ -20,8 +53,8 @@ export default defineNuxtConfig({
      * @see https://nuxt.com/docs/guide/going-further/runtime-config#example
      */
     public: {
-      appUrl: '',
-      apiUrl: ''
+      appUrl: publicAppUrl,
+      apiUrl: publicApiUrl
     }
   },
 
@@ -50,30 +83,7 @@ export default defineNuxtConfig({
 
   vite: {
     plugins: [
-      {
-        name: 'mainsoft-fs-entry-rewrite',
-        transformIndexHtml(html) {
-          return html.replaceAll('/_nuxt/Users/', '/_nuxt/@fs/Users/')
-        },
-        configureServer(server) {
-          const rewriteFsEntry = (req: any, _res: any, next: () => void) => {
-            const url = req.url || ''
-            if (url.startsWith('/_nuxt/Users/')) {
-              req.url = url.replace('/_nuxt/Users/', '/_nuxt/@fs/Users/')
-            }
-            next()
-          }
-
-          // Place rewrite before Vite static middlewares.
-          // Nuxt dev may emit module URLs like "/_nuxt/Users/.../entry.async.js"
-          // and Vite only serves them correctly via "/_nuxt/@fs/Users/...".
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ;(server.middlewares as any).stack.unshift({
-            route: '',
-            handle: rewriteFsEntry
-          })
-        },
-      },
+      ...(isDev ? [mainsoftFsEntryRewrite] : []),
       tailwindcss()
     ],
     build: {
@@ -81,11 +91,7 @@ export default defineNuxtConfig({
       minify: true
     },
     server: {
-      allowedHosts: [
-        'localhost',
-        '127.0.0.1',
-        'wanly-evolved-lionfish.cloudpub.ru'
-      ],
+      allowedHosts: devAllowedHosts,
       proxy: {
         '/api': { target: process.env.SERVER_HOST || 'http://api-need_set:8000', changeOrigin: true }
       }
