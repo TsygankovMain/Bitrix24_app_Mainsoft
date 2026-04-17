@@ -485,6 +485,23 @@ class QueryStabilityTest(TestCase):
         self.assertEqual(payload["count"], 0)
         self.assertIn("warning", payload)
 
+    @patch("main.views.ProjectSyncService.sync", side_effect=RuntimeError("project sync failed"))
+    def test_project_board_sync_endpoint_returns_warning_instead_of_500(self, _sync_mock):
+        token = self.account.create_jwt_token()
+        response = Client().post(
+            "/api/project-board/sync",
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "warning")
+        self.assertEqual(payload["synced"], 0)
+        self.assertEqual(payload["created"], 0)
+        self.assertEqual(payload["updated"], 0)
+        self.assertIn("warning", payload)
+
     @patch("main.views.ProjectSyncService.backfill_timesheet_project_items", return_value={"status": "success", "updated": 0, "unresolved": 0})
     @patch("main.views.ProjectSyncService.sync", side_effect=RuntimeError("sync failed"))
     @patch("main.views.ConfigurationService.save_configuration_sync", return_value=None)

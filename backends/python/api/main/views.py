@@ -680,7 +680,26 @@ def sync_project_board(request: AuthorizedRequest):
             incremental_since_minutes = int(incremental_raw)
         except (TypeError, ValueError):
             return JsonResponse({"error": "incremental_since_minutes must be integer"}, status=400)
-    return JsonResponse(service.sync(incremental_since_minutes=incremental_since_minutes))
+    try:
+        return JsonResponse(service.sync(incremental_since_minutes=incremental_since_minutes))
+    except Exception as exc:
+        logger.exception("Project board sync failed for account %s", request.bitrix24_account.pk)
+        return JsonResponse(
+            {
+                "status": "warning",
+                "sync_mode": "failed",
+                "synced": 0,
+                "created": 0,
+                "updated": 0,
+                "skipped_missing_group_link": 0,
+                "skipped_conflict_linking": 0,
+                "warning": (
+                    "Синхронизацию проектов выполнить не удалось. "
+                    "Показаны последние сохраненные данные."
+                ),
+                "error": str(exc),
+            }
+        )
 
 
 @xframe_options_exempt
