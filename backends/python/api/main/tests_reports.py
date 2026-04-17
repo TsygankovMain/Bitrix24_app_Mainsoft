@@ -7,7 +7,7 @@ from django.test import Client, RequestFactory, SimpleTestCase, TestCase
 from django.utils import timezone
 
 from .bitrix_data_access import BitrixDataService
-from .middleware import RequestLoggingMiddleware
+from .middleware import ApiTrailingSlashNormalizeMiddleware, RequestLoggingMiddleware
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
 from .report_queries import build_filtered_timesheet_queryset
 from .report_services import (
@@ -270,6 +270,23 @@ class RequestLoggingMiddlewareTest(SimpleTestCase):
         create_mock.assert_called_once()
 
 
+class ApiTrailingSlashNormalizeMiddlewareTest(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.middleware = ApiTrailingSlashNormalizeMiddleware(lambda request: JsonResponse({"ok": True}))
+
+    def test_normalizes_api_path_with_trailing_slash(self):
+        request = self.factory.get("/api/configuration/")
+        self.middleware.process_request(request)
+        self.assertEqual(request.path_info, "/api/configuration")
+
+    def test_keeps_non_api_path_intact(self):
+        request = self.factory.get("/settings/")
+        original_path = request.path_info
+        self.middleware.process_request(request)
+        self.assertEqual(request.path_info, original_path)
+
+
 class QueryStabilityTest(TestCase):
     def setUp(self):
         self.account = Bitrix24Account.objects.create(
@@ -281,6 +298,13 @@ class QueryStabilityTest(TestCase):
             status="active",
             application_version=1,
         )
+
+    def test_api_configuration_trailing_slash_does_not_fallback_to_spa_html(self):
+        response = Client().get("/api/configuration/")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("application/json", response["Content-Type"])
+        self.assertIn("error", response.json())
 
     def test_timesheet_filters_use_date_range_and_exclude_archived_projects(self):
         ProjectCard.objects.create(

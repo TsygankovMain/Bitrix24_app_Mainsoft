@@ -59,6 +59,6 @@ urlpatterns = [
     path('api/logs/requests', views.get_request_logs, name='get_request_logs'),
     path('api/logs/system', views.get_system_logs, name='get_system_logs'),
 
-    # SPA Entry Point (Catch-all for frontend routing)
-    re_path(r'^.*$', views.serve_spa, name='serve_spa'),
+    # SPA Entry Point (Catch-all for frontend routing), but never for `/api...`
+    re_path(r'^(?!api(?:/|$)).*$', views.serve_spa, name='serve_spa'),
 ]
