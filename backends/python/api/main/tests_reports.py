@@ -22,6 +22,7 @@ from .services import (
     PROJECT_STAGE_IN_WORK,
     PROJECT_STAGE_NO_WRITEOFF_30,
     PROJECT_STAGE_NO_WRITEOFF_90,
+    ProjectCardService,
     ProjectStageAutomationService,
 )
 from .timesheet_sync_service import TimesheetSyncService
@@ -482,6 +483,59 @@ class QueryStabilityTest(TestCase):
         self.assertEqual(payload["status"], "warning")
         self.assertEqual(payload["count"], 0)
         self.assertIn("warning", payload)
+
+
+class HomepagePortfolioStabilityTest(TestCase):
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=3,
+            is_b24_user_admin=True,
+            member_id="member-3",
+            is_master_account=True,
+            domain_url="portfolio.bitrix24.ru",
+            status="active",
+            application_version=1,
+        )
+        self.service = ProjectCardService(Mock(), self.account)
+
+    @patch.object(ProjectCardService, "_get_revenue_leakage_rows", side_effect=RuntimeError("leakage failed"))
+    @patch.object(ProjectCardService, "get_board_data", side_effect=RuntimeError("board failed"))
+    def test_homepage_snapshot_handles_board_and_leakage_failures(self, _board_mock, _leakage_mock):
+        snapshot = self.service.get_homepage_snapshot()
+
+        self.assertIsInstance(snapshot, dict)
+        self.assertEqual(snapshot.get("cards"), [])
+        self.assertEqual(snapshot.get("top_loss_projects"), [])
+        self.assertTrue(snapshot.get("warning"))
+        self.assertIn("временно", snapshot.get("warning").lower())
+
+    @patch.object(ProjectCardService, "_get_revenue_leakage_rows", side_effect=RuntimeError("leakage failed"))
+    @patch.object(
+        ProjectCardService,
+        "get_board_data",
+        return_value={
+            "summary": {"total_count": 1, "active_count": 1, "archived_count": 0, "support_count": 0, "inactive_30_count": 0, "inactive_90_count": 0},
+            "cards": [
+                {
+                    "project_id": "p-1",
+                    "project_name": "Project 1",
+                    "is_archived": False,
+                    "curator_user_id": "42",
+                    "curator_name": "Иван Иванов",
+                    "last_writeoff_days": 5,
+                }
+            ],
+            "stages": [],
+            "warning": None,
+        },
+    )
+    def test_homepage_snapshot_keeps_board_when_only_leakage_fails(self, _board_mock, _leakage_mock):
+        snapshot = self.service.get_homepage_snapshot()
+
+        self.assertEqual(snapshot["summary"]["total_count"], 1)
+        self.assertEqual(len(snapshot["cards"]), 1)
+        self.assertEqual(snapshot["top_loss_projects"], [])
+        self.assertTrue(snapshot.get("warning"))
 
 
 class StageAutomationStabilityTest(TestCase):

@@ -211,7 +211,30 @@ class ProjectCardService:
         if cached is not None:
             return cached
 
-        board = self.get_board_data()
+        board_warning: Optional[str] = None
+        try:
+            board = self.get_board_data()
+        except Exception as exc:
+            logger.exception("Homepage board fetch failed for %s: %s", self.account.domain_url, exc)
+            board_warning = "Некоторые данные главной временно недоступны."
+            try:
+                board = self.get_fallback_board_data()
+            except Exception as fallback_exc:
+                logger.exception("Homepage fallback fetch failed for %s: %s", self.account.domain_url, fallback_exc)
+                board = {
+                    "summary": {
+                        "total_count": 0,
+                        "active_count": 0,
+                        "archived_count": 0,
+                        "support_count": 0,
+                        "inactive_30_count": 0,
+                        "inactive_90_count": 0,
+                    },
+                    "cards": [],
+                    "stages": self._build_legacy_stage_options(),
+                    "warning": "Данные портфеля временно недоступны. Повторите позже.",
+                }
+
         cards = board.get("cards", [])
         active_cards = [card for card in cards if not card.get("is_archived")]
         curators_map: Dict[str, Dict[str, str]] = {}
@@ -231,14 +254,22 @@ class ProjectCardService:
             reverse=True,
         )[:6]
 
+        top_loss_projects: List[Dict[str, Any]] = []
+        leakage_warning: Optional[str] = None
+        try:
+            top_loss_projects = self._get_revenue_leakage_rows(limit=5)
+        except Exception as exc:
+            logger.exception("Homepage top-loss fetch failed for %s: %s", self.account.domain_url, exc)
+            leakage_warning = "Блок потерь выручки временно недоступен."
+
         snapshot = {
             "summary": board.get("summary", {}),
             "cards": active_cards,
             "stages": board.get("stages", []),
             "curators": sorted(curators_map.values(), key=lambda item: item["name"]),
             "risk_cards": risk_cards,
-            "top_loss_projects": self._get_revenue_leakage_rows(limit=5),
-            "warning": board.get("warning"),
+            "top_loss_projects": top_loss_projects,
+            "warning": self._merge_warning(self._merge_warning(board.get("warning"), board_warning), leakage_warning),
             "generated_at": timezone.now().isoformat(),
         }
         cache.set(build_account_cache_key(self.account, "project-board-homepage"), snapshot, HOMEPAGE_CACHE_TTL)
