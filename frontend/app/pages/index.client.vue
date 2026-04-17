@@ -58,7 +58,7 @@ const appSections = computed<AppSection[]>(() => [
   {
     id: 'group-project-report',
     title: 'Проектный отчет (группа)',
-    description: 'Сценарий SONET_GROUP_DETAIL_TAB',
+    description: 'Открытие отчета внутри проекта',
     toneClass: 'bg-indigo-50 text-indigo-700',
     action: () => router.push('/reports/project-report')
   },
@@ -93,7 +93,7 @@ const appSections = computed<AppSection[]>(() => [
   {
     id: 'report-revenue',
     title: 'Потери выручки',
-    description: 'Non-billable зоны',
+    description: 'Неучитываемые зоны',
     toneClass: 'bg-rose-50 text-rose-700',
     action: () => openReport('revenue-leakage')
   },
@@ -506,7 +506,7 @@ onMounted(async () => {
               </div>
               <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                 <div class="text-[11px] uppercase tracking-[0.08em] text-slate-500">Бюджет часов</div>
-                <div class="mt-1 font-semibold text-slate-900">{{ selectedProject.project_hours_budget || 'support' }}</div>
+                <div class="mt-1 font-semibold text-slate-900">{{ selectedProject.project_hours_budget || 'поддержка' }}</div>
               </div>
               <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                 <div class="text-[11px] uppercase tracking-[0.08em] text-slate-500">Ставка</div>
@@ -532,7 +532,7 @@ onMounted(async () => {
                 <div class="mt-1 text-xs font-normal text-slate-500">Отчет по проекту с пресетом</div>
               </button>
               <button type="button" class="ms-action-card text-left" @click="router.push('/projects')">
-                Открыть board
+                Открыть канбан проектов
                 <div class="mt-1 text-xs font-normal text-slate-500">Перейти в управление проектами</div>
               </button>
             </div>

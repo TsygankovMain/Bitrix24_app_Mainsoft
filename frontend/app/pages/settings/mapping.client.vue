@@ -14,7 +14,7 @@ const router = useRouter()
 const apiStore = useApiStore()
 
 useHead({
-  title: 'Настройка полей (Маппинг)'
+  title: 'Настройка полей'
 })
 
 // region Init
@@ -82,7 +82,7 @@ const PROJECT_FIELDS: MappingFieldDefinition[] = [
     desc: 'Единое типовое поле стадии проекта из Smart Process.',
     acceptedTypes: ['crm_status', 'status', 'stage'],
   },
-  { key: 'is_support', label: 'Support-флаг', type: 'boolean', desc: 'Проект в режиме поддержки' },
+  { key: 'is_support', label: 'Флаг поддержки', type: 'boolean', desc: 'Проект в режиме поддержки' },
   { key: 'project_hours_budget', label: 'Бюджет часов', type: 'double', desc: 'Плановый объем часов проекта' },
   { key: 'hourly_rate', label: 'Ставка часа', type: 'double', desc: 'Коммерческая ставка проекта' },
   { key: 'curator_id', label: 'Куратор', type: 'employee', desc: 'Ответственный пользователь Bitrix24' },
@@ -525,7 +525,7 @@ onMounted(async () => {
     <div class="ms-page-frame">
       <div class="ms-page-header">
         <div>
-          <h1 class="ms-title">Настройка полей (Маппинг)</h1>
+          <h1 class="ms-title">Настройка полей</h1>
           <p class="ms-subtitle mt-2">Привязка полей приложения к Smart Process и проверка структуры данных.</p>
         </div>
         <div class="flex gap-2">
@@ -684,7 +684,7 @@ onMounted(async () => {
                   </div>
 
                   <div v-if="projectSpaValidation.missing_fields_in_sp.length > 0" class="ms-panel-muted">
-                      <div class="font-semibold text-slate-900">Маппинги указывают на несуществующие поля</div>
+                      <div class="font-semibold text-slate-900">Сопоставления указывают на несуществующие поля</div>
                       <div class="mt-1 space-y-1 text-xs text-slate-600">
                           <div v-for="row in projectSpaValidation.missing_fields_in_sp" :key="`missing-field-${row.key}`">
                               {{ row.key }} → {{ row.mapped_field }}

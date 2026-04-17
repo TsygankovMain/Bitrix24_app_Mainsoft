@@ -48,7 +48,7 @@ onMounted(async () => {
         // Load config
         await fieldConfigStore.loadFromB24($b24!)
         if (!fieldConfigStore.isConfigured) {
-            error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Зайдите в Настройки → Маппинг.'
+            error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Зайдите в Настройки → Настройка полей.'
             isLoading.value = false
             return
         }

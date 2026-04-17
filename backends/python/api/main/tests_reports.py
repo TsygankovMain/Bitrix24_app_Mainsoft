@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
+from django.core.cache import cache
 from django.http import JsonResponse
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase
 from django.utils import timezone
@@ -552,6 +553,111 @@ class QueryStabilityTest(TestCase):
         payload = response.json()
         self.assertEqual(payload.get("status"), "success")
         self.assertIn("warning", payload)
+
+
+class ProjectBoardEndpointStabilityTest(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=11,
+            is_b24_user_admin=True,
+            member_id="member-board",
+            is_master_account=True,
+            domain_url="board.bitrix24.ru",
+            status="active",
+            application_version=1,
+        )
+        self.token = self.account.create_jwt_token()
+
+        ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_id="p-healthy",
+            project_name="Healthy Project",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            is_archived=False,
+        )
+
+    @patch("main.project_board_service.ProjectCardService.refresh_writeoff_stats", side_effect=RuntimeError("writeoff failed"))
+    def test_project_board_returns_200_when_writeoff_refresh_fails(self, _refresh_mock):
+        response = Client().get(
+            "/api/project-board",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("summary", payload)
+        self.assertTrue(payload.get("warning"))
+
+    @patch("main.project_board_service.ProjectCardService.serialize_card", autospec=True)
+    def test_project_board_skips_broken_cards_and_returns_partial_payload(self, serialize_mock):
+        ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_id="p-broken",
+            project_name="Broken Project",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            is_archived=False,
+        )
+
+        def serialize_side_effect(service, card):
+            if card.project_id == "p-broken":
+                raise RuntimeError("broken card")
+            return {
+                "id": str(card.id),
+                "project_item_id": card.project_item_id,
+                "project_id": card.project_id,
+                "project_name": card.project_name,
+                "stage": card.stage,
+                "manual_stage": card.manual_stage,
+                "is_archived": card.is_archived,
+                "archived_at": None,
+                "project_hours_budget": card.project_hours_budget,
+                "hourly_rate": card.hourly_rate,
+                "is_support": card.is_support,
+                "curator_user_id": card.curator_user_id,
+                "curator_name": card.curator_name,
+                "project_start_date": None,
+                "project_end_date": None,
+                "company_id": card.company_id,
+                "company_name": card.company_name,
+                "company_inn": None,
+                "our_legal_entity_id": card.our_legal_entity_id,
+                "our_legal_entity_name": card.our_legal_entity_name,
+                "our_legal_entity_inn": None,
+                "last_writeoff_at": None,
+                "last_writeoff_days": 0,
+                "stage_source": card.stage_source,
+                "created_at": card.created_at.isoformat() if card.created_at else None,
+                "updated_at": card.updated_at.isoformat() if card.updated_at else None,
+            }
+
+        serialize_mock.side_effect = serialize_side_effect
+
+        response = Client().get(
+            "/api/project-board",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload.get("cards", [])), 1)
+        self.assertTrue(payload.get("warning"))
+
+    @patch("main.project_board_service.ProjectCardService.get_fallback_board_data", side_effect=RuntimeError("fallback failed"))
+    @patch("main.project_board_service.ensure_project_card_schema", return_value=False)
+    def test_project_board_returns_minimal_payload_when_fallback_fails(self, _schema_mock, _fallback_mock):
+        response = Client().get(
+            "/api/project-board",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get("cards"), [])
+        self.assertEqual(payload.get("summary", {}).get("total_count"), 0)
+        self.assertTrue(payload.get("warning"))
 
 
 class HomepagePortfolioStabilityTest(TestCase):

@@ -72,7 +72,7 @@ export function useTaskTreeLoader() {
 
     await fieldConfigStore.loadFromB24($b24)
     if (!fieldConfigStore.isConfigured) {
-      error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Зайдите в Настройки → Маппинг и настройте поля.'
+      error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Зайдите в Настройки → Настройка полей и настройте поля.'
     }
   }
 

@@ -3,7 +3,7 @@
     <div class="ms-page-frame">
       <div class="ms-page-header">
         <div>
-          <h1 class="ms-title">Панель отладки</h1>
+          <h1 class="ms-title">Диагностика системы</h1>
           <p class="ms-subtitle mt-2">История запросов, системные события и разбор ошибок.</p>
         </div>
         <B24Button label="Назад" color="link" @click="router.push('/settings')" />
@@ -15,14 +15,14 @@
         class="ms-tab-btn"
         :class="activeTab === 'requests' ? 'ms-tab-btn-active' : ''"
       >
-        HTTP Запросы
+        Запросы
       </button>
       <button 
         @click="activeTab = 'system'" 
         class="ms-tab-btn"
         :class="activeTab === 'system' ? 'ms-tab-btn-active' : ''"
       >
-        Системные Логи
+        Системные события
       </button>
       </div>
 
@@ -39,12 +39,12 @@
           <table class="ms-table">
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Method</th>
-                <th>Path</th>
-                <th>Status</th>
-                <th>Duration</th>
-                <th>Action</th>
+                <th>Время</th>
+                <th>Метод</th>
+                <th>Путь</th>
+                <th>Статус</th>
+                <th>Длительность</th>
+                <th>Действие</th>
               </tr>
             </thead>
             <tbody>
@@ -55,7 +55,7 @@
                 <td class="font-mono" :class="getStatusColor(log.status_code)">{{ log.status_code }}</td>
                 <td class="text-slate-500">{{ log.duration_ms?.toFixed(0) }}ms</td>
                 <td>
-                  <button @click="openDetails(log)" class="text-xs font-medium text-lime-700 hover:text-lime-800">Details</button>
+                  <button @click="openDetails(log)" class="text-xs font-medium text-lime-700 hover:text-lime-800">Подробнее</button>
                 </td>
               </tr>
             </tbody>
@@ -76,11 +76,11 @@
           <table class="ms-table">
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Level</th>
-                <th>Module</th>
-                <th>Message</th>
-                <th>Trace</th>
+                <th>Время</th>
+                <th>Уровень</th>
+                <th>Модуль</th>
+                <th>Сообщение</th>
+                <th>Стек</th>
               </tr>
             </thead>
             <tbody>
@@ -90,7 +90,7 @@
                 <td class="text-xs text-slate-500">{{ log.module }}</td>
                 <td class="max-w-md truncate" :title="log.message">{{ log.message }}</td>
                 <td>
-                  <button v-if="log.traceback" @click="openTrace(log)" class="text-xs font-medium text-rose-600 hover:text-rose-700">Trace</button>
+                  <button v-if="log.traceback" @click="openTrace(log)" class="text-xs font-medium text-rose-600 hover:text-rose-700">Стек</button>
                 </td>
               </tr>
             </tbody>
@@ -109,17 +109,17 @@
 
           <div class="ms-modal-body overflow-y-auto">
             <div v-if="selectedItem.request_body" class="mb-4">
-              <h4 class="mb-1 text-sm font-semibold text-slate-900">Request Body</h4>
+              <h4 class="mb-1 text-sm font-semibold text-slate-900">Тело запроса</h4>
               <pre class="ms-code-block whitespace-pre-wrap">{{ parseOrRaw(selectedItem.request_body) }}</pre>
             </div>
 
             <div v-if="selectedItem.response_body" class="mb-4">
-              <h4 class="mb-1 text-sm font-semibold text-slate-900">Response Body</h4>
+              <h4 class="mb-1 text-sm font-semibold text-slate-900">Тело ответа</h4>
               <pre class="ms-code-block whitespace-pre-wrap">{{ parseOrRaw(selectedItem.response_body) }}</pre>
             </div>
 
             <div v-if="selectedItem.traceback" class="mb-4">
-              <h4 class="mb-1 text-sm font-semibold text-rose-700">Traceback</h4>
+              <h4 class="mb-1 text-sm font-semibold text-rose-700">Стек ошибки</h4>
               <pre class="overflow-x-auto whitespace-pre-wrap rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-900 shadow-sm">{{ selectedItem.traceback }}</pre>
             </div>
 
@@ -147,7 +147,7 @@ const systemLogs = ref<any[]>([])
 const selectedItem = ref<any>(null)
 
 useHead({
-  title: 'Панель отладки'
+  title: 'Диагностика системы'
 })
 
 const fetchRequests = async (page = 1) => {

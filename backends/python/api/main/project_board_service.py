@@ -1,4 +1,5 @@
 import logging
+import traceback
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -9,7 +10,7 @@ from django.utils import timezone
 
 from .bitrix_data_access import BitrixDataService
 from .configuration_service import ConfigurationService
-from .models import Bitrix24Account, ProjectCard, TimesheetItem
+from .models import Bitrix24Account, ProjectCard, SystemLog, TimesheetItem
 from .project_board_shared import (
     BITRIX_REFERENCE_CACHE_TTL,
     HOMEPAGE_CACHE_TTL,
@@ -76,33 +77,139 @@ class ProjectCardService:
         return self.serialize_card(self._get_card(project_id))
 
     def get_board_data(self) -> Dict[str, Any]:
-        cached = cache.get(build_account_cache_key(self.account, "project-board"))
+        cache_key = build_account_cache_key(self.account, "project-board")
+        cached = cache.get(cache_key)
         if cached is not None:
             return cached
 
         if not ensure_project_card_schema():
-            return self.get_fallback_board_data()
+            payload = self._build_safe_board_fallback(
+                stage="schema_unavailable",
+                warnings=["Локальная таблица проектов недоступна. Показаны ограниченные данные."],
+            )
+            cache.set(cache_key, payload, PROJECT_BOARD_CACHE_TTL)
+            return payload
 
-        self.refresh_writeoff_stats()
-        config = self._load_config()
-        stage_options = self.get_project_stage_options(config)
-        cards = list(get_project_card_queryset(self.account).order_by("is_archived", "project_name"))
-        active_cards = [card for card in cards if not card.is_archived]
+        warnings: List[str] = []
 
-        payload = {
+        try:
+            self.refresh_writeoff_stats()
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.refresh_writeoff_stats_failed",
+                exc,
+                stage="refresh_writeoff_stats",
+            )
+            warnings.append("Часть расчетов по списаниям временно недоступна.")
+
+        config: Dict[str, Any] = {}
+        try:
+            config = self._load_config()
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.load_config_failed",
+                exc,
+                stage="load_config",
+            )
+            warnings.append("Не удалось загрузить часть конфигурации проектов.")
+
+        try:
+            stage_options = self.get_project_stage_options(config)
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.load_config_failed",
+                exc,
+                stage="load_stage_options",
+            )
+            stage_options = self._build_legacy_stage_options()
+            warnings.append("Стадии проектов загружены в резервном режиме.")
+
+        try:
+            cards = list(get_project_card_queryset(self.account).order_by("is_archived", "project_name"))
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.serialize_card_failed",
+                exc,
+                stage="load_cards_queryset",
+            )
+            payload = self._build_safe_board_fallback(
+                stage="load_cards_queryset",
+                warnings=[*warnings, "Не удалось загрузить карточки проектов из локальной проекции."],
+            )
+            cache.set(cache_key, payload, PROJECT_BOARD_CACHE_TTL)
+            return payload
+
+        serialized_cards: List[Dict[str, Any]] = []
+        failed_cards = 0
+        for card in cards:
+            try:
+                serialized_cards.append(self.serialize_card(card))
+            except Exception as exc:
+                failed_cards += 1
+                self._log_board_exception(
+                    "project_board.serialize_card_failed",
+                    exc,
+                    stage="serialize_card",
+                    details=f"project_id={card.project_id}",
+                )
+
+        if failed_cards > 0:
+            warnings.append(f"Некоторые карточки проектов не удалось отобразить ({failed_cards}).")
+
+        active_cards = [card for card in serialized_cards if not card.get("is_archived")]
+        warning_text = self._join_warning_parts(warnings)
+
+        payload: Dict[str, Any] = {
             "stages": stage_options,
-            "cards": [self.serialize_card(card) for card in cards],
+            "cards": serialized_cards,
             "summary": {
-                "total_count": len(cards),
+                "total_count": len(serialized_cards),
                 "active_count": len(active_cards),
-                "archived_count": len(cards) - len(active_cards),
-                "support_count": sum(1 for card in active_cards if card.is_support),
-                "inactive_30_count": sum(1 for card in active_cards if card.stage == PROJECT_STAGE_NO_WRITEOFF_30),
-                "inactive_90_count": sum(1 for card in active_cards if card.stage == PROJECT_STAGE_NO_WRITEOFF_90),
+                "archived_count": len(serialized_cards) - len(active_cards),
+                "support_count": sum(1 for card in active_cards if card.get("is_support")),
+                "inactive_30_count": sum(1 for card in active_cards if card.get("stage") == PROJECT_STAGE_NO_WRITEOFF_30),
+                "inactive_90_count": sum(1 for card in active_cards if card.get("stage") == PROJECT_STAGE_NO_WRITEOFF_90),
             },
         }
-        cache.set(build_account_cache_key(self.account, "project-board"), payload, PROJECT_BOARD_CACHE_TTL)
+        if warning_text:
+            payload["warning"] = warning_text
+        cache.set(cache_key, payload, PROJECT_BOARD_CACHE_TTL)
         return payload
+
+    def _build_safe_board_fallback(self, stage: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
+        warnings = warnings or []
+        try:
+            fallback_payload = self.get_fallback_board_data()
+            merged_warning = self._join_warning_parts([fallback_payload.get("warning"), *warnings])
+            if merged_warning:
+                fallback_payload["warning"] = merged_warning
+            return fallback_payload
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.fallback_failed",
+                exc,
+                stage=stage,
+            )
+
+        warning_text = self._join_warning_parts(
+            [
+                "Данные проектов временно недоступны. Повторите попытку позже.",
+                *warnings,
+            ]
+        )
+        return {
+            "stages": self._build_legacy_stage_options(),
+            "cards": [],
+            "summary": {
+                "total_count": 0,
+                "active_count": 0,
+                "archived_count": 0,
+                "support_count": 0,
+                "inactive_30_count": 0,
+                "inactive_90_count": 0,
+            },
+            "warning": warning_text,
+        }
 
     def get_fallback_board_data(self) -> Dict[str, Any]:
         _, by_project_id, by_project_title = self.collect_writeoff_maps()
@@ -1084,6 +1191,46 @@ class ProjectCardService:
         if primary and secondary:
             return f"{primary} {secondary}".strip()
         return primary or secondary
+
+    @staticmethod
+    def _join_warning_parts(parts: List[Optional[str]]) -> Optional[str]:
+        normalized: List[str] = []
+        seen = set()
+        for part in parts:
+            text = str(part or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        if not normalized:
+            return None
+        return " ".join(normalized)
+
+    def _log_board_exception(self, marker: str, exc: Exception, stage: str, details: Optional[str] = None) -> None:
+        logger.exception(
+            "%s domain=%s stage=%s details=%s error=%s",
+            marker,
+            self.account.domain_url,
+            stage,
+            details or "",
+            exc,
+        )
+        try:
+            message_parts = [
+                f"domain={self.account.domain_url}",
+                f"stage={stage}",
+                f"error={exc}",
+            ]
+            if details:
+                message_parts.append(f"details={details}")
+            SystemLog.objects.create(
+                level="ERROR",
+                module=marker,
+                message="; ".join(message_parts),
+                traceback=traceback.format_exc(),
+            )
+        except Exception:
+            logger.warning("Failed to persist %s marker to SystemLog", marker)
 
     def _get_card(self, project_id: str) -> ProjectCard:
         return ProjectCard.objects.get(bitrix24_account=self.account, project_id=str(project_id))

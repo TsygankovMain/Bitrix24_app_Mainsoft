@@ -604,7 +604,7 @@ onMounted(async () => {
               <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.archived_count || 0 }}</div>
             </div>
             <div class="ms-stat-card">
-              <div class="text-xs text-slate-400">Support</div>
+              <div class="text-xs text-slate-400">Поддержка</div>
               <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.support_count || 0 }}</div>
             </div>
             <div class="ms-stat-card">
@@ -626,7 +626,7 @@ onMounted(async () => {
               ]"
               @click="activeView = 'board'"
             >
-              Board
+              Канбан
             </button>
             <button
               type="button"
@@ -636,7 +636,7 @@ onMounted(async () => {
               ]"
               @click="activeView = 'timeline'"
             >
-              Timeline
+              Хронология
             </button>
             <button
               type="button"
@@ -646,7 +646,7 @@ onMounted(async () => {
               ]"
               @click="activeView = 'archive'"
             >
-              Archive
+              Архив
             </button>
           </div>
 
@@ -666,8 +666,8 @@ onMounted(async () => {
                 v-model="supportFilter"
               >
                 <option value="all">Все</option>
-                <option value="support">Только support</option>
-                <option value="delivery">Только delivery</option>
+                <option value="support">Только поддержка</option>
+                <option value="delivery">Только проектная работа</option>
               </select>
             </label>
 
