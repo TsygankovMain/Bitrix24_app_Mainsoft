@@ -89,15 +89,13 @@ def ensure_project_card_schema(force_refresh: bool = False) -> bool:
         if PROJECT_CARD_TABLE_NAME not in table_names or TIMESHEET_ITEM_TABLE_NAME not in table_names:
             is_available = False
         else:
-            with connection.cursor() as cursor:
-                project_card_columns = {
-                    col.name for col in connection.introspection.get_table_description(cursor, PROJECT_CARD_TABLE_NAME)
-                }
-                timesheet_columns = {
-                    col.name for col in connection.introspection.get_table_description(cursor, TIMESHEET_ITEM_TABLE_NAME)
-                }
+            project_card_columns, timesheet_columns = _get_linkage_columns()
 
             # Board/sync features require linkage columns from migration 0009.
+            if "project_item_id" not in project_card_columns or "project_item_id" not in timesheet_columns:
+                _ensure_linkage_columns()
+                project_card_columns, timesheet_columns = _get_linkage_columns()
+
             is_available = (
                 "project_item_id" in project_card_columns
                 and "project_item_id" in timesheet_columns
@@ -108,6 +106,52 @@ def ensure_project_card_schema(force_refresh: bool = False) -> bool:
 
     cache.set(PROJECT_CARD_SCHEMA_CACHE_KEY, is_available, PROJECT_CARD_SCHEMA_TTL)
     return is_available
+
+
+def _get_linkage_columns() -> tuple[set[str], set[str]]:
+    with connection.cursor() as cursor:
+        project_card_columns = {
+            col.name for col in connection.introspection.get_table_description(cursor, PROJECT_CARD_TABLE_NAME)
+        }
+        timesheet_columns = {
+            col.name for col in connection.introspection.get_table_description(cursor, TIMESHEET_ITEM_TABLE_NAME)
+        }
+    return project_card_columns, timesheet_columns
+
+
+def _ensure_linkage_columns() -> None:
+    """
+    Hotfix path for schema drift in production: add missing linkage columns/indexes
+    when migration step was skipped during release.
+    """
+    qn = connection.ops.quote_name
+    project_table = qn(PROJECT_CARD_TABLE_NAME)
+    timesheet_table = qn(TIMESHEET_ITEM_TABLE_NAME)
+    project_col = qn("project_item_id")
+    project_idx = qn(f"{PROJECT_CARD_TABLE_NAME}_project_item_id_idx")
+    timesheet_idx = qn(f"{TIMESHEET_ITEM_TABLE_NAME}_project_item_id_idx")
+
+    project_columns, timesheet_columns = _get_linkage_columns()
+
+    sql_statements: List[str] = []
+    if "project_item_id" not in project_columns:
+        sql_statements.append(f"ALTER TABLE {project_table} ADD COLUMN {project_col} VARCHAR(50)")
+    if "project_item_id" not in timesheet_columns:
+        sql_statements.append(f"ALTER TABLE {timesheet_table} ADD COLUMN {project_col} VARCHAR(50)")
+    # Index creation is idempotent with IF NOT EXISTS for PostgreSQL/SQLite.
+    sql_statements.append(f"CREATE INDEX IF NOT EXISTS {project_idx} ON {project_table} ({project_col})")
+    sql_statements.append(f"CREATE INDEX IF NOT EXISTS {timesheet_idx} ON {timesheet_table} ({project_col})")
+
+    with connection.cursor() as cursor:
+        for sql in sql_statements:
+            cursor.execute(sql)
+
+    if sql_statements:
+        logger.warning(
+            "Auto-healed missing project linkage columns/indexes in %s and %s",
+            PROJECT_CARD_TABLE_NAME,
+            TIMESHEET_ITEM_TABLE_NAME,
+        )
 
 
 def get_project_card_queryset(account: Bitrix24Account):
