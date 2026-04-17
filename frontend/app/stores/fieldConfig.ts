@@ -280,8 +280,24 @@ export const useFieldConfigStore = defineStore(
                     discoveredMapping,
                 })
 
-                // Keep config object in sync in runtime (without forced write to app.option.set).
+                // Keep config object in sync in runtime
                 rawConfig.fields_mapping = mergedRawMapping
+
+                // Persist the auto-detected mappings back to Bitrix
+                try {
+                    // @ts-ignore - callMethod typing
+                    await $b24.callMethod('app.option.set', {
+                        options: {
+                            timestamp_config: JSON.stringify(rawConfig)
+                        }
+                    })
+                    console.info('[FieldConfig] Persisted auto-detected mappings to app.option', {
+                        missingKeys,
+                        mergedRawMapping
+                    })
+                } catch (saveError) {
+                    console.warn('[FieldConfig] Failed to persist auto-detected mappings', saveError)
+                }
             } catch (error) {
                 console.warn('[FieldConfig] Auto-detect missing mappings failed', {
                     spEntityTypeId,

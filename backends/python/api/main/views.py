@@ -937,6 +937,8 @@ def timesheet_sync(request: AuthorizedRequest):
     service = TimesheetSyncService(request.bitrix24_account.client, request.bitrix24_account, config)
     try:
         count = service.sync_all()
+        project_card_service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+        project_card_service.refresh_writeoff_stats()
     except Exception as exc:
         logger.exception("Timesheet sync failed for account %s", request.bitrix24_account.pk)
         return JsonResponse(

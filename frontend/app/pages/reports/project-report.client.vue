@@ -356,6 +356,10 @@ const handleSaveMeeting = async () => {
 
         closeModal()
         await fetchData()
+        
+        apiStore.syncTimesheets().then(() => {
+            projectCardCache.clear()
+        }).catch(e => console.warn('[ProjectReport] Background sync failed', e))
     } catch (e: any) {
         modalError.value = e.message
     } finally {

@@ -88,6 +88,10 @@ async function reloadWorkspace() {
 
     await loadTaskTree($b24, rootTaskId.value)
     expandedTasks.value = new Set([rootTaskId.value])
+    
+    apiStore.syncTimesheets().then(() => {
+        projectCardCache.clear()
+    }).catch(e => console.warn('[Embedded] Background sync failed', e))
 }
 
 // --- INITIALIZATION ---

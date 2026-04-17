@@ -6,11 +6,13 @@ import ProjectBoardColumn from '~/components/projects/ProjectBoardColumn.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import ProjectTimelineLane from '~/components/projects/ProjectTimelineLane.vue'
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption, ProjectBoardResponse } from '~/utils/projectBoard'
-import { buildProjectBoardSummary, formatProjectDate, getTimelineAnchor, parseProjectDateValue, upsertProjectBoardCard } from '~/utils/projectBoard'
+import { upsertProjectBoardCard, buildProjectBoardSummary, formatProjectDate, getTimelineAnchor, parseProjectDateValue } from '~/utils/projectBoard'
 import { openProjectGroup } from '~/utils/openProjectGroup'
+import { openCrmItemCard } from '~/utils/openCrmItem'
 
 const router = useRouter()
 const { locales: localesI18n, setLocale } = useI18n()
+const fieldConfigStore = useFieldConfigStore()
 
 useHead({
   title: 'Управление проектами',
@@ -455,6 +457,22 @@ function openProject(card?: ProjectBoardCardRecord | null) {
   openProjectGroup(targetCard.project_id)
 }
 
+function openSpa(card?: ProjectBoardCardRecord | null) {
+  const targetCard = card || selectedCard.value
+  if (!targetCard) {
+    return
+  }
+
+  const spEntityTypeId = fieldConfigStore.entityTypeId
+  const projectItemId = targetCard.project_item_id
+
+  if (spEntityTypeId && projectItemId) {
+    openCrmItemCard(spEntityTypeId, projectItemId)
+  } else {
+    showStatus('warning', 'Нет привязки к элементу SPA.')
+  }
+}
+
 function handleDragStart(projectId: string) {
   draggedProjectId.value = projectId
 }
@@ -774,6 +792,7 @@ onMounted(async () => {
         @save="handleSaveProject"
         @archive="handleArchiveProject"
         @open-project="openProject"
+        @open-spa="openSpa"
       />
     </div>
   </div>
