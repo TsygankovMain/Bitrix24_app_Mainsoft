@@ -1021,12 +1021,24 @@ def save_configuration(request: AuthorizedRequest):
 
         config = service.normalize_configuration_sync(config)
 
-        project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
+        warnings = []
+        project_validation = None
         try:
             should_validate_project_spa = int(config.get("project_sp_entity_type_id") or 0) > 0
         except (TypeError, ValueError):
             should_validate_project_spa = False
-        if should_validate_project_spa and not project_validation.get("is_valid"):
+
+        if should_validate_project_spa:
+            try:
+                project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
+            except Exception as validation_exc:
+                logger.exception("Configuration save validation failed: %s", validation_exc)
+                warnings.append(
+                    "Проверка Project SPA временно недоступна. Настройки сохранены, "
+                    "но валидацию рекомендуется повторить позже."
+                )
+
+        if should_validate_project_spa and project_validation and not project_validation.get("is_valid"):
             return JsonResponse(
                 {
                     "status": "validation_error",
@@ -1042,15 +1054,40 @@ def save_configuration(request: AuthorizedRequest):
         response_payload = {"status": "success"}
         if should_validate_project_spa:
             project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
-            sync_result = project_sync_service.sync()
-            backfill_result = project_sync_service.backfill_timesheet_project_items()
-            response_payload["project_sync"] = sync_result
-            response_payload["timesheet_backfill"] = backfill_result
+            try:
+                sync_result = project_sync_service.sync()
+                response_payload["project_sync"] = sync_result
+            except Exception as sync_exc:
+                logger.exception("Configuration save project sync failed: %s", sync_exc)
+                warnings.append(
+                    "Настройки сохранены, но автосинхронизация проектов завершилась ошибкой."
+                )
+                response_payload["project_sync"] = {
+                    "status": "warning",
+                    "warning": str(sync_exc),
+                }
+
+            try:
+                backfill_result = project_sync_service.backfill_timesheet_project_items()
+                response_payload["timesheet_backfill"] = backfill_result
+            except Exception as backfill_exc:
+                logger.exception("Configuration save timesheet backfill failed: %s", backfill_exc)
+                warnings.append(
+                    "Настройки сохранены, но backfill связей меток времени завершился ошибкой."
+                )
+                response_payload["timesheet_backfill"] = {
+                    "status": "warning",
+                    "warning": str(backfill_exc),
+                }
+
+        if warnings:
+            response_payload["warning"] = " ".join(warnings)
 
         return JsonResponse(response_payload)
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
     except Exception as e:
+        logger.exception("Configuration save failed: %s", e)
         return JsonResponse({"error": str(e)}, status=500)
 
 

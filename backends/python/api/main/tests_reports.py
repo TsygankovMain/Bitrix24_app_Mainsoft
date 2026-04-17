@@ -484,6 +484,75 @@ class QueryStabilityTest(TestCase):
         self.assertEqual(payload["count"], 0)
         self.assertIn("warning", payload)
 
+    @patch("main.views.ProjectSyncService.backfill_timesheet_project_items", return_value={"status": "success", "updated": 0, "unresolved": 0})
+    @patch("main.views.ProjectSyncService.sync", side_effect=RuntimeError("sync failed"))
+    @patch("main.views.ConfigurationService.save_configuration_sync", return_value=None)
+    @patch("main.views.ConfigurationService.normalize_configuration_sync", side_effect=lambda cfg: cfg)
+    @patch("main.views._build_project_spa_validation_payload", return_value={"is_valid": True})
+    def test_save_configuration_returns_success_when_project_sync_fails(
+        self,
+        _validation_mock,
+        _normalize_mock,
+        _save_mock,
+        _sync_mock,
+        _backfill_mock,
+    ):
+        token = self.account.create_jwt_token()
+        response = Client().post(
+            "/api/configuration/save",
+            data={
+                "config": {
+                    "sp_entity_type_id": 0,
+                    "fields_mapping": {},
+                    "project_sp_entity_type_id": 1164,
+                    "project_fields_mapping": {"bitrix_group_id": "UF_CRM_1"},
+                    "is_configured": True,
+                }
+            },
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get("status"), "success")
+        self.assertIn("warning", payload)
+        self.assertIn("project_sync", payload)
+
+    @patch("main.views.ProjectSyncService.backfill_timesheet_project_items", return_value={"status": "success", "updated": 0, "unresolved": 0})
+    @patch("main.views.ProjectSyncService.sync", return_value={"status": "success", "synced": 0, "created": 0, "updated": 0})
+    @patch("main.views.ConfigurationService.save_configuration_sync", return_value=None)
+    @patch("main.views.ConfigurationService.normalize_configuration_sync", side_effect=lambda cfg: cfg)
+    @patch("main.views._build_project_spa_validation_payload", side_effect=RuntimeError("validation unavailable"))
+    def test_save_configuration_returns_success_when_validation_fails_temporarily(
+        self,
+        _validation_mock,
+        _normalize_mock,
+        _save_mock,
+        _sync_mock,
+        _backfill_mock,
+    ):
+        token = self.account.create_jwt_token()
+        response = Client().post(
+            "/api/configuration/save",
+            data={
+                "config": {
+                    "sp_entity_type_id": 0,
+                    "fields_mapping": {},
+                    "project_sp_entity_type_id": 1164,
+                    "project_fields_mapping": {"bitrix_group_id": "UF_CRM_1"},
+                    "is_configured": True,
+                }
+            },
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get("status"), "success")
+        self.assertIn("warning", payload)
+
 
 class HomepagePortfolioStabilityTest(TestCase):
     def setUp(self):
