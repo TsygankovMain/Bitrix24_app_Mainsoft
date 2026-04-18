@@ -1,4 +1,5 @@
 from collections import defaultdict
+from typing import Any, Dict, Mapping, Set
 
 from django.core.paginator import Paginator
 from django.http import JsonResponse, HttpResponse
@@ -78,6 +79,7 @@ __all__ = [
     "get_smart_processes",
     "get_sp_fields",
     "get_project_spa_validation",
+    "get_finance_spa_validation",
     "get_project_spa_stages",
     "run_project_spa_backfill",
     "get_request_logs",
@@ -177,7 +179,15 @@ PROJECT_SPA_REQUIRED_MAPPING = {
     "is_archived": "boolean",
 }
 
-PROJECT_SPA_TYPE_ALIASES = {
+FINANCE_SPA_REQUIRED_MAPPING = {
+    "project_item_id": "project_identifier",
+    "operation_type": "stage",
+    "amount": "double",
+    "operation_date": "date",
+    "source": "string",
+}
+
+SPA_FIELD_TYPE_ALIASES: Dict[str, Set[str]] = {
     "string": {"string", "text", "char"},
     "integer": {"integer", "int"},
     "double": {"double", "float", "money"},
@@ -188,6 +198,8 @@ PROJECT_SPA_TYPE_ALIASES = {
     "project_identifier": {"integer", "int", "string", "text", "char"},
     "stage": {"string", "text", "char", "crm_status", "status"},
 }
+PROJECT_SPA_TYPE_ALIASES = SPA_FIELD_TYPE_ALIASES
+FINANCE_SPA_TYPE_ALIASES = SPA_FIELD_TYPE_ALIASES
 
 
 def _normalize_field_type(value):
@@ -196,10 +208,18 @@ def _normalize_field_type(value):
     return str(value).strip().lower()
 
 
-def _is_project_field_type_compatible(expected_type, actual_type):
+def _is_field_type_compatible(
+    expected_type: str,
+    actual_type: Any,
+    type_aliases: Mapping[str, Set[str]],
+) -> bool:
     actual = _normalize_field_type(actual_type)
-    expected_aliases = PROJECT_SPA_TYPE_ALIASES.get(expected_type, {expected_type})
+    expected_aliases = type_aliases.get(expected_type, {expected_type})
     return actual in expected_aliases
+
+
+def _is_project_field_type_compatible(expected_type, actual_type):
+    return _is_field_type_compatible(expected_type, actual_type, PROJECT_SPA_TYPE_ALIASES)
 
 
 def _collect_project_spa_linkage_issues(sync_service: ProjectSyncService, entity_type_id: int, project_mapping: dict):
@@ -399,6 +419,131 @@ def _build_project_spa_validation_payload(
         "write_access_error": write_access_error,
         "warnings": warnings,
         "linkage_issues": linkage_issues,
+    }
+
+
+def _build_finance_spa_validation_payload(
+    config_service: ConfigurationService,
+    account,
+    config: dict,
+):
+    config = config_service.normalize_configuration_sync(config)
+    try:
+        entity_type_id = int(config.get("finance_sp_entity_type_id") or 0)
+    except (TypeError, ValueError):
+        entity_type_id = 0
+
+    finance_mapping = config.get("finance_fields_mapping") or {}
+    if not isinstance(finance_mapping, dict):
+        finance_mapping = {}
+
+    required_keys = list(FINANCE_SPA_REQUIRED_MAPPING.keys())
+    missing_mapping_keys = []
+    missing_fields_in_sp = []
+    type_mismatches = []
+    warnings = []
+    access_error = None
+    write_access_error = None
+
+    if not entity_type_id:
+        return {
+            "is_configured": False,
+            "is_valid": False,
+            "entity_type_id": 0,
+            "required_mapping_keys": required_keys,
+            "missing_mapping_keys": required_keys,
+            "missing_fields_in_sp": [],
+            "type_mismatches": [],
+            "access_error": "Не выбран Смарт-процесс ФИНАНСЫ в настройках.",
+            "write_access_error": "Не выбран Смарт-процесс ФИНАНСЫ в настройках.",
+            "warnings": ["Finance SPA не настроен."],
+        }
+
+    fields_meta = config_service.get_sp_fields_sync(entity_type_id)
+    fields_by_id = {str(field.get("id") or ""): field for field in fields_meta if field.get("id")}
+    fields_by_id_lower = {key.lower(): value for key, value in fields_by_id.items()}
+
+    for mapping_key, expected_type in FINANCE_SPA_REQUIRED_MAPPING.items():
+        mapped_field = str(finance_mapping.get(mapping_key) or "").strip()
+        if not mapped_field:
+            missing_mapping_keys.append(mapping_key)
+            continue
+
+        field_meta = fields_by_id.get(mapped_field) or fields_by_id_lower.get(mapped_field.lower())
+        if not field_meta:
+            missing_fields_in_sp.append({"key": mapping_key, "mapped_field": mapped_field})
+            continue
+
+        actual_type = field_meta.get("type")
+        if not _is_field_type_compatible(expected_type, actual_type, FINANCE_SPA_TYPE_ALIASES):
+            type_mismatches.append(
+                {
+                    "key": mapping_key,
+                    "mapped_field": mapped_field,
+                    "expected_type": expected_type,
+                    "actual_type": _normalize_field_type(actual_type),
+                }
+            )
+
+    try:
+        account.client._bitrix_token.call_method(
+            "crm.item.list",
+            {"entityTypeId": entity_type_id, "select": ["id"], "start": 0},
+        )
+    except Exception as exc:
+        access_error = str(exc)
+
+    try:
+        sample_items_response = account.client._bitrix_token.call_method(
+            "crm.item.list",
+            {"entityTypeId": entity_type_id, "select": ["id", "title"], "start": 0},
+        )
+        sample_items = sample_items_response.get("result", [])
+        if isinstance(sample_items, dict):
+            sample_items = sample_items.get("items") or sample_items.get("result") or []
+        sample_id = None
+        for row in sample_items or []:
+            sample_id = row.get("id") or row.get("ID")
+            if sample_id:
+                break
+        if sample_id:
+            account.client._bitrix_token.call_method(
+                "crm.item.update",
+                {
+                    "entityTypeId": entity_type_id,
+                    "id": int(sample_id) if str(sample_id).isdigit() else sample_id,
+                    "fields": {},
+                },
+            )
+        else:
+            warnings.append("Права на обновление не проверены: в Finance SPA нет элементов для no-op update.")
+    except Exception as exc:
+        exc_text = str(exc)
+        benign_markers = ("fields", "empty", "пуст")
+        if any(marker in exc_text.lower() for marker in benign_markers):
+            warnings.append("Права на обновление подтверждены частично: no-op update не принял пустой payload.")
+        else:
+            write_access_error = exc_text
+
+    is_valid = (
+        not missing_mapping_keys
+        and not missing_fields_in_sp
+        and not type_mismatches
+        and access_error is None
+        and write_access_error is None
+    )
+
+    return {
+        "is_configured": True,
+        "is_valid": is_valid,
+        "entity_type_id": entity_type_id,
+        "required_mapping_keys": required_keys,
+        "missing_mapping_keys": missing_mapping_keys,
+        "missing_fields_in_sp": missing_fields_in_sp,
+        "type_mismatches": type_mismatches,
+        "access_error": access_error,
+        "write_access_error": write_access_error,
+        "warnings": warnings,
     }
 
 
@@ -1022,16 +1167,30 @@ def save_configuration(request: AuthorizedRequest):
         config = service.normalize_configuration_sync(config)
 
         project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
+        finance_validation = _build_finance_spa_validation_payload(service, request.bitrix24_account, config)
         try:
             should_validate_project_spa = int(config.get("project_sp_entity_type_id") or 0) > 0
         except (TypeError, ValueError):
             should_validate_project_spa = False
+        try:
+            should_validate_finance_spa = int(config.get("finance_sp_entity_type_id") or 0) > 0
+        except (TypeError, ValueError):
+            should_validate_finance_spa = False
         if should_validate_project_spa and not project_validation.get("is_valid"):
             return JsonResponse(
                 {
                     "status": "validation_error",
                     "error": "Конфигурация Project SPA невалидна. Исправьте ошибки и повторите сохранение.",
                     "validation": project_validation,
+                },
+                status=400,
+            )
+        if should_validate_finance_spa and not finance_validation.get("is_valid"):
+            return JsonResponse(
+                {
+                    "status": "validation_error",
+                    "error": "Конфигурация Finance SPA невалидна. Исправьте ошибки и повторите сохранение.",
+                    "finance_validation": finance_validation,
                 },
                 status=400,
             )
@@ -1096,6 +1255,17 @@ def get_project_spa_validation(request: AuthorizedRequest):
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     config = config_service.get_configuration_sync()
     payload = _build_project_spa_validation_payload(config_service, request.bitrix24_account, config)
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_finance_spa_validation")
+@auth_required
+def get_finance_spa_validation(request: AuthorizedRequest):
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    payload = _build_finance_spa_validation_payload(config_service, request.bitrix24_account, config)
     return JsonResponse(payload)
 
 

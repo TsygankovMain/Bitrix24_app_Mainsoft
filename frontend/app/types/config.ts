@@ -1,9 +1,11 @@
 export interface AppConfigurationPayload {
   sp_entity_type_id?: number | string | null
   project_sp_entity_type_id?: number | string | null
+  finance_sp_entity_type_id?: number | string | null
   hourly_rate?: number | string | null
   fields_mapping?: Record<string, string>
   project_fields_mapping?: Record<string, string>
+  finance_fields_mapping?: Record<string, string>
   stage_id?: string | null
   stage?: string | null
   project_stage?: string | null
@@ -81,6 +83,31 @@ export interface ProjectSpaValidationPayload {
   write_access_error?: string | null
   warnings: string[]
   linkage_issues: ProjectSpaLinkageIssues
+}
+
+export interface FinanceSpaTypeMismatch {
+  key: string
+  mapped_field: string
+  expected_type: string
+  actual_type: string
+}
+
+export interface FinanceSpaMissingField {
+  key: string
+  mapped_field: string
+}
+
+export interface FinanceSpaValidationPayload {
+  is_configured: boolean
+  is_valid: boolean
+  entity_type_id: number
+  required_mapping_keys: string[]
+  missing_mapping_keys: string[]
+  missing_fields_in_sp: FinanceSpaMissingField[]
+  type_mismatches: FinanceSpaTypeMismatch[]
+  access_error?: string | null
+  write_access_error?: string | null
+  warnings: string[]
 }
 
 export interface FieldConfigObject {

@@ -14,6 +14,7 @@ import type {
 } from '~/types/report'
 import type {
   AppConfigurationPayload,
+  FinanceSpaValidationPayload,
   ProjectSpaValidationPayload,
   SmartProcessFieldOption,
   SmartProcessOption,
@@ -26,6 +27,7 @@ type SaveConfigurationResponse = {
   project_sync?: Record<string, unknown>
   timesheet_backfill?: Record<string, unknown>
   validation?: ProjectSpaValidationPayload
+  finance_validation?: FinanceSpaValidationPayload
   error?: string
 }
 
@@ -648,6 +650,12 @@ export const useApiStore = defineStore(
       })
     }
 
+    const getFinanceSpaValidation = async (): Promise<FinanceSpaValidationPayload> => {
+      return await $api('/api/finance-spa/validation', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
     const createSmartProcess = async (): Promise<SmartProcessCreateResponse> => {
       const result = await $api('/api/smart-processes/create', {
         method: 'POST',
@@ -752,6 +760,7 @@ export const useApiStore = defineStore(
       getSmartProcesses,
       getSpFields,
       getProjectSpaValidation,
+      getFinanceSpaValidation,
       getRequestLogs,
       getSystemLogs,
       createSmartProcess,

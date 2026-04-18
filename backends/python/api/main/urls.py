@@ -50,6 +50,7 @@ urlpatterns = [
     path('api/smart-processes', views.get_smart_processes, name='get_smart_processes'),
     path('api/smart-processes/fields', views.get_sp_fields, name='get_sp_fields'),
     path('api/project-spa/validation', views.get_project_spa_validation, name='get_project_spa_validation'),
+    path('api/finance-spa/validation', views.get_finance_spa_validation, name='get_finance_spa_validation'),
     path('api/project-spa/stages', views.get_project_spa_stages, name='get_project_spa_stages'),
     path('api/smart-processes/create', views.create_smart_process, name='create_smart_process'),
     path('api/smart-processes/create-fields', views.create_fields, name='create_fields'),

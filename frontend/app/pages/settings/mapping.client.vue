@@ -3,6 +3,7 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref } from 'vue'
 import type {
   AppConfigurationPayload,
+  FinanceSpaValidationPayload,
   MappingFieldDefinition,
   ProjectSpaValidationPayload,
   SmartProcessFieldOption,
@@ -83,7 +84,22 @@ const PROJECT_FIELDS: MappingFieldDefinition[] = [
     acceptedTypes: ['crm_status', 'status', 'stage'],
   },
   { key: 'is_support', label: 'Support-флаг', type: 'boolean', desc: 'Проект в режиме поддержки' },
+  {
+    key: 'project_type',
+    label: 'Тип проекта',
+    type: 'string | status',
+    desc: 'Режим проекта: delivery/support.',
+    acceptedTypes: ['string', 'crm_status', 'status'],
+  },
+  {
+    key: 'budget_mode',
+    label: 'Режим бюджета',
+    type: 'string | status',
+    desc: 'Режим бюджетирования: hours/amount/hours_and_amount/support.',
+    acceptedTypes: ['string', 'crm_status', 'status'],
+  },
   { key: 'project_hours_budget', label: 'Бюджет часов', type: 'double', desc: 'Плановый объем часов проекта' },
+  { key: 'planned_budget_amount', label: 'Бюджет в деньгах', type: 'double', desc: 'Плановый бюджет проекта в денежном выражении' },
   { key: 'hourly_rate', label: 'Ставка часа', type: 'double', desc: 'Коммерческая ставка проекта' },
   { key: 'curator_id', label: 'Куратор', type: 'employee', desc: 'Ответственный пользователь Bitrix24' },
   { key: 'company_id', label: 'Компания', type: 'crm_company', desc: 'Клиентская компания проекта' },
@@ -93,16 +109,51 @@ const PROJECT_FIELDS: MappingFieldDefinition[] = [
   { key: 'is_archived', label: 'Архив', type: 'boolean', desc: 'Флаг архивности проекта' },
 ]
 
+const FINANCE_FIELDS: MappingFieldDefinition[] = [
+  {
+    key: 'project_item_id',
+    label: 'ID карточки проекта',
+    type: 'integer | string',
+    desc: 'Связь финансовой операции с карточкой проекта в Project SPA.',
+    acceptedTypes: ['integer', 'string'],
+  },
+  {
+    key: 'operation_type',
+    label: 'Тип операции',
+    type: 'string | status',
+    desc: 'Доход/расход или другой тип финансовой операции.',
+    acceptedTypes: ['string', 'crm_status', 'status'],
+  },
+  { key: 'amount', label: 'Сумма', type: 'double', desc: 'Сумма операции в указанной валюте.' },
+  { key: 'currency', label: 'Валюта', type: 'string', desc: 'Код валюты операции (например, RUB, USD).' },
+  { key: 'operation_date', label: 'Дата операции', type: 'date', desc: 'Дата фактической финансовой операции.' },
+  { key: 'source', label: 'Источник', type: 'string', desc: 'Канал или источник происхождения операции.' },
+  {
+    key: 'deal_id',
+    label: 'ID сделки',
+    type: 'integer | string',
+    desc: 'Связь с CRM-сделкой, если операция относится к сделке.',
+    acceptedTypes: ['integer', 'string'],
+  },
+  { key: 'comment', label: 'Комментарий', type: 'string', desc: 'Пояснение к финансовой операции.' },
+  { key: 'responsible_user_id', label: 'Ответственный', type: 'employee', desc: 'Пользователь, ответственный за операцию.' },
+]
+
 const PROJECT_CREATABLE_FIELD_KEYS = new Set(PROJECT_FIELDS.filter(field => field.key !== 'title' && field.key !== PROJECT_STAGE_FIELD_KEY).map(field => field.key))
 const CREATE_OPTION_PREFIX = '__create__:'
 
 // Mapping State: AppFieldKey -> BitrixFieldID
 const mapping = ref<Record<string, string>>({})
 const projectMapping = ref<Record<string, string>>({})
+const financeMapping = ref<Record<string, string>>({})
 const selectedProjectSpId = ref<number | null>(null)
 const projectSpFields = ref<SmartProcessFieldOption[]>([])
 const projectSpaValidation = ref<ProjectSpaValidationPayload | null>(null)
 const isValidatingProjectSpa = ref(false)
+const selectedFinanceSpId = ref<number | null>(null)
+const financeSpFields = ref<SmartProcessFieldOption[]>([])
+const financeSpaValidation = ref<FinanceSpaValidationPayload | null>(null)
+const isValidatingFinanceSpa = ref(false)
 
 function normalizeMappingState(source?: Record<string, string> | null) {
   return Object.entries(source || {}).reduce<Record<string, string>>((acc, [key, value]) => {
@@ -226,6 +277,12 @@ async function loadData() {
             await loadProjectSpFields(Number(cfg.project_sp_entity_type_id))
             await validateProjectSpa()
         }
+        if (cfg.finance_sp_entity_type_id) {
+            selectedFinanceSpId.value = Number(cfg.finance_sp_entity_type_id)
+            financeMapping.value = normalizeMappingState(cfg.finance_fields_mapping || {})
+            await loadFinanceSpFields(Number(cfg.finance_sp_entity_type_id))
+            await validateFinanceSpa()
+        }
     } catch (e) {
         processErrorGlobal(e)
     } finally {
@@ -245,11 +302,34 @@ async function validateProjectSpa() {
     }
 }
 
+async function validateFinanceSpa() {
+    isValidatingFinanceSpa.value = true
+    try {
+        financeSpaValidation.value = await apiStore.getFinanceSpaValidation()
+    } catch (e) {
+        processErrorGlobal(e)
+    } finally {
+        isValidatingFinanceSpa.value = false
+    }
+}
+
 async function loadProjectSpFields(entityTypeId: number) {
     isLoading.value = true
     try {
         const res = await apiStore.getSpFields(entityTypeId)
         projectSpFields.value = res.fields || []
+    } catch (e) {
+        processErrorGlobal(e)
+    } finally {
+        isLoading.value = false
+    }
+}
+
+async function loadFinanceSpFields(entityTypeId: number) {
+    isLoading.value = true
+    try {
+        const res = await apiStore.getSpFields(entityTypeId)
+        financeSpFields.value = res.fields || []
     } catch (e) {
         processErrorGlobal(e)
     } finally {
@@ -277,12 +357,15 @@ async function handleSave() {
     statusMessage.value = null
     try {
         const serializedProjectMapping = serializeProjectMappingState(projectMapping.value)
+        const serializedFinanceMapping = normalizeMappingState(financeMapping.value)
         const newConfig = {
             ...config.value,
             sp_entity_type_id: selectedSpId.value,
             fields_mapping: mapping.value,
             project_sp_entity_type_id: selectedProjectSpId.value,
             project_fields_mapping: serializedProjectMapping,
+            finance_sp_entity_type_id: selectedFinanceSpId.value,
+            finance_fields_mapping: serializedFinanceMapping,
             stage_id: serializedProjectMapping.stage_id || null,
             stage: serializedProjectMapping.stage || null,
             project_stage: serializedProjectMapping.stage || null,
@@ -312,12 +395,25 @@ async function handleSave() {
         if (selectedProjectSpId.value) {
             await validateProjectSpa()
         }
+        if (selectedFinanceSpId.value) {
+            await validateFinanceSpa()
+        }
         router.push('/settings')
     } catch (e: any) {
         const errData = e?.data
-        if (errData?.validation) {
-            projectSpaValidation.value = errData.validation as ProjectSpaValidationPayload
-            const errorText = errData?.error || 'Конфигурация Project SPA не прошла валидацию.'
+        if (errData?.validation || errData?.finance_validation) {
+            if (errData?.validation) {
+                projectSpaValidation.value = errData.validation as ProjectSpaValidationPayload
+            }
+            if (errData?.finance_validation) {
+                financeSpaValidation.value = errData.finance_validation as FinanceSpaValidationPayload
+            }
+
+            const errorText = errData?.error || (
+                errData?.validation
+                    ? 'Конфигурация Project SPA не прошла валидацию.'
+                    : 'Конфигурация Finance SPA не прошла валидацию.'
+            )
             showStatus('error', errorText)
             return
         }
@@ -405,6 +501,16 @@ function getProjectFieldOptions(field: MappingFieldDefinition) {
     }
 
     return options
+}
+
+function getFinanceFieldOptions(field: MappingFieldDefinition) {
+    const currentValue = String(financeMapping.value[field.key] || '').trim()
+    return financeSpFields.value
+      .filter(option => isFieldTypeCompatible(field, option.type) || String(option.id || '').trim() === currentValue)
+      .map(f => ({
+        label: `${f.title} (${f.type})`,
+        value: f.id
+      }))
 }
 
 function showStatus(type: 'success' | 'error', text: string) {
@@ -506,6 +612,16 @@ async function handleMappingSelectChange(
         projectMapping.value[fieldKey] = nextValue
     } else {
         delete projectMapping.value[fieldKey]
+    }
+}
+
+function handleFinanceMappingSelectChange(event: Event, fieldKey: string) {
+    const select = event.target as HTMLSelectElement | null
+    const nextValue = select?.value || ''
+    if (nextValue) {
+        financeMapping.value[fieldKey] = nextValue
+    } else {
+        delete financeMapping.value[fieldKey]
     }
 }
 
@@ -751,6 +867,120 @@ onMounted(async () => {
              </div>
           </B24Card>
 
+          <B24Card title="Смарт-процесс ДОХОДЫ-РАСХОДЫ (finance)" class="ms-surface">
+              <div class="w-full space-y-4">
+                  <div>
+                      <label class="mb-1 block text-sm font-semibold text-slate-800">Смарт-процесс финансов</label>
+                      <select
+                        v-model="selectedFinanceSpId"
+                        class="block w-full sm:text-sm"
+                      >
+                          <option :value="null">-- Не выбрано --</option>
+                          <option v-for="sp in smartProcesses" :key="`finance-${sp.id}`" :value="sp.entityTypeId">
+                              {{ sp.title }} (ID: {{ sp.entityTypeId }})
+                          </option>
+                      </select>
+                      <p class="mt-1 text-xs text-slate-500">
+                          Этот процесс хранит операции ДОХОДЫ-РАСХОДЫ и их привязку к проектам.
+                      </p>
+                  </div>
+
+                  <div class="flex flex-wrap gap-2">
+                      <B24Button
+                        label="Подгрузить поля финансов"
+                        color="primary"
+                        size="sm"
+                        @click="() => { if (selectedFinanceSpId) loadFinanceSpFields(selectedFinanceSpId) }"
+                        :disabled="!selectedFinanceSpId || isLoading"
+                      />
+                      <B24Button
+                        label="Проверить Finance SPA"
+                        color="default"
+                        size="sm"
+                        @click="validateFinanceSpa"
+                        :loading="isValidatingFinanceSpa"
+                        :disabled="!selectedFinanceSpId || isValidatingFinanceSpa"
+                      />
+                  </div>
+              </div>
+          </B24Card>
+
+          <B24Card title="Проверка Finance SPA" v-if="selectedFinanceSpId" class="ms-surface">
+              <div v-if="financeSpaValidation" class="space-y-3 text-sm">
+                  <div class="ms-note" :class="financeSpaValidation.is_valid ? 'ms-note-success' : 'ms-note-danger'">
+                      {{ financeSpaValidation.is_valid ? 'Валидация пройдена: контур Finance SPA готов.' : 'Есть проблемы конфигурации Finance SPA.' }}
+                  </div>
+
+                  <div v-if="financeSpaValidation.access_error" class="ms-note ms-note-danger">
+                      Ошибка доступа к Finance SPA: {{ financeSpaValidation.access_error }}
+                  </div>
+                  <div v-if="financeSpaValidation.write_access_error" class="ms-note ms-note-danger">
+                      Ошибка прав на обновление Finance SPA: {{ financeSpaValidation.write_access_error }}
+                  </div>
+
+                  <div v-if="financeSpaValidation.missing_mapping_keys.length > 0" class="ms-panel-muted">
+                      <div class="font-semibold text-slate-900">Не заполнены обязательные маппинги</div>
+                      <div class="mt-1 text-xs text-slate-600">
+                          {{ financeSpaValidation.missing_mapping_keys.join(', ') }}
+                      </div>
+                  </div>
+
+                  <div v-if="financeSpaValidation.missing_fields_in_sp.length > 0" class="ms-panel-muted">
+                      <div class="font-semibold text-slate-900">Маппинги указывают на несуществующие поля</div>
+                      <div class="mt-1 space-y-1 text-xs text-slate-600">
+                          <div v-for="row in financeSpaValidation.missing_fields_in_sp" :key="`finance-missing-field-${row.key}`">
+                              {{ row.key }} → {{ row.mapped_field }}
+                          </div>
+                      </div>
+                  </div>
+
+                  <div v-if="financeSpaValidation.type_mismatches.length > 0" class="ms-panel-muted">
+                      <div class="font-semibold text-slate-900">Несоответствие типов полей</div>
+                      <div class="mt-1 space-y-1 text-xs text-slate-600">
+                          <div v-for="row in financeSpaValidation.type_mismatches" :key="`finance-type-mismatch-${row.key}`">
+                              {{ row.key }} → {{ row.mapped_field }} (ожидалось: {{ row.expected_type }}, фактически: {{ row.actual_type }})
+                          </div>
+                      </div>
+                  </div>
+
+                  <div v-if="financeSpaValidation.warnings.length > 0" class="ms-panel-muted">
+                      <div class="font-semibold text-slate-900">Предупреждения</div>
+                      <div class="mt-1 space-y-1 text-xs text-slate-600">
+                          <div v-for="(warning, index) in financeSpaValidation.warnings" :key="`finance-warning-${index}`">
+                              {{ warning }}
+                          </div>
+                      </div>
+                  </div>
+              </div>
+              <div v-else class="ms-empty-state">
+                  Нажмите «Проверить Finance SPA», чтобы увидеть статус маппинга.
+              </div>
+          </B24Card>
+
+          <B24Card title="Доступные поля Finance SPA" v-if="selectedFinanceSpId" class="ms-surface">
+             <div v-if="financeSpFields.length > 0" class="ms-table-shell max-h-60 overflow-y-auto">
+                 <table class="ms-table">
+                     <thead class="sticky top-0">
+                         <tr>
+                             <th>Название</th>
+                             <th>Код (ID)</th>
+                             <th>Тип</th>
+                         </tr>
+                     </thead>
+                     <tbody class="text-sm">
+                         <tr v-for="field in financeSpFields" :key="`finance-field-${field.id}`">
+                             <td class="font-medium text-slate-900">{{ field.title }}</td>
+                             <td class="font-mono text-xs text-slate-500">{{ field.id }}</td>
+                             <td class="text-slate-500">{{ field.type }}</td>
+                         </tr>
+                     </tbody>
+                 </table>
+             </div>
+             <div v-else class="ms-empty-state">
+                 Поля еще не загружены. Нажмите "Подгрузить поля финансов".
+             </div>
+          </B24Card>
+
           <!-- Field List (Read-Only) -->
           <B24Card title="Доступные поля сущности" v-if="selectedSpId" class="ms-surface">
              <div v-if="spFields.length > 0" class="ms-table-shell max-h-60 overflow-y-auto">
@@ -845,6 +1075,44 @@ onMounted(async () => {
                                   >
                                       <option value="">-- Не сопоставлено --</option>
                                       <option v-for="opt in getProjectFieldOptions(field)" :key="opt.value" :value="opt.value">
+                                          {{ opt.label }}
+                                      </option>
+                                  </select>
+                              </td>
+                          </tr>
+                      </tbody>
+                  </table>
+              </div>
+          </B24Card>
+
+          <B24Card title="Сопоставление полей финансов (Finance SPA)" v-if="selectedFinanceSpId" class="ms-surface">
+              <div class="ms-table-shell">
+                  <table class="ms-table">
+                      <thead>
+                          <tr>
+                              <th class="w-1/2">
+                                  Поле финансов в приложении
+                              </th>
+                              <th class="w-1/2">
+                                  Поле в Finance SPA
+                              </th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                          <tr v-for="field in FINANCE_FIELDS" :key="`finance-map-${field.key}`">
+                              <td>
+                                  <div class="text-sm font-medium text-slate-900">{{ field.label }}</div>
+                                  <div class="text-xs text-slate-500">{{ field.desc }}</div>
+                                  <div class="mt-1 text-xs text-lime-700">Тип: {{ field.type }}</div>
+                              </td>
+                              <td>
+                                  <select
+                                    :value="financeMapping[field.key] || ''"
+                                    class="block w-full sm:text-sm"
+                                    @change="(event) => handleFinanceMappingSelectChange(event, field.key)"
+                                  >
+                                      <option value="">-- Не сопоставлено --</option>
+                                      <option v-for="opt in getFinanceFieldOptions(field)" :key="opt.value" :value="opt.value">
                                           {{ opt.label }}
                                       </option>
                                   </select>

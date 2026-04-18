@@ -128,6 +128,9 @@ class ProjectCardService:
                     "project_hours_budget": None,
                     "hourly_rate": 0.0,
                     "is_support": False,
+                    "project_type": "delivery",
+                    "budget_mode": "hours_and_amount",
+                    "planned_budget_amount": None,
                     "curator_user_id": None,
                     "curator_name": None,
                     "project_start_date": None,
@@ -261,8 +264,19 @@ class ProjectCardService:
         next_budget = self._to_optional_float(payload.get("project_hours_budget")) if "project_hours_budget" in payload else card.project_hours_budget
         next_hourly_rate = self._to_float(payload.get("hourly_rate"), default=card.hourly_rate) if "hourly_rate" in payload else card.hourly_rate
         next_is_support = self._to_bool(payload.get("is_support"), default=card.is_support) if "is_support" in payload else card.is_support
+        next_project_type = self._clean_str(payload.get("project_type")) if "project_type" in payload else card.project_type
+        next_budget_mode = self._clean_str(payload.get("budget_mode")) if "budget_mode" in payload else card.budget_mode
+        next_planned_budget_amount = (
+            self._to_optional_float(payload.get("planned_budget_amount"))
+            if "planned_budget_amount" in payload
+            else card.planned_budget_amount
+        )
         next_start_date = self._parse_date(payload.get("project_start_date")) if "project_start_date" in payload else card.project_start_date
         next_end_date = self._parse_date(payload.get("project_end_date")) if "project_end_date" in payload else card.project_end_date
+        if not next_project_type:
+            next_project_type = "support" if next_is_support else "delivery"
+        if not next_budget_mode:
+            next_budget_mode = "support" if next_is_support else "hours_and_amount"
 
         if next_curator_user_id and not next_curator_name:
             next_curator_name = BitrixDataService(self.client, {}, self.account).fetch_users([next_curator_user_id]).get(next_curator_user_id)
@@ -289,6 +303,9 @@ class ProjectCardService:
         card.project_hours_budget = next_budget
         card.hourly_rate = next_hourly_rate
         card.is_support = next_is_support
+        card.project_type = next_project_type
+        card.budget_mode = next_budget_mode
+        card.planned_budget_amount = next_planned_budget_amount
         card.curator_user_id = next_curator_user_id
         card.curator_name = next_curator_name
         card.project_start_date = next_start_date
@@ -471,6 +488,9 @@ class ProjectCardService:
             "project_hours_budget": card.project_hours_budget,
             "hourly_rate": card.hourly_rate,
             "is_support": card.is_support,
+            "project_type": card.project_type,
+            "budget_mode": card.budget_mode,
+            "planned_budget_amount": card.planned_budget_amount,
             "curator_user_id": card.curator_user_id,
             "curator_name": card.curator_name,
             "project_start_date": card.project_start_date.isoformat() if card.project_start_date else None,
@@ -1015,6 +1035,9 @@ class ProjectCardService:
             self._assign_mapped_spa_field(fields, mapping, stage_mapping_key, mapped_stage_value)
         self._assign_mapped_spa_field(fields, mapping, "is_support", "Y" if card.is_support else "N")
         self._assign_mapped_spa_field(fields, mapping, "project_hours_budget", card.project_hours_budget)
+        self._assign_mapped_spa_field(fields, mapping, "project_type", card.project_type)
+        self._assign_mapped_spa_field(fields, mapping, "budget_mode", card.budget_mode)
+        self._assign_mapped_spa_field(fields, mapping, "planned_budget_amount", card.planned_budget_amount)
         self._assign_mapped_spa_field(fields, mapping, "hourly_rate", card.hourly_rate)
         self._assign_mapped_spa_field(fields, mapping, "curator_id", self._to_bitrix_id(card.curator_user_id))
         self._assign_mapped_spa_field(fields, mapping, "company_id", self._to_bitrix_id(card.company_id))
