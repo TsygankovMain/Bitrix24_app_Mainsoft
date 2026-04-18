@@ -269,12 +269,20 @@ function hasMeaningfulValue(value: unknown): boolean {
     return true
 }
 
+function toNumberOrNull(value: unknown): number | null {
+    const normalized = Number(value)
+    return Number.isFinite(normalized) ? normalized : null
+}
+
 function validateProjectBindingForSave(
     fields: Record<string, any>,
     hierarchy?: {
         projectId?: string | null
         projectTitle?: string
-    } | null
+    } | null,
+    options?: {
+        requireRateSnapshot?: boolean
+    }
 ): string | null {
     if (!config.value) {
         return 'Не удалось загрузить конфигурацию приложения.'
@@ -292,6 +300,19 @@ function validateProjectBindingForSave(
     if (!hasMeaningfulValue(fields[projectItemField])) {
         const projectLabel = hierarchy.projectTitle ? `«${hierarchy.projectTitle}»` : `group_id ${hierarchy.projectId}`
         return `Для задачи не найден связанный проект в Project SPA (${projectLabel}). Проверьте связь group_id → project_item_id в карточке проекта.`
+    }
+
+    const shouldRequireRateSnapshot = options?.requireRateSnapshot === true
+    if (shouldRequireRateSnapshot) {
+        const hourlyRateSnapshotField = String(config.value.FIELDS.HOURLY_RATE_SNAPSHOT || '').trim()
+        if (!hourlyRateSnapshotField) {
+            return 'В настройках не задано поле «Ставка часа (снимок)». Обратитесь к администратору.'
+        }
+
+        const hourlyRateSnapshot = toNumberOrNull(fields[hourlyRateSnapshotField])
+        if (hourlyRateSnapshot === null || hourlyRateSnapshot <= 0) {
+            return 'Не удалось определить ставку часа проекта для сохранения снимка. Проверьте ставку в карточке проекта.'
+        }
     }
 
     return null
@@ -356,10 +377,12 @@ async function enrichFieldsWithProjectContext(
         const projectCard = hierarchy.projectId ? await getProjectCardByProjectId(hierarchy.projectId) : null
         const projectOurInn = String(projectCard?.our_legal_entity_inn || '').trim()
         const projectClientInn = String(projectCard?.company_inn || '').trim()
+        const projectHourlyRate = toNumberOrNull(projectCard?.hourly_rate)
         const resolvedOurInn = projectOurInn || String(hierarchy.ourInn || '').trim()
         const resolvedClientInn = projectClientInn || String(hierarchy.clientInn || '').trim()
         const ourInnFieldCode = resolveInnFieldCode('OUR_INN')
         const clientInnFieldCode = resolveInnFieldCode('CLIENT_INN')
+        const hourlyRateSnapshotFieldCode = String(config.value.FIELDS?.HOURLY_RATE_SNAPSHOT || '').trim()
 
         if (!ourInnFieldCode || !clientInnFieldCode) {
             console.warn('[Embedded][INN] Missing INN field mapping', {
@@ -388,6 +411,9 @@ async function enrichFieldsWithProjectContext(
             if (projectItemId) {
                 assignMappedField(fields, config.value.FIELDS.PROJECT_ITEM_ID, projectItemId)
             }
+            if (hourlyRateSnapshotFieldCode && projectHourlyRate !== null && projectHourlyRate > 0) {
+                assignMappedField(fields, hourlyRateSnapshotFieldCode, projectHourlyRate)
+            }
             const myCompanyId = String(projectCard?.our_legal_entity_id || '').trim()
             if (myCompanyId) {
                 fields.mycompanyId = /^\d+$/.test(myCompanyId) ? Number(myCompanyId) : myCompanyId
@@ -407,6 +433,8 @@ async function enrichFieldsWithProjectContext(
             resolvedClientInn,
             payloadOurInn: ourInnFieldCode ? fields[ourInnFieldCode] : undefined,
             payloadClientInn: clientInnFieldCode ? fields[clientInnFieldCode] : undefined,
+            hourlyRateSnapshotFieldCode,
+            payloadHourlyRateSnapshot: hourlyRateSnapshotFieldCode ? fields[hourlyRateSnapshotFieldCode] : undefined,
             mycompanyId: fields.mycompanyId,
         })
         return
@@ -647,6 +675,8 @@ async function saveCurrentItem() {
                 payloadMycompanyId: fields.mycompanyId,
                 projectItemFieldCode: config.value.FIELDS.PROJECT_ITEM_ID,
                 payloadProjectItemId: fields[config.value.FIELDS.PROJECT_ITEM_ID],
+                hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
+                payloadHourlyRateSnapshot: fields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
             })
             await ($b24 as any).callMethod('crm.item.update', {
                 entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
@@ -668,6 +698,8 @@ async function saveCurrentItem() {
                 payloadMycompanyId: fields.mycompanyId,
                 projectItemFieldCode: config.value.FIELDS.PROJECT_ITEM_ID,
                 payloadProjectItemId: fields[config.value.FIELDS.PROJECT_ITEM_ID],
+                hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
+                payloadHourlyRateSnapshot: fields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
             })
             const createRes = await ($b24 as any).callMethod('crm.item.add', {
                 entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
@@ -776,6 +808,8 @@ async function splitItem() {
             payloadMycompanyId: splitFields.mycompanyId,
             projectItemFieldCode: config.value.FIELDS.PROJECT_ITEM_ID,
             payloadProjectItemId: splitFields[config.value.FIELDS.PROJECT_ITEM_ID],
+            hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
+            payloadHourlyRateSnapshot: splitFields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
         })
 
         await reloadWorkspace()

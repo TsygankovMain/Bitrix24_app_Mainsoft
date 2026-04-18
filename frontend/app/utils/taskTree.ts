@@ -43,8 +43,9 @@ export function buildTaskTree(rootTaskId: string, tasks: Array<{ id: string | nu
   const roots: TaskWorkspaceNode[] = []
 
   for (const node of Object.values(nodesMap)) {
-    if (node.parentId && nodesMap[node.parentId]) {
-      nodesMap[node.parentId].children.push(node)
+    const parentNode = node.parentId ? nodesMap[node.parentId] : undefined
+    if (parentNode) {
+      parentNode.children.push(node)
     } else if (node.taskId === String(rootTaskId)) {
       roots.push(node)
     }
@@ -88,8 +89,8 @@ export function filterTaskNode(node: TaskWorkspaceNode, filters: TaskWorkspaceFi
     }
 
     if (filters.dateFrom || filters.dateTo) {
-      const sourceDate = item.date || item.createdTime || ''
-      const normalizedDate = sourceDate.split('T')[0]
+      const sourceDate = String(item.date || item.createdTime || '')
+      const normalizedDate = sourceDate.split('T')[0] || ''
       if (filters.dateFrom && normalizedDate < filters.dateFrom) {
         return false
       }

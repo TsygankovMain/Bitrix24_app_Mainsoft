@@ -165,6 +165,7 @@ class TimesheetItem(models.Model):
     description = models.TextField(null=True, blank=True)
     project_id = models.CharField(max_length=50, null=True, blank=True)
     project_item_id = models.CharField(max_length=50, null=True, blank=True, db_index=True)
+    hourly_rate_snapshot = models.FloatField(null=True, blank=True)
     project_title = models.CharField(max_length=255, null=True, blank=True)
     task_hierarchy_ids = models.JSONField(default=list)
     task_hierarchy_titles = models.JSONField(default=list)

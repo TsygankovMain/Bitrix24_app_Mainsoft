@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, Mapping, Set
+from typing import Any, Dict, Mapping, Optional, Set
 
 from django.core.paginator import Paginator
 from django.http import JsonResponse, HttpResponse
@@ -21,6 +21,8 @@ from openpyxl.styles import Font, Alignment
 from config import load_config
 from .services import (
     BitrixDataService,
+    FinanceOperationService,
+    ProjectBudgetNotifier,
     ReportService,
     TimesheetSyncService,
     ConfigurationService,
@@ -55,6 +57,8 @@ __all__ = [
     "get_support_status",
     "connect_support_line",
     "get_project_board",
+    "get_finance_operations",
+    "create_finance_operation",
     "get_project_board_meta",
     "get_project_board_card",
     "sync_project_board",
@@ -62,6 +66,7 @@ __all__ = [
     "update_project_board_stage",
     "archive_project_board",
     "run_project_board_daily_check",
+    "run_project_budget_notifier",
     "get_project_board_companies",
     "get_homepage_portfolio",
     "get_internal_lists",
@@ -92,6 +97,25 @@ __all__ = [
 
 config = load_config()
 logger = logging.getLogger(__name__)
+
+
+def _run_budget_notifier_safe(
+    request: AuthorizedRequest,
+    *,
+    source: str,
+    project_ids: Optional[list[str]] = None,
+    project_item_ids: Optional[list[str]] = None,
+):
+    try:
+        notifier = ProjectBudgetNotifier(request.bitrix24_account.client, request.bitrix24_account)
+        if project_item_ids:
+            return notifier.evaluate_project_item_ids(project_item_ids, source=source)
+        if project_ids:
+            return notifier.evaluate_project_ids(project_ids, source=source)
+        return notifier.evaluate_all(source=source)
+    except Exception as notifier_error:  # pragma: no cover - non-critical path
+        logger.warning("ProjectBudgetNotifier failed (%s): %s", source, notifier_error)
+        return None
 
 
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
@@ -653,23 +677,7 @@ def install(request):
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
-    # Manual Auth Check since we removed @auth_required to support HEAD
-    try:
-        # Re-using the decorator logic or manually calling the auth service
-        # Since @auth_required populated request.bitrix24_account, we need to do it here manually
-        # effectively inlining the auth check for POST requests ONLY.
-        
-        # However, to keep it clean, let's keep @auth_required but make it smarter?
-        # No, decorators are hard to make conditional on method easily without complexity.
-        # Simplest way: wrapper function.
-        pass
-    except Exception:
-        pass
-
-    # Better approach: 
-    # We can't easily inline the complex auth logic from decorators.
-    # Let's use a dual-handler approach or simply wrap the logic.
-    
+    # POST-install flow is delegated to the authenticated handler.
     return _install_post_logic(request)
 
 @require_POST
@@ -767,6 +775,53 @@ def get_project_board(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @require_GET
+@log_errors("get_finance_operations")
+@auth_required
+def get_finance_operations(request: AuthorizedRequest):
+    service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        project_item_id = str(request.GET.get("project_item_id") or "").strip() or None
+        deal_id = str(request.GET.get("deal_id") or "").strip() or None
+        limit_raw = str(request.GET.get("limit") or "").strip()
+        limit = int(limit_raw) if limit_raw else 20
+        return JsonResponse(
+            service.list_operations(
+                project_item_id=project_item_id,
+                deal_id=deal_id,
+                limit=limit,
+            )
+        )
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("create_finance_operation")
+@auth_required
+def create_finance_operation(request: AuthorizedRequest):
+    payload = _load_request_json(request)
+    service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        result = service.create_operation(payload)
+        invalidate_project_runtime_caches(request.bitrix24_account)
+        operation = result.get("operation") if isinstance(result, dict) else {}
+        operation_project_item_id = str((operation or {}).get("project_item_id") or "").strip()
+        notifier_result = _run_budget_notifier_safe(
+            request,
+            source="finance_operation",
+            project_item_ids=[operation_project_item_id] if operation_project_item_id else None,
+        )
+        if notifier_result is not None and isinstance(result, dict):
+            result["notifier"] = notifier_result
+        return JsonResponse(result)
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+
+@xframe_options_exempt
+@require_GET
 @log_errors("get_project_board_meta")
 @auth_required
 def get_project_board_meta(request: AuthorizedRequest):
@@ -825,7 +880,11 @@ def sync_project_board(request: AuthorizedRequest):
             incremental_since_minutes = int(incremental_raw)
         except (TypeError, ValueError):
             return JsonResponse({"error": "incremental_since_minutes must be integer"}, status=400)
-    return JsonResponse(service.sync(incremental_since_minutes=incremental_since_minutes))
+    sync_result = service.sync(incremental_since_minutes=incremental_since_minutes)
+    notifier_result = _run_budget_notifier_safe(request, source="project_sync")
+    if notifier_result is not None and isinstance(sync_result, dict):
+        sync_result["notifier"] = notifier_result
+    return JsonResponse(sync_result)
 
 
 @xframe_options_exempt
@@ -853,6 +912,13 @@ def update_project_board(request: AuthorizedRequest):
 
     try:
         result = service.update_project_card(str(project_id), payload)
+        notifier_result = _run_budget_notifier_safe(
+            request,
+            source="project_card_update",
+            project_ids=[str(project_id)],
+        )
+        if notifier_result is not None and isinstance(result, dict):
+            result["notifier"] = notifier_result
         return JsonResponse(result)
     except ProjectCard.DoesNotExist:
         return JsonResponse({"error": "Проект не найден"}, status=404)
@@ -877,6 +943,13 @@ def update_project_board_stage(request: AuthorizedRequest):
 
     try:
         result = service.update_stage(str(project_id), str(stage))
+        notifier_result = _run_budget_notifier_safe(
+            request,
+            source="project_stage_update",
+            project_ids=[str(project_id)],
+        )
+        if notifier_result is not None and isinstance(result, dict):
+            result["notifier"] = notifier_result
         return JsonResponse(result)
     except ProjectCard.DoesNotExist:
         return JsonResponse({"error": "Проект не найден"}, status=404)
@@ -901,6 +974,13 @@ def archive_project_board(request: AuthorizedRequest):
 
     try:
         result = service.archive_project(str(project_id), is_archived)
+        notifier_result = _run_budget_notifier_safe(
+            request,
+            source="project_archive_update",
+            project_ids=[str(project_id)],
+        )
+        if notifier_result is not None and isinstance(result, dict):
+            result["notifier"] = notifier_result
         return JsonResponse(result)
     except ProjectCard.DoesNotExist:
         return JsonResponse({"error": "Проект не найден"}, status=404)
@@ -915,7 +995,43 @@ def archive_project_board(request: AuthorizedRequest):
 @auth_required
 def run_project_board_daily_check(request: AuthorizedRequest):
     service = ProjectStageAutomationService(request.bitrix24_account)
-    return JsonResponse(service.run_daily_check())
+    result = service.run_daily_check()
+    notifier_result = _run_budget_notifier_safe(request, source="daily_stage_check")
+    if notifier_result is not None and isinstance(result, dict):
+        result["notifier"] = notifier_result
+    return JsonResponse(result)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("run_project_budget_notifier")
+@auth_required
+def run_project_budget_notifier(request: AuthorizedRequest):
+    payload = _load_request_json(request)
+    project_ids = payload.get("project_ids") if isinstance(payload, dict) else None
+    project_item_ids = payload.get("project_item_ids") if isinstance(payload, dict) else None
+
+    normalized_project_ids = [
+        str(project_id).strip()
+        for project_id in (project_ids or [])
+        if str(project_id or "").strip()
+    ]
+    normalized_project_item_ids = [
+        str(project_item_id).strip()
+        for project_item_id in (project_item_ids or [])
+        if str(project_item_id or "").strip()
+    ]
+
+    notifier_result = _run_budget_notifier_safe(
+        request,
+        source="manual_api_trigger",
+        project_ids=normalized_project_ids or None,
+        project_item_ids=normalized_project_item_ids or None,
+    )
+    if notifier_result is None:
+        return JsonResponse({"status": "warning", "message": "Notifier execution failed"}, status=400)
+    return JsonResponse(notifier_result)
 
 
 @xframe_options_exempt
@@ -1096,7 +1212,11 @@ def timesheet_sync(request: AuthorizedRequest):
         )
 
     invalidate_project_runtime_caches(request.bitrix24_account)
-    return JsonResponse({"status": "success", "count": count})
+    response_payload = {"status": "success", "count": count}
+    notifier_result = _run_budget_notifier_safe(request, source="timesheet_sync")
+    if notifier_result is not None:
+        response_payload["notifier"] = notifier_result
+    return JsonResponse(response_payload)
 
 
 @xframe_options_exempt
@@ -1128,6 +1248,7 @@ def timesheet_list(request: AuthorizedRequest):
             "non_billable_hours": item.non_billable_hours,
             "description": item.description,
             "project_title": item.project_title,
+            "hourly_rate_snapshot": item.hourly_rate_snapshot,
             "date": item.date_reflection.isoformat() if item.date_reflection else None,
             "created_at": item.created_at.isoformat()
         })
@@ -1299,9 +1420,12 @@ def get_project_spa_stages(request: AuthorizedRequest):
 @auth_required
 def create_smart_process(request: AuthorizedRequest):
     """Create a new Smart Process from settings page."""
+    import json as json_module
     try:
+        body = json_module.loads(request.body or "{}")
+        mapping_type = body.get('mappingType') or 'timesheet'
         service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
-        result = service.create_smart_process_only()
+        result = service.create_smart_process_only(str(mapping_type))
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -1318,13 +1442,14 @@ def create_fields(request: AuthorizedRequest):
     """Create all required fields in the selected Smart Process."""
     import json as json_module
     try:
-        body = json_module.loads(request.body)
+        body = json_module.loads(request.body or "{}")
         sp_id = body.get('entityTypeId')
+        mapping_type = body.get('mappingType') or 'timesheet'
         if not sp_id:
             return JsonResponse({"error": "Не указан ID смарт-процесса"}, status=400)
 
         service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
-        result = service.create_fields_only(int(sp_id))
+        result = service.create_fields_only(int(sp_id), str(mapping_type))
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -1340,7 +1465,7 @@ def create_fields(request: AuthorizedRequest):
 def create_mapped_field(request: AuthorizedRequest):
     import json as json_module
     try:
-        body = json_module.loads(request.body)
+        body = json_module.loads(request.body or "{}")
         sp_id = body.get('entityTypeId')
         field_key = body.get('fieldKey')
         mapping_type = body.get('mappingType') or 'timesheet'
@@ -1463,8 +1588,14 @@ def get_request_logs(request: AuthorizedRequest):
 def get_system_logs(request: AuthorizedRequest):
     page_number = request.GET.get('page', 1)
     page_size = request.GET.get('limit', 50)
+    module_filter = str(request.GET.get('module') or '').strip()
+    level_filter = str(request.GET.get('level') or '').strip().upper()
     
     queryset = SystemLog.objects.all().order_by('-timestamp')
+    if module_filter:
+        queryset = queryset.filter(module__icontains=module_filter)
+    if level_filter:
+        queryset = queryset.filter(level=level_filter)
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
     

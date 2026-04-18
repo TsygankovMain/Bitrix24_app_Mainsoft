@@ -84,7 +84,20 @@ export function useTaskTreeLoader() {
     isLoading.value = true
     error.value = null
 
-    const fields = config.value.FIELDS
+    const fields = config.value.FIELDS || {}
+    const fieldTaskId = String(fields.TASK_ID || '').trim()
+    const fieldEmployee = String(fields.EMPLOYEE || '').trim()
+    const fieldHours = String(fields.HOURS || '').trim()
+    const fieldIsConsidered = String(fields.IS_CONSIDERED || '').trim()
+    const fieldDescription = String(fields.DESCRIPTION || '').trim()
+    const fieldDate = String(fields.DATE || '').trim()
+
+    if (!fieldTaskId || !fieldEmployee || !fieldHours || !fieldIsConsidered || !fieldDescription || !fieldDate) {
+      error.value = 'Конфигурация полей для дерева задач неполная. Проверьте маппинг в настройках.'
+      isLoading.value = false
+      return
+    }
+
     const smartProcessId = config.value.DEFAULT_SMART_PROCESS_ID
 
     try {
@@ -167,8 +180,8 @@ export function useTaskTreeLoader() {
             method: 'crm.item.list',
             params: {
               entityTypeId: smartProcessId,
-              filter: { [fields.TASK_ID]: Number(currentTaskId) },
-              select: ['id', 'createdTime', fields.TASK_ID, fields.EMPLOYEE, fields.HOURS, fields.IS_CONSIDERED, fields.DESCRIPTION, 'TITLE', fields.DATE],
+              filter: { [fieldTaskId]: Number(currentTaskId) },
+              select: ['id', 'createdTime', fieldTaskId, fieldEmployee, fieldHours, fieldIsConsidered, fieldDescription, 'TITLE', fieldDate],
               start: 0,
               limit: 50
             }
@@ -191,11 +204,11 @@ export function useTaskTreeLoader() {
               continue
             }
             seenItemIds.add(itemId)
-            const taskIdValue = String(item[fields.TASK_ID] ?? key.replace('items_', ''))
-            const employeeId = String(item[fields.EMPLOYEE] || '')
+            const taskIdValue = String(item[fieldTaskId] ?? key.replace('items_', ''))
+            const employeeId = String(item[fieldEmployee] || '')
             const user = usersMap.value[employeeId]
             const employeeName = user ? `${user.NAME || ''} ${user.LAST_NAME || ''}`.trim() : `User ${employeeId}`
-            const date = item[fields.DATE] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')
+            const date = item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')
 
             taskItems.push({
               taskId: taskIdValue,
@@ -203,9 +216,9 @@ export function useTaskTreeLoader() {
                 id: itemId,
                 title: item.title || item.TITLE || '',
                 createdTime: item.createdTime,
-                hours: parseFloat(item[fields.HOURS]) || 0,
-                isConsidered: item[fields.IS_CONSIDERED] === 'Y' || item[fields.IS_CONSIDERED] === true,
-                description: item[fields.DESCRIPTION] || '',
+                hours: parseFloat(item[fieldHours]) || 0,
+                isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
+                description: item[fieldDescription] || '',
                 employeeId,
                 employeeName,
                 date
@@ -228,8 +241,8 @@ export function useTaskTreeLoader() {
                 method: 'crm.item.list',
                 params: {
                   entityTypeId: smartProcessId,
-                  filter: { [fields.TASK_ID]: Number(currentTaskId) },
-                  select: ['id', 'createdTime', fields.TASK_ID, fields.EMPLOYEE, fields.HOURS, fields.IS_CONSIDERED, fields.DESCRIPTION, 'TITLE', fields.DATE],
+                  filter: { [fieldTaskId]: Number(currentTaskId) },
+                  select: ['id', 'createdTime', fieldTaskId, fieldEmployee, fieldHours, fieldIsConsidered, fieldDescription, 'TITLE', fieldDate],
                   start,
                   limit: 50
                 }
@@ -249,20 +262,20 @@ export function useTaskTreeLoader() {
 
               seenItemIds.add(itemId)
               newCount += 1
-              const employeeId = String(item[fields.EMPLOYEE] || '')
+              const employeeId = String(item[fieldEmployee] || '')
               const user = usersMap.value[employeeId]
               const employeeName = user ? `${user.NAME || ''} ${user.LAST_NAME || ''}`.trim() : `User ${employeeId}`
-              const date = item[fields.DATE] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')
+              const date = item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')
 
               taskItems.push({
-                taskId: String(item[fields.TASK_ID] ?? currentTaskId),
+                taskId: String(item[fieldTaskId] ?? currentTaskId),
                 item: {
                   id: itemId,
                   title: item.title || item.TITLE || '',
                   createdTime: item.createdTime,
-                  hours: parseFloat(item[fields.HOURS]) || 0,
-                  isConsidered: item[fields.IS_CONSIDERED] === 'Y' || item[fields.IS_CONSIDERED] === true,
-                  description: item[fields.DESCRIPTION] || '',
+                  hours: parseFloat(item[fieldHours]) || 0,
+                  isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
+                  description: item[fieldDescription] || '',
                   employeeId,
                   employeeName,
                   date

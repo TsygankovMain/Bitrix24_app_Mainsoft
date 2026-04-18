@@ -8,6 +8,8 @@ from django.db.models import Case, F, FloatField, Max, Sum, Value, When
 from django.utils import timezone
 
 from .bitrix_data_access import BitrixDataService
+from .finance_operation_service import FinanceOperationService
+from .project_budget_service import ProjectBudgetService
 from .configuration_service import ConfigurationService
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
 from .project_board_shared import (
@@ -73,7 +75,20 @@ class ProjectCardService:
     def get_card_data(self, project_id: str) -> Dict[str, Any]:
         if not ensure_project_card_schema():
             raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
-        return self.serialize_card(self._get_card(project_id))
+        card = self._get_card(project_id)
+        budget_metrics = ProjectBudgetService(self.account).get_card_metrics(card)
+        try:
+            recent_finance_operations = FinanceOperationService(self.client, self.account).get_recent_operations_by_project_item_id(
+                card.project_item_id,
+                limit=5,
+            )
+        except Exception:
+            recent_finance_operations = []
+        return self.serialize_card(
+            card,
+            budget_metrics=budget_metrics,
+            recent_finance_operations=recent_finance_operations,
+        )
 
     def get_board_data(self) -> Dict[str, Any]:
         cached = cache.get(build_account_cache_key(self.account, "project-board"))
@@ -86,12 +101,25 @@ class ProjectCardService:
         self.refresh_writeoff_stats()
         config = self._load_config()
         stage_options = self.get_project_stage_options(config)
+        stage_lookup = self.get_project_stage_lookup(config)
+        company_options = self.get_companies()
+        legal_entity_options = self.get_legal_entities(config)
         cards = list(get_project_card_queryset(self.account).order_by("is_archived", "project_name"))
+        budget_metrics_map = ProjectBudgetService(self.account).build_metrics_map(cards)
         active_cards = [card for card in cards if not card.is_archived]
 
         payload = {
             "stages": stage_options,
-            "cards": [self.serialize_card(card) for card in cards],
+            "cards": [
+                self.serialize_card(
+                    card,
+                    stage_lookup=stage_lookup,
+                    company_options=company_options,
+                    legal_entity_options=legal_entity_options,
+                    budget_metrics=budget_metrics_map.get(card.project_id),
+                )
+                for card in cards
+            ],
             "summary": {
                 "total_count": len(cards),
                 "active_count": len(active_cards),
@@ -131,6 +159,37 @@ class ProjectCardService:
                     "project_type": "delivery",
                     "budget_mode": "hours_and_amount",
                     "planned_budget_amount": None,
+                    "planned_hours": None,
+                    "planned_amount": None,
+                    "actual_hours": 0.0,
+                    "actual_cost_amount": 0.0,
+                    "actual_income_amount": 0.0,
+                    "actual_expense_amount": 0.0,
+                    "actual_financial_result": 0.0,
+                    "hours_remaining": None,
+                    "budget_remaining": None,
+                    "budget_utilization_mode": "none",
+                    "budget_utilization_ratio": None,
+                    "budget_utilization_percent": None,
+                    "budget_health_status": "Без лимита",
+                    "budget_health_reason": "Не задан плановый лимит.",
+                    "budget": {
+                        "planned_hours": None,
+                        "planned_amount": None,
+                        "actual_hours": 0.0,
+                        "actual_cost_amount": 0.0,
+                        "actual_income_amount": 0.0,
+                        "actual_expense_amount": 0.0,
+                        "actual_financial_result": 0.0,
+                        "hours_remaining": None,
+                        "budget_remaining": None,
+                        "budget_utilization_mode": "none",
+                        "budget_utilization_ratio": None,
+                        "budget_utilization_percent": None,
+                        "budget_health_status": "Без лимита",
+                        "budget_health_reason": "Не задан плановый лимит.",
+                    },
+                    "recent_finance_operations": [],
                     "curator_user_id": None,
                     "curator_name": None,
                     "project_start_date": None,
@@ -446,17 +505,29 @@ class ProjectCardService:
             fallback=self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name"),
         )
 
-    def serialize_card(self, card: ProjectCard) -> Dict[str, Any]:
-        stage_lookup = self.get_project_stage_lookup()
+    def serialize_card(
+        self,
+        card: ProjectCard,
+        stage_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
+        company_options: Optional[List[Dict[str, Any]]] = None,
+        legal_entity_options: Optional[List[Dict[str, Any]]] = None,
+        budget_metrics: Optional[Dict[str, Any]] = None,
+        recent_finance_operations: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        stage_lookup = stage_lookup or self.get_project_stage_lookup()
+        company_options = company_options if company_options is not None else self.get_companies()
+        legal_entity_options = legal_entity_options if legal_entity_options is not None else self.get_legal_entities()
+        budget_metrics = budget_metrics if budget_metrics is not None else ProjectBudgetService(self.account).get_card_metrics(card)
+        recent_finance_operations = recent_finance_operations or []
         company_id, company_name, company_inn = self._resolve_reference_details(
             card.company_id,
             card.company_name,
-            self.get_companies(),
+            company_options,
         )
         legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details(
             card.our_legal_entity_id,
             card.our_legal_entity_name,
-            self.get_legal_entities(),
+            legal_entity_options,
         )
 
         if company_id and not company_inn:
@@ -491,6 +562,22 @@ class ProjectCardService:
             "project_type": card.project_type,
             "budget_mode": card.budget_mode,
             "planned_budget_amount": card.planned_budget_amount,
+            "planned_hours": budget_metrics.get("planned_hours"),
+            "planned_amount": budget_metrics.get("planned_amount"),
+            "actual_hours": budget_metrics.get("actual_hours", 0.0),
+            "actual_cost_amount": budget_metrics.get("actual_cost_amount", 0.0),
+            "actual_income_amount": budget_metrics.get("actual_income_amount", 0.0),
+            "actual_expense_amount": budget_metrics.get("actual_expense_amount", 0.0),
+            "actual_financial_result": budget_metrics.get("actual_financial_result", 0.0),
+            "hours_remaining": budget_metrics.get("hours_remaining"),
+            "budget_remaining": budget_metrics.get("budget_remaining"),
+            "budget_utilization_mode": budget_metrics.get("budget_utilization_mode"),
+            "budget_utilization_ratio": budget_metrics.get("budget_utilization_ratio"),
+            "budget_utilization_percent": budget_metrics.get("budget_utilization_percent"),
+            "budget_health_status": budget_metrics.get("budget_health_status", "Без лимита"),
+            "budget_health_reason": budget_metrics.get("budget_health_reason"),
+            "budget": budget_metrics,
+            "recent_finance_operations": recent_finance_operations,
             "curator_user_id": card.curator_user_id,
             "curator_name": card.curator_name,
             "project_start_date": card.project_start_date.isoformat() if card.project_start_date else None,

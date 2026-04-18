@@ -54,6 +54,7 @@ const APP_FIELDS: MappingFieldDefinition[] = [
     acceptedTypes: ['integer', 'string'],
   },
   { key: 'project_item_id', label: 'ID элемента проекта SPA', type: 'integer', desc: 'ID карточки проекта в Smart Process ПРОЕКТ' },
+  { key: 'hourly_rate_snapshot', label: 'Ставка часа (снимок)', type: 'double', desc: 'Ставка часа на момент создания записи времени' },
   { key: 'data', label: 'Дата', type: 'date', desc: 'Дата, за которую списано время' },
   { key: 'id_zadach_ierarhiya', label: 'Иерархия ID', type: 'string (JSON)', desc: 'JSON массив ID родительских задач' },
   { key: 'title_zadach_ierarhiya', label: 'Иерархия Названий', type: 'string (JSON)', desc: 'JSON массив названий родительских задач' },
@@ -140,7 +141,9 @@ const FINANCE_FIELDS: MappingFieldDefinition[] = [
 ]
 
 const PROJECT_CREATABLE_FIELD_KEYS = new Set(PROJECT_FIELDS.filter(field => field.key !== 'title' && field.key !== PROJECT_STAGE_FIELD_KEY).map(field => field.key))
+const FINANCE_CREATABLE_FIELD_KEYS = new Set(FINANCE_FIELDS.map(field => field.key))
 const CREATE_OPTION_PREFIX = '__create__:'
+type MappingType = 'timesheet' | 'project' | 'finance'
 
 // Mapping State: AppFieldKey -> BitrixFieldID
 const mapping = ref<Record<string, string>>({})
@@ -423,14 +426,18 @@ async function handleSave() {
     }
 }
 
-function getCreateOptionValue(mappingType: 'timesheet' | 'project', fieldKey: string) {
+function getCreateOptionValue(mappingType: MappingType, fieldKey: string) {
     return `${CREATE_OPTION_PREFIX}${mappingType}:${fieldKey}`
 }
 
-function canCreateMappedField(mappingType: 'timesheet' | 'project', fieldKey: string) {
-    return mappingType === 'timesheet'
-        ? APP_CREATABLE_FIELD_KEYS.has(fieldKey)
-        : PROJECT_CREATABLE_FIELD_KEYS.has(fieldKey)
+function canCreateMappedField(mappingType: MappingType, fieldKey: string) {
+    if (mappingType === 'timesheet') {
+        return APP_CREATABLE_FIELD_KEYS.has(fieldKey)
+    }
+    if (mappingType === 'project') {
+        return PROJECT_CREATABLE_FIELD_KEYS.has(fieldKey)
+    }
+    return FINANCE_CREATABLE_FIELD_KEYS.has(fieldKey)
 }
 
 function normalizeAcceptedType(value?: string | null) {
@@ -505,12 +512,21 @@ function getProjectFieldOptions(field: MappingFieldDefinition) {
 
 function getFinanceFieldOptions(field: MappingFieldDefinition) {
     const currentValue = String(financeMapping.value[field.key] || '').trim()
-    return financeSpFields.value
+    const options = financeSpFields.value
       .filter(option => isFieldTypeCompatible(field, option.type) || String(option.id || '').trim() === currentValue)
       .map(f => ({
         label: `${f.title} (${f.type})`,
         value: f.id
       }))
+
+    if (canCreateMappedField('finance', field.key)) {
+        options.push({
+            label: `+ Создать поле «${field.label}»`,
+            value: getCreateOptionValue('finance', field.key)
+        })
+    }
+
+    return options
 }
 
 function showStatus(type: 'success' | 'error', text: string) {
@@ -518,25 +534,47 @@ function showStatus(type: 'success' | 'error', text: string) {
     setTimeout(() => { statusMessage.value = null }, 5000)
 }
 
-async function handleCreateSmartProcess() {
+async function handleCreateSmartProcess(mappingType: MappingType) {
     isCreatingSP.value = true
     statusMessage.value = null
     try {
-        const result = await apiStore.createSmartProcess()
+        const result = await apiStore.createSmartProcess(mappingType)
         const newConfig = result.config
         config.value = { ...config.value, ...newConfig }
-        selectedSpId.value = Number(newConfig.sp_entity_type_id)
-        mapping.value = normalizeMappingState(newConfig.fields_mapping || {})
-        if (newConfig.sp_entity_type_id) {
-            await loadSpFields(Number(newConfig.sp_entity_type_id))
+        const typeLabel = mappingType === 'timesheet'
+            ? 'Метки времени'
+            : mappingType === 'project'
+              ? 'Project SPA'
+              : 'Finance SPA'
+
+        if (mappingType === 'timesheet') {
+            selectedSpId.value = Number(newConfig.sp_entity_type_id)
+            mapping.value = normalizeMappingState(newConfig.fields_mapping || {})
+            if (newConfig.sp_entity_type_id) {
+                await loadSpFields(Number(newConfig.sp_entity_type_id))
+            }
+        } else if (mappingType === 'project') {
+            selectedProjectSpId.value = Number(newConfig.project_sp_entity_type_id)
+            projectMapping.value = normalizeProjectMappingState(newConfig)
+            if (newConfig.project_sp_entity_type_id) {
+                await loadProjectSpFields(Number(newConfig.project_sp_entity_type_id))
+                await validateProjectSpa()
+            }
+        } else {
+            selectedFinanceSpId.value = Number(newConfig.finance_sp_entity_type_id)
+            financeMapping.value = normalizeMappingState(newConfig.finance_fields_mapping || {})
+            if (newConfig.finance_sp_entity_type_id) {
+                await loadFinanceSpFields(Number(newConfig.finance_sp_entity_type_id))
+                await validateFinanceSpa()
+            }
         }
-        // Reload SP list
+
         const spRes = await apiStore.getSmartProcesses()
         smartProcesses.value = spRes.types || []
         const warnings = result.field_warnings?.length ? ` Предупреждения: ${result.field_warnings.join('; ')}` : ''
         showStatus(
           'success',
-          `Смарт-процесс создан и автоматически заполнен полями (ID: ${newConfig.sp_entity_type_id}, полей: ${result.created_fields_count || 0}).${warnings}`
+          `${typeLabel}: смарт-процесс создан и автоматически заполнен полями (полей: ${result.created_fields_count || 0}).${warnings}`
         )
     } catch (e: any) {
         const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
@@ -546,8 +584,12 @@ async function handleCreateSmartProcess() {
     }
 }
 
-async function handleCreateMappedField(mappingType: 'timesheet' | 'project', fieldKey: string, fieldLabel: string) {
-    const entityTypeId = mappingType === 'timesheet' ? Number(selectedSpId.value || 0) : Number(selectedProjectSpId.value || 0)
+async function handleCreateMappedField(mappingType: MappingType, fieldKey: string, fieldLabel: string) {
+    const entityTypeId = mappingType === 'timesheet'
+        ? Number(selectedSpId.value || 0)
+        : mappingType === 'project'
+          ? Number(selectedProjectSpId.value || 0)
+          : Number(selectedFinanceSpId.value || 0)
     if (!entityTypeId) {
         showStatus('error', 'Сначала выберите смарт-процесс.')
         return
@@ -563,7 +605,7 @@ async function handleCreateMappedField(mappingType: 'timesheet' | 'project', fie
             mapping.value = mergeCreatedFieldMapping(mapping.value, result.config.fields_mapping, fieldKey, result.field_id)
             config.value.fields_mapping = { ...mapping.value }
             await loadSpFields(entityTypeId)
-        } else {
+        } else if (mappingType === 'project') {
             projectMapping.value = mergeCreatedFieldMapping(
                 projectMapping.value,
                 result.config.project_fields_mapping,
@@ -573,6 +615,16 @@ async function handleCreateMappedField(mappingType: 'timesheet' | 'project', fie
             config.value.project_fields_mapping = serializeProjectMappingState(projectMapping.value)
             await loadProjectSpFields(entityTypeId)
             await validateProjectSpa()
+        } else {
+            financeMapping.value = mergeCreatedFieldMapping(
+                financeMapping.value,
+                result.config.finance_fields_mapping,
+                fieldKey,
+                result.field_id
+            )
+            config.value.finance_fields_mapping = { ...financeMapping.value }
+            await loadFinanceSpFields(entityTypeId)
+            await validateFinanceSpa()
         }
 
         const warnings = result.field_warnings?.length ? ` Предупреждения: ${result.field_warnings.join('; ')}` : ''
@@ -587,7 +639,7 @@ async function handleCreateMappedField(mappingType: 'timesheet' | 'project', fie
 
 async function handleMappingSelectChange(
     event: Event,
-    mappingType: 'timesheet' | 'project',
+    mappingType: MappingType,
     fieldKey: string,
     fieldLabel: string,
 ) {
@@ -608,16 +660,15 @@ async function handleMappingSelectChange(
         return
     }
 
-    if (nextValue) {
-        projectMapping.value[fieldKey] = nextValue
-    } else {
-        delete projectMapping.value[fieldKey]
+    if (mappingType === 'project') {
+        if (nextValue) {
+            projectMapping.value[fieldKey] = nextValue
+        } else {
+            delete projectMapping.value[fieldKey]
+        }
+        return
     }
-}
 
-function handleFinanceMappingSelectChange(event: Event, fieldKey: string) {
-    const select = event.target as HTMLSelectElement | null
-    const nextValue = select?.value || ''
     if (nextValue) {
         financeMapping.value[fieldKey] = nextValue
     } else {
@@ -709,7 +760,7 @@ onMounted(async () => {
                                 label="Создать смарт-процесс" 
                                 color="primary" 
                                 size="sm"
-                                @click="handleCreateSmartProcess" 
+                                @click="handleCreateSmartProcess('timesheet')" 
                                 :loading="isCreatingSP"
                                 :disabled="(!!selectedSpId && selectedSpId !== 0) || isCreatingSP"
                             />
@@ -755,6 +806,14 @@ onMounted(async () => {
                         @click="validateProjectSpa"
                         :loading="isValidatingProjectSpa"
                         :disabled="!selectedProjectSpId || isValidatingProjectSpa"
+                      />
+                      <B24Button
+                        label="Создать Project SPA"
+                        color="primary"
+                        size="sm"
+                        @click="handleCreateSmartProcess('project')"
+                        :loading="isCreatingSP"
+                        :disabled="(!!selectedProjectSpId && selectedProjectSpId !== 0) || isCreatingSP"
                       />
                   </div>
               </div>
@@ -900,6 +959,14 @@ onMounted(async () => {
                         @click="validateFinanceSpa"
                         :loading="isValidatingFinanceSpa"
                         :disabled="!selectedFinanceSpId || isValidatingFinanceSpa"
+                      />
+                      <B24Button
+                        label="Создать Finance SPA"
+                        color="primary"
+                        size="sm"
+                        @click="handleCreateSmartProcess('finance')"
+                        :loading="isCreatingSP"
+                        :disabled="(!!selectedFinanceSpId && selectedFinanceSpId !== 0) || isCreatingSP"
                       />
                   </div>
               </div>
@@ -1109,7 +1176,8 @@ onMounted(async () => {
                                   <select
                                     :value="financeMapping[field.key] || ''"
                                     class="block w-full sm:text-sm"
-                                    @change="(event) => handleFinanceMappingSelectChange(event, field.key)"
+                                    :disabled="creatingMappedField === `finance:${field.key}`"
+                                    @change="(event) => handleMappingSelectChange(event, 'finance', field.key, field.label)"
                                   >
                                       <option value="">-- Не сопоставлено --</option>
                                       <option v-for="opt in getFinanceFieldOptions(field)" :key="opt.value" :value="opt.value">

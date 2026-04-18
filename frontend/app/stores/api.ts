@@ -46,6 +46,42 @@ type MappedFieldCreateResponse = {
   field_warnings?: string[]
 }
 
+type MappingType = 'timesheet' | 'project' | 'finance'
+
+export type FinanceOperationRecord = {
+  id?: string | null
+  title?: string | null
+  project_item_id?: string | null
+  deal_id?: string | null
+  operation_type?: string | null
+  amount?: number
+  currency?: string | null
+  operation_date?: string | null
+  source?: string | null
+  comment?: string | null
+  responsible_user_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+type FinanceOperationsResponse = {
+  operations: FinanceOperationRecord[]
+  count: number
+  entity_type_id?: number
+}
+
+type FinanceOperationCreatePayload = {
+  project_item_id: string
+  deal_id?: string | null
+  operation_type: 'income' | 'expense' | string
+  amount: number
+  currency?: string | null
+  operation_date: string
+  source?: string | null
+  comment?: string | null
+  responsible_user_id?: string | null
+}
+
 export const useApiStore = defineStore(
   'api',
   () => {
@@ -208,14 +244,14 @@ export const useApiStore = defineStore(
     const postInstall = async (data: Record<string, any>): Promise<Record<string, any>> => {
       return await $api('/api/install', {
         method: 'POST',
-        body: JSON.stringify(data),
+        body: data,
       })
     }
 
     const getToken = async (data: Record<string, any>): Promise<{ token: string }> => {
       return await $api('/api/getToken', {
         method: 'POST',
-        body: JSON.stringify(data),
+        body: data,
       })
     }
 
@@ -427,6 +463,50 @@ export const useApiStore = defineStore(
       return response.card || null
     }
 
+    const getFinanceOperations = async (params: {
+      project_item_id?: string | null
+      deal_id?: string | null
+      limit?: number
+    }): Promise<FinanceOperationsResponse> => {
+      const search = new URLSearchParams()
+      if (params.project_item_id) {
+        search.set('project_item_id', String(params.project_item_id))
+      }
+      if (params.deal_id) {
+        search.set('deal_id', String(params.deal_id))
+      }
+      if (params.limit && Number(params.limit) > 0) {
+        search.set('limit', String(params.limit))
+      }
+
+      const query = search.toString()
+      return await $api<FinanceOperationsResponse>(`/api/finance-operations${query ? `?${query}` : ''}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const createFinanceOperation = async (payload: FinanceOperationCreatePayload): Promise<{
+      status: string
+      operation?: FinanceOperationRecord
+      idempotency_key?: string
+    }> => {
+      const result = await $api('/api/finance-operations/create', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        body: JSON.stringify(payload)
+      })
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result as {
+        status: string
+        operation?: FinanceOperationRecord
+        idempotency_key?: string
+      }
+    }
+
     const getHomepagePortfolio = async (forceRefresh = false): Promise<any> => {
       return await withBrowserCache('homepage-portfolio', browserCacheTtl.homepage, async () => {
         return await $api('/api/homepage/portfolio', {
@@ -524,6 +604,20 @@ export const useApiStore = defineStore(
       })
       clearCache('project-board', 'homepage-portfolio')
       return result
+    }
+
+    const runProjectBudgetNotifier = async (payload?: {
+      project_ids?: string[]
+      project_item_ids?: string[]
+    }): Promise<any> => {
+      return await $api('/api/project-budget/notify', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload || {})
+      })
     }
 
     const runProjectSpaBackfill = async (): Promise<any> => {
@@ -656,27 +750,30 @@ export const useApiStore = defineStore(
       })
     }
 
-    const createSmartProcess = async (): Promise<SmartProcessCreateResponse> => {
+    const createSmartProcess = async (mappingType: MappingType = 'timesheet'): Promise<SmartProcessCreateResponse> => {
       const result = await $api('/api/smart-processes/create', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({})
+        body: JSON.stringify({ mappingType })
       })
       clearCache('app-configuration')
       return result as SmartProcessCreateResponse
     }
 
-    const createFields = async (entityTypeId: number): Promise<SmartProcessCreateResponse> => {
+    const createFields = async (
+      entityTypeId: number,
+      mappingType: MappingType = 'timesheet'
+    ): Promise<SmartProcessCreateResponse> => {
       const result = await $api('/api/smart-processes/create-fields', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ entityTypeId })
+        body: JSON.stringify({ entityTypeId, mappingType })
       })
       clearCache('app-configuration')
       return result as SmartProcessCreateResponse
@@ -685,7 +782,7 @@ export const useApiStore = defineStore(
     const createMappedField = async (
       entityTypeId: number,
       fieldKey: string,
-      mappingType: 'timesheet' | 'project'
+      mappingType: MappingType
     ): Promise<MappedFieldCreateResponse> => {
       const result = await $api('/api/smart-processes/create-field', {
         method: 'POST',
@@ -712,10 +809,23 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getSystemLogs = async (page: number = 1, limit: number = 50): Promise<any> => {
+    const getSystemLogs = async (
+      page: number = 1,
+      limit: number = 50,
+      options?: {
+        module?: string
+        level?: string
+      }
+    ): Promise<any> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
       params.append('limit', limit.toString())
+      if (options?.module) {
+        params.append('module', options.module)
+      }
+      if (options?.level) {
+        params.append('level', options.level)
+      }
       return await $api(`/api/logs/system?${params.toString()}`, {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
       })
@@ -739,6 +849,8 @@ export const useApiStore = defineStore(
       getProjectBoard,
       getProjectBoardMeta,
       getProjectBoardCard,
+      getFinanceOperations,
+      createFinanceOperation,
       getHomepagePortfolio,
       getSupportStatus,
       connectSupportLine,
@@ -747,6 +859,7 @@ export const useApiStore = defineStore(
       updateProjectStage,
       archiveProject,
       runProjectBoardDailyCheck,
+      runProjectBudgetNotifier,
       runProjectSpaBackfill,
       getCompaniesForProjectBinding,
       getBitrixInternalLists,

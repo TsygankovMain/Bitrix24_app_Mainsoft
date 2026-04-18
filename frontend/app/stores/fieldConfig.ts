@@ -25,6 +25,7 @@ const BACKEND_MAPPING: Record<string, string> = {
     'title_zadach_ierarhiya': 'TITLE_HIERARCHY',
     'project_id': 'PROJECT_ID',
     'project_item_id': 'PROJECT_ITEM_ID',
+    'hourly_rate_snapshot': 'HOURLY_RATE_SNAPSHOT',
     'project_title': 'PROJECT_TITLE',
     'data': 'DATE',
     'task_name': 'TASK_NAME',
@@ -48,6 +49,10 @@ const AUTO_DETECT_MAPPING_RULES: Record<string, { labels: string[]; codeHints: s
     project_item_id: {
         labels: ['ID элемента проекта SPA', 'ID элемента проекта', 'Project item id'],
         codeHints: ['PROJECT_ITEM_ID'],
+    },
+    hourly_rate_snapshot: {
+        labels: ['Ставка часа (снимок)', 'Ставка часа snapshot', 'Hourly rate snapshot'],
+        codeHints: ['HOURLY_RATE_SNAPSHOT'],
     },
 }
 
@@ -84,18 +89,19 @@ export const useFieldConfigStore = defineStore(
                 // @ts-ignore - callMethod typing
                 const result = await $b24.callMethod('app.option.get', {})
                 const data = result.getData()
+                const payload: any = data as any
                 console.log('[FieldConfig] Raw app.option.get response:', JSON.stringify(data))
 
                 // Try multiple paths to find timestamp_config
                 let rawConfigStr: string | null = null
 
-                if (typeof data === 'object' && data !== null) {
+                if (typeof payload === 'object' && payload !== null) {
                     // Path 1: data.result.timestamp_config (if getData returns whole response)
-                    rawConfigStr = data?.result?.timestamp_config
+                    rawConfigStr = payload?.result?.timestamp_config
                     // Path 2: data.timestamp_config (if getData returns result directly)
-                    if (!rawConfigStr) rawConfigStr = data?.timestamp_config
+                    if (!rawConfigStr) rawConfigStr = payload?.timestamp_config
                     // Path 3: data is the config string itself
-                    if (!rawConfigStr && typeof data === 'string') rawConfigStr = data
+                    if (!rawConfigStr && typeof payload === 'string') rawConfigStr = payload
                 }
 
                 console.log('[FieldConfig] Found timestamp_config:', rawConfigStr ? rawConfigStr.substring(0, 100) + '...' : 'null')

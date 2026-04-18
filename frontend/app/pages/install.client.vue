@@ -86,22 +86,23 @@ const steps = ref<Record<string, IStep>>({
   userFields: {
     caption: t('page.install.step.userFields.caption'),
     action: async () => {
-      const typeId = `some_type_${import.meta.dev ? 'dev' : 'prod'}`
+      const typeId = `project_finance_embed_${import.meta.dev ? 'dev' : 'prod'}`
+      const commonParams = {
+        USER_TYPE_ID: typeId,
+        HANDLER: `${appUrl}/handler/placement-crm-deal-detail-tab`,
+        TITLE: 'Финансы проекта (сделка)',
+        DESCRIPTION: 'Встройка для создания доходов и расходов проекта прямо из сделки',
+        OPTIONS: {
+          height: 640
+        }
+      }
 
       const exists = (steps.value.init?.data?.userFieldTypeList as { USER_TYPE_ID: string }[]).some(item => item.USER_TYPE_ID === typeId)
       if (exists) {
         await $b24.callBatch([
           {
             method: 'userfieldtype.update',
-            params: {
-              USER_TYPE_ID: typeId,
-              HANDLER: `${appUrl}/handler/uf.demo`,
-              TITLE: `[${import.meta.dev ? 'dev' : 'prod'}] Some Type`,
-              DESCRIPTION: `Some Description`,
-              OPTIONS: {
-                height: 105
-              }
-            }
+            params: commonParams
           }
         ], false)
 
@@ -111,15 +112,7 @@ const steps = ref<Record<string, IStep>>({
       await $b24.callBatch([
         {
           method: 'userfieldtype.add',
-          params: {
-            USER_TYPE_ID: typeId,
-            HANDLER: `${appUrl}/handler/uf.demo`,
-            TITLE: `[${import.meta.dev ? 'dev' : 'prod'}] Some Type`,
-            DESCRIPTION: `Some Description`,
-            OPTIONS: {
-              height: 105
-            }
-          }
+          params: commonParams
         }
       ], false)
     }
@@ -142,24 +135,69 @@ const steps = ref<Record<string, IStep>>({
   serverSide: {
     caption: t('page.install.step.serverSide.caption'),
     action: async () => {
-      const authData = $b24.auth.getAuthData()
+      const authData = $b24.auth.getAuthData() as Record<string, any> | false
 
       if(authData === false) {
         throw new Error('Some problem with auth. See App logic')
       }
 
+      const rawPlacementInfo = (() => {
+        try {
+          return (window as any)?.BX24?.placement?.info?.() || {}
+        } catch {
+          return {}
+        }
+      })() as Record<string, any>
+
+      const legacyAuth = (() => {
+        try {
+          return (window as any)?.BX24?.getAuth?.() || {}
+        } catch {
+          return {}
+        }
+      })() as Record<string, any>
+
+      const accessToken = String(
+        authData.access_token
+        || authData.AUTH_ID
+        || rawPlacementInfo.AUTH_ID
+        || legacyAuth.AUTH_ID
+        || legacyAuth.access_token
+        || ''
+      ).trim()
+
+      const refreshToken = String(
+        authData.refresh_token
+        || authData.REFRESH_ID
+        || rawPlacementInfo.REFRESH_ID
+        || legacyAuth.REFRESH_ID
+        || legacyAuth.refresh_token
+        || ''
+      ).trim()
+
+      const memberId = String(
+        authData.member_id
+        || rawPlacementInfo.MEMBER_ID
+        || legacyAuth.member_id
+        || ''
+      ).trim()
+
+      if (!accessToken) {
+        throw new Error('Install auth payload is missing AUTH_ID/access_token')
+      }
+
       await apiStore.postInstall({
-        DOMAIN: withoutTrailingSlash(authData.domain).replace('https://', '').replace('http://', ''),
-        PROTOCOL: authData.domain.includes('https://') ? 1 : 0,
+        DOMAIN: withoutTrailingSlash(String(authData.domain || rawPlacementInfo.DOMAIN || '')).replace('https://', '').replace('http://', ''),
+        PROTOCOL: Number(rawPlacementInfo.PROTOCOL || (String(authData.domain || '').includes('https://') ? 1 : 0)),
         LICENSE: steps.value.init?.data?.appInfo.LICENSE,
         LICENSE_FAMILY: steps.value.init?.data?.appInfo.LICENSE_FAMILY,
         LANG: $b24.getLang(),
         APP_SID: $b24.getAppSid(),
-        AUTH_ID: authData.access_token,
-        AUTH_EXPIRES: authData.expires_in,
-        REFRESH_ID: authData.refresh_token,
-        REFRESH_TOKEN: authData.refresh_token,
-        member_id: authData.member_id,
+        AUTH_ID: accessToken,
+        AUTH_EXPIRES: Number(authData.expires_in || rawPlacementInfo.AUTH_EXPIRES || 0),
+        REFRESH_ID: refreshToken,
+        REFRESH_TOKEN: refreshToken,
+        member_id: memberId,
         user_id: Number(steps.value.init?.data?.profile.ID),
         status: steps.value.init?.data?.appInfo.STATUS,
         appVersion: Number(steps.value.init?.data?.appInfo.VERSION),

@@ -4,7 +4,10 @@ import type { ProjectBoardCardRecord } from '~/utils/projectBoard'
 import {
   formatProjectDate,
   formatProjectHours,
+  formatProjectCurrency,
   formatProjectMoney,
+  formatProjectPercent,
+  getBudgetStatusBadgeClass,
   getStageBadgeClass
 } from '~/utils/projectBoard'
 
@@ -18,6 +21,15 @@ const emit = defineEmits<{
 }>()
 
 const stageBadgeClass = computed(() => getStageBadgeClass(props.card.stage))
+const budgetBadgeClass = computed(() => getBudgetStatusBadgeClass(props.card.budget_health_status))
+const isSupportCard = computed(() => Boolean(props.card.is_support || String(props.card.project_type || '').toLowerCase() === 'support'))
+const budgetProgressPercent = computed(() => {
+  const value = Number(props.card.budget_utilization_percent)
+  if (!Number.isFinite(value)) {
+    return null
+  }
+  return Math.max(0, Math.min(value, 100))
+})
 const lastWriteoffLabel = computed(() => {
   if (!props.card.last_writeoff_at) {
     return 'Списаний пока нет'
@@ -65,6 +77,9 @@ function handleDragStart(event: DragEvent) {
           >
             Авто
           </span>
+          <span :class="['inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold', budgetBadgeClass]">
+            {{ card.budget_health_status || 'Без лимита' }}
+          </span>
         </div>
       </div>
 
@@ -81,6 +96,38 @@ function handleDragStart(event: DragEvent) {
       <div class="rounded-xl bg-slate-50 px-3 py-2">
         <div class="text-slate-400">Ставка</div>
         <div class="mt-1 font-semibold text-slate-800">{{ formatProjectMoney(card.hourly_rate) }}</div>
+      </div>
+      <div class="rounded-xl bg-slate-50 px-3 py-2">
+        <div class="text-slate-400">План, ₽</div>
+        <div class="mt-1 font-semibold text-slate-800">{{ formatProjectCurrency(card.planned_amount ?? card.planned_budget_amount) }}</div>
+      </div>
+      <div class="rounded-xl bg-slate-50 px-3 py-2">
+        <div class="text-slate-400">Факт, ₽</div>
+        <div class="mt-1 font-semibold text-slate-800">{{ formatProjectCurrency(card.actual_cost_amount) }}</div>
+      </div>
+    </div>
+
+    <div v-if="!isSupportCard" class="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+      <div class="flex items-center justify-between gap-2">
+        <span>Освоение</span>
+        <span class="font-semibold text-slate-800">{{ formatProjectPercent(card.budget_utilization_percent) }}</span>
+      </div>
+      <div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+        <div
+          class="h-full rounded-full bg-emerald-500 transition-all"
+          :class="{
+            'bg-amber-500': card.budget_health_status === 'Риск',
+            'bg-rose-500': card.budget_health_status === 'Перерасход',
+            'bg-slate-400': card.budget_health_status === 'Без лимита',
+          }"
+          :style="{ width: `${budgetProgressPercent ?? 0}%` }"
+        />
+      </div>
+    </div>
+    <div v-else class="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+      <div class="flex items-center justify-between gap-2">
+        <span>Финрезультат поддержки</span>
+        <span class="font-semibold text-slate-800">{{ formatProjectCurrency(card.actual_financial_result) }}</span>
       </div>
     </div>
 

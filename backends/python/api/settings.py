@@ -16,7 +16,17 @@ parsed_virtual_host = urlparse(VIRTUAL_HOST) if VIRTUAL_HOST else None
 
 default_allowed_hosts = ["localhost", "127.0.0.1"]
 if DEBUG:
-    default_allowed_hosts.extend(["api", "frontend"])
+    default_allowed_hosts.extend(
+        [
+            "api",
+            "api-python",
+            "api-php",
+            "api-node",
+            "frontend",
+            "cloudpub",
+            "cloudpubFront",
+        ]
+    )
 if parsed_virtual_host and parsed_virtual_host.hostname:
     default_allowed_hosts.append(parsed_virtual_host.hostname)
 

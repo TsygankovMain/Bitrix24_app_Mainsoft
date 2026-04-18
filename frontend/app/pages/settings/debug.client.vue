@@ -69,7 +69,35 @@
             <div class="text-sm font-semibold text-slate-900">Системные логи</div>
             <div class="mt-1 text-sm text-slate-500">Ошибки, warning-события и ключевые сообщения приложения.</div>
           </div>
-          <B24Button label="Обновить" size="sm" @click="fetchSystem(1)" />
+          <div class="flex flex-wrap items-center gap-2">
+            <label class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600">
+              <input v-model="showNotifierLogsOnly" type="checkbox" class="rounded border-slate-300">
+              Только budget-notifier
+            </label>
+            <B24Button
+              label="Запустить Budget Notifier"
+              size="sm"
+              color="air-primary"
+              :loading="isRunningNotifier"
+              @click="runBudgetNotifier"
+            />
+            <B24Button label="Обновить" size="sm" @click="fetchSystem(1)" />
+          </div>
+        </div>
+
+        <div
+          v-if="notifierResult"
+          class="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
+        >
+          <div class="font-semibold text-slate-900">Результат Budget Notifier</div>
+          <div class="mt-2 grid gap-1 text-xs text-slate-600 sm:grid-cols-3">
+            <div>Проверено: {{ notifierResult.checked || 0 }}</div>
+            <div>Отправлено: {{ notifierResult.sent || 0 }}</div>
+            <div>Cooldown skip: {{ notifierResult.cooldown_skipped || 0 }}</div>
+          </div>
+          <div v-if="Array.isArray(notifierResult.events) && notifierResult.events.length > 0" class="mt-2 text-xs">
+            Последние события: {{ notifierResult.events.slice(0, 3).map((event: any) => `${event.project_name} / ${event.event_code} / ${event.status}`).join('; ') }}
+          </div>
         </div>
 
         <div class="ms-table-shell">
@@ -145,6 +173,9 @@ const activeTab = ref<'requests' | 'system'>('requests')
 const requestLogs = ref<any[]>([])
 const systemLogs = ref<any[]>([])
 const selectedItem = ref<any>(null)
+const isRunningNotifier = ref(false)
+const notifierResult = ref<any | null>(null)
+const showNotifierLogsOnly = ref(false)
 
 useHead({
   title: 'Панель отладки'
@@ -161,16 +192,34 @@ const fetchRequests = async (page = 1) => {
 
 const fetchSystem = async (page = 1) => {
    try {
-    const res = await api.getSystemLogs(page, 50)
+    const res = await api.getSystemLogs(page, 50, {
+      module: showNotifierLogsOnly.value ? 'project_budget_notifier' : undefined,
+    })
     systemLogs.value = res.items
   } catch (e) {
     console.error(e)
   }
 }
 
+const runBudgetNotifier = async () => {
+  isRunningNotifier.value = true
+  try {
+    notifierResult.value = await api.runProjectBudgetNotifier({})
+    await fetchSystem(1)
+  } catch (e) {
+    console.error(e)
+  } finally {
+    isRunningNotifier.value = false
+  }
+}
+
 onMounted(() => {
   fetchRequests()
   fetchSystem()
+})
+
+watch(showNotifierLogsOnly, () => {
+  fetchSystem(1)
 })
 
 const formatDate = (ts: string) => {
