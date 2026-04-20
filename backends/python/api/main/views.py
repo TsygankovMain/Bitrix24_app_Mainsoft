@@ -643,7 +643,11 @@ def get_project_board_card(request: AuthorizedRequest):
     try:
         return JsonResponse({"card": service.get_card_data(project_id)})
     except ProjectCard.DoesNotExist:
-        return JsonResponse({"card": None}, status=404)
+        # "Карточки ещё нет" — не ошибка сервера, а валидное состояние:
+        # для задач/групп без синхронизированного ProjectCard placement просто не показывает блок.
+        # Возвращаем 200 с null, чтобы ofetch на фронте не бросал FetchError и не блокировал
+        # нативное списание времени в Битрикс24.
+        return JsonResponse({"card": None})
     except Exception as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
