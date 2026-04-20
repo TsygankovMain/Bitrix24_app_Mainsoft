@@ -23,6 +23,10 @@ ARG NUXT_PUBLIC_API_URL=""
 ENV VIRTUAL_HOST=${VIRTUAL_HOST}
 ENV NUXT_PUBLIC_APP_URL=${VIRTUAL_HOST}
 ENV NUXT_PUBLIC_API_URL=${NUXT_PUBLIC_API_URL}
+# Nuxt 4 + Vite 7 SSG build spikes >1.7GB heap during the "transforming" stage
+# with ~1100 node_modules packages. Without this override Node is killed silently
+# (SIGKILL from OOM) and the deploy log just cuts off mid-build.
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN if [ -z "$VIRTUAL_HOST" ]; then echo "VIRTUAL_HOST build arg is required"; exit 1; fi \
     && case "$VIRTUAL_HOST" in http://*|https://*) NORMALIZED_HOST="$VIRTUAL_HOST" ;; *) NORMALIZED_HOST="https://$VIRTUAL_HOST" ;; esac \
     && export NUXT_PUBLIC_APP_URL="$NORMALIZED_HOST" \
