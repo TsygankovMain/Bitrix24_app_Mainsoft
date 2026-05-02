@@ -235,6 +235,8 @@ class ProjectCardService:
                     "archived_at": None,
                     "project_hours_budget": None,
                     "hourly_rate": 0.0,
+                    "project_income": None,
+                    "project_expense": None,
                     "is_support": False,
                     "curator_user_id": None,
                     "curator_name": None,
@@ -399,6 +401,8 @@ class ProjectCardService:
         next_legal_entity_name = self._clean_str(payload.get("our_legal_entity_name")) if "our_legal_entity_name" in payload else card.our_legal_entity_name
         next_budget = self._to_optional_float(payload.get("project_hours_budget")) if "project_hours_budget" in payload else card.project_hours_budget
         next_hourly_rate = self._to_float(payload.get("hourly_rate"), default=card.hourly_rate) if "hourly_rate" in payload else card.hourly_rate
+        next_project_income = self._to_optional_float(payload.get("project_income")) if "project_income" in payload else card.project_income
+        next_project_expense = self._to_optional_float(payload.get("project_expense")) if "project_expense" in payload else card.project_expense
         next_is_support = self._to_bool(payload.get("is_support"), default=card.is_support) if "is_support" in payload else card.is_support
         next_start_date = self._parse_date(payload.get("project_start_date")) if "project_start_date" in payload else card.project_start_date
         next_end_date = self._parse_date(payload.get("project_end_date")) if "project_end_date" in payload else card.project_end_date
@@ -427,6 +431,8 @@ class ProjectCardService:
         card.project_name = next_project_name
         card.project_hours_budget = next_budget
         card.hourly_rate = next_hourly_rate
+        card.project_income = next_project_income
+        card.project_expense = next_project_expense
         card.is_support = next_is_support
         card.curator_user_id = next_curator_user_id
         card.curator_name = next_curator_name
@@ -616,6 +622,8 @@ class ProjectCardService:
             "archived_at": card.archived_at.isoformat() if card.archived_at else None,
             "project_hours_budget": card.project_hours_budget,
             "hourly_rate": card.hourly_rate,
+            "project_income": card.project_income,
+            "project_expense": card.project_expense,
             "is_support": card.is_support,
             "curator_user_id": card.curator_user_id,
             "curator_name": card.curator_name,
@@ -1162,6 +1170,8 @@ class ProjectCardService:
         self._assign_mapped_spa_field(fields, mapping, "is_support", "Y" if card.is_support else "N")
         self._assign_mapped_spa_field(fields, mapping, "project_hours_budget", card.project_hours_budget)
         self._assign_mapped_spa_field(fields, mapping, "hourly_rate", card.hourly_rate)
+        self._assign_mapped_spa_field(fields, mapping, "project_income", card.project_income)
+        self._assign_mapped_spa_field(fields, mapping, "project_expense", card.project_expense)
         self._assign_mapped_spa_field(fields, mapping, "curator_id", self._to_bitrix_id(card.curator_user_id))
         self._assign_mapped_spa_field(fields, mapping, "company_id", self._to_bitrix_id(card.company_id))
         self._assign_mapped_spa_field(fields, mapping, "our_legal_entity_id", self._to_bitrix_id(card.our_legal_entity_id))

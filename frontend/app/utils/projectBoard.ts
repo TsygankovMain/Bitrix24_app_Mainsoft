@@ -126,6 +126,14 @@ export function formatProjectHours(value?: number | null) {
   return `${Number(value).toFixed(0)} ч`
 }
 
+export function formatProjectCurrency(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return '—'
+  }
+
+  return `${Number(value).toFixed(0)} ₽`
+}
+
 export function getTimelineAnchor(card: ProjectBoardCardRecord) {
   return card.project_start_date || card.last_writeoff_at || card.created_at || card.updated_at
 }

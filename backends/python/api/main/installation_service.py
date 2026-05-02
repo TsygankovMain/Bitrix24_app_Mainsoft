@@ -37,6 +37,8 @@ PROJECT_FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     'is_support': {'suffix': 'IS_SUPPORT', 'label': 'Support-флаг', 'type': 'boolean'},
     'project_hours_budget': {'suffix': 'PROJECT_HOURS_BUDGET', 'label': 'Бюджет часов', 'type': 'double'},
     'hourly_rate': {'suffix': 'HOURLY_RATE', 'label': 'Ставка часа', 'type': 'double'},
+    'project_income': {'suffix': 'PROJECT_INCOME', 'label': 'Доход проекта', 'type': 'double'},
+    'project_expense': {'suffix': 'PROJECT_EXPENSE', 'label': 'Расход проекта', 'type': 'double'},
     'curator_id': {'suffix': 'CURATOR_ID', 'label': 'Куратор', 'type': 'employee'},
     'company_id': {'suffix': 'COMPANY_ID', 'label': 'Компания', 'type': 'crm_company'},
     'our_legal_entity_id': {'suffix': 'OUR_LEGAL_ENTITY_ID', 'label': 'Наше юрлицо', 'type': 'crm_company'},

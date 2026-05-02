@@ -37,6 +37,8 @@ export interface ProjectBoardCardRecord {
   archived_at: string | null
   project_hours_budget: number | null
   hourly_rate: number
+  project_income: number | null
+  project_expense: number | null
   is_support: boolean
   curator_user_id: string | null
   curator_name: string | null

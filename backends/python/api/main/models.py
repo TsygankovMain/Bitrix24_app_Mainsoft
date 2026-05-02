@@ -198,6 +198,8 @@ class ProjectCard(models.Model):
     archived_at = models.DateTimeField(null=True, blank=True)
     project_hours_budget = models.FloatField(null=True, blank=True)
     hourly_rate = models.FloatField(default=0.0)
+    project_income = models.FloatField(null=True, blank=True)
+    project_expense = models.FloatField(null=True, blank=True)
     is_support = models.BooleanField(default=False)
     curator_user_id = models.CharField(max_length=50, null=True, blank=True)
     curator_name = models.CharField(max_length=255, null=True, blank=True)

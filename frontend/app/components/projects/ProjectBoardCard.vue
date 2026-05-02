@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { ProjectBoardCardRecord } from '~/utils/projectBoard'
 import {
+  formatProjectCurrency,
   formatProjectDate,
   formatProjectHours,
   formatProjectMoney,
@@ -81,6 +82,14 @@ function handleDragStart(event: DragEvent) {
       <div class="rounded-xl bg-slate-50 px-3 py-2">
         <div class="text-slate-400">Ставка</div>
         <div class="mt-1 font-semibold text-slate-800">{{ formatProjectMoney(card.hourly_rate) }}</div>
+      </div>
+      <div class="rounded-xl bg-emerald-50 px-3 py-2">
+        <div class="text-emerald-500">Доход</div>
+        <div class="mt-1 font-semibold text-emerald-700">{{ formatProjectCurrency(card.project_income) }}</div>
+      </div>
+      <div class="rounded-xl bg-rose-50 px-3 py-2">
+        <div class="text-rose-500">Расход</div>
+        <div class="mt-1 font-semibold text-rose-700">{{ formatProjectCurrency(card.project_expense) }}</div>
       </div>
     </div>
 

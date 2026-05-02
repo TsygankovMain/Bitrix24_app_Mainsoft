@@ -169,6 +169,8 @@ PROJECT_SPA_REQUIRED_MAPPING = {
     "is_support": "boolean",
     "project_hours_budget": "double",
     "hourly_rate": "double",
+    "project_income": "double",
+    "project_expense": "double",
     "curator_id": "employee",
     "company_id": "crm_company",
     "our_legal_entity_id": "crm_company",

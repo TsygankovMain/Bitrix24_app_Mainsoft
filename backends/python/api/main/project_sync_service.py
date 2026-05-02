@@ -288,6 +288,8 @@ class ProjectSyncService:
                     archived_at=timezone.now() if normalized["is_archived"] else None,
                     project_hours_budget=normalized.get("project_hours_budget"),
                     hourly_rate=normalized.get("hourly_rate") or 0.0,
+                    project_income=normalized.get("project_income"),
+                    project_expense=normalized.get("project_expense"),
                     is_support=normalized.get("is_support", False),
                     curator_user_id=normalized.get("curator_user_id"),
                     curator_name=normalized.get("curator_name"),
@@ -317,6 +319,8 @@ class ProjectSyncService:
             self._set_if_changed(existing, "is_archived", normalized["is_archived"], changed_fields)
             self._set_if_changed(existing, "project_hours_budget", normalized.get("project_hours_budget"), changed_fields)
             self._set_if_changed(existing, "hourly_rate", normalized.get("hourly_rate") or 0.0, changed_fields)
+            self._set_if_changed(existing, "project_income", normalized.get("project_income"), changed_fields)
+            self._set_if_changed(existing, "project_expense", normalized.get("project_expense"), changed_fields)
             self._set_if_changed(existing, "is_support", normalized.get("is_support", False), changed_fields)
             self._set_if_changed(existing, "curator_user_id", normalized.get("curator_user_id"), changed_fields)
             self._set_if_changed(existing, "curator_name", normalized.get("curator_name"), changed_fields)
@@ -447,6 +451,12 @@ class ProjectSyncService:
             self._get_mapped_value(item, mapping, "hourly_rate", "UF_CRM_HOURLY_RATE", "ufCrmHourlyRate"),
             default=0.0,
         )
+        project_income = ProjectCardService._to_optional_float(
+            self._get_mapped_value(item, mapping, "project_income", "UF_CRM_PROJECT_INCOME", "ufCrmProjectIncome")
+        )
+        project_expense = ProjectCardService._to_optional_float(
+            self._get_mapped_value(item, mapping, "project_expense", "UF_CRM_PROJECT_EXPENSE", "ufCrmProjectExpense")
+        )
         start_date = ProjectCardService._parse_date(
             self._get_mapped_value(item, mapping, "start_date", "UF_CRM_START_DATE", "ufCrmStartDate", "projectDateStart", "PROJECT_DATE_START")
         )
@@ -483,6 +493,8 @@ class ProjectSyncService:
             "is_support": is_support,
             "project_hours_budget": budget,
             "hourly_rate": hourly_rate,
+            "project_income": project_income,
+            "project_expense": project_expense,
             "curator_user_id": curator_user_id,
             "curator_name": None,
             "company_id": company_id,

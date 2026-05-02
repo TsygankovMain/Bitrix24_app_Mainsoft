@@ -41,6 +41,8 @@ watch(
       project_name: props.card.project_name || '',
       project_hours_budget: props.card.project_hours_budget ?? '',
       hourly_rate: props.card.hourly_rate ?? 0,
+      project_income: props.card.project_income ?? '',
+      project_expense: props.card.project_expense ?? '',
       is_support: props.card.is_support,
       curator_user_id: props.card.curator_user_id || '',
       curator_name: props.card.curator_name || '',
@@ -152,6 +154,27 @@ function handleSave() {
                 type="number"
                 min="0"
                 step="100"
+              >
+            </label>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <label class="grid gap-1 text-sm">
+              <span class="font-medium text-slate-700">Доход, ₽</span>
+              <input
+                v-model="draft.project_income"
+                type="number"
+                min="0"
+                step="1000"
+              >
+            </label>
+            <label class="grid gap-1 text-sm">
+              <span class="font-medium text-slate-700">Расход, ₽</span>
+              <input
+                v-model="draft.project_expense"
+                type="number"
+                min="0"
+                step="1000"
               >
             </label>
           </div>

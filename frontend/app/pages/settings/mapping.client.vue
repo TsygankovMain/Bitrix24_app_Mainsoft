@@ -85,6 +85,8 @@ const PROJECT_FIELDS: MappingFieldDefinition[] = [
   { key: 'is_support', label: 'Флаг поддержки', type: 'boolean', desc: 'Проект в режиме поддержки' },
   { key: 'project_hours_budget', label: 'Бюджет часов', type: 'double', desc: 'Плановый объем часов проекта' },
   { key: 'hourly_rate', label: 'Ставка часа', type: 'double', desc: 'Коммерческая ставка проекта' },
+  { key: 'project_income', label: 'Доход проекта', type: 'double', desc: 'Плановый или фактический доход проекта в рублях' },
+  { key: 'project_expense', label: 'Расход проекта', type: 'double', desc: 'Плановый или фактический расход проекта в рублях' },
   { key: 'curator_id', label: 'Куратор', type: 'employee', desc: 'Ответственный пользователь Bitrix24' },
   { key: 'company_id', label: 'Компания', type: 'crm_company', desc: 'Клиентская компания проекта' },
   { key: 'our_legal_entity_id', label: 'Наше юрлицо', type: 'crm_company', desc: 'Наша компания, от которой ведется проект' },
