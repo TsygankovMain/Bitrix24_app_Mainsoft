@@ -1,14 +1,34 @@
 import tailwindcss from '@tailwindcss/vite'
 import { contentLocales } from './i18n/i18n.map'
 
-const env = (globalThis as any)?.process?.env || {}
-const isDev = env.NODE_ENV !== 'production'
-const publicAppUrl = env.NUXT_PUBLIC_APP_URL || env.VIRTUAL_HOST || ''
-const publicApiUrl = env.NUXT_PUBLIC_API_URL || publicAppUrl || ''
+const normalizePublicUrl = (rawValue: unknown): string => {
+  const raw = String(rawValue || '').trim()
+  if (!raw) {
+    return ''
+  }
+
+  if (raw.startsWith('/')) {
+    return raw
+  }
+
+  if (/^https?:\/\//i.test(raw)) {
+    return raw
+  }
+
+  if (raw.startsWith('//')) {
+    return `https:${raw}`
+  }
+
+  return `https://${raw}`
+}
+
+const isDev = process.env.NODE_ENV !== 'production'
+const publicAppUrl = normalizePublicUrl(process.env.NUXT_PUBLIC_APP_URL || process.env.VIRTUAL_HOST || '')
+const publicApiUrl = normalizePublicUrl(process.env.NUXT_PUBLIC_API_URL || publicAppUrl || '')
 const devAllowedHosts = [
   'localhost',
   '127.0.0.1',
-  ...String(env.NUXT_ALLOWED_HOSTS || '')
+  ...String(process.env.NUXT_ALLOWED_HOSTS || '')
     .split(',')
     .map(host => host.trim())
     .filter(Boolean)
@@ -94,14 +114,14 @@ export default defineNuxtConfig({
     server: {
       allowedHosts: devAllowedHosts,
       proxy: {
-        '/api': { target: env.SERVER_HOST || 'http://api-need_set:8000', changeOrigin: true }
+        '/api': { target: process.env.SERVER_HOST || 'http://api-need_set:8000', changeOrigin: true }
       }
     }
   },
 
   nitro: {
     devProxy: {
-      '/api': { target: env.SERVER_HOST || 'http://api-need_set:8000', changeOrigin: true }
+      '/api': { target: process.env.SERVER_HOST || 'http://api-need_set:8000', changeOrigin: true }
     },
   },
 

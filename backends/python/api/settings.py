@@ -3,6 +3,11 @@ from urllib.parse import urlparse
 
 from config import config
 
+if config.db_type == "mysql":
+    import pymysql
+
+    pymysql.install_as_MySQLdb()
+
 BASE_DIR = Path(__file__).resolve().parent
 
 SECRET_KEY = config.jwt_secret
@@ -50,6 +55,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware", # Added for static files
     "main.middleware.RequestLoggingMiddleware",
+    "main.middleware.ApiTrailingSlashNormalizeMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -81,7 +87,7 @@ ASGI_APPLICATION = "asgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql_psycopg2",
+        "ENGINE": "django.db.backends.mysql" if config.db_type == "mysql" else "django.db.backends.postgresql_psycopg2",
         "NAME": config.db_name,
         "USER": config.db_user,
         "PASSWORD": config.db_password,

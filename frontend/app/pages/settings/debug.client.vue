@@ -3,7 +3,7 @@
     <div class="ms-page-frame">
       <div class="ms-page-header">
         <div>
-          <h1 class="ms-title">Панель отладки</h1>
+          <h1 class="ms-title">Диагностика системы</h1>
           <p class="ms-subtitle mt-2">История запросов, системные события и разбор ошибок.</p>
         </div>
         <B24Button label="Назад" color="link" @click="router.push('/settings')" />
@@ -15,14 +15,14 @@
         class="ms-tab-btn"
         :class="activeTab === 'requests' ? 'ms-tab-btn-active' : ''"
       >
-        HTTP Запросы
+        Запросы
       </button>
       <button 
         @click="activeTab = 'system'" 
         class="ms-tab-btn"
         :class="activeTab === 'system' ? 'ms-tab-btn-active' : ''"
       >
-        Системные Логи
+        Системные события
       </button>
       </div>
 
@@ -39,25 +39,44 @@
           <table class="ms-table">
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Method</th>
-                <th>Path</th>
-                <th>Status</th>
-                <th>Duration</th>
-                <th>Action</th>
+                <th>Время</th>
+                <th>Метод</th>
+                <th>Путь</th>
+                <th>Статус</th>
+                <th>Длительность</th>
+                <th>Действие</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="log in requestLogs" :key="log.id" class="text-sm">
-                <td class="whitespace-nowrap text-slate-500">{{ formatDate(log.timestamp) }}</td>
-                <td class="font-mono font-bold" :class="getMethodColor(log.method)">{{ log.method }}</td>
-                <td class="max-w-xs truncate font-mono text-xs" :title="log.path">{{ log.path }}</td>
-                <td class="font-mono" :class="getStatusColor(log.status_code)">{{ log.status_code }}</td>
-                <td class="text-slate-500">{{ log.duration_ms?.toFixed(0) }}ms</td>
-                <td>
-                  <button @click="openDetails(log)" class="text-xs font-medium text-lime-700 hover:text-lime-800">Details</button>
-                </td>
-              </tr>
+              <template v-for="log in requestLogs" :key="`req-${log.id}`">
+                <tr class="text-sm">
+                  <td class="whitespace-nowrap text-slate-500">{{ formatDate(log.timestamp) }}</td>
+                  <td class="font-mono font-bold" :class="getMethodColor(log.method)">{{ log.method }}</td>
+                  <td class="max-w-xs truncate font-mono text-xs" :title="log.path">{{ log.path }}</td>
+                  <td class="font-mono" :class="getStatusColor(log.status_code)">{{ log.status_code }}</td>
+                  <td class="text-slate-500">{{ log.duration_ms?.toFixed(0) }}ms</td>
+                  <td>
+                    <button @click="toggleRequestDetails(log.id)" class="text-xs font-medium text-lime-700 hover:text-lime-800">
+                      {{ expandedRequestId === log.id ? 'Скрыть' : 'Подробнее' }}
+                    </button>
+                  </td>
+                </tr>
+                <tr v-if="expandedRequestId === log.id">
+                  <td colspan="6" class="bg-slate-50 p-3">
+                    <div class="space-y-4">
+                      <div v-if="log.request_body">
+                        <h4 class="mb-1 text-sm font-semibold text-slate-900">Тело запроса</h4>
+                        <pre class="ms-code-block whitespace-pre-wrap">{{ parseOrRaw(log.request_body) }}</pre>
+                      </div>
+                      <div v-if="log.response_body">
+                        <h4 class="mb-1 text-sm font-semibold text-slate-900">Тело ответа</h4>
+                        <pre class="ms-code-block whitespace-pre-wrap">{{ parseOrRaw(log.response_body) }}</pre>
+                      </div>
+                      <pre class="ms-code-block whitespace-pre-wrap font-mono">{{ JSON.stringify(log, null, 2) }}</pre>
+                    </div>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -69,94 +88,47 @@
             <div class="text-sm font-semibold text-slate-900">Системные логи</div>
             <div class="mt-1 text-sm text-slate-500">Ошибки, warning-события и ключевые сообщения приложения.</div>
           </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <label class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600">
-              <input v-model="showNotifierLogsOnly" type="checkbox" class="rounded border-slate-300">
-              Только budget-notifier
-            </label>
-            <B24Button
-              label="Запустить Budget Notifier"
-              size="sm"
-              color="air-primary"
-              :loading="isRunningNotifier"
-              @click="runBudgetNotifier"
-            />
-            <B24Button label="Обновить" size="sm" @click="fetchSystem(1)" />
-          </div>
-        </div>
-
-        <div
-          v-if="notifierResult"
-          class="mb-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700"
-        >
-          <div class="font-semibold text-slate-900">Результат Budget Notifier</div>
-          <div class="mt-2 grid gap-1 text-xs text-slate-600 sm:grid-cols-3">
-            <div>Проверено: {{ notifierResult.checked || 0 }}</div>
-            <div>Отправлено: {{ notifierResult.sent || 0 }}</div>
-            <div>Cooldown skip: {{ notifierResult.cooldown_skipped || 0 }}</div>
-          </div>
-          <div v-if="Array.isArray(notifierResult.events) && notifierResult.events.length > 0" class="mt-2 text-xs">
-            Последние события: {{ notifierResult.events.slice(0, 3).map((event: any) => `${event.project_name} / ${event.event_code} / ${event.status}`).join('; ') }}
-          </div>
+          <B24Button label="Обновить" size="sm" @click="fetchSystem(1)" />
         </div>
 
         <div class="ms-table-shell">
           <table class="ms-table">
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Level</th>
-                <th>Module</th>
-                <th>Message</th>
-                <th>Trace</th>
+                <th>Время</th>
+                <th>Уровень</th>
+                <th>Модуль</th>
+                <th>Сообщение</th>
+                <th>Стек</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="log in systemLogs" :key="log.id" class="text-sm leading-tight">
-                <td class="whitespace-nowrap text-slate-500">{{ formatDate(log.timestamp) }}</td>
-                <td class="font-bold" :class="getLevelColor(log.level)">{{ log.level }}</td>
-                <td class="text-xs text-slate-500">{{ log.module }}</td>
-                <td class="max-w-md truncate" :title="log.message">{{ log.message }}</td>
-                <td>
-                  <button v-if="log.traceback" @click="openTrace(log)" class="text-xs font-medium text-rose-600 hover:text-rose-700">Trace</button>
-                </td>
-              </tr>
+              <template v-for="log in systemLogs" :key="`sys-${log.id}`">
+                <tr class="text-sm leading-tight">
+                  <td class="whitespace-nowrap text-slate-500">{{ formatDate(log.timestamp) }}</td>
+                  <td class="font-bold" :class="getLevelColor(log.level)">{{ log.level }}</td>
+                  <td class="text-xs text-slate-500">{{ log.module }}</td>
+                  <td class="max-w-md truncate" :title="log.message">{{ log.message }}</td>
+                  <td>
+                    <button v-if="log.traceback" @click="toggleSystemDetails(log.id)" class="text-xs font-medium text-rose-600 hover:text-rose-700">
+                      {{ expandedSystemId === log.id ? 'Скрыть' : 'Стек' }}
+                    </button>
+                  </td>
+                </tr>
+                <tr v-if="expandedSystemId === log.id">
+                  <td colspan="5" class="bg-rose-50/30 p-3">
+                    <div class="space-y-4">
+                      <div v-if="log.traceback">
+                        <h4 class="mb-1 text-sm font-semibold text-rose-700">Стек ошибки</h4>
+                        <pre class="overflow-x-auto whitespace-pre-wrap rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-900 shadow-sm">{{ log.traceback }}</pre>
+                      </div>
+                      <pre class="ms-code-block whitespace-pre-wrap font-mono">{{ JSON.stringify(log, null, 2) }}</pre>
+                    </div>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
-        </div>
-      </div>
-    
-      <div v-if="selectedItem" class="ms-modal-overlay" @click.self="selectedItem = null">
-        <div class="ms-modal-panel flex max-h-[90vh] w-full max-w-5xl flex-col">
-          <div class="ms-modal-header">
-            <h3 class="text-lg font-semibold text-slate-900">Детали лога</h3>
-            <button @click="selectedItem = null" class="rounded-full bg-slate-100 p-2 text-slate-500 transition hover:bg-slate-200 hover:text-slate-700">
-              ✕
-            </button>
-          </div>
-
-          <div class="ms-modal-body overflow-y-auto">
-            <div v-if="selectedItem.request_body" class="mb-4">
-              <h4 class="mb-1 text-sm font-semibold text-slate-900">Request Body</h4>
-              <pre class="ms-code-block whitespace-pre-wrap">{{ parseOrRaw(selectedItem.request_body) }}</pre>
-            </div>
-
-            <div v-if="selectedItem.response_body" class="mb-4">
-              <h4 class="mb-1 text-sm font-semibold text-slate-900">Response Body</h4>
-              <pre class="ms-code-block whitespace-pre-wrap">{{ parseOrRaw(selectedItem.response_body) }}</pre>
-            </div>
-
-            <div v-if="selectedItem.traceback" class="mb-4">
-              <h4 class="mb-1 text-sm font-semibold text-rose-700">Traceback</h4>
-              <pre class="overflow-x-auto whitespace-pre-wrap rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-900 shadow-sm">{{ selectedItem.traceback }}</pre>
-            </div>
-
-            <pre class="ms-code-block mt-4 whitespace-pre-wrap font-mono">{{ JSON.stringify(selectedItem, null, 2) }}</pre>
-          </div>
-
-          <div class="ms-modal-footer flex justify-end">
-            <B24Button label="Закрыть" color="default" @click="selectedItem = null" />
-          </div>
         </div>
       </div>
     </div>
@@ -172,13 +144,11 @@ const activeTab = ref<'requests' | 'system'>('requests')
 
 const requestLogs = ref<any[]>([])
 const systemLogs = ref<any[]>([])
-const selectedItem = ref<any>(null)
-const isRunningNotifier = ref(false)
-const notifierResult = ref<any | null>(null)
-const showNotifierLogsOnly = ref(false)
+const expandedRequestId = ref<number | string | null>(null)
+const expandedSystemId = ref<number | string | null>(null)
 
 useHead({
-  title: 'Панель отладки'
+  title: 'Диагностика системы'
 })
 
 const fetchRequests = async (page = 1) => {
@@ -192,34 +162,16 @@ const fetchRequests = async (page = 1) => {
 
 const fetchSystem = async (page = 1) => {
    try {
-    const res = await api.getSystemLogs(page, 50, {
-      module: showNotifierLogsOnly.value ? 'project_budget_notifier' : undefined,
-    })
+    const res = await api.getSystemLogs(page, 50)
     systemLogs.value = res.items
   } catch (e) {
     console.error(e)
   }
 }
 
-const runBudgetNotifier = async () => {
-  isRunningNotifier.value = true
-  try {
-    notifierResult.value = await api.runProjectBudgetNotifier({})
-    await fetchSystem(1)
-  } catch (e) {
-    console.error(e)
-  } finally {
-    isRunningNotifier.value = false
-  }
-}
-
 onMounted(() => {
   fetchRequests()
   fetchSystem()
-})
-
-watch(showNotifierLogsOnly, () => {
-  fetchSystem(1)
 })
 
 const formatDate = (ts: string) => {
@@ -247,17 +199,33 @@ const getLevelColor = (l: string) => {
   return 'text-green-600'
 }
 
-const parseOrRaw = (str: string) => {
+const parseOrRaw = (value: unknown) => {
     try {
-        if(!str) return ""
-        if(str.startsWith("{") || str.startsWith("[")) {
-            return JSON.stringify(JSON.parse(str), null, 2)
+        if(value === null || value === undefined) return ""
+        if(typeof value === 'string') {
+            const str = value.trim()
+            if(!str) return ""
+            if(str.startsWith("{") || str.startsWith("[")) {
+                return JSON.stringify(JSON.parse(str), null, 2)
+            }
+            return value
         }
+        return JSON.stringify(value, null, 2)
     } catch { }
-    return str
+    return String(value ?? '')
 }
 
-const openDetails = (item: any) => selectedItem.value = item
-const openTrace = (item: any) => selectedItem.value = { ...item }
+const toggleRequestDetails = (id: number | string) => {
+  expandedRequestId.value = expandedRequestId.value === id ? null : id
+}
+
+const toggleSystemDetails = (id: number | string) => {
+  expandedSystemId.value = expandedSystemId.value === id ? null : id
+}
+
+watch(activeTab, () => {
+  expandedRequestId.value = null
+  expandedSystemId.value = null
+})
 
 </script>

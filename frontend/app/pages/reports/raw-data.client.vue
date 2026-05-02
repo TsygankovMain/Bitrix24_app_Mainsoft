@@ -6,7 +6,7 @@ import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 const { t, locales: localesI18n, setLocale } = useI18n()
 
 useHead({
-  title: 'Сырые данные (БД)'
+  title: 'Проверка данных'
 })
 
 // region Init ////
@@ -220,7 +220,7 @@ onMounted(async () => {
     isLoading.value = true
     $b24 = await $initializeB24Frame()
     await initApp($b24, localesI18n, setLocale)
-    await $b24.parent.setTitle('Сырые данные (БД)') 
+    await $b24.parent.setTitle('Проверка данных') 
     isInit.value = true
     
     // Initial fetch
@@ -272,7 +272,7 @@ onMounted(async () => {
           <template #header>
             <div class="flex flex-row justify-between items-center w-full">
                 <div>
-                  <ProseH2 class="!text-slate-900">Сырые данные (БД)</ProseH2>
+                  <ProseH2 class="!text-slate-900">Проверка данных</ProseH2>
                   <p class="mt-1 text-sm text-slate-500">Локальная база, ручная синхронизация и Excel-выгрузка по выбранным полям.</p>
                 </div>
                 <div class="flex gap-2 items-center">

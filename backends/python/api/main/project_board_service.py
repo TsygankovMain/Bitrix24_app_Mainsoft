@@ -1,17 +1,17 @@
 import logging
+import traceback
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from b24pysdk import Client
 from django.core.cache import cache
+from django.db import ProgrammingError
 from django.db.models import Case, F, FloatField, Max, Sum, Value, When
 from django.utils import timezone
 
 from .bitrix_data_access import BitrixDataService
-from .finance_operation_service import FinanceOperationService
-from .project_budget_service import ProjectBudgetService
 from .configuration_service import ConfigurationService
-from .models import Bitrix24Account, ProjectCard, TimesheetItem
+from .models import Bitrix24Account, ProjectCard, SystemLog, TimesheetItem
 from .project_board_shared import (
     BITRIX_REFERENCE_CACHE_TTL,
     HOMEPAGE_CACHE_TTL,
@@ -75,62 +75,142 @@ class ProjectCardService:
     def get_card_data(self, project_id: str) -> Dict[str, Any]:
         if not ensure_project_card_schema():
             raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
-        card = self._get_card(project_id)
-        budget_metrics = ProjectBudgetService(self.account).get_card_metrics(card)
-        try:
-            recent_finance_operations = FinanceOperationService(self.client, self.account).get_recent_operations_by_project_item_id(
-                card.project_item_id,
-                limit=5,
-            )
-        except Exception:
-            recent_finance_operations = []
-        return self.serialize_card(
-            card,
-            budget_metrics=budget_metrics,
-            recent_finance_operations=recent_finance_operations,
-        )
+        return self.serialize_card(self._get_card(project_id))
 
     def get_board_data(self) -> Dict[str, Any]:
-        cached = cache.get(build_account_cache_key(self.account, "project-board"))
+        cache_key = build_account_cache_key(self.account, "project-board")
+        cached = cache.get(cache_key)
         if cached is not None:
             return cached
 
         if not ensure_project_card_schema():
-            return self.get_fallback_board_data()
+            payload = self._build_safe_board_fallback(
+                stage="schema_unavailable",
+                warnings=["Локальная таблица проектов недоступна. Показаны ограниченные данные."],
+            )
+            cache.set(cache_key, payload, PROJECT_BOARD_CACHE_TTL)
+            return payload
 
-        self.refresh_writeoff_stats()
-        config = self._load_config()
-        stage_options = self.get_project_stage_options(config)
-        stage_lookup = self.get_project_stage_lookup(config)
-        company_options = self.get_companies()
-        legal_entity_options = self.get_legal_entities(config)
-        cards = list(get_project_card_queryset(self.account).order_by("is_archived", "project_name"))
-        budget_metrics_map = ProjectBudgetService(self.account).build_metrics_map(cards)
-        active_cards = [card for card in cards if not card.is_archived]
+        warnings: List[str] = []
 
-        payload = {
-            "stages": stage_options,
-            "cards": [
-                self.serialize_card(
-                    card,
-                    stage_lookup=stage_lookup,
-                    company_options=company_options,
-                    legal_entity_options=legal_entity_options,
-                    budget_metrics=budget_metrics_map.get(card.project_id),
+        try:
+            self.refresh_writeoff_stats()
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.refresh_writeoff_stats_failed",
+                exc,
+                stage="refresh_writeoff_stats",
+            )
+            warnings.append("Часть расчетов по списаниям временно недоступна.")
+
+        config: Dict[str, Any] = {}
+        try:
+            config = self._load_config()
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.load_config_failed",
+                exc,
+                stage="load_config",
+            )
+            warnings.append("Не удалось загрузить часть конфигурации проектов.")
+
+        try:
+            stage_options = self.get_project_stage_options(config)
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.load_config_failed",
+                exc,
+                stage="load_stage_options",
+            )
+            stage_options = self._build_legacy_stage_options()
+            warnings.append("Стадии проектов загружены в резервном режиме.")
+
+        try:
+            cards = list(get_project_card_queryset(self.account).order_by("is_archived", "project_name"))
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.serialize_card_failed",
+                exc,
+                stage="load_cards_queryset",
+            )
+            payload = self._build_safe_board_fallback(
+                stage="load_cards_queryset",
+                warnings=[*warnings, "Не удалось загрузить карточки проектов из локальной проекции."],
+            )
+            cache.set(cache_key, payload, PROJECT_BOARD_CACHE_TTL)
+            return payload
+
+        serialized_cards: List[Dict[str, Any]] = []
+        failed_cards = 0
+        for card in cards:
+            try:
+                serialized_cards.append(self.serialize_card(card))
+            except Exception as exc:
+                failed_cards += 1
+                self._log_board_exception(
+                    "project_board.serialize_card_failed",
+                    exc,
+                    stage="serialize_card",
+                    details=f"project_id={card.project_id}",
                 )
-                for card in cards
-            ],
+
+        if failed_cards > 0:
+            warnings.append(f"Некоторые карточки проектов не удалось отобразить ({failed_cards}).")
+
+        active_cards = [card for card in serialized_cards if not card.get("is_archived")]
+        warning_text = self._join_warning_parts(warnings)
+
+        payload: Dict[str, Any] = {
+            "stages": stage_options,
+            "cards": serialized_cards,
             "summary": {
-                "total_count": len(cards),
+                "total_count": len(serialized_cards),
                 "active_count": len(active_cards),
-                "archived_count": len(cards) - len(active_cards),
-                "support_count": sum(1 for card in active_cards if card.is_support),
-                "inactive_30_count": sum(1 for card in active_cards if card.stage == PROJECT_STAGE_NO_WRITEOFF_30),
-                "inactive_90_count": sum(1 for card in active_cards if card.stage == PROJECT_STAGE_NO_WRITEOFF_90),
+                "archived_count": len(serialized_cards) - len(active_cards),
+                "support_count": sum(1 for card in active_cards if card.get("is_support")),
+                "inactive_30_count": sum(1 for card in active_cards if card.get("stage") == PROJECT_STAGE_NO_WRITEOFF_30),
+                "inactive_90_count": sum(1 for card in active_cards if card.get("stage") == PROJECT_STAGE_NO_WRITEOFF_90),
             },
         }
-        cache.set(build_account_cache_key(self.account, "project-board"), payload, PROJECT_BOARD_CACHE_TTL)
+        if warning_text:
+            payload["warning"] = warning_text
+        cache.set(cache_key, payload, PROJECT_BOARD_CACHE_TTL)
         return payload
+
+    def _build_safe_board_fallback(self, stage: str, warnings: Optional[List[str]] = None) -> Dict[str, Any]:
+        warnings = warnings or []
+        try:
+            fallback_payload = self.get_fallback_board_data()
+            merged_warning = self._join_warning_parts([fallback_payload.get("warning"), *warnings])
+            if merged_warning:
+                fallback_payload["warning"] = merged_warning
+            return fallback_payload
+        except Exception as exc:
+            self._log_board_exception(
+                "project_board.fallback_failed",
+                exc,
+                stage=stage,
+            )
+
+        warning_text = self._join_warning_parts(
+            [
+                "Данные проектов временно недоступны. Повторите попытку позже.",
+                *warnings,
+            ]
+        )
+        return {
+            "stages": self._build_legacy_stage_options(),
+            "cards": [],
+            "summary": {
+                "total_count": 0,
+                "active_count": 0,
+                "archived_count": 0,
+                "support_count": 0,
+                "inactive_30_count": 0,
+                "inactive_90_count": 0,
+            },
+            "warning": warning_text,
+        }
 
     def get_fallback_board_data(self) -> Dict[str, Any]:
         _, by_project_id, by_project_title = self.collect_writeoff_maps()
@@ -156,40 +236,6 @@ class ProjectCardService:
                     "project_hours_budget": None,
                     "hourly_rate": 0.0,
                     "is_support": False,
-                    "project_type": "delivery",
-                    "budget_mode": "hours_and_amount",
-                    "planned_budget_amount": None,
-                    "planned_hours": None,
-                    "planned_amount": None,
-                    "actual_hours": 0.0,
-                    "actual_cost_amount": 0.0,
-                    "actual_income_amount": 0.0,
-                    "actual_expense_amount": 0.0,
-                    "actual_financial_result": 0.0,
-                    "hours_remaining": None,
-                    "budget_remaining": None,
-                    "budget_utilization_mode": "none",
-                    "budget_utilization_ratio": None,
-                    "budget_utilization_percent": None,
-                    "budget_health_status": "Без лимита",
-                    "budget_health_reason": "Не задан плановый лимит.",
-                    "budget": {
-                        "planned_hours": None,
-                        "planned_amount": None,
-                        "actual_hours": 0.0,
-                        "actual_cost_amount": 0.0,
-                        "actual_income_amount": 0.0,
-                        "actual_expense_amount": 0.0,
-                        "actual_financial_result": 0.0,
-                        "hours_remaining": None,
-                        "budget_remaining": None,
-                        "budget_utilization_mode": "none",
-                        "budget_utilization_ratio": None,
-                        "budget_utilization_percent": None,
-                        "budget_health_status": "Без лимита",
-                        "budget_health_reason": "Не задан плановый лимит.",
-                    },
-                    "recent_finance_operations": [],
                     "curator_user_id": None,
                     "curator_name": None,
                     "project_start_date": None,
@@ -273,7 +319,30 @@ class ProjectCardService:
         if cached is not None:
             return cached
 
-        board = self.get_board_data()
+        board_warning: Optional[str] = None
+        try:
+            board = self.get_board_data()
+        except Exception as exc:
+            logger.exception("Homepage board fetch failed for %s: %s", self.account.domain_url, exc)
+            board_warning = "Некоторые данные главной временно недоступны."
+            try:
+                board = self.get_fallback_board_data()
+            except Exception as fallback_exc:
+                logger.exception("Homepage fallback fetch failed for %s: %s", self.account.domain_url, fallback_exc)
+                board = {
+                    "summary": {
+                        "total_count": 0,
+                        "active_count": 0,
+                        "archived_count": 0,
+                        "support_count": 0,
+                        "inactive_30_count": 0,
+                        "inactive_90_count": 0,
+                    },
+                    "cards": [],
+                    "stages": self._build_legacy_stage_options(),
+                    "warning": "Данные портфеля временно недоступны. Повторите позже.",
+                }
+
         cards = board.get("cards", [])
         active_cards = [card for card in cards if not card.get("is_archived")]
         curators_map: Dict[str, Dict[str, str]] = {}
@@ -293,14 +362,22 @@ class ProjectCardService:
             reverse=True,
         )[:6]
 
+        top_loss_projects: List[Dict[str, Any]] = []
+        leakage_warning: Optional[str] = None
+        try:
+            top_loss_projects = self._get_revenue_leakage_rows(limit=5)
+        except Exception as exc:
+            logger.exception("Homepage top-loss fetch failed for %s: %s", self.account.domain_url, exc)
+            leakage_warning = "Блок потерь выручки временно недоступен."
+
         snapshot = {
             "summary": board.get("summary", {}),
             "cards": active_cards,
             "stages": board.get("stages", []),
             "curators": sorted(curators_map.values(), key=lambda item: item["name"]),
             "risk_cards": risk_cards,
-            "top_loss_projects": self._get_revenue_leakage_rows(limit=5),
-            "warning": board.get("warning"),
+            "top_loss_projects": top_loss_projects,
+            "warning": self._merge_warning(self._merge_warning(board.get("warning"), board_warning), leakage_warning),
             "generated_at": timezone.now().isoformat(),
         }
         cache.set(build_account_cache_key(self.account, "project-board-homepage"), snapshot, HOMEPAGE_CACHE_TTL)
@@ -323,19 +400,8 @@ class ProjectCardService:
         next_budget = self._to_optional_float(payload.get("project_hours_budget")) if "project_hours_budget" in payload else card.project_hours_budget
         next_hourly_rate = self._to_float(payload.get("hourly_rate"), default=card.hourly_rate) if "hourly_rate" in payload else card.hourly_rate
         next_is_support = self._to_bool(payload.get("is_support"), default=card.is_support) if "is_support" in payload else card.is_support
-        next_project_type = self._clean_str(payload.get("project_type")) if "project_type" in payload else card.project_type
-        next_budget_mode = self._clean_str(payload.get("budget_mode")) if "budget_mode" in payload else card.budget_mode
-        next_planned_budget_amount = (
-            self._to_optional_float(payload.get("planned_budget_amount"))
-            if "planned_budget_amount" in payload
-            else card.planned_budget_amount
-        )
         next_start_date = self._parse_date(payload.get("project_start_date")) if "project_start_date" in payload else card.project_start_date
         next_end_date = self._parse_date(payload.get("project_end_date")) if "project_end_date" in payload else card.project_end_date
-        if not next_project_type:
-            next_project_type = "support" if next_is_support else "delivery"
-        if not next_budget_mode:
-            next_budget_mode = "support" if next_is_support else "hours_and_amount"
 
         if next_curator_user_id and not next_curator_name:
             next_curator_name = BitrixDataService(self.client, {}, self.account).fetch_users([next_curator_user_id]).get(next_curator_user_id)
@@ -362,9 +428,6 @@ class ProjectCardService:
         card.project_hours_budget = next_budget
         card.hourly_rate = next_hourly_rate
         card.is_support = next_is_support
-        card.project_type = next_project_type
-        card.budget_mode = next_budget_mode
-        card.planned_budget_amount = next_planned_budget_amount
         card.curator_user_id = next_curator_user_id
         card.curator_name = next_curator_name
         card.project_start_date = next_start_date
@@ -453,17 +516,24 @@ class ProjectCardService:
         by_project_id: Dict[str, datetime] = {}
         by_project_title: Dict[str, datetime] = {}
 
-        item_rows = (
-            TimesheetItem.objects.filter(bitrix24_account=self.account)
-            .exclude(project_item_id__isnull=True)
-            .exclude(project_item_id="")
-            .values("project_item_id")
-            .annotate(last_writeoff_at=Max("date_reflection"))
-        )
-        for row in item_rows:
-            project_item_id = self._clean_str(row.get("project_item_id"))
-            if project_item_id and row.get("last_writeoff_at"):
-                by_project_item_id[project_item_id] = row["last_writeoff_at"]
+        try:
+            item_rows = (
+                TimesheetItem.objects.filter(bitrix24_account=self.account)
+                .exclude(project_item_id__isnull=True)
+                .exclude(project_item_id="")
+                .values("project_item_id")
+                .annotate(last_writeoff_at=Max("date_reflection"))
+            )
+            for row in item_rows:
+                project_item_id = self._clean_str(row.get("project_item_id"))
+                if project_item_id and row.get("last_writeoff_at"):
+                    by_project_item_id[project_item_id] = row["last_writeoff_at"]
+        except ProgrammingError as exc:
+            logger.warning(
+                "collect_writeoff_maps: project_item_id is unavailable for account %s, fallback to project_id/title maps: %s",
+                self.account.pk,
+                exc,
+            )
 
         id_rows = (
             TimesheetItem.objects.filter(bitrix24_account=self.account)
@@ -505,29 +575,17 @@ class ProjectCardService:
             fallback=self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name"),
         )
 
-    def serialize_card(
-        self,
-        card: ProjectCard,
-        stage_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
-        company_options: Optional[List[Dict[str, Any]]] = None,
-        legal_entity_options: Optional[List[Dict[str, Any]]] = None,
-        budget_metrics: Optional[Dict[str, Any]] = None,
-        recent_finance_operations: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        stage_lookup = stage_lookup or self.get_project_stage_lookup()
-        company_options = company_options if company_options is not None else self.get_companies()
-        legal_entity_options = legal_entity_options if legal_entity_options is not None else self.get_legal_entities()
-        budget_metrics = budget_metrics if budget_metrics is not None else ProjectBudgetService(self.account).get_card_metrics(card)
-        recent_finance_operations = recent_finance_operations or []
+    def serialize_card(self, card: ProjectCard) -> Dict[str, Any]:
+        stage_lookup = self.get_project_stage_lookup()
         company_id, company_name, company_inn = self._resolve_reference_details(
             card.company_id,
             card.company_name,
-            company_options,
+            self.get_companies(),
         )
         legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details(
             card.our_legal_entity_id,
             card.our_legal_entity_name,
-            legal_entity_options,
+            self.get_legal_entities(),
         )
 
         if company_id and not company_inn:
@@ -559,25 +617,6 @@ class ProjectCardService:
             "project_hours_budget": card.project_hours_budget,
             "hourly_rate": card.hourly_rate,
             "is_support": card.is_support,
-            "project_type": card.project_type,
-            "budget_mode": card.budget_mode,
-            "planned_budget_amount": card.planned_budget_amount,
-            "planned_hours": budget_metrics.get("planned_hours"),
-            "planned_amount": budget_metrics.get("planned_amount"),
-            "actual_hours": budget_metrics.get("actual_hours", 0.0),
-            "actual_cost_amount": budget_metrics.get("actual_cost_amount", 0.0),
-            "actual_income_amount": budget_metrics.get("actual_income_amount", 0.0),
-            "actual_expense_amount": budget_metrics.get("actual_expense_amount", 0.0),
-            "actual_financial_result": budget_metrics.get("actual_financial_result", 0.0),
-            "hours_remaining": budget_metrics.get("hours_remaining"),
-            "budget_remaining": budget_metrics.get("budget_remaining"),
-            "budget_utilization_mode": budget_metrics.get("budget_utilization_mode"),
-            "budget_utilization_ratio": budget_metrics.get("budget_utilization_ratio"),
-            "budget_utilization_percent": budget_metrics.get("budget_utilization_percent"),
-            "budget_health_status": budget_metrics.get("budget_health_status", "Без лимита"),
-            "budget_health_reason": budget_metrics.get("budget_health_reason"),
-            "budget": budget_metrics,
-            "recent_finance_operations": recent_finance_operations,
             "curator_user_id": card.curator_user_id,
             "curator_name": card.curator_name,
             "project_start_date": card.project_start_date.isoformat() if card.project_start_date else None,
@@ -1122,9 +1161,6 @@ class ProjectCardService:
             self._assign_mapped_spa_field(fields, mapping, stage_mapping_key, mapped_stage_value)
         self._assign_mapped_spa_field(fields, mapping, "is_support", "Y" if card.is_support else "N")
         self._assign_mapped_spa_field(fields, mapping, "project_hours_budget", card.project_hours_budget)
-        self._assign_mapped_spa_field(fields, mapping, "project_type", card.project_type)
-        self._assign_mapped_spa_field(fields, mapping, "budget_mode", card.budget_mode)
-        self._assign_mapped_spa_field(fields, mapping, "planned_budget_amount", card.planned_budget_amount)
         self._assign_mapped_spa_field(fields, mapping, "hourly_rate", card.hourly_rate)
         self._assign_mapped_spa_field(fields, mapping, "curator_id", self._to_bitrix_id(card.curator_user_id))
         self._assign_mapped_spa_field(fields, mapping, "company_id", self._to_bitrix_id(card.company_id))
@@ -1163,6 +1199,46 @@ class ProjectCardService:
         if primary and secondary:
             return f"{primary} {secondary}".strip()
         return primary or secondary
+
+    @staticmethod
+    def _join_warning_parts(parts: List[Optional[str]]) -> Optional[str]:
+        normalized: List[str] = []
+        seen = set()
+        for part in parts:
+            text = str(part or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        if not normalized:
+            return None
+        return " ".join(normalized)
+
+    def _log_board_exception(self, marker: str, exc: Exception, stage: str, details: Optional[str] = None) -> None:
+        logger.exception(
+            "%s domain=%s stage=%s details=%s error=%s",
+            marker,
+            self.account.domain_url,
+            stage,
+            details or "",
+            exc,
+        )
+        try:
+            message_parts = [
+                f"domain={self.account.domain_url}",
+                f"stage={stage}",
+                f"error={exc}",
+            ]
+            if details:
+                message_parts.append(f"details={details}")
+            SystemLog.objects.create(
+                level="ERROR",
+                module=marker,
+                message="; ".join(message_parts),
+                traceback=traceback.format_exc(),
+            )
+        except Exception:
+            logger.warning("Failed to persist %s marker to SystemLog", marker)
 
     def _get_card(self, project_id: str) -> ProjectCard:
         return ProjectCard.objects.get(bitrix24_account=self.account, project_id=str(project_id))

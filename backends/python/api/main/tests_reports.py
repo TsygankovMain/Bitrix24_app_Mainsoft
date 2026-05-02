@@ -1,12 +1,14 @@
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
+from django.core.cache import cache
+from django.db import ProgrammingError
 from django.http import JsonResponse
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase
 from django.utils import timezone
 
 from .bitrix_data_access import BitrixDataService
-from .middleware import RequestLoggingMiddleware
+from .middleware import ApiTrailingSlashNormalizeMiddleware, RequestLoggingMiddleware
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
 from .finance_operation_service import FinanceOperationService
 from .project_budget_notifier import ProjectBudgetNotifier
@@ -20,11 +22,13 @@ from .report_services import (
     FIELD_TITLE_HIERARCHY,
     ReportService,
 )
+from .project_board_shared import PROJECT_CARD_SCHEMA_CACHE_KEY, ensure_project_card_schema
 from .services import (
     PROJECT_STAGE_ESTIMATE,
     PROJECT_STAGE_IN_WORK,
     PROJECT_STAGE_NO_WRITEOFF_30,
     PROJECT_STAGE_NO_WRITEOFF_90,
+    ProjectCardService,
     ProjectStageAutomationService,
 )
 from .timesheet_sync_service import TimesheetSyncService
@@ -271,6 +275,23 @@ class RequestLoggingMiddlewareTest(SimpleTestCase):
         create_mock.assert_called_once()
 
 
+class ApiTrailingSlashNormalizeMiddlewareTest(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.middleware = ApiTrailingSlashNormalizeMiddleware(lambda request: JsonResponse({"ok": True}))
+
+    def test_normalizes_api_path_with_trailing_slash(self):
+        request = self.factory.get("/api/configuration/")
+        self.middleware.process_request(request)
+        self.assertEqual(request.path_info, "/api/configuration")
+
+    def test_keeps_non_api_path_intact(self):
+        request = self.factory.get("/settings/")
+        original_path = request.path_info
+        self.middleware.process_request(request)
+        self.assertEqual(request.path_info, original_path)
+
+
 class QueryStabilityTest(TestCase):
     def setUp(self):
         self.account = Bitrix24Account.objects.create(
@@ -282,6 +303,13 @@ class QueryStabilityTest(TestCase):
             status="active",
             application_version=1,
         )
+
+    def test_api_configuration_trailing_slash_does_not_fallback_to_spa_html(self):
+        response = Client().get("/api/configuration/")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("application/json", response["Content-Type"])
+        self.assertIn("error", response.json())
 
     def test_timesheet_filters_use_date_range_and_exclude_archived_projects(self):
         ProjectCard.objects.create(
@@ -485,6 +513,300 @@ class QueryStabilityTest(TestCase):
         self.assertEqual(payload["status"], "warning")
         self.assertEqual(payload["count"], 0)
         self.assertIn("warning", payload)
+
+    @patch("main.views.ProjectSyncService.sync", side_effect=RuntimeError("project sync failed"))
+    def test_project_board_sync_endpoint_returns_warning_instead_of_500(self, _sync_mock):
+        token = self.account.create_jwt_token()
+        response = Client().post(
+            "/api/project-board/sync",
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "warning")
+        self.assertEqual(payload["synced"], 0)
+        self.assertEqual(payload["created"], 0)
+        self.assertEqual(payload["updated"], 0)
+        self.assertIn("warning", payload)
+
+    @patch("main.views.ProjectSyncService.backfill_timesheet_project_items", return_value={"status": "success", "updated": 0, "unresolved": 0})
+    @patch("main.views.ProjectSyncService.sync", side_effect=RuntimeError("sync failed"))
+    @patch("main.views.ConfigurationService.save_configuration_sync", return_value=None)
+    @patch("main.views.ConfigurationService.normalize_configuration_sync", side_effect=lambda cfg: cfg)
+    @patch("main.views._build_project_spa_validation_payload", return_value={"is_valid": True})
+    def test_save_configuration_returns_success_when_project_sync_fails(
+        self,
+        _validation_mock,
+        _normalize_mock,
+        _save_mock,
+        _sync_mock,
+        _backfill_mock,
+    ):
+        token = self.account.create_jwt_token()
+        response = Client().post(
+            "/api/configuration/save",
+            data={
+                "config": {
+                    "sp_entity_type_id": 0,
+                    "fields_mapping": {},
+                    "project_sp_entity_type_id": 1164,
+                    "project_fields_mapping": {"bitrix_group_id": "UF_CRM_1"},
+                    "is_configured": True,
+                }
+            },
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get("status"), "success")
+        self.assertIn("warning", payload)
+        self.assertIn("project_sync", payload)
+
+    @patch("main.views.ProjectSyncService.backfill_timesheet_project_items", return_value={"status": "success", "updated": 0, "unresolved": 0})
+    @patch("main.views.ProjectSyncService.sync", return_value={"status": "success", "synced": 0, "created": 0, "updated": 0})
+    @patch("main.views.ConfigurationService.save_configuration_sync", return_value=None)
+    @patch("main.views.ConfigurationService.normalize_configuration_sync", side_effect=lambda cfg: cfg)
+    @patch("main.views._build_project_spa_validation_payload", side_effect=RuntimeError("validation unavailable"))
+    def test_save_configuration_returns_success_when_validation_fails_temporarily(
+        self,
+        _validation_mock,
+        _normalize_mock,
+        _save_mock,
+        _sync_mock,
+        _backfill_mock,
+    ):
+        token = self.account.create_jwt_token()
+        response = Client().post(
+            "/api/configuration/save",
+            data={
+                "config": {
+                    "sp_entity_type_id": 0,
+                    "fields_mapping": {},
+                    "project_sp_entity_type_id": 1164,
+                    "project_fields_mapping": {"bitrix_group_id": "UF_CRM_1"},
+                    "is_configured": True,
+                }
+            },
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get("status"), "success")
+        self.assertIn("warning", payload)
+
+
+class ProjectBoardEndpointStabilityTest(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=11,
+            is_b24_user_admin=True,
+            member_id="member-board",
+            is_master_account=True,
+            domain_url="board.bitrix24.ru",
+            status="active",
+            application_version=1,
+        )
+        self.token = self.account.create_jwt_token()
+
+        ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_id="p-healthy",
+            project_name="Healthy Project",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            is_archived=False,
+        )
+
+    @patch("main.project_board_service.ProjectCardService.refresh_writeoff_stats", side_effect=RuntimeError("writeoff failed"))
+    def test_project_board_returns_200_when_writeoff_refresh_fails(self, _refresh_mock):
+        response = Client().get(
+            "/api/project-board",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("summary", payload)
+        self.assertTrue(payload.get("warning"))
+
+    @patch("main.project_board_service.ProjectCardService.serialize_card", autospec=True)
+    def test_project_board_skips_broken_cards_and_returns_partial_payload(self, serialize_mock):
+        ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_id="p-broken",
+            project_name="Broken Project",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            is_archived=False,
+        )
+
+        def serialize_side_effect(service, card):
+            if card.project_id == "p-broken":
+                raise RuntimeError("broken card")
+            return {
+                "id": str(card.id),
+                "project_item_id": card.project_item_id,
+                "project_id": card.project_id,
+                "project_name": card.project_name,
+                "stage": card.stage,
+                "manual_stage": card.manual_stage,
+                "is_archived": card.is_archived,
+                "archived_at": None,
+                "project_hours_budget": card.project_hours_budget,
+                "hourly_rate": card.hourly_rate,
+                "is_support": card.is_support,
+                "curator_user_id": card.curator_user_id,
+                "curator_name": card.curator_name,
+                "project_start_date": None,
+                "project_end_date": None,
+                "company_id": card.company_id,
+                "company_name": card.company_name,
+                "company_inn": None,
+                "our_legal_entity_id": card.our_legal_entity_id,
+                "our_legal_entity_name": card.our_legal_entity_name,
+                "our_legal_entity_inn": None,
+                "last_writeoff_at": None,
+                "last_writeoff_days": 0,
+                "stage_source": card.stage_source,
+                "created_at": card.created_at.isoformat() if card.created_at else None,
+                "updated_at": card.updated_at.isoformat() if card.updated_at else None,
+            }
+
+        serialize_mock.side_effect = serialize_side_effect
+
+        response = Client().get(
+            "/api/project-board",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(len(payload.get("cards", [])), 1)
+        self.assertTrue(payload.get("warning"))
+
+    @patch("main.project_board_service.ProjectCardService.get_fallback_board_data", side_effect=RuntimeError("fallback failed"))
+    @patch("main.project_board_service.ensure_project_card_schema", return_value=False)
+    def test_project_board_returns_minimal_payload_when_fallback_fails(self, _schema_mock, _fallback_mock):
+        response = Client().get(
+            "/api/project-board",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get("cards"), [])
+        self.assertEqual(payload.get("summary", {}).get("total_count"), 0)
+        self.assertTrue(payload.get("warning"))
+
+    @patch("main.project_board_shared.connection.introspection.get_table_description")
+    @patch("main.project_board_shared.connection.introspection.table_names")
+    def test_ensure_project_card_schema_returns_false_when_project_item_columns_missing(
+        self,
+        table_names_mock,
+        table_description_mock,
+    ):
+        class _Col:
+            def __init__(self, name: str):
+                self.name = name
+
+        table_names_mock.return_value = ["project_card", "timesheet_item"]
+        table_description_mock.side_effect = [
+            [_Col("id"), _Col("project_id"), _Col("project_name")],  # project_card without project_item_id
+            [_Col("id"), _Col("project_id"), _Col("project_title")],  # timesheet_item without project_item_id
+        ]
+
+        cache.delete(PROJECT_CARD_SCHEMA_CACHE_KEY)
+        self.assertFalse(ensure_project_card_schema(force_refresh=True))
+
+    def test_collect_writeoff_maps_falls_back_when_project_item_column_missing(self):
+        now = timezone.make_aware(datetime(2026, 4, 10, 10, 0))
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=9001,
+            task_id="9001",
+            employee_id="u-1",
+            hours=2.5,
+            project_id="p-legacy",
+            project_title="Legacy Project",
+            date_reflection=now,
+        )
+
+        service = ProjectCardService(Mock(), self.account)
+        original_filter = TimesheetItem.objects.filter
+        call_counter = {"count": 0}
+
+        def filter_side_effect(*args, **kwargs):
+            call_counter["count"] += 1
+            if call_counter["count"] == 1:
+                raise ProgrammingError('column "timesheet_item"."project_item_id" does not exist')
+            return original_filter(*args, **kwargs)
+
+        with patch("main.project_board_service.TimesheetItem.objects.filter", side_effect=filter_side_effect):
+            by_item, by_project_id, by_project_title = service.collect_writeoff_maps()
+
+        self.assertEqual(by_item, {})
+        self.assertIn("p-legacy", by_project_id)
+        self.assertIn("Legacy Project", by_project_title)
+
+
+class HomepagePortfolioStabilityTest(TestCase):
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=3,
+            is_b24_user_admin=True,
+            member_id="member-3",
+            is_master_account=True,
+            domain_url="portfolio.bitrix24.ru",
+            status="active",
+            application_version=1,
+        )
+        self.service = ProjectCardService(Mock(), self.account)
+
+    @patch.object(ProjectCardService, "_get_revenue_leakage_rows", side_effect=RuntimeError("leakage failed"))
+    @patch.object(ProjectCardService, "get_board_data", side_effect=RuntimeError("board failed"))
+    def test_homepage_snapshot_handles_board_and_leakage_failures(self, _board_mock, _leakage_mock):
+        snapshot = self.service.get_homepage_snapshot()
+
+        self.assertIsInstance(snapshot, dict)
+        self.assertEqual(snapshot.get("cards"), [])
+        self.assertEqual(snapshot.get("top_loss_projects"), [])
+        self.assertTrue(snapshot.get("warning"))
+        self.assertIn("временно", snapshot.get("warning").lower())
+
+    @patch.object(ProjectCardService, "_get_revenue_leakage_rows", side_effect=RuntimeError("leakage failed"))
+    @patch.object(
+        ProjectCardService,
+        "get_board_data",
+        return_value={
+            "summary": {"total_count": 1, "active_count": 1, "archived_count": 0, "support_count": 0, "inactive_30_count": 0, "inactive_90_count": 0},
+            "cards": [
+                {
+                    "project_id": "p-1",
+                    "project_name": "Project 1",
+                    "is_archived": False,
+                    "curator_user_id": "42",
+                    "curator_name": "Иван Иванов",
+                    "last_writeoff_days": 5,
+                }
+            ],
+            "stages": [],
+            "warning": None,
+        },
+    )
+    def test_homepage_snapshot_keeps_board_when_only_leakage_fails(self, _board_mock, _leakage_mock):
+        snapshot = self.service.get_homepage_snapshot()
+
+        self.assertEqual(snapshot["summary"]["total_count"], 1)
+        self.assertEqual(len(snapshot["cards"]), 1)
+        self.assertEqual(snapshot["top_loss_projects"], [])
+        self.assertTrue(snapshot.get("warning"))
 
 
 class StageAutomationStabilityTest(TestCase):

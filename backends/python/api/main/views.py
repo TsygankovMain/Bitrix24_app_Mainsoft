@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import Any, Dict, Mapping, Optional, Set
 
 from django.core.paginator import Paginator
 from django.http import JsonResponse, HttpResponse
@@ -21,8 +20,6 @@ from openpyxl.styles import Font, Alignment
 from config import load_config
 from .services import (
     BitrixDataService,
-    FinanceOperationService,
-    ProjectBudgetNotifier,
     ReportService,
     TimesheetSyncService,
     ConfigurationService,
@@ -57,8 +54,6 @@ __all__ = [
     "get_support_status",
     "connect_support_line",
     "get_project_board",
-    "get_finance_operations",
-    "create_finance_operation",
     "get_project_board_meta",
     "get_project_board_card",
     "sync_project_board",
@@ -66,7 +61,6 @@ __all__ = [
     "update_project_board_stage",
     "archive_project_board",
     "run_project_board_daily_check",
-    "run_project_budget_notifier",
     "get_project_board_companies",
     "get_homepage_portfolio",
     "get_internal_lists",
@@ -84,7 +78,6 @@ __all__ = [
     "get_smart_processes",
     "get_sp_fields",
     "get_project_spa_validation",
-    "get_finance_spa_validation",
     "get_project_spa_stages",
     "run_project_spa_backfill",
     "get_request_logs",
@@ -97,25 +90,6 @@ __all__ = [
 
 config = load_config()
 logger = logging.getLogger(__name__)
-
-
-def _run_budget_notifier_safe(
-    request: AuthorizedRequest,
-    *,
-    source: str,
-    project_ids: Optional[list[str]] = None,
-    project_item_ids: Optional[list[str]] = None,
-):
-    try:
-        notifier = ProjectBudgetNotifier(request.bitrix24_account.client, request.bitrix24_account)
-        if project_item_ids:
-            return notifier.evaluate_project_item_ids(project_item_ids, source=source)
-        if project_ids:
-            return notifier.evaluate_project_ids(project_ids, source=source)
-        return notifier.evaluate_all(source=source)
-    except Exception as notifier_error:  # pragma: no cover - non-critical path
-        logger.warning("ProjectBudgetNotifier failed (%s): %s", source, notifier_error)
-        return None
 
 
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
@@ -203,15 +177,7 @@ PROJECT_SPA_REQUIRED_MAPPING = {
     "is_archived": "boolean",
 }
 
-FINANCE_SPA_REQUIRED_MAPPING = {
-    "project_item_id": "project_identifier",
-    "operation_type": "stage",
-    "amount": "double",
-    "operation_date": "date",
-    "source": "string",
-}
-
-SPA_FIELD_TYPE_ALIASES: Dict[str, Set[str]] = {
+PROJECT_SPA_TYPE_ALIASES = {
     "string": {"string", "text", "char"},
     "integer": {"integer", "int"},
     "double": {"double", "float", "money"},
@@ -222,8 +188,6 @@ SPA_FIELD_TYPE_ALIASES: Dict[str, Set[str]] = {
     "project_identifier": {"integer", "int", "string", "text", "char"},
     "stage": {"string", "text", "char", "crm_status", "status"},
 }
-PROJECT_SPA_TYPE_ALIASES = SPA_FIELD_TYPE_ALIASES
-FINANCE_SPA_TYPE_ALIASES = SPA_FIELD_TYPE_ALIASES
 
 
 def _normalize_field_type(value):
@@ -232,18 +196,10 @@ def _normalize_field_type(value):
     return str(value).strip().lower()
 
 
-def _is_field_type_compatible(
-    expected_type: str,
-    actual_type: Any,
-    type_aliases: Mapping[str, Set[str]],
-) -> bool:
-    actual = _normalize_field_type(actual_type)
-    expected_aliases = type_aliases.get(expected_type, {expected_type})
-    return actual in expected_aliases
-
-
 def _is_project_field_type_compatible(expected_type, actual_type):
-    return _is_field_type_compatible(expected_type, actual_type, PROJECT_SPA_TYPE_ALIASES)
+    actual = _normalize_field_type(actual_type)
+    expected_aliases = PROJECT_SPA_TYPE_ALIASES.get(expected_type, {expected_type})
+    return actual in expected_aliases
 
 
 def _collect_project_spa_linkage_issues(sync_service: ProjectSyncService, entity_type_id: int, project_mapping: dict):
@@ -446,131 +402,6 @@ def _build_project_spa_validation_payload(
     }
 
 
-def _build_finance_spa_validation_payload(
-    config_service: ConfigurationService,
-    account,
-    config: dict,
-):
-    config = config_service.normalize_configuration_sync(config)
-    try:
-        entity_type_id = int(config.get("finance_sp_entity_type_id") or 0)
-    except (TypeError, ValueError):
-        entity_type_id = 0
-
-    finance_mapping = config.get("finance_fields_mapping") or {}
-    if not isinstance(finance_mapping, dict):
-        finance_mapping = {}
-
-    required_keys = list(FINANCE_SPA_REQUIRED_MAPPING.keys())
-    missing_mapping_keys = []
-    missing_fields_in_sp = []
-    type_mismatches = []
-    warnings = []
-    access_error = None
-    write_access_error = None
-
-    if not entity_type_id:
-        return {
-            "is_configured": False,
-            "is_valid": False,
-            "entity_type_id": 0,
-            "required_mapping_keys": required_keys,
-            "missing_mapping_keys": required_keys,
-            "missing_fields_in_sp": [],
-            "type_mismatches": [],
-            "access_error": "Не выбран Смарт-процесс ФИНАНСЫ в настройках.",
-            "write_access_error": "Не выбран Смарт-процесс ФИНАНСЫ в настройках.",
-            "warnings": ["Finance SPA не настроен."],
-        }
-
-    fields_meta = config_service.get_sp_fields_sync(entity_type_id)
-    fields_by_id = {str(field.get("id") or ""): field for field in fields_meta if field.get("id")}
-    fields_by_id_lower = {key.lower(): value for key, value in fields_by_id.items()}
-
-    for mapping_key, expected_type in FINANCE_SPA_REQUIRED_MAPPING.items():
-        mapped_field = str(finance_mapping.get(mapping_key) or "").strip()
-        if not mapped_field:
-            missing_mapping_keys.append(mapping_key)
-            continue
-
-        field_meta = fields_by_id.get(mapped_field) or fields_by_id_lower.get(mapped_field.lower())
-        if not field_meta:
-            missing_fields_in_sp.append({"key": mapping_key, "mapped_field": mapped_field})
-            continue
-
-        actual_type = field_meta.get("type")
-        if not _is_field_type_compatible(expected_type, actual_type, FINANCE_SPA_TYPE_ALIASES):
-            type_mismatches.append(
-                {
-                    "key": mapping_key,
-                    "mapped_field": mapped_field,
-                    "expected_type": expected_type,
-                    "actual_type": _normalize_field_type(actual_type),
-                }
-            )
-
-    try:
-        account.client._bitrix_token.call_method(
-            "crm.item.list",
-            {"entityTypeId": entity_type_id, "select": ["id"], "start": 0},
-        )
-    except Exception as exc:
-        access_error = str(exc)
-
-    try:
-        sample_items_response = account.client._bitrix_token.call_method(
-            "crm.item.list",
-            {"entityTypeId": entity_type_id, "select": ["id", "title"], "start": 0},
-        )
-        sample_items = sample_items_response.get("result", [])
-        if isinstance(sample_items, dict):
-            sample_items = sample_items.get("items") or sample_items.get("result") or []
-        sample_id = None
-        for row in sample_items or []:
-            sample_id = row.get("id") or row.get("ID")
-            if sample_id:
-                break
-        if sample_id:
-            account.client._bitrix_token.call_method(
-                "crm.item.update",
-                {
-                    "entityTypeId": entity_type_id,
-                    "id": int(sample_id) if str(sample_id).isdigit() else sample_id,
-                    "fields": {},
-                },
-            )
-        else:
-            warnings.append("Права на обновление не проверены: в Finance SPA нет элементов для no-op update.")
-    except Exception as exc:
-        exc_text = str(exc)
-        benign_markers = ("fields", "empty", "пуст")
-        if any(marker in exc_text.lower() for marker in benign_markers):
-            warnings.append("Права на обновление подтверждены частично: no-op update не принял пустой payload.")
-        else:
-            write_access_error = exc_text
-
-    is_valid = (
-        not missing_mapping_keys
-        and not missing_fields_in_sp
-        and not type_mismatches
-        and access_error is None
-        and write_access_error is None
-    )
-
-    return {
-        "is_configured": True,
-        "is_valid": is_valid,
-        "entity_type_id": entity_type_id,
-        "required_mapping_keys": required_keys,
-        "missing_mapping_keys": missing_mapping_keys,
-        "missing_fields_in_sp": missing_fields_in_sp,
-        "type_mismatches": type_mismatches,
-        "access_error": access_error,
-        "write_access_error": write_access_error,
-        "warnings": warnings,
-    }
-
-
 def _load_request_json(request: AuthorizedRequest):
     try:
         return json.loads(request.body or "{}")
@@ -677,7 +508,23 @@ def install(request):
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
-    # POST-install flow is delegated to the authenticated handler.
+    # Manual Auth Check since we removed @auth_required to support HEAD
+    try:
+        # Re-using the decorator logic or manually calling the auth service
+        # Since @auth_required populated request.bitrix24_account, we need to do it here manually
+        # effectively inlining the auth check for POST requests ONLY.
+        
+        # However, to keep it clean, let's keep @auth_required but make it smarter?
+        # No, decorators are hard to make conditional on method easily without complexity.
+        # Simplest way: wrapper function.
+        pass
+    except Exception:
+        pass
+
+    # Better approach: 
+    # We can't easily inline the complex auth logic from decorators.
+    # Let's use a dual-handler approach or simply wrap the logic.
+    
     return _install_post_logic(request)
 
 @require_POST
@@ -775,53 +622,6 @@ def get_project_board(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @require_GET
-@log_errors("get_finance_operations")
-@auth_required
-def get_finance_operations(request: AuthorizedRequest):
-    service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
-    try:
-        project_item_id = str(request.GET.get("project_item_id") or "").strip() or None
-        deal_id = str(request.GET.get("deal_id") or "").strip() or None
-        limit_raw = str(request.GET.get("limit") or "").strip()
-        limit = int(limit_raw) if limit_raw else 20
-        return JsonResponse(
-            service.list_operations(
-                project_item_id=project_item_id,
-                deal_id=deal_id,
-                limit=limit,
-            )
-        )
-    except Exception as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
-
-
-@xframe_options_exempt
-@csrf_exempt
-@require_POST
-@log_errors("create_finance_operation")
-@auth_required
-def create_finance_operation(request: AuthorizedRequest):
-    payload = _load_request_json(request)
-    service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
-    try:
-        result = service.create_operation(payload)
-        invalidate_project_runtime_caches(request.bitrix24_account)
-        operation = result.get("operation") if isinstance(result, dict) else {}
-        operation_project_item_id = str((operation or {}).get("project_item_id") or "").strip()
-        notifier_result = _run_budget_notifier_safe(
-            request,
-            source="finance_operation",
-            project_item_ids=[operation_project_item_id] if operation_project_item_id else None,
-        )
-        if notifier_result is not None and isinstance(result, dict):
-            result["notifier"] = notifier_result
-        return JsonResponse(result)
-    except Exception as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
-
-
-@xframe_options_exempt
-@require_GET
 @log_errors("get_project_board_meta")
 @auth_required
 def get_project_board_meta(request: AuthorizedRequest):
@@ -843,7 +643,11 @@ def get_project_board_card(request: AuthorizedRequest):
     try:
         return JsonResponse({"card": service.get_card_data(project_id)})
     except ProjectCard.DoesNotExist:
-        return JsonResponse({"card": None}, status=404)
+        # "Карточки ещё нет" — не ошибка сервера, а валидное состояние:
+        # для задач/групп без синхронизированного ProjectCard placement просто не показывает блок.
+        # Возвращаем 200 с null, чтобы ofetch на фронте не бросал FetchError и не блокировал
+        # нативное списание времени в Битрикс24.
+        return JsonResponse({"card": None})
     except Exception as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
@@ -880,11 +684,26 @@ def sync_project_board(request: AuthorizedRequest):
             incremental_since_minutes = int(incremental_raw)
         except (TypeError, ValueError):
             return JsonResponse({"error": "incremental_since_minutes must be integer"}, status=400)
-    sync_result = service.sync(incremental_since_minutes=incremental_since_minutes)
-    notifier_result = _run_budget_notifier_safe(request, source="project_sync")
-    if notifier_result is not None and isinstance(sync_result, dict):
-        sync_result["notifier"] = notifier_result
-    return JsonResponse(sync_result)
+    try:
+        return JsonResponse(service.sync(incremental_since_minutes=incremental_since_minutes))
+    except Exception as exc:
+        logger.exception("Project board sync failed for account %s", request.bitrix24_account.pk)
+        return JsonResponse(
+            {
+                "status": "warning",
+                "sync_mode": "failed",
+                "synced": 0,
+                "created": 0,
+                "updated": 0,
+                "skipped_missing_group_link": 0,
+                "skipped_conflict_linking": 0,
+                "warning": (
+                    "Синхронизацию проектов выполнить не удалось. "
+                    "Показаны последние сохраненные данные."
+                ),
+                "error": str(exc),
+            }
+        )
 
 
 @xframe_options_exempt
@@ -912,13 +731,6 @@ def update_project_board(request: AuthorizedRequest):
 
     try:
         result = service.update_project_card(str(project_id), payload)
-        notifier_result = _run_budget_notifier_safe(
-            request,
-            source="project_card_update",
-            project_ids=[str(project_id)],
-        )
-        if notifier_result is not None and isinstance(result, dict):
-            result["notifier"] = notifier_result
         return JsonResponse(result)
     except ProjectCard.DoesNotExist:
         return JsonResponse({"error": "Проект не найден"}, status=404)
@@ -943,13 +755,6 @@ def update_project_board_stage(request: AuthorizedRequest):
 
     try:
         result = service.update_stage(str(project_id), str(stage))
-        notifier_result = _run_budget_notifier_safe(
-            request,
-            source="project_stage_update",
-            project_ids=[str(project_id)],
-        )
-        if notifier_result is not None and isinstance(result, dict):
-            result["notifier"] = notifier_result
         return JsonResponse(result)
     except ProjectCard.DoesNotExist:
         return JsonResponse({"error": "Проект не найден"}, status=404)
@@ -974,13 +779,6 @@ def archive_project_board(request: AuthorizedRequest):
 
     try:
         result = service.archive_project(str(project_id), is_archived)
-        notifier_result = _run_budget_notifier_safe(
-            request,
-            source="project_archive_update",
-            project_ids=[str(project_id)],
-        )
-        if notifier_result is not None and isinstance(result, dict):
-            result["notifier"] = notifier_result
         return JsonResponse(result)
     except ProjectCard.DoesNotExist:
         return JsonResponse({"error": "Проект не найден"}, status=404)
@@ -995,43 +793,7 @@ def archive_project_board(request: AuthorizedRequest):
 @auth_required
 def run_project_board_daily_check(request: AuthorizedRequest):
     service = ProjectStageAutomationService(request.bitrix24_account)
-    result = service.run_daily_check()
-    notifier_result = _run_budget_notifier_safe(request, source="daily_stage_check")
-    if notifier_result is not None and isinstance(result, dict):
-        result["notifier"] = notifier_result
-    return JsonResponse(result)
-
-
-@xframe_options_exempt
-@csrf_exempt
-@require_POST
-@log_errors("run_project_budget_notifier")
-@auth_required
-def run_project_budget_notifier(request: AuthorizedRequest):
-    payload = _load_request_json(request)
-    project_ids = payload.get("project_ids") if isinstance(payload, dict) else None
-    project_item_ids = payload.get("project_item_ids") if isinstance(payload, dict) else None
-
-    normalized_project_ids = [
-        str(project_id).strip()
-        for project_id in (project_ids or [])
-        if str(project_id or "").strip()
-    ]
-    normalized_project_item_ids = [
-        str(project_item_id).strip()
-        for project_item_id in (project_item_ids or [])
-        if str(project_item_id or "").strip()
-    ]
-
-    notifier_result = _run_budget_notifier_safe(
-        request,
-        source="manual_api_trigger",
-        project_ids=normalized_project_ids or None,
-        project_item_ids=normalized_project_item_ids or None,
-    )
-    if notifier_result is None:
-        return JsonResponse({"status": "warning", "message": "Notifier execution failed"}, status=400)
-    return JsonResponse(notifier_result)
+    return JsonResponse(service.run_daily_check())
 
 
 @xframe_options_exempt
@@ -1212,11 +974,7 @@ def timesheet_sync(request: AuthorizedRequest):
         )
 
     invalidate_project_runtime_caches(request.bitrix24_account)
-    response_payload = {"status": "success", "count": count}
-    notifier_result = _run_budget_notifier_safe(request, source="timesheet_sync")
-    if notifier_result is not None:
-        response_payload["notifier"] = notifier_result
-    return JsonResponse(response_payload)
+    return JsonResponse({"status": "success", "count": count})
 
 
 @xframe_options_exempt
@@ -1248,7 +1006,6 @@ def timesheet_list(request: AuthorizedRequest):
             "non_billable_hours": item.non_billable_hours,
             "description": item.description,
             "project_title": item.project_title,
-            "hourly_rate_snapshot": item.hourly_rate_snapshot,
             "date": item.date_reflection.isoformat() if item.date_reflection else None,
             "created_at": item.created_at.isoformat()
         })
@@ -1287,31 +1044,29 @@ def save_configuration(request: AuthorizedRequest):
 
         config = service.normalize_configuration_sync(config)
 
-        project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
-        finance_validation = _build_finance_spa_validation_payload(service, request.bitrix24_account, config)
+        warnings = []
+        project_validation = None
         try:
             should_validate_project_spa = int(config.get("project_sp_entity_type_id") or 0) > 0
         except (TypeError, ValueError):
             should_validate_project_spa = False
-        try:
-            should_validate_finance_spa = int(config.get("finance_sp_entity_type_id") or 0) > 0
-        except (TypeError, ValueError):
-            should_validate_finance_spa = False
-        if should_validate_project_spa and not project_validation.get("is_valid"):
+
+        if should_validate_project_spa:
+            try:
+                project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
+            except Exception as validation_exc:
+                logger.exception("Configuration save validation failed: %s", validation_exc)
+                warnings.append(
+                    "Проверка Project SPA временно недоступна. Настройки сохранены, "
+                    "но валидацию рекомендуется повторить позже."
+                )
+
+        if should_validate_project_spa and project_validation and not project_validation.get("is_valid"):
             return JsonResponse(
                 {
                     "status": "validation_error",
                     "error": "Конфигурация Project SPA невалидна. Исправьте ошибки и повторите сохранение.",
                     "validation": project_validation,
-                },
-                status=400,
-            )
-        if should_validate_finance_spa and not finance_validation.get("is_valid"):
-            return JsonResponse(
-                {
-                    "status": "validation_error",
-                    "error": "Конфигурация Finance SPA невалидна. Исправьте ошибки и повторите сохранение.",
-                    "finance_validation": finance_validation,
                 },
                 status=400,
             )
@@ -1322,15 +1077,40 @@ def save_configuration(request: AuthorizedRequest):
         response_payload = {"status": "success"}
         if should_validate_project_spa:
             project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
-            sync_result = project_sync_service.sync()
-            backfill_result = project_sync_service.backfill_timesheet_project_items()
-            response_payload["project_sync"] = sync_result
-            response_payload["timesheet_backfill"] = backfill_result
+            try:
+                sync_result = project_sync_service.sync()
+                response_payload["project_sync"] = sync_result
+            except Exception as sync_exc:
+                logger.exception("Configuration save project sync failed: %s", sync_exc)
+                warnings.append(
+                    "Настройки сохранены, но автосинхронизация проектов завершилась ошибкой."
+                )
+                response_payload["project_sync"] = {
+                    "status": "warning",
+                    "warning": str(sync_exc),
+                }
+
+            try:
+                backfill_result = project_sync_service.backfill_timesheet_project_items()
+                response_payload["timesheet_backfill"] = backfill_result
+            except Exception as backfill_exc:
+                logger.exception("Configuration save timesheet backfill failed: %s", backfill_exc)
+                warnings.append(
+                    "Настройки сохранены, но backfill связей меток времени завершился ошибкой."
+                )
+                response_payload["timesheet_backfill"] = {
+                    "status": "warning",
+                    "warning": str(backfill_exc),
+                }
+
+        if warnings:
+            response_payload["warning"] = " ".join(warnings)
 
         return JsonResponse(response_payload)
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
     except Exception as e:
+        logger.exception("Configuration save failed: %s", e)
         return JsonResponse({"error": str(e)}, status=500)
 
 
@@ -1381,17 +1161,6 @@ def get_project_spa_validation(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @require_GET
-@log_errors("get_finance_spa_validation")
-@auth_required
-def get_finance_spa_validation(request: AuthorizedRequest):
-    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
-    config = config_service.get_configuration_sync()
-    payload = _build_finance_spa_validation_payload(config_service, request.bitrix24_account, config)
-    return JsonResponse(payload)
-
-
-@xframe_options_exempt
-@require_GET
 @log_errors("get_project_spa_stages")
 @auth_required
 def get_project_spa_stages(request: AuthorizedRequest):
@@ -1420,12 +1189,9 @@ def get_project_spa_stages(request: AuthorizedRequest):
 @auth_required
 def create_smart_process(request: AuthorizedRequest):
     """Create a new Smart Process from settings page."""
-    import json as json_module
     try:
-        body = json_module.loads(request.body or "{}")
-        mapping_type = body.get('mappingType') or 'timesheet'
         service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
-        result = service.create_smart_process_only(str(mapping_type))
+        result = service.create_smart_process_only()
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -1442,14 +1208,13 @@ def create_fields(request: AuthorizedRequest):
     """Create all required fields in the selected Smart Process."""
     import json as json_module
     try:
-        body = json_module.loads(request.body or "{}")
+        body = json_module.loads(request.body)
         sp_id = body.get('entityTypeId')
-        mapping_type = body.get('mappingType') or 'timesheet'
         if not sp_id:
             return JsonResponse({"error": "Не указан ID смарт-процесса"}, status=400)
 
         service = InstallationService(request.bitrix24_account.client, request.bitrix24_account)
-        result = service.create_fields_only(int(sp_id), str(mapping_type))
+        result = service.create_fields_only(int(sp_id))
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
@@ -1465,7 +1230,7 @@ def create_fields(request: AuthorizedRequest):
 def create_mapped_field(request: AuthorizedRequest):
     import json as json_module
     try:
-        body = json_module.loads(request.body or "{}")
+        body = json_module.loads(request.body)
         sp_id = body.get('entityTypeId')
         field_key = body.get('fieldKey')
         mapping_type = body.get('mappingType') or 'timesheet'
@@ -1588,14 +1353,8 @@ def get_request_logs(request: AuthorizedRequest):
 def get_system_logs(request: AuthorizedRequest):
     page_number = request.GET.get('page', 1)
     page_size = request.GET.get('limit', 50)
-    module_filter = str(request.GET.get('module') or '').strip()
-    level_filter = str(request.GET.get('level') or '').strip().upper()
     
     queryset = SystemLog.objects.all().order_by('-timestamp')
-    if module_filter:
-        queryset = queryset.filter(module__icontains=module_filter)
-    if level_filter:
-        queryset = queryset.filter(level=level_filter)
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
     

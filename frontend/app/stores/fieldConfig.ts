@@ -113,7 +113,7 @@ export const useFieldConfigStore = defineStore(
                     await autoDetectMissingMappings($b24, rawConfig)
                 } else {
                     console.warn('[FieldConfig] No timestamp_config found in response. Data keys:', data ? Object.keys(data) : 'null')
-                    loadError.value = 'Конфигурация не найдена. Зайдите в Настройки → Маппинг и настройте поля.'
+                    loadError.value = 'Конфигурация не найдена. Зайдите в Настройки → Настройка полей и настройте поля.'
                 }
             } catch (e: any) {
                 console.error('[FieldConfig] Load error:', e)

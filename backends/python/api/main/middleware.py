@@ -72,3 +72,32 @@ class RequestLoggingMiddleware(MiddlewareMixin):
         if len(value) <= self.MAX_BODY_LENGTH:
             return value
         return value[: self.MAX_BODY_LENGTH] + "... [Truncated]"
+
+
+class ApiTrailingSlashNormalizeMiddleware(MiddlewareMixin):
+    """
+    Normalize trailing slash for API routes so `/api/.../` is resolved as `/api/...`.
+
+    This prevents accidental fallback to SPA catch-all when proxy/client appends
+    a trailing slash to API endpoints.
+    """
+
+    API_PREFIX = "/api"
+
+    def process_request(self, request):
+        path = request.path_info or ""
+        if not path.startswith(self.API_PREFIX):
+            return None
+
+        if path in {"/api", "/api/"}:
+            normalized = "/api"
+        elif path.endswith("/"):
+            normalized = path.rstrip("/")
+        else:
+            normalized = path
+
+        if normalized != path:
+            request.path_info = normalized
+            request.META["PATH_INFO"] = normalized
+
+        return None

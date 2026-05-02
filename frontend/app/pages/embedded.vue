@@ -298,8 +298,15 @@ function validateProjectBindingForSave(
     }
 
     if (!hasMeaningfulValue(fields[projectItemField])) {
+        // НЕ блокируем сохранение: штатное списание часов должно работать даже если
+        // связка group_id → project_item_id ещё не прописана в карточке проекта.
+        // Запись без project_item_id не попадёт в бюджет-аналитику, но нативный
+        // поток учёта времени в Битрикс24 не должен страдать из-за этого.
         const projectLabel = hierarchy.projectTitle ? `«${hierarchy.projectTitle}»` : `group_id ${hierarchy.projectId}`
-        return `Для задачи не найден связанный проект в Project SPA (${projectLabel}). Проверьте связь group_id → project_item_id в карточке проекта.`
+        console.warn(
+            `[Embedded] project_item_id не найден для ${projectLabel}. ` +
+            'Запись будет сохранена без привязки к Project SPA.'
+        )
     }
 
     const shouldRequireRateSnapshot = options?.requireRateSnapshot === true
@@ -463,34 +470,67 @@ async function getTaskHierarchy(taskId: string) {
     let clientInn = ''
     
     try {
-            // 1. Get task info (GROUP_ID and INN fields)
-        const taskRes = await ($b24 as any).callMethod('tasks.task.get', {
-            taskId: taskId,
-            select: ['ID', 'TITLE', 'GROUP_ID', config.value.TASK_FIELDS.OUR_INN, config.value.TASK_FIELDS.CLIENT_INN]
-        })
-        
-        const taskData = taskRes.getData()
-        // API can return { task: {...} } OR { result: { task: {...} } }
-        const taskObj = taskData?.result?.task || taskData?.task
-        console.log(`🔍 [Embedded] Hierarchy: taskData keys:`, taskData ? Object.keys(taskData) : 'null', 'taskObj:', !!taskObj)
-        if (taskObj) {
-            const debugTask = JSON.stringify(taskObj)
-            console.log(`🔍 [Embedded] Hierarchy: Initial task ${taskId} raw data:`, debugTask)
-            
-            // Try all possible cases for GROUP_ID
-            const gid = taskObj.groupId || taskObj.group_id || taskObj.GROUP_ID || taskObj.GroupId
-            console.log(`🔍 [Embedded] Hierarchy: GROUP_ID candidates:`, { groupId: taskObj.groupId, group_id: taskObj.group_id, GROUP_ID: taskObj.GROUP_ID, GroupId: taskObj.GroupId, resolved: gid })
-            if (gid && gid !== '0') {
-                projectId = String(gid)
+        // Collect hierarchy and try to resolve GROUP_ID from the full chain.
+        let currentTaskId: string | null = taskId
+        let loopCount = 0
+
+        while (currentTaskId && loopCount < 20) { // Safety break
+            try {
+                const result = await ($b24 as any).callMethod('tasks.task.get', {
+                    taskId: currentTaskId,
+                    select: [
+                        'ID',
+                        'TITLE',
+                        'GROUP_ID',
+                        'PARENT_ID',
+                        config.value.TASK_FIELDS.OUR_INN,
+                        config.value.TASK_FIELDS.CLIENT_INN,
+                    ]
+                })
+                const data = result.getData()
+                const task = data.task || data.result?.task
+
+                if (!task) {
+                    console.warn(`⚠️ [Embedded] Hierarchy: Task ${currentTaskId} not found or no data`)
+                    break
+                }
+
+                if (loopCount === 0) {
+                    console.log(`🔍 [Embedded] Hierarchy: Initial task ${taskId} raw data:`, JSON.stringify(task))
+                }
+
+                const gid = task.groupId || task.group_id || task.GROUP_ID || task.GroupId
+                if (!projectId && gid && gid !== '0') {
+                    projectId = String(gid)
+                }
+
+                if (!ourInn) {
+                    ourInn = task[config.value.TASK_FIELDS.OUR_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.OUR_INN]) || ''
+                }
+                if (!clientInn) {
+                    clientInn = task[config.value.TASK_FIELDS.CLIENT_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.CLIENT_INN]) || ''
+                }
+
+                const tid = task.id || task.ID || task.Id
+                const ttitle = task.title || task.TITLE || task.Title
+                const tparent: any = task.parentId || task.parent_id || task.PARENT_ID || task.ParentId
+
+                if (tid) idPath.unshift(String(tid))
+                if (ttitle) titlePath.unshift(String(ttitle))
+
+                if (tparent && tparent !== '0') {
+                    currentTaskId = String(tparent)
+                } else {
+                    currentTaskId = null
+                }
+            } catch (e) {
+                console.error(`[Embedded] Error getting task ${currentTaskId}:`, e)
+                currentTaskId = null
             }
-            // Get INN fields
-            ourInn = taskObj[config.value.TASK_FIELDS.OUR_INN] || (taskObj.uf && taskObj.uf[config.value.TASK_FIELDS.OUR_INN]) || ''
-            clientInn = taskObj[config.value.TASK_FIELDS.CLIENT_INN] || (taskObj.uf && taskObj.uf[config.value.TASK_FIELDS.CLIENT_INN]) || ''
-        } else {
-             console.warn(`⚠️ [Embedded] Hierarchy: Task ${taskId} not found or no data`)
+            console.log(`🔍 [Embedded] Hierarchy step: path length ${idPath.length}, next parent: ${currentTaskId}`)
+            loopCount++
         }
-        
-        // 2. Get project/group name if exists
+
         if (projectId) {
             try {
                 const groupRes = await ($b24 as any).callMethod('sonet_group.get', {
@@ -500,55 +540,17 @@ async function getTaskHierarchy(taskId: string) {
                 if (groupData && groupData[0]) {
                     projectTitle = groupData[0].NAME
                 } else if (groupData && groupData.result && groupData.result[0]) {
-                     projectTitle = groupData.result[0].NAME
+                    projectTitle = groupData.result[0].NAME
                 }
             } catch (e) {
                 console.error('[Embedded] Error getting group:', e)
             }
         }
-        
-        // 3. Collect hierarchy (from task up to root)
-        let currentTaskId: string | null = taskId
-        let loopCount = 0
-        
-        while (currentTaskId && loopCount < 20) { // Safety break
-            try {
-                const result = await ($b24 as any).callMethod('tasks.task.get', {
-                    taskId: currentTaskId,
-                    select: ['ID', 'TITLE', 'PARENT_ID']
-                })
-                const data = result.getData()
-                const task = data.task || data.result?.task
-                
-                if (task) {
-                    const tid = task.id || task.ID || task.Id
-                    const ttitle = task.title || task.TITLE || task.Title
-                    const tparent: any = task.parentId || task.parent_id || task.PARENT_ID || task.ParentId
-                    
-                    if (tid) idPath.unshift(String(tid))
-                    if (ttitle) titlePath.unshift(String(ttitle))
-                    
-                    if (tparent && tparent !== '0') {
-                        currentTaskId = String(tparent)
-                    } else {
-                        currentTaskId = null
-                    }
-                } else {
-                    currentTaskId = null
-                }
-            } catch (e) {
-                console.error(`[Embedded] Error getting task ${currentTaskId}:`, e)
-                currentTaskId = null
-            }
-            // Output current step
-            console.log(`🔍 [Embedded] Hierarchy step: path length ${idPath.length}, next parent: ${currentTaskId}`)
-            loopCount++
-        }
-        
-        console.log('✅ [Embedded] Hierarchy collected FINAL:', { 
-            idPath, 
-            titlePath, 
-            projectId, 
+
+        console.log('✅ [Embedded] Hierarchy collected FINAL:', {
+            idPath,
+            titlePath,
+            projectId,
             projectTitle,
             ourInn: !!ourInn,
             clientInn: !!clientInn

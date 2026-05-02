@@ -175,7 +175,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
       <div class="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_auto] xl:items-start">
         <div class="min-w-0">
           <div class="ms-eyebrow">
-            Portfolio Home
+            Портфель проектов
           </div>
           <div
             v-if="data?.warning"
@@ -195,7 +195,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
               ]"
               @click="previewMode = 'board'"
             >
-              Board preview
+              Канбан
             </button>
             <button
               type="button"
@@ -205,11 +205,11 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
               ]"
               @click="previewMode = 'timeline'"
             >
-              Timeline preview
+              Хронология
             </button>
           </div>
 
-          <B24Button label="Открыть Project Board" color="success" @click="emit('open-board')" />
+          <B24Button label="Канбан проектов" color="success" @click="emit('open-board')" />
         </div>
       </div>
 
@@ -230,7 +230,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
           <div class="mt-1 text-xs text-slate-500">Высокий риск потери</div>
         </article>
         <article class="ms-stat-card">
-          <div class="text-xs text-slate-400">Support-проекты</div>
+          <div class="text-xs text-slate-400">Проекты поддержки</div>
           <div class="mt-2 text-3xl font-semibold text-cyan-700">{{ data?.summary.support_count || 0 }}</div>
           <div class="mt-1 text-xs text-slate-500">Отдельный режим работы</div>
         </article>
@@ -265,7 +265,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
         {{ signalsOnly ? 'Все проекты' : 'Показать сигналы' }}
       </button>
 
-      <B24Button label="Открыть Project Board" color="default" @click="emit('open-board')" />
+      <B24Button label="Канбан проектов" color="default" @click="emit('open-board')" />
     </section>
 
     <div class="grid gap-6 xl:grid-cols-[1.7fr_0.9fr]">
@@ -372,9 +372,9 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
               <div class="mt-1 text-sm font-semibold text-slate-900">{{ selectedProject.our_legal_entity_name || 'Не выбрано' }}</div>
             </div>
             <div class="rounded-2xl bg-slate-50 px-4 py-3">
-              <div class="text-xs text-slate-400">Объем / support</div>
+              <div class="text-xs text-slate-400">Объем / поддержка</div>
               <div class="mt-1 text-sm font-semibold text-slate-900">
-                {{ selectedProject.is_support ? 'Support' : formatProjectHours(selectedProject.project_hours_budget) }}
+                {{ selectedProject.is_support ? 'Поддержка' : formatProjectHours(selectedProject.project_hours_budget) }}
               </div>
             </div>
             <div class="rounded-2xl bg-slate-50 px-4 py-3">
@@ -400,7 +400,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
         </template>
 
         <div v-else class="py-10 text-center text-sm text-slate-500">
-          Выберите проект слева, чтобы увидеть executive snapshot.
+          Выберите проект слева, чтобы увидеть карточку с ключевыми показателями.
         </div>
       </aside>
     </div>

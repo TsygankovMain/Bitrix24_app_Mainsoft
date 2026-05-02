@@ -30,25 +30,25 @@
           <div class="ms-panel">
             <h3 class="text-base font-semibold text-slate-900">Конфигурация</h3>
             <p class="mt-2 text-sm text-slate-500">
-            Сопоставление полей Smart Process с полями приложения.
+            Сопоставление полей процесса с данными приложения.
             </p>
-            <B24Button class="mt-4" label="Настройка полей (Маппинг)" color="success" @click="router.push('/settings/mapping')" />
+            <B24Button class="mt-4" label="Настройка полей" color="success" @click="router.push('/settings/mapping')" />
           </div>
 
           <div class="ms-panel">
             <h3 class="text-base font-semibold text-slate-900">Данные</h3>
             <p class="mt-2 text-sm text-slate-500">
-            Просмотр необработанных данных, синхронизированных с базой данных.
+            Просмотр исходных записей, синхронизированных с системой.
             </p>
-            <B24Button class="mt-4" label="Перейти к сырым данным" color="primary" @click="router.push('/reports/raw-data')" />
+            <B24Button class="mt-4" label="Открыть проверку данных" color="primary" @click="router.push('/reports/raw-data')" />
           </div>
 
           <div class="ms-panel">
-            <h3 class="text-base font-semibold text-slate-900">Отладка</h3>
+            <h3 class="text-base font-semibold text-slate-900">Диагностика</h3>
             <p class="mt-2 text-sm text-slate-500">
             Логи запросов и ошибок системы.
             </p>
-            <B24Button class="mt-4" label="Панель отладки" color="default" @click="router.push('/settings/debug')" />
+            <B24Button class="mt-4" label="Диагностика системы" color="default" @click="router.push('/settings/debug')" />
           </div>
         </div>
 
@@ -58,9 +58,9 @@
             Технические экраны вынесены из главной страницы и доступны отсюда.
           </p>
           <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <B24Button label="Сырые данные" color="default" @click="router.push('/reports/raw-data')" />
-            <B24Button label="Отладка отчетов" color="default" @click="router.push('/reports/debug')" />
-            <B24Button label="Отладка настроек" color="default" @click="router.push('/settings/debug')" />
+            <B24Button label="Проверка данных" color="default" @click="router.push('/reports/raw-data')" />
+            <B24Button label="Диагностика отчетов" color="default" @click="router.push('/reports/debug')" />
+            <B24Button label="Диагностика настроек" color="default" @click="router.push('/settings/debug')" />
             <B24Button label="Опции слайдера" color="default" @click="router.push('/slider/app-options')" />
           </div>
         </div>

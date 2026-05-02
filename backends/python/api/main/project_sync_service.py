@@ -604,7 +604,9 @@ class ProjectSyncService:
             response = self.client._bitrix_token.call_method(
                 "sonet_group.get",
                 {
-                    "FILTER": {"PROJECT": "Y"},
+                    # В Битрикс24 "группа" и "проект" — по сути одно и то же для бюджетного модуля.
+                    # Синхронизируем все SonetGroup, а не только PROJECT=Y, иначе карточка
+                    # для обычных рабочих групп не создаётся и /project-board/card отдаёт 404.
                     "SELECT": [
                         "ID",
                         "NAME",
@@ -622,8 +624,7 @@ class ProjectSyncService:
                 break
 
             for item in batch:
-                if self._is_project(item):
-                    items.append(item)
+                items.append(item)
 
             if len(batch) < page_size:
                 break
@@ -639,7 +640,8 @@ class ProjectSyncService:
             response = self.client._bitrix_token.call_method(
                 "socialnetwork.api.workgroup.list",
                 {
-                    "filter": {"PROJECT": "Y"},
+                    # См. комментарий в _fetch_project_groups_via_sonet_group:
+                    # тянем все группы, не только PROJECT=Y.
                     "select": [
                         "ID",
                         "NAME",
@@ -657,8 +659,7 @@ class ProjectSyncService:
                 break
 
             for item in batch:
-                if self._is_project(item):
-                    items.append(item)
+                items.append(item)
 
             if next_value is None or int(next_value) <= start:
                 break

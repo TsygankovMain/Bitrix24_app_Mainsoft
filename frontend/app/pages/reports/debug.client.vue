@@ -8,7 +8,7 @@ import ProjectEmployeeTable from '../../components/reports/ProjectEmployeeTable.
 const { t, locales: localesI18n, setLocale } = useI18n()
 
 useHead({
-  title: t('page.index.seo.title') // We might want to update the title key, but keep it for now
+  title: 'Диагностика отчетов'
 })
 
 // region Init ////
@@ -108,7 +108,7 @@ onMounted(async () => {
     await initApp($b24, localesI18n, setLocale)
     // Don't set title here to avoid overwriting the main one if navigating back/forth rapidly?
     // Actually, setting title is fine.
-    await $b24.parent.setTitle('Debug Report') 
+    await $b24.parent.setTitle('Диагностика отчетов') 
     isInit.value = true
     
     // Initial fetch
@@ -133,7 +133,7 @@ onMounted(async () => {
           <template #header>
             <div class="flex flex-row justify-between items-center w-full">
                 <div>
-                  <ProseH2 class="!text-slate-900">Debug Report</ProseH2>
+                  <ProseH2 class="!text-slate-900">Диагностика отчетов</ProseH2>
                   <p class="mt-1 text-sm text-slate-500">Технический экран для сверки агрегатов и локальных данных.</p>
                 </div>
                 <div class="flex gap-2 items-center">
@@ -161,7 +161,7 @@ onMounted(async () => {
                 @click="activeTab = 'raw-data'"
                 :class="['ms-tab-btn', activeTab === 'raw-data' ? 'ms-tab-btn-active' : '']"
               >
-                Сырые данные (БД)
+                Проверка данных
               </button>
           </div>
 
