@@ -30,6 +30,7 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
+from .perf import ReportProfiler
 from .report_queries import (
     TREE_REPORT_FIELDS,
     build_filtered_timesheet_queryset,
@@ -801,20 +802,32 @@ def run_project_board_daily_check(request: AuthorizedRequest):
 @log_errors("report_employee_project")
 @auth_required
 def report_employee_project(request: AuthorizedRequest):
-    queryset = _get_filtered_timesheet_queryset(request)
-    rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
+    profiler = ReportProfiler("report_employee_project", account_id=request.bitrix24_account.pk)
+    with profiler.stage("queryset_build"):
+        queryset = _get_filtered_timesheet_queryset(request)
+    with profiler.stage("materialize"):
+        rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
-    user_map = _get_user_map(request, user_ids)
-    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
-    items = build_tree_report_items(
-        rows,
-        project_name_by_item=project_name_by_item,
-        project_name_by_group=project_name_by_group,
-    )
-
-    report_service = ReportService()
-    report = report_service.generate_employee_projects(items, user_map)
-    return JsonResponse(report, safe=False)
+    with profiler.stage("user_map"):
+        user_map = _get_user_map(request, user_ids)
+    with profiler.stage("project_lookup"):
+        project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    with profiler.stage("build_items"):
+        items = build_tree_report_items(
+            rows,
+            project_name_by_item=project_name_by_item,
+            project_name_by_group=project_name_by_group,
+        )
+    with profiler.stage("service_generate"):
+        report_service = ReportService()
+        report = report_service.generate_employee_projects(items, user_map)
+    profiler.set_metric("rows", len(rows))
+    profiler.set_metric("users", len(user_ids))
+    with profiler.stage("serialize"):
+        response = JsonResponse(report, safe=False)
+    profiler.attach_to_response(response)
+    profiler.log()
+    return response
 
 
 @xframe_options_exempt
@@ -822,20 +835,32 @@ def report_employee_project(request: AuthorizedRequest):
 @log_errors("report_project_employee")
 @auth_required
 def report_project_employee(request: AuthorizedRequest):
-    queryset = _get_filtered_timesheet_queryset(request)
-    rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
+    profiler = ReportProfiler("report_project_employee", account_id=request.bitrix24_account.pk)
+    with profiler.stage("queryset_build"):
+        queryset = _get_filtered_timesheet_queryset(request)
+    with profiler.stage("materialize"):
+        rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
-    user_map = _get_user_map(request, user_ids)
-    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
-    items = build_tree_report_items(
-        rows,
-        project_name_by_item=project_name_by_item,
-        project_name_by_group=project_name_by_group,
-    )
-
-    report_service = ReportService()
-    report = report_service.generate_project_employees(items, user_map)
-    return JsonResponse(report, safe=False)
+    with profiler.stage("user_map"):
+        user_map = _get_user_map(request, user_ids)
+    with profiler.stage("project_lookup"):
+        project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    with profiler.stage("build_items"):
+        items = build_tree_report_items(
+            rows,
+            project_name_by_item=project_name_by_item,
+            project_name_by_group=project_name_by_group,
+        )
+    with profiler.stage("service_generate"):
+        report_service = ReportService()
+        report = report_service.generate_project_employees(items, user_map)
+    profiler.set_metric("rows", len(rows))
+    profiler.set_metric("users", len(user_ids))
+    with profiler.stage("serialize"):
+        response = JsonResponse(report, safe=False)
+    profiler.attach_to_response(response)
+    profiler.log()
+    return response
 
 @xframe_options_exempt
 @require_GET
@@ -843,22 +868,33 @@ def report_project_employee(request: AuthorizedRequest):
 @auth_required
 def report_project_task_employee(request: AuthorizedRequest):
     """Report: Project -> Task Hierarchy -> Employee -> Items"""
-    queryset = _get_filtered_timesheet_queryset(request)
-    rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
+    profiler = ReportProfiler("report_project_task_employee", account_id=request.bitrix24_account.pk)
+    with profiler.stage("queryset_build"):
+        queryset = _get_filtered_timesheet_queryset(request)
+    with profiler.stage("materialize"):
+        rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
-    user_map = _get_user_map(request, user_ids)
-    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
-    items = build_tree_report_items(
-        rows,
-        include_task_id=True,
-        project_name_by_item=project_name_by_item,
-        project_name_by_group=project_name_by_group,
-    )
-
-    report_service = ReportService()
-    report = report_service.generate_project_task_employees(items, user_map)
-
-    return JsonResponse(report, safe=False)
+    with profiler.stage("user_map"):
+        user_map = _get_user_map(request, user_ids)
+    with profiler.stage("project_lookup"):
+        project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    with profiler.stage("build_items"):
+        items = build_tree_report_items(
+            rows,
+            include_task_id=True,
+            project_name_by_item=project_name_by_item,
+            project_name_by_group=project_name_by_group,
+        )
+    with profiler.stage("service_generate"):
+        report_service = ReportService()
+        report = report_service.generate_project_task_employees(items, user_map)
+    profiler.set_metric("rows", len(rows))
+    profiler.set_metric("users", len(user_ids))
+    with profiler.stage("serialize"):
+        response = JsonResponse(report, safe=False)
+    profiler.attach_to_response(response)
+    profiler.log()
+    return response
 
 
 @xframe_options_exempt
@@ -866,30 +902,43 @@ def report_project_task_employee(request: AuthorizedRequest):
 @log_errors("report_revenue_leakage")
 @auth_required
 def report_revenue_leakage(request: AuthorizedRequest):
-    queryset = _get_filtered_timesheet_queryset(request)
-    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
-    rows = list(queryset.values(
-        'employee_id',
-        'project_item_id',
-        'project_id',
-        'project_title',
-        'hours',
-        'is_billable',
-    ))
+    profiler = ReportProfiler("report_revenue_leakage", account_id=request.bitrix24_account.pk)
+    with profiler.stage("queryset_build"):
+        queryset = _get_filtered_timesheet_queryset(request)
+    with profiler.stage("project_lookup"):
+        project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    with profiler.stage("materialize"):
+        rows = list(queryset.values(
+            'employee_id',
+            'project_item_id',
+            'project_id',
+            'project_title',
+            'hours',
+            'is_billable',
+        ))
 
     user_ids = {row['employee_id'] for row in rows if row.get('employee_id')}
-    user_map = _get_user_map(request, user_ids)
+    with profiler.stage("user_map"):
+        user_map = _get_user_map(request, user_ids)
 
-    items = [{
-        "sotrudnik_id": row["employee_id"],
-        "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
-        "kolichestvo_chasov": row["hours"],
-        "uchitivaem": row["is_billable"],
-    } for row in rows]
+    with profiler.stage("build_items"):
+        items = [{
+            "sotrudnik_id": row["employee_id"],
+            "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
+            "kolichestvo_chasov": row["hours"],
+            "uchitivaem": row["is_billable"],
+        } for row in rows]
 
-    report_service = ReportService()
-    report = report_service.generate_revenue_leakage(items, user_map)
-    return JsonResponse(report)
+    with profiler.stage("service_generate"):
+        report_service = ReportService()
+        report = report_service.generate_revenue_leakage(items, user_map)
+    profiler.set_metric("rows", len(rows))
+    profiler.set_metric("users", len(user_ids))
+    with profiler.stage("serialize"):
+        response = JsonResponse(report)
+    profiler.attach_to_response(response)
+    profiler.log()
+    return response
 
 
 @xframe_options_exempt
@@ -897,27 +946,39 @@ def report_revenue_leakage(request: AuthorizedRequest):
 @log_errors("report_time_entry_discipline")
 @auth_required
 def report_time_entry_discipline(request: AuthorizedRequest):
-    queryset = _get_filtered_timesheet_queryset(request)
-    rows = list(queryset.values(
-        'employee_id',
-        'date_reflection',
-        'source_created_at',
-        'created_at',
-    ))
+    profiler = ReportProfiler("report_time_entry_discipline", account_id=request.bitrix24_account.pk)
+    with profiler.stage("queryset_build"):
+        queryset = _get_filtered_timesheet_queryset(request)
+    with profiler.stage("materialize"):
+        rows = list(queryset.values(
+            'employee_id',
+            'date_reflection',
+            'source_created_at',
+            'created_at',
+        ))
 
     user_ids = {row['employee_id'] for row in rows if row.get('employee_id')}
-    user_map = _get_user_map(request, user_ids)
+    with profiler.stage("user_map"):
+        user_map = _get_user_map(request, user_ids)
 
-    items = [{
-        "sotrudnik_id": row["employee_id"],
-        "date_reflection": row["date_reflection"],
-        "source_created_at": row["source_created_at"],
-        "created_at": row["created_at"],
-    } for row in rows]
+    with profiler.stage("build_items"):
+        items = [{
+            "sotrudnik_id": row["employee_id"],
+            "date_reflection": row["date_reflection"],
+            "source_created_at": row["source_created_at"],
+            "created_at": row["created_at"],
+        } for row in rows]
 
-    report_service = ReportService()
-    report = report_service.generate_time_entry_discipline(items, user_map)
-    return JsonResponse(report)
+    with profiler.stage("service_generate"):
+        report_service = ReportService()
+        report = report_service.generate_time_entry_discipline(items, user_map)
+    profiler.set_metric("rows", len(rows))
+    profiler.set_metric("users", len(user_ids))
+    with profiler.stage("serialize"):
+        response = JsonResponse(report)
+    profiler.attach_to_response(response)
+    profiler.log()
+    return response
 
 
 @xframe_options_exempt
@@ -925,27 +986,39 @@ def report_time_entry_discipline(request: AuthorizedRequest):
 @log_errors("report_focus_analysis")
 @auth_required
 def report_focus_analysis(request: AuthorizedRequest):
-    queryset = _get_filtered_timesheet_queryset(request)
-    rows = list(queryset.values(
-        'employee_id',
-        'project_title',
-        'task_id',
-        'hours',
-    ))
+    profiler = ReportProfiler("report_focus_analysis", account_id=request.bitrix24_account.pk)
+    with profiler.stage("queryset_build"):
+        queryset = _get_filtered_timesheet_queryset(request)
+    with profiler.stage("materialize"):
+        rows = list(queryset.values(
+            'employee_id',
+            'project_title',
+            'task_id',
+            'hours',
+        ))
 
     user_ids = {row['employee_id'] for row in rows if row.get('employee_id')}
-    user_map = _get_user_map(request, user_ids)
+    with profiler.stage("user_map"):
+        user_map = _get_user_map(request, user_ids)
 
-    items = [{
-        "sotrudnik_id": row["employee_id"],
-        "project_name": row["project_title"],
-        "task_id": row["task_id"],
-        "kolichestvo_chasov": row["hours"],
-    } for row in rows]
+    with profiler.stage("build_items"):
+        items = [{
+            "sotrudnik_id": row["employee_id"],
+            "project_name": row["project_title"],
+            "task_id": row["task_id"],
+            "kolichestvo_chasov": row["hours"],
+        } for row in rows]
 
-    report_service = ReportService()
-    report = report_service.generate_focus_analysis(items, user_map)
-    return JsonResponse(report)
+    with profiler.stage("service_generate"):
+        report_service = ReportService()
+        report = report_service.generate_focus_analysis(items, user_map)
+    profiler.set_metric("rows", len(rows))
+    profiler.set_metric("users", len(user_ids))
+    with profiler.stage("serialize"):
+        response = JsonResponse(report)
+    profiler.attach_to_response(response)
+    profiler.log()
+    return response
 
 
 @xframe_options_exempt
@@ -954,16 +1027,22 @@ def report_focus_analysis(request: AuthorizedRequest):
 @log_errors("timesheet_sync")
 @auth_required
 def timesheet_sync(request: AuthorizedRequest):
-    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
-    config = config_service.get_configuration_sync()
-    
+    profiler = ReportProfiler("timesheet_sync", account_id=request.bitrix24_account.pk)
+    with profiler.stage("config"):
+        config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+        config = config_service.get_configuration_sync()
+
     service = TimesheetSyncService(request.bitrix24_account.client, request.bitrix24_account, config)
     try:
-        count = service.sync_all()
-        project_card_service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
-        project_card_service.refresh_writeoff_stats()
+        with profiler.stage("sync_all"):
+            count = service.sync_all()
+        with profiler.stage("refresh_writeoff_stats"):
+            project_card_service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+            project_card_service.refresh_writeoff_stats()
     except Exception as exc:
         logger.exception("Timesheet sync failed for account %s", request.bitrix24_account.pk)
+        profiler.set_metric("status", "error")
+        profiler.log()
         return JsonResponse(
             {
                 "status": "warning",
@@ -973,8 +1052,13 @@ def timesheet_sync(request: AuthorizedRequest):
             }
         )
 
-    invalidate_project_runtime_caches(request.bitrix24_account)
-    return JsonResponse({"status": "success", "count": count})
+    with profiler.stage("invalidate_caches"):
+        invalidate_project_runtime_caches(request.bitrix24_account)
+    profiler.set_metric("count", count)
+    response = JsonResponse({"status": "success", "count": count})
+    profiler.attach_to_response(response)
+    profiler.log()
+    return response
 
 
 @xframe_options_exempt
@@ -1254,6 +1338,7 @@ def create_mapped_field(request: AuthorizedRequest):
 @log_errors("report_daily_workload")
 @auth_required
 def report_daily_workload(request: AuthorizedRequest):
+    profiler = ReportProfiler("report_daily_workload", account_id=request.bitrix24_account.pk)
     date_from = request.GET.get('date_from')
     date_to = request.GET.get('date_to')
 
@@ -1266,51 +1351,62 @@ def report_daily_workload(request: AuthorizedRequest):
         today = date.today()
         date_to = today.isoformat()
 
-    queryset = build_filtered_timesheet_queryset(
-        request.bitrix24_account,
-        {
-            "date_from": date_from,
-            "date_to": date_to,
-            "employee_ids[]": request.GET.getlist("employee_ids[]"),
-            "project_ids[]": request.GET.getlist("project_ids[]"),
-            "employee_mode": request.GET.get("employee_mode", "include"),
-            "project_mode": request.GET.get("project_mode", "include"),
-        },
-    )
-    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
-    rows = materialize_rows(
-        queryset,
-        (
-            "employee_id",
-            "project_item_id",
-            "project_id",
-            "project_title",
-            "hours",
-            "task_id",
-            "task_hierarchy_titles",
-            "description",
-            "date_reflection",
-        ),
-    )
+    with profiler.stage("queryset_build"):
+        queryset = build_filtered_timesheet_queryset(
+            request.bitrix24_account,
+            {
+                "date_from": date_from,
+                "date_to": date_to,
+                "employee_ids[]": request.GET.getlist("employee_ids[]"),
+                "project_ids[]": request.GET.getlist("project_ids[]"),
+                "employee_mode": request.GET.get("employee_mode", "include"),
+                "project_mode": request.GET.get("project_mode", "include"),
+            },
+        )
+    with profiler.stage("project_lookup"):
+        project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    with profiler.stage("materialize"):
+        rows = materialize_rows(
+            queryset,
+            (
+                "employee_id",
+                "project_item_id",
+                "project_id",
+                "project_title",
+                "hours",
+                "task_id",
+                "task_hierarchy_titles",
+                "description",
+                "date_reflection",
+            ),
+        )
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
-    user_map = _get_user_map(request, user_ids)
-    items = [
-        {
-            "sotrudnik_id": row["employee_id"],
-            "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
-            "kolichestvo_chasov": row["hours"],
-            "id_zadachi": row["task_id"],
-            "nazvanie_zadachi": row["task_hierarchy_titles"][-1] if row.get("task_hierarchy_titles") else "No Title",
-            "opisanie": row["description"],
-            "data": row["date_reflection"].isoformat() if row.get("date_reflection") else None,
-        }
-        for row in rows
-    ]
-    
-    report_service = ReportService()
-    report = report_service.generate_daily_workload(items, user_map, date_from, date_to)
-    
-    return JsonResponse(report, safe=False)
+    with profiler.stage("user_map"):
+        user_map = _get_user_map(request, user_ids)
+    with profiler.stage("build_items"):
+        items = [
+            {
+                "sotrudnik_id": row["employee_id"],
+                "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
+                "kolichestvo_chasov": row["hours"],
+                "id_zadachi": row["task_id"],
+                "nazvanie_zadachi": row["task_hierarchy_titles"][-1] if row.get("task_hierarchy_titles") else "No Title",
+                "opisanie": row["description"],
+                "data": row["date_reflection"].isoformat() if row.get("date_reflection") else None,
+            }
+            for row in rows
+        ]
+
+    with profiler.stage("service_generate"):
+        report_service = ReportService()
+        report = report_service.generate_daily_workload(items, user_map, date_from, date_to)
+    profiler.set_metric("rows", len(rows))
+    profiler.set_metric("users", len(user_ids))
+    with profiler.stage("serialize"):
+        response = JsonResponse(report, safe=False)
+    profiler.attach_to_response(response)
+    profiler.log()
+    return response
 
 
 @xframe_options_exempt

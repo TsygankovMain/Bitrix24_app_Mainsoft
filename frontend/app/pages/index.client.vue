@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref, watch } from 'vue'
-import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import { buildReportRouteLocation, type ReportRouteName, type ReportRoutePayload } from '~/utils/reportNavigation'
-import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
+import type { ProjectBoardCardRecord } from '~/utils/projectBoard'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
@@ -31,13 +30,6 @@ const isPortfolioLoading = ref(false)
 const portfolioData = ref<any | null>(null)
 const projectSearch = ref('')
 const selectedProjectId = ref('')
-const isHomeProjectDrawerOpen = ref(false)
-const selectedHomeProject = ref<ProjectBoardCardRecord | null>(null)
-const isHomeProjectSaving = ref(false)
-const isHomeProjectArchiving = ref(false)
-const homeEmployeeDirectory = ref<ProjectBoardDirectoryOption[]>([])
-const homeCompanyDirectory = ref<ProjectBoardDirectoryOption[]>([])
-const homeLegalEntityDirectory = ref<ProjectBoardDirectoryOption[]>([])
 
 type AppSection = {
   id: string
@@ -48,20 +40,6 @@ type AppSection = {
 }
 
 const appSections = computed<AppSection[]>(() => [
-  {
-    id: 'task-workspace',
-    title: 'Учет часов в задаче',
-    description: 'Рабочее место трудозатрат',
-    toneClass: 'bg-sky-50 text-sky-700',
-    action: () => router.push('/task')
-  },
-  {
-    id: 'group-project-report',
-    title: 'Проектный отчет (группа)',
-    description: 'Открытие отчета внутри проекта',
-    toneClass: 'bg-indigo-50 text-indigo-700',
-    action: () => router.push('/reports/project-report')
-  },
   {
     id: 'report-project',
     title: 'Отчет по проектам',
@@ -211,110 +189,15 @@ async function loadPortfolio(forceRefresh = false) {
   }
 }
 
-async function ensureHomeProjectDirectories(forceRefresh = false) {
-  const needsLoad = forceRefresh
-    || !homeEmployeeDirectory.value.length
-    || !homeCompanyDirectory.value.length
-    || !homeLegalEntityDirectory.value.length
-
-  if (!needsLoad) {
-    return
-  }
-
-  const meta = await apiStore.getProjectBoardMeta(forceRefresh)
-  const directories = meta.directories || {}
-  homeEmployeeDirectory.value = directories.employees || meta.employees || []
-  homeCompanyDirectory.value = directories.companies || meta.companies || []
-  homeLegalEntityDirectory.value = directories.legal_entities || meta.legal_entities || []
-}
-
-function openHomeProjectCard(card: ProjectBoardCardRecord) {
-  selectedHomeProject.value = card
-  isHomeProjectDrawerOpen.value = true
-  void ensureHomeProjectDirectories()
-}
 
 function openProject(card?: ProjectBoardCardRecord | null) {
-  const targetCard = card || selectedHomeProject.value || selectedProject.value
+  const targetCard = card || selectedProject.value
   if (!targetCard) {
     return
   }
   openProjectGroup(targetCard.project_id)
 }
 
-function applyUpdatedHomeProjectCard(updatedCard: ProjectBoardCardRecord) {
-  if (selectedHomeProject.value?.project_id === updatedCard.project_id) {
-    selectedHomeProject.value = updatedCard
-  }
-
-  if (selectedProjectId.value === updatedCard.project_id) {
-    selectedProjectId.value = updatedCard.project_id
-  }
-
-  if (!portfolioData.value?.cards) {
-    return
-  }
-
-  portfolioData.value = {
-    ...portfolioData.value,
-    cards: portfolioData.value.cards.map((card: ProjectBoardCardRecord) =>
-      card.project_id === updatedCard.project_id ? updatedCard : card
-    ),
-    risk_cards: (portfolioData.value.risk_cards || []).map((card: ProjectBoardCardRecord) =>
-      card.project_id === updatedCard.project_id ? updatedCard : card
-    ),
-  }
-}
-
-async function refreshPortfolioAfterProjectChange(updatedCard?: ProjectBoardCardRecord | null) {
-  await loadPortfolio(true)
-
-  if (!updatedCard || !portfolioData.value?.cards?.length) {
-    return
-  }
-
-  const nextCard = portfolioData.value.cards.find((card: ProjectBoardCardRecord) => card.project_id === updatedCard.project_id)
-  if (nextCard) {
-    selectedHomeProject.value = nextCard
-    selectedProjectId.value = nextCard.project_id
-  }
-}
-
-async function handleHomeProjectSave(payload: Record<string, any>) {
-  isHomeProjectSaving.value = true
-  try {
-    const response = await apiStore.updateProjectCard(payload)
-    if (response.card) {
-      applyUpdatedHomeProjectCard(response.card)
-      await refreshPortfolioAfterProjectChange(response.card)
-    }
-  } catch (error) {
-    processErrorGlobal(error)
-  } finally {
-    isHomeProjectSaving.value = false
-  }
-}
-
-async function handleHomeProjectArchive(nextArchivedState: boolean) {
-  if (!selectedHomeProject.value) {
-    return
-  }
-
-  isHomeProjectArchiving.value = true
-  try {
-    const response = await apiStore.archiveProject(selectedHomeProject.value.project_id, nextArchivedState)
-    if (response.card) {
-      applyUpdatedHomeProjectCard(response.card)
-      await refreshPortfolioAfterProjectChange(response.card)
-    } else {
-      await refreshPortfolioAfterProjectChange(selectedHomeProject.value)
-    }
-  } catch (error) {
-    processErrorGlobal(error)
-  } finally {
-    isHomeProjectArchiving.value = false
-  }
-}
 
 function openSelectedProjectReport(report: ReportRouteName = 'project') {
   const card = selectedProject.value
@@ -523,10 +406,6 @@ onMounted(async () => {
                 Открыть проект
                 <div class="mt-1 text-xs font-normal text-slate-500">Группа проекта в Bitrix24</div>
               </button>
-              <button type="button" class="ms-action-card text-left" @click="openHomeProjectCard(selectedProject)">
-                Открыть карточку
-                <div class="mt-1 text-xs font-normal text-slate-500">Слайдер карточки проекта</div>
-              </button>
               <button type="button" class="ms-action-card text-left" @click="openSelectedProjectReport('project')">
                 Сформировать отчет
                 <div class="mt-1 text-xs font-normal text-slate-500">Отчет по проекту с пресетом</div>
@@ -568,19 +447,6 @@ onMounted(async () => {
           </button>
         </div>
       </section>
-
-      <ProjectBoardDrawer
-        v-model="isHomeProjectDrawerOpen"
-        :card="selectedHomeProject"
-        :employees="homeEmployeeDirectory"
-        :companies="homeCompanyDirectory"
-        :legal-entities="homeLegalEntityDirectory"
-        :is-saving="isHomeProjectSaving"
-        :is-archiving="isHomeProjectArchiving"
-        @save="handleHomeProjectSave"
-        @archive="handleHomeProjectArchive"
-        @open-project="openProject"
-      />
     </div>
   </div>
 </template>
