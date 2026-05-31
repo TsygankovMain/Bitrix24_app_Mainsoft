@@ -104,6 +104,7 @@ function getBubbleStyle(row: any) {
 
 async function fetchReport() {
   const payload = await generateReport({
+    reportName: 'Фокус и распыление',
     loader: () => apiStore.getReportFocusAnalysis(
       dateFrom.value,
       dateTo.value,
@@ -118,7 +119,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-  progress.begin('Формирование Excel…')
+  progress.begin('Excel: «Фокус и распыление»', 0, 'Готовим файл выгрузки')
   try {
     const blob = await apiStore.exportReportFocusAnalysis(
       dateFrom.value,

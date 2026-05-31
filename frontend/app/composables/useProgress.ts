@@ -4,14 +4,16 @@ import { reactive, computed } from 'vue'
 const state = reactive({
   count: 0,
   title: '',
+  hint: '',
   done: 0,
   total: 0,
 })
 
 export function useProgress() {
-  function begin(title = '', total = 0) {
+  function begin(title = '', total = 0, hint = '') {
     state.count++
     state.title = title
+    state.hint = hint
     state.done = 0
     state.total = total
   }
@@ -23,6 +25,7 @@ export function useProgress() {
     state.count = Math.max(0, state.count - 1)
     if (state.count === 0) {
       state.title = ''
+      state.hint = ''
       state.done = 0
       state.total = 0
     }

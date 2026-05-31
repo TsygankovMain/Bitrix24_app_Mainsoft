@@ -120,7 +120,7 @@ async function applyItems(items: InnApplyItem[]) {
   message.value = ''
   let updated = 0
   let failedCount = 0
-  globalProgress.begin('Простановка ИНН…', payload.length)
+  globalProgress.begin('Простановка ИНН…', payload.length, 'Бобёр-Учётчик тащит карточки в 1С')
   try {
     for (let i = 0; i < payload.length; i += CHUNK) {
       const chunk = payload.slice(i, i + CHUNK)

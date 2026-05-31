@@ -84,6 +84,7 @@ function riskBadgeClass(value: string) {
 
 async function fetchReport() {
   const payload = await generateReport({
+    reportName: 'Дисциплина внесения',
     loader: () => apiStore.getReportTimeEntryDiscipline(
       dateFrom.value,
       dateTo.value,
@@ -98,7 +99,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-  progress.begin('Формирование Excel…')
+  progress.begin('Excel: «Дисциплина внесения»', 0, 'Готовим файл выгрузки')
   try {
     const blob = await apiStore.exportReportTimeEntryDiscipline(
       dateFrom.value,

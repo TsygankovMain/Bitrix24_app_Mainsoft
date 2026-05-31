@@ -24,6 +24,6 @@ const progress = useProgress()
         <NuxtPage />
       </NuxtLayout>
     </B24DashboardGroup>
-    <ProgressOverlay :visible="progress.active.value" :title="progress.state.title" :done="progress.state.done" :total="progress.state.total" />
+    <ProgressOverlay :visible="progress.active.value" :title="progress.state.title" :hint="progress.state.hint" :done="progress.state.done" :total="progress.state.total" />
   </B24App>
 </template>

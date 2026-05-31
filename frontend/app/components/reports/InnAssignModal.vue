@@ -38,7 +38,7 @@ async function apply() {
     const CHUNK = 25
     let updated = 0
     // begin/end строго парные: end() только после успешного begin()
-    globalProgress.begin('Простановка ИНН…', items.length)
+    globalProgress.begin('Простановка ИНН…', items.length, 'Бобёр-Учётчик тащит карточки в 1С')
     try {
       for (let i = 0; i < items.length; i += CHUNK) {
         const res = await apiStore.applyInnBackfill(items.slice(i, i + CHUNK))

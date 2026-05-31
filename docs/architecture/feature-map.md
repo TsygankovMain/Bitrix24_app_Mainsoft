@@ -53,7 +53,7 @@
 - **Бэк:** `views.py::get_request_logs / get_system_logs`; модели `models.py::RequestLog`, `SystemLog`.
 
 ## Прочее
-- **Глобальный прогресс:** `composables/useProgress.ts` (синглтон `begin/update/end`, счётчик параллельных операций) + единый `<ProgressOverlay>` (🦫) в `app.vue`. `begin/end` — в `useReportGenerator` (генерация отчётов), `handleExport*` (выгрузки), синках, ИНН-простановке. Тест `tests/progress.test.ts`.
+- **Глобальный прогресс:** `composables/useProgress.ts` (синглтон `begin(title, total, hint?)` / `update` / `end`, счётчик параллельных операций, поля `title`/`hint`/`done`/`total`) + единый `<ProgressOverlay>` (🦫) в `app.vue`. Два режима: **детерминированный** (`total>0` → заливка по %, X/Y — ИНН-простановка) и **индетерминированный** (`total=0` → бегущая полоса `po-sweep` + едущий бобёр `po-ride`, чтобы было видно, что не завис). `begin/end` — в `useReportGenerator` (генерация отчётов, title из `reportName`), `handleExport*` (выгрузки), синках, ИНН-простановке; `hint` — подзаголовок по разделу. Тест `tests/progress.test.ts`.
 - **Главная/портфолио:** `pages/index.client.vue` → `getHomepagePortfolio` → `/api/homepage/portfolio`.
 - **Поддержка:** `/api/support/status`, `/api/support/connect`.
 - **Финансовый контур** — **в планах**, на текущий момент изолирован (см. CHANGELOG, секции про finance).

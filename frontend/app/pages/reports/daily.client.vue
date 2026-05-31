@@ -95,6 +95,7 @@ function getDayCell(row: any, dateKey: string) {
 
 async function fetchReport() {
     const payload = await generateReport({
+        reportName: 'Ежедневная нагрузка',
         loader: () => apiStore.getReportDailyWorkload(
             dateFrom.value,
             dateTo.value,
@@ -112,7 +113,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-    progress.begin('Формирование Excel…')
+    progress.begin('Excel: «Ежедневная нагрузка»', 0, 'Готовим файл выгрузки')
     try {
         const blob = await apiStore.exportReportDailyWorkload(
             dateFrom.value,

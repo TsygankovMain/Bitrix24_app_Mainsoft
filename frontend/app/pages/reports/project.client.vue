@@ -87,6 +87,7 @@ async function syncWithRoutePreset() {
 
 async function fetchReport() {
     const payload = await generateReport({
+        reportName: 'По проектам',
         loader: () => apiStore.getReportProjectEmployee(
             dateFrom.value,
             dateTo.value,
@@ -101,7 +102,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-    progress.begin('Формирование Excel…')
+    progress.begin('Excel: «По проектам»', 0, 'Готовим файл выгрузки')
     try {
         const blob = await apiStore.exportReportProjectEmployee(
             dateFrom.value,

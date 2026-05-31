@@ -86,6 +86,7 @@ function lossBadgeClass(value: number) {
 
 async function fetchReport() {
   const payload = await generateReport({
+    reportName: 'Потери выручки',
     loader: () => apiStore.getReportRevenueLeakage(
       dateFrom.value,
       dateTo.value,
@@ -100,7 +101,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-  progress.begin('Формирование Excel…')
+  progress.begin('Excel: «Потери выручки»', 0, 'Готовим файл выгрузки')
   try {
     const blob = await apiStore.exportReportRevenueLeakage(
       dateFrom.value,

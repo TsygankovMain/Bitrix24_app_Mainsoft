@@ -397,7 +397,7 @@ async function refreshReferenceOptions(showToast = true) {
 }
 
 async function syncBoard(showToast = true) {
-  progress.begin('Синхронизация проектов…')
+  progress.begin('Синхронизация проектов', 0, 'Обновляем доску проектов')
   isSyncing.value = true
   try {
     const result = await apiStore.syncProjectCards()

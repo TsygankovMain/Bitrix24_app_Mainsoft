@@ -149,7 +149,7 @@ const handleExport = async () => {
     }
     
     isExporting.value = true
-    progress.begin('Формирование Excel…')
+    progress.begin('Excel: «Сырые данные»', 0, 'Готовим файл выгрузки')
     try {
         const blob = await apiStore.exportRawData(dateFrom.value, dateTo.value, dateType.value, selectedFields.value)
 
@@ -196,7 +196,7 @@ async function resetFilter() {
 
 
 async function handleSync() {
-    progress.begin('Синхронизация с Bitrix24…')
+    progress.begin('Синхронизация с Bitrix24', 0, 'Обновляем списания времени')
     isSyncing.value = true
     try {
         const result = await apiStore.syncTimesheets()

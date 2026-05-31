@@ -41,7 +41,11 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
     let fetchMs = 0
 
     try {
-      progress.begin('Формирование отчёта…')
+      progress.begin(
+        config.reportName ? `Отчёт «${config.reportName}»: формирование…` : 'Формирование отчёта…',
+        0,
+        'Собираем данные из Bitrix24'
+      )
       if (config.syncTimesheets !== false) {
         const syncStart = perfEnabled ? performance.now() : 0
         try {

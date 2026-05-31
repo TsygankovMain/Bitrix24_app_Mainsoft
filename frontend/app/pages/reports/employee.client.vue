@@ -69,6 +69,7 @@ const progress = useProgress()
 
 async function fetchReport() {
     const payload = await generateReport({
+        reportName: 'По сотрудникам',
         loader: () => apiStore.getReportEmployeeProject(
             dateFrom.value,
             dateTo.value,
@@ -83,7 +84,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-    progress.begin('Формирование Excel…')
+    progress.begin('Excel: «По сотрудникам»', 0, 'Готовим файл выгрузки')
     try {
         const blob = await apiStore.exportReportEmployeeProject(
             dateFrom.value,
