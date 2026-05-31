@@ -39,7 +39,12 @@ from .report_queries import (
     materialize_rows,
     resolve_project_name_for_row,
 )
-from .report_excel import build_project_task_workbook
+from .report_excel import (
+    build_project_task_workbook,
+    build_hierarchy_workbook,
+    build_matrix_workbook,
+    build_table_workbook,
+)
 from .inn_backfill_service import InnBackfillService
 
 __all__ = [
@@ -72,6 +77,12 @@ __all__ = [
     "report_daily_workload",
     "report_project_task_employee",
     "report_project_task_employee_export",
+    "report_employee_project_export",
+    "report_project_employee_export",
+    "report_daily_workload_export",
+    "report_revenue_leakage_export",
+    "report_time_entry_discipline_export",
+    "report_focus_analysis_export",
     "inn_backfill_scan",
     "inn_backfill_apply",
     "inn_backfill_project_items",
@@ -934,6 +945,296 @@ def report_project_task_employee_export(request: AuthorizedRequest):
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_employee_project_export")
+@auth_required
+def report_employee_project_export(request: AuthorizedRequest):
+    """Excel-выгрузка отчёта «По сотрудникам/проектам» с сохранением иерархии."""
+    queryset = _get_filtered_timesheet_queryset(request)
+    rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
+    user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
+    user_map = _get_user_map(request, user_ids)
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    items = build_tree_report_items(
+        rows,
+        project_name_by_item=project_name_by_item,
+        project_name_by_group=project_name_by_group,
+    )
+    roots = ReportService().generate_employee_projects(items, user_map)
+
+    date_from = request.GET.get("date_from") or ""
+    date_to = request.GET.get("date_to") or ""
+    output = build_hierarchy_workbook(roots, title="Отчет по сотрудникам",
+                                      date_from=date_from, date_to=date_to)
+
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="report_employee_project.xlsx"'
+    return response
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_project_employee_export")
+@auth_required
+def report_project_employee_export(request: AuthorizedRequest):
+    """Excel-выгрузка отчёта «По проектам/сотрудникам» с сохранением иерархии."""
+    queryset = _get_filtered_timesheet_queryset(request)
+    rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
+    user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
+    user_map = _get_user_map(request, user_ids)
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    items = build_tree_report_items(
+        rows,
+        project_name_by_item=project_name_by_item,
+        project_name_by_group=project_name_by_group,
+    )
+    roots = ReportService().generate_project_employees(items, user_map)
+
+    date_from = request.GET.get("date_from") or ""
+    date_to = request.GET.get("date_to") or ""
+    output = build_hierarchy_workbook(roots, title="Отчет по проектам",
+                                      date_from=date_from, date_to=date_to)
+
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="report_project_employee.xlsx"'
+    return response
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_daily_workload_export")
+@auth_required
+def report_daily_workload_export(request: AuthorizedRequest):
+    """Excel-выгрузка отчёта «Ежедневная нагрузка» в виде матрицы сотрудник×день."""
+    from datetime import date
+    date_from = request.GET.get('date_from')
+    date_to = request.GET.get('date_to')
+
+    if not date_from:
+        today = date.today()
+        date_from = date(today.year, today.month, 1).isoformat()
+    if not date_to:
+        today = date.today()
+        date_to = today.isoformat()
+
+    queryset = build_filtered_timesheet_queryset(
+        request.bitrix24_account,
+        {
+            "date_from": date_from,
+            "date_to": date_to,
+            "employee_ids[]": request.GET.getlist("employee_ids[]"),
+            "project_ids[]": request.GET.getlist("project_ids[]"),
+            "employee_mode": request.GET.get("employee_mode", "include"),
+            "project_mode": request.GET.get("project_mode", "include"),
+        },
+    )
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    rows = materialize_rows(
+        queryset,
+        (
+            "employee_id",
+            "project_item_id",
+            "project_id",
+            "project_title",
+            "hours",
+            "task_id",
+            "task_hierarchy_titles",
+            "description",
+            "date_reflection",
+        ),
+    )
+    user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
+    user_map = _get_user_map(request, user_ids)
+    items = [
+        {
+            "sotrudnik_id": row["employee_id"],
+            "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
+            "kolichestvo_chasov": row["hours"],
+            "id_zadachi": row["task_id"],
+            "nazvanie_zadachi": row["task_hierarchy_titles"][-1] if row.get("task_hierarchy_titles") else "No Title",
+            "opisanie": row["description"],
+            "data": row["date_reflection"].isoformat() if row.get("date_reflection") else None,
+        }
+        for row in rows
+    ]
+
+    report = ReportService().generate_daily_workload(items, user_map, date_from, date_to)
+    output = build_matrix_workbook(report["header_days"], report["rows"],
+                                   title="Ежедневная нагрузка",
+                                   date_from=date_from, date_to=date_to)
+
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="report_daily_workload.xlsx"'
+    return response
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_revenue_leakage_export")
+@auth_required
+def report_revenue_leakage_export(request: AuthorizedRequest):
+    """Excel-выгрузка отчёта «Потери выручки» в виде таблицы."""
+    queryset = _get_filtered_timesheet_queryset(request)
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    rows = list(queryset.values(
+        'employee_id',
+        'project_item_id',
+        'project_id',
+        'project_title',
+        'hours',
+        'is_billable',
+    ))
+
+    user_ids = {row['employee_id'] for row in rows if row.get('employee_id')}
+    user_map = _get_user_map(request, user_ids)
+
+    items = [{
+        "sotrudnik_id": row["employee_id"],
+        "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
+        "kolichestvo_chasov": row["hours"],
+        "uchitivaem": row["is_billable"],
+    } for row in rows]
+
+    report = ReportService().generate_revenue_leakage(items, user_map)
+
+    # Выгружаем risk_rows (детальные данные по рискам)
+    table_rows = report.get("risk_rows", [])
+    columns = [
+        {"key": "project_name", "label": "Проект", "fmt": "text", "width": 25},
+        {"key": "employee_name", "label": "Сотрудник", "fmt": "text", "width": 20},
+        {"key": "total_hours", "label": "Всего часов", "fmt": "hours", "width": 14},
+        {"key": "billable_hours", "label": "Учтено часов", "fmt": "hours", "width": 14},
+        {"key": "non_billable_hours", "label": "Не учтено часов", "fmt": "hours", "width": 14},
+        {"key": "loss_rate", "label": "Доля потерь, %", "fmt": "hours", "width": 14},
+    ]
+
+    date_from = request.GET.get("date_from") or ""
+    date_to = request.GET.get("date_to") or ""
+    output = build_table_workbook(columns, table_rows, title="Потери выручки",
+                                  date_from=date_from, date_to=date_to)
+
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="report_revenue_leakage.xlsx"'
+    return response
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_time_entry_discipline_export")
+@auth_required
+def report_time_entry_discipline_export(request: AuthorizedRequest):
+    """Excel-выгрузка отчёта «Дисциплина внесения времени» в виде таблицы."""
+    queryset = _get_filtered_timesheet_queryset(request)
+    rows = list(queryset.values(
+        'employee_id',
+        'date_reflection',
+        'source_created_at',
+        'created_at',
+    ))
+
+    user_ids = {row['employee_id'] for row in rows if row.get('employee_id')}
+    user_map = _get_user_map(request, user_ids)
+
+    items = [{
+        "sotrudnik_id": row["employee_id"],
+        "date_reflection": row["date_reflection"],
+        "source_created_at": row["source_created_at"],
+        "created_at": row["created_at"],
+    } for row in rows]
+
+    report = ReportService().generate_time_entry_discipline(items, user_map)
+
+    # Выгружаем employee_rows (детальные данные по сотрудникам)
+    table_rows = report.get("employee_rows", [])
+    columns = [
+        {"key": "employee_name", "label": "Сотрудник", "fmt": "text", "width": 20},
+        {"key": "entry_count", "label": "Записей", "fmt": "hours", "width": 12},
+        {"key": "same_day_share", "label": "В день записи, доля", "fmt": "percent", "width": 16},
+        {"key": "avg_lag_days", "label": "Средн. отставание, дней", "fmt": "hours", "width": 16},
+        {"key": "late_entries", "label": "Запис. >1дня назад", "fmt": "hours", "width": 14},
+        {"key": "max_lag_days", "label": "Макс. отставание, дней", "fmt": "hours", "width": 16},
+        {"key": "risk_level", "label": "Уровень риска", "fmt": "text", "width": 14},
+    ]
+
+    date_from = request.GET.get("date_from") or ""
+    date_to = request.GET.get("date_to") or ""
+    output = build_table_workbook(columns, table_rows, title="Дисциплина внесения времени",
+                                  date_from=date_from, date_to=date_to)
+
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="report_time_entry_discipline.xlsx"'
+    return response
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_focus_analysis_export")
+@auth_required
+def report_focus_analysis_export(request: AuthorizedRequest):
+    """Excel-выгрузка отчёта «Фокус и распыление» в виде таблицы."""
+    queryset = _get_filtered_timesheet_queryset(request)
+    rows = list(queryset.values(
+        'employee_id',
+        'project_title',
+        'task_id',
+        'hours',
+    ))
+
+    user_ids = {row['employee_id'] for row in rows if row.get('employee_id')}
+    user_map = _get_user_map(request, user_ids)
+
+    items = [{
+        "sotrudnik_id": row["employee_id"],
+        "project_name": row["project_title"],
+        "task_id": row["task_id"],
+        "kolichestvo_chasov": row["hours"],
+    } for row in rows]
+
+    report = ReportService().generate_focus_analysis(items, user_map)
+
+    # Выгружаем employee_rows (детальные данные по сотрудникам)
+    table_rows = report.get("employee_rows", [])
+    columns = [
+        {"key": "employee_name", "label": "Сотрудник", "fmt": "text", "width": 20},
+        {"key": "project_count", "label": "Кол-во проектов", "fmt": "hours", "width": 14},
+        {"key": "task_count", "label": "Кол-во задач", "fmt": "hours", "width": 14},
+        {"key": "entry_count", "label": "Записей", "fmt": "hours", "width": 12},
+        {"key": "total_hours", "label": "Всего часов", "fmt": "hours", "width": 14},
+        {"key": "avg_entry_hours", "label": "Средняя запись, ч", "fmt": "hours", "width": 14},
+        {"key": "focus_index", "label": "Индекс фокуса", "fmt": "percent", "width": 14},
+        {"key": "top_project_hours", "label": "Часов на топ проект", "fmt": "hours", "width": 16},
+        {"key": "risk_level", "label": "Уровень риска", "fmt": "text", "width": 14},
+    ]
+
+    date_from = request.GET.get("date_from") or ""
+    date_to = request.GET.get("date_to") or ""
+    output = build_table_workbook(columns, table_rows, title="Фокус и распыление",
+                                  date_from=date_from, date_to=date_to)
+
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = 'attachment; filename="report_focus_analysis.xlsx"'
     return response
 
 

@@ -40,9 +40,15 @@ urlpatterns = [
     path('api/report-daily-workload', views.report_daily_workload, name='report_daily_workload'),
     path('api/report-project-task-employee', views.report_project_task_employee, name='report_project_task_employee'),
     path('api/report-project-task-employee-export', views.report_project_task_employee_export, name='report_project_task_employee_export'),
+    path('api/report-employee-project-export', views.report_employee_project_export, name='report_employee_project_export'),
+    path('api/report-project-employee-export', views.report_project_employee_export, name='report_project_employee_export'),
+    path('api/report-daily-workload-export', views.report_daily_workload_export, name='report_daily_workload_export'),
     path('api/report-revenue-leakage', views.report_revenue_leakage, name='report_revenue_leakage'),
+    path('api/report-revenue-leakage-export', views.report_revenue_leakage_export, name='report_revenue_leakage_export'),
     path('api/report-time-entry-discipline', views.report_time_entry_discipline, name='report_time_entry_discipline'),
+    path('api/report-time-entry-discipline-export', views.report_time_entry_discipline_export, name='report_time_entry_discipline_export'),
     path('api/report-focus-analysis', views.report_focus_analysis, name='report_focus_analysis'),
+    path('api/report-focus-analysis-export', views.report_focus_analysis_export, name='report_focus_analysis_export'),
 
     # Timesheets
     path('api/sync-timesheets', views.timesheet_sync, name='sync_timesheets'), # Matches api.ts: /api/sync-timesheets
