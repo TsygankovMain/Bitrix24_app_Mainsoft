@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import * as locales from '@bitrix24/b24ui-nuxt/locale'
+import ProgressOverlay from '~/components/common/ProgressOverlay.vue'
+import { useProgress } from '~/composables/useProgress'
 
 // region Init ////
 const { locale, defaultLocale } = useI18n()
@@ -10,6 +12,8 @@ useHead({
   htmlAttrs: { lang, dir }
 })
 // endregion ////
+
+const progress = useProgress()
 </script>
 
 <template>
@@ -20,5 +24,6 @@ useHead({
         <NuxtPage />
       </NuxtLayout>
     </B24DashboardGroup>
+    <ProgressOverlay :visible="progress.active.value" :title="progress.state.title" :done="progress.state.done" :total="progress.state.total" />
   </B24App>
 </template>
