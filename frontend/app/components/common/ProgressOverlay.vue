@@ -23,34 +23,33 @@ const finished = computed(() => pct.value === 100)
     <div v-if="visible" class="fixed inset-0 z-[1000] flex items-center justify-center" style="background:rgba(15,23,42,.45)">
       <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-[440px] p-6 text-center">
         <div class="text-sm font-semibold text-slate-700">{{ title || 'Идёт операция…' }}</div>
-        <div class="text-xs text-slate-400 mt-1 mb-5">{{ hint || 'Бобёр-Учётчик трудится' }}</div>
+        <div class="text-xs text-slate-400 mt-1 mb-4">{{ hint || 'Бобёр-Учётчик трудится' }}</div>
 
-        <!-- Детерминированный режим: заливка по проценту + бобёр на её краю -->
-        <div v-if="determinate" class="relative h-6 rounded-full bg-slate-200 overflow-visible">
-          <div
-            class="h-full rounded-full transition-all duration-300"
-            :style="{ width: (pct ?? 0) + '%', background: 'linear-gradient(90deg,#84cc16,#10b981)' }"
-          />
-          <div
-            class="absolute -top-5 text-2xl po-beaver"
-            :style="{ left: (pct ?? 0) + '%' }"
-          >{{ finished ? '🦫✅' : '🦫' }}<span v-if="!finished" class="text-xs absolute top-2 left-5">🗂️</span></div>
-        </div>
-
-        <!-- Индетерминированный режим: бегущая полоса + едущий бобёр (видно, что идёт работа) -->
-        <div v-else class="relative h-6 overflow-visible">
-          <div class="absolute inset-0 rounded-full bg-slate-200 overflow-hidden">
-            <div
-              class="absolute top-0 h-full w-2/5 rounded-full po-sweep"
-              style="background: linear-gradient(90deg,#84cc16,#10b981)"
-            />
+        <div class="flex items-center gap-3">
+          <!-- Бобёр отдельно от полосы: стоит рядом, крупнее (1.5×), подпрыгивает на месте -->
+          <div class="po-beaver shrink-0 relative leading-none" style="font-size:2.25rem">
+            {{ finished ? '🦫✅' : '🦫' }}<span v-if="!finished" class="absolute" style="font-size:0.95rem; right:-6px; bottom:-4px">🗂️</span>
           </div>
-          <div class="absolute -top-5 text-2xl po-ride">🦫<span class="text-xs absolute top-2 left-5">🗂️</span></div>
-        </div>
 
-        <div class="flex justify-between text-xs text-slate-500 mt-2">
-          <span>{{ label || (determinate ? `обработано ${done ?? 0} / ${total}` : 'идёт обработка…') }}</span>
-          <span v-if="pct !== null" class="font-semibold text-slate-700">{{ pct }}%</span>
+          <div class="flex-1">
+            <!-- Полоса: детерминированная заливка (по %) или бегущая (индетерминированно) -->
+            <div class="relative h-4 rounded-full bg-slate-200 overflow-hidden">
+              <div
+                v-if="determinate"
+                class="h-full rounded-full transition-all duration-300"
+                :style="{ width: (pct ?? 0) + '%', background: 'linear-gradient(90deg,#84cc16,#10b981)' }"
+              />
+              <div
+                v-else
+                class="absolute top-0 h-full w-2/5 rounded-full po-sweep"
+                style="background: linear-gradient(90deg,#84cc16,#10b981)"
+              />
+            </div>
+            <div class="flex justify-between text-xs text-slate-500 mt-2">
+              <span>{{ label || (determinate ? `обработано ${done ?? 0} / ${total}` : 'идёт обработка…') }}</span>
+              <span v-if="pct !== null" class="font-semibold text-slate-700">{{ pct }}%</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -58,22 +57,16 @@ const finished = computed(() => pct.value === 100)
 </template>
 
 <style scoped>
-/* Бобёр в детерминированном режиме: подпрыгивает на месте, центрируется по краю заливки */
+/* Бобёр подпрыгивает на месте (без горизонтального движения — он зафиксирован рядом с полосой) */
 .po-beaver { animation: po-bob 1s ease-in-out infinite; }
 @keyframes po-bob {
-  0%, 100% { transform: translateX(-50%) translateY(0); }
-  50%      { transform: translateX(-50%) translateY(-3px); }
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
 }
 /* Бегущая полоса индетерминированного режима */
 .po-sweep { animation: po-sweep 1.5s ease-in-out infinite; }
 @keyframes po-sweep {
   0%   { transform: translateX(-120%); }
   100% { transform: translateX(320%); }
-}
-/* Бобёр едет вдоль полосы и подпрыгивает */
-.po-ride { animation: po-bob 1s ease-in-out infinite, po-ride 1.5s ease-in-out infinite; }
-@keyframes po-ride {
-  0%   { left: 2%; }
-  100% { left: 98%; }
 }
 </style>
