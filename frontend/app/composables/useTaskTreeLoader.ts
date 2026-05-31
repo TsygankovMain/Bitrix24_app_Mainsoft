@@ -7,23 +7,46 @@ interface LoadTaskTreeOptions {
   includeProfile?: boolean
 }
 
-function extractResult(response: any) {
-  return response?.result || response?.data || response
+type RawRecord = Record<string, unknown>
+
+interface CrmItemRaw {
+  id: string | number
+  title?: string
+  TITLE?: string
+  createdTime?: string
+  [key: string]: unknown
 }
 
-function extractTaskList(response: any) {
-  const result = extractResult(response)
-  return result?.tasks || result || []
+interface B24BatchResult {
+  getData: () => RawRecord
 }
 
-function extractItemList(response: any) {
-  const result = extractResult(response)
-  return result?.items || result || []
+// Minimal local view of the B24Frame batch API. Casting through this avoids
+// resolving the SDK's heavy generic Result/AjaxResult types at every call site.
+interface B24BatchClient {
+  callBatch: (calls: object, isHaltOnError?: boolean, returnAjaxResult?: boolean) => Promise<B24BatchResult>
+  callMethod: (method: string, params?: object, start?: number) => Promise<B24BatchResult>
 }
 
-function extractSingleTask(response: any) {
-  const result = extractResult(response)
-  return result?.task || response?.task || null
+function extractResult(response: unknown): unknown {
+  const record = response as RawRecord | null | undefined
+  return record?.result || record?.data || response
+}
+
+function extractTaskList(response: unknown): RawRecord[] {
+  const result = extractResult(response) as RawRecord | null | undefined
+  return (result?.tasks || result || []) as RawRecord[]
+}
+
+function extractItemList(response: unknown): CrmItemRaw[] {
+  const result = extractResult(response) as RawRecord | null | undefined
+  return (result?.items || result || []) as CrmItemRaw[]
+}
+
+function extractSingleTask(response: unknown): RawRecord | null {
+  const result = extractResult(response) as RawRecord | null | undefined
+  const raw = response as RawRecord | null | undefined
+  return (result?.task || raw?.task || null) as RawRecord | null
 }
 
 export function useTaskTreeLoader() {
@@ -48,10 +71,11 @@ export function useTaskTreeLoader() {
       batch.profile = { method: 'profile' }
     }
 
-    const result = await ($b24 as any).callBatch(batch)
+    const client = $b24 as unknown as B24BatchClient
+    const result = await client.callBatch(batch)
     const data = result.getData()
 
-    const usersResponse = data.users
+    const usersResponse = data.users as RawRecord | undefined
     if (usersResponse && !usersResponse.error) {
       const users = extractResult(usersResponse)
       const map: Record<string, TaskWorkspaceUser> = {}
@@ -64,7 +88,7 @@ export function useTaskTreeLoader() {
     }
 
     if (options.includeProfile) {
-      const profile = extractResult(data.profile)
+      const profile = extractResult(data.profile) as RawRecord | null
       if (profile?.ID) {
         currentUserId.value = String(profile.ID)
       }
@@ -99,9 +123,10 @@ export function useTaskTreeLoader() {
     }
 
     const smartProcessId = config.value.DEFAULT_SMART_PROCESS_ID
+    const client = $b24 as unknown as B24BatchClient
 
     try {
-      const rootTaskResponse = await ($b24 as any).callMethod('tasks.task.get', {
+      const rootTaskResponse = await client.callMethod('tasks.task.get', {
         taskId,
         select: ['ID', 'TITLE']
       })
@@ -111,10 +136,10 @@ export function useTaskTreeLoader() {
         throw new Error('Не удалось загрузить корневую задачу.')
       }
 
-      const normalizedRootTaskId = String(rootTask.id || rootTask.ID)
+      const normalizedRootTaskId = String(rootTask?.id || rootTask?.ID)
       const allTasks: Array<{ id: string; title: string; parentId: string | null }> = [{
         id: normalizedRootTaskId,
-        title: String(rootTask.title || rootTask.TITLE || ''),
+        title: String(rootTask?.title || rootTask?.TITLE || ''),
         parentId: null
       }]
 
@@ -140,10 +165,10 @@ export function useTaskTreeLoader() {
           break
         }
 
-        const batchResponse = await ($b24 as any).callBatch(batch)
+        const batchResponse = await client.callBatch(batch)
         const batchData = batchResponse.getData()
 
-        for (const response of Object.values(batchData) as any[]) {
+        for (const response of Object.values(batchData) as RawRecord[]) {
           if (response?.error) {
             continue
           }
@@ -188,11 +213,11 @@ export function useTaskTreeLoader() {
           }
         }
 
-        const chunkResponse = await ($b24 as any).callBatch(batch)
+        const chunkResponse = await client.callBatch(batch)
         const chunkData = chunkResponse.getData()
         const tasksNeedingMore: string[] = []
 
-        for (const [key, response] of Object.entries(chunkData) as Array<[string, any]>) {
+        for (const [key, response] of Object.entries(chunkData) as Array<[string, RawRecord]>) {
           if (response?.error) {
             continue
           }
@@ -208,7 +233,7 @@ export function useTaskTreeLoader() {
             const employeeId = String(item[fieldEmployee] || '')
             const user = usersMap.value[employeeId]
             const employeeName = user ? `${user.NAME || ''} ${user.LAST_NAME || ''}`.trim() : `User ${employeeId}`
-            const date = item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')
+            const date = (item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')) as string
 
             taskItems.push({
               taskId: taskIdValue,
@@ -216,9 +241,9 @@ export function useTaskTreeLoader() {
                 id: itemId,
                 title: item.title || item.TITLE || '',
                 createdTime: item.createdTime,
-                hours: parseFloat(item[fieldHours]) || 0,
+                hours: parseFloat(item[fieldHours] as string) || 0,
                 isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
-                description: item[fieldDescription] || '',
+                description: (item[fieldDescription] || '') as string,
                 employeeId,
                 employeeName,
                 date
@@ -249,7 +274,7 @@ export function useTaskTreeLoader() {
               }
             }
 
-            const extraResponse = await ($b24 as any).callBatch(extraBatch)
+            const extraResponse = await client.callBatch(extraBatch)
             const extraData = extraResponse.getData()
             const extraItems = extractItemList(extraData[`extra_${currentTaskId}_${start}`])
             let newCount = 0
@@ -265,7 +290,7 @@ export function useTaskTreeLoader() {
               const employeeId = String(item[fieldEmployee] || '')
               const user = usersMap.value[employeeId]
               const employeeName = user ? `${user.NAME || ''} ${user.LAST_NAME || ''}`.trim() : `User ${employeeId}`
-              const date = item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')
+              const date = (item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')) as string
 
               taskItems.push({
                 taskId: String(item[fieldTaskId] ?? currentTaskId),
@@ -273,9 +298,9 @@ export function useTaskTreeLoader() {
                   id: itemId,
                   title: item.title || item.TITLE || '',
                   createdTime: item.createdTime,
-                  hours: parseFloat(item[fieldHours]) || 0,
+                  hours: parseFloat(item[fieldHours] as string) || 0,
                   isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
-                  description: item[fieldDescription] || '',
+                  description: (item[fieldDescription] || '') as string,
                   employeeId,
                   employeeName,
                   date
@@ -301,9 +326,9 @@ export function useTaskTreeLoader() {
       }
 
       taskTree.value = roots
-    } catch (caughtError: any) {
+    } catch (caughtError) {
       console.error(caughtError)
-      error.value = caughtError?.message || String(caughtError)
+      error.value = (caughtError as Error)?.message || String(caughtError)
     } finally {
       isLoading.value = false
     }

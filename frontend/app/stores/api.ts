@@ -20,6 +20,7 @@ import type {
   SmartProcessOption,
 } from '~/types/config'
 import type { ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
+import type { InnScanResult, InnApplyItem, InnApplyResult } from '~/types/inn'
 
 type SaveConfigurationResponse = {
   status?: string
@@ -383,6 +384,49 @@ export const useApiStore = defineStore(
       return await runReportRequest<ProjectTaskReportNode[]>('/api/report-project-task-employee', dateFrom, dateTo, empIds, projIds)
     }
 
+    const exportReportProjectTaskEmployee = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<Blob> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
+      return await $api(`/api/report-project-task-employee-export?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        responseType: 'blob'
+      })
+    }
+
+    const scanInnBackfill = async (
+      dateFrom?: string,
+      dateTo?: string,
+      projectIds?: string[]
+    ): Promise<InnScanResult> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+      if (dateTo) params.append('date_to', dateTo)
+      for (const id of projectIds || []) {
+        params.append('project_ids[]', String(id))
+      }
+      return await $api<InnScanResult>(`/api/inn-backfill/scan?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const applyInnBackfill = async (items: InnApplyItem[]): Promise<InnApplyResult> => {
+      return await $api<InnApplyResult>('/api/inn-backfill/apply', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        body: JSON.stringify({ items })
+      })
+    }
+
     const getReportRevenueLeakage = async (
       dateFrom?: string,
       dateTo?: string,
@@ -486,20 +530,26 @@ export const useApiStore = defineStore(
       return response.card || null
     }
 
-    const getFinanceOperations = async (params: {
+    // --- Финансовый функционал (в планах) изолирован ---
+    // Бэкенд-endpoint `/api/finance-operations` отключён (см. backends/python/api/main/urls.py).
+    // Заглушка не выполняет сетевой вызов, чтобы не было битых запросов.
+    // Для восстановления: удалить throw и раскомментировать оригинальное тело ниже.
+    const getFinanceOperations = async (_params: {
       project_item_id?: string | null
       deal_id?: string | null
       limit?: number
     }): Promise<FinanceOperationsResponse> => {
+      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-operations отключён.')
+      /*
       const search = new URLSearchParams()
-      if (params.project_item_id) {
-        search.set('project_item_id', String(params.project_item_id))
+      if (_params.project_item_id) {
+        search.set('project_item_id', String(_params.project_item_id))
       }
-      if (params.deal_id) {
-        search.set('deal_id', String(params.deal_id))
+      if (_params.deal_id) {
+        search.set('deal_id', String(_params.deal_id))
       }
-      if (params.limit && Number(params.limit) > 0) {
-        search.set('limit', String(params.limit))
+      if (_params.limit && Number(_params.limit) > 0) {
+        search.set('limit', String(_params.limit))
       }
 
       const query = search.toString()
@@ -508,19 +558,25 @@ export const useApiStore = defineStore(
           Authorization: `Bearer ${tokenJWT.value}`
         }
       })
+      */
     }
 
-    const createFinanceOperation = async (payload: FinanceOperationCreatePayload): Promise<{
+    // --- Финансовый функционал (в планах) изолирован ---
+    // Бэкенд-endpoint `/api/finance-operations/create` отключён (см. backends/python/api/main/urls.py).
+    // Для восстановления: удалить throw и раскомментировать оригинальное тело ниже.
+    const createFinanceOperation = async (_payload: FinanceOperationCreatePayload): Promise<{
       status: string
       operation?: FinanceOperationRecord
       idempotency_key?: string
     }> => {
+      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-operations/create отключён.')
+      /*
       const result = await $api('/api/finance-operations/create', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(_payload)
       })
       clearCache('project-board', 'homepage-portfolio', 'filter-projects')
       return result as {
@@ -528,6 +584,7 @@ export const useApiStore = defineStore(
         operation?: FinanceOperationRecord
         idempotency_key?: string
       }
+      */
     }
 
     const getHomepagePortfolio = async (forceRefresh = false): Promise<any> => {
@@ -629,18 +686,24 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const runProjectBudgetNotifier = async (payload?: {
+    // --- Финансовый функционал (в планах) изолирован ---
+    // Бэкенд-endpoint `/api/project-budget/notify` отключён (см. backends/python/api/main/urls.py).
+    // В фронте больше не вызывается; заглушка оставлена для лёгкого восстановления.
+    const runProjectBudgetNotifier = async (_payload?: {
       project_ids?: string[]
       project_item_ids?: string[]
     }): Promise<any> => {
+      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/project-budget/notify отключён.')
+      /*
       return await $api('/api/project-budget/notify', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(payload || {})
+        body: JSON.stringify(_payload || {})
       })
+      */
     }
 
     const runProjectSpaBackfill = async (): Promise<any> => {
@@ -767,10 +830,16 @@ export const useApiStore = defineStore(
       })
     }
 
+    // --- Финансовый функционал (в планах) изолирован ---
+    // Бэкенд-endpoint `/api/finance-spa/validation` отключён (см. backends/python/api/main/urls.py).
+    // В фронте больше не вызывается; заглушка оставлена для лёгкого восстановления.
     const getFinanceSpaValidation = async (): Promise<FinanceSpaValidationPayload> => {
+      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-spa/validation отключён.')
+      /*
       return await $api('/api/finance-spa/validation', {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
       })
+      */
     }
 
     const createSmartProcess = async (mappingType: MappingType = 'timesheet'): Promise<SmartProcessCreateResponse> => {
@@ -863,6 +932,9 @@ export const useApiStore = defineStore(
       getReportEmployeeProject,
       getReportProjectEmployee,
       getReportProjectTaskEmployee,
+      exportReportProjectTaskEmployee,
+      scanInnBackfill,
+      applyInnBackfill,
       getReportDailyWorkload,
       getReportRevenueLeakage,
       getReportTimeEntryDiscipline,

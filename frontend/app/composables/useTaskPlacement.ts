@@ -2,13 +2,40 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import type { Ref } from 'vue'
 import { requestIframeAutoHeight, requestIframeFullHeight } from '@/utils/iframe-resizer'
 
+interface PlacementOptions {
+  taskId?: string | number
+  ID?: string | number
+  id?: string | number
+  [key: string]: unknown
+}
+
+interface PlacementInfo {
+  options?: PlacementOptions
+}
+
+interface FrameWithPlacement {
+  placement: {
+    options?: PlacementOptions
+    info: PlacementInfo
+  }
+}
+
+interface BX24Global {
+  placement: {
+    info: () => PlacementInfo | null | undefined
+  }
+  openApplication: (...args: unknown[]) => unknown
+}
+
+type WindowWithBX24 = Window & { BX24: BX24Global }
+
 export function resolveTaskPlacementOptions($b24: B24Frame | null) {
-  const frame = $b24 as any
+  const frame = $b24 as unknown as FrameWithPlacement
   let options = frame?.placement?.options || (frame?.placement?.info && frame.placement.info.options)
 
-  if (!options && typeof window !== 'undefined' && typeof (window as any).BX24 !== 'undefined') {
+  if (!options && typeof window !== 'undefined' && typeof (window as unknown as WindowWithBX24).BX24 !== 'undefined') {
     try {
-      const rawInfo = (window as any).BX24.placement.info()
+      const rawInfo = (window as unknown as WindowWithBX24).BX24.placement.info()
       if (rawInfo) {
         options = rawInfo.options
       }
@@ -28,8 +55,8 @@ export function resolveTaskPlacementId($b24: B24Frame | null) {
 
 export function canOpenNativeApplication() {
   return typeof window !== 'undefined'
-    && typeof (window as any).BX24 !== 'undefined'
-    && typeof (window as any).BX24.openApplication === 'function'
+    && typeof (window as unknown as WindowWithBX24).BX24 !== 'undefined'
+    && typeof (window as unknown as WindowWithBX24).BX24.openApplication === 'function'
 }
 
 export function useIframeResizeOnToggle(source: Ref<boolean>, delayMs = 300) {

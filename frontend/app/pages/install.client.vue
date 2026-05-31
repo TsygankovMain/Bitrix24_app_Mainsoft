@@ -83,40 +83,45 @@ const steps = ref<Record<string, IStep>>({
   //   }
   // },
 
-  userFields: {
-    caption: t('page.install.step.userFields.caption'),
-    action: async () => {
-      const typeId = `project_finance_embed_${import.meta.dev ? 'dev' : 'prod'}`
-      const commonParams = {
-        USER_TYPE_ID: typeId,
-        HANDLER: `${appUrl}/handler/placement-crm-deal-detail-tab`,
-        TITLE: 'Финансы проекта (сделка)',
-        DESCRIPTION: 'Встройка для создания доходов и расходов проекта прямо из сделки',
-        OPTIONS: {
-          height: 640
-        }
-      }
-
-      const exists = (steps.value.init?.data?.userFieldTypeList as { USER_TYPE_ID: string }[]).some(item => item.USER_TYPE_ID === typeId)
-      if (exists) {
-        await $b24.callBatch([
-          {
-            method: 'userfieldtype.update',
-            params: commonParams
-          }
-        ], false)
-
-        return
-      }
-
-      await $b24.callBatch([
-        {
-          method: 'userfieldtype.add',
-          params: commonParams
-        }
-      ], false)
-    }
-  },
+  // --- Финансовый функционал (в планах) изолирован ---
+  // Регистрация встройки `project_finance_embed` (финансовый таб в карточке сделки) отключена,
+  // т.к. бэкенд-эндпоинты finance отключены (см. backends/python/api/main/urls.py).
+  // Страница-обработчик /handler/placement-crm-deal-detail-tab показывает заглушку «в разработке».
+  // Для восстановления: раскомментировать шаг ниже.
+  // userFields: {
+  //   caption: t('page.install.step.userFields.caption'),
+  //   action: async () => {
+  //     const typeId = `project_finance_embed_${import.meta.dev ? 'dev' : 'prod'}`
+  //     const commonParams = {
+  //       USER_TYPE_ID: typeId,
+  //       HANDLER: `${appUrl}/handler/placement-crm-deal-detail-tab`,
+  //       TITLE: 'Финансы проекта (сделка)',
+  //       DESCRIPTION: 'Встройка для создания доходов и расходов проекта прямо из сделки',
+  //       OPTIONS: {
+  //         height: 640
+  //       }
+  //     }
+  //
+  //     const exists = (steps.value.init?.data?.userFieldTypeList as { USER_TYPE_ID: string }[]).some(item => item.USER_TYPE_ID === typeId)
+  //     if (exists) {
+  //       await $b24.callBatch([
+  //         {
+  //           method: 'userfieldtype.update',
+  //           params: commonParams
+  //         }
+  //       ], false)
+  //
+  //       return
+  //     }
+  //
+  //     await $b24.callBatch([
+  //       {
+  //         method: 'userfieldtype.add',
+  //         params: commonParams
+  //       }
+  //     ], false)
+  //   }
+  // },
   // crm: {
   //   caption: t('page.install.step.crm.caption'),
   //   action: async () => {

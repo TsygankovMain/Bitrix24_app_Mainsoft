@@ -45,3 +45,6 @@ index_test.html
 
 # Internal planning docs
 docs/internal/
+
+# Claude Code worktrees (служебное)
+.claude/worktrees/

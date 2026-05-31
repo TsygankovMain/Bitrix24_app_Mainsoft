@@ -20,8 +20,9 @@ urlpatterns = [
     path('api/support/status', views.get_support_status, name='get_support_status'),
     path('api/support/connect', views.connect_support_line, name='connect_support_line'),
     path('api/project-board', views.get_project_board, name='get_project_board'),
-    path('api/finance-operations', views.get_finance_operations, name='get_finance_operations'),
-    path('api/finance-operations/create', views.create_finance_operation, name='create_finance_operation'),
+    # --- Финансовый функционал (в планах) изолирован: views отсутствуют в views.py после merge prod_2026 ---
+    # path('api/finance-operations', views.get_finance_operations, name='get_finance_operations'),
+    # path('api/finance-operations/create', views.create_finance_operation, name='create_finance_operation'),
     path('api/project-board/meta', views.get_project_board_meta, name='get_project_board_meta'),
     path('api/project-board/card', views.get_project_board_card, name='get_project_board_card'),
     path('api/project-board/companies', views.get_project_board_companies, name='get_project_board_companies'),
@@ -32,11 +33,13 @@ urlpatterns = [
     path('api/project-board/update-stage', views.update_project_board_stage, name='update_project_board_stage'),
     path('api/project-board/archive', views.archive_project_board, name='archive_project_board'),
     path('api/project-board/run-daily-check', views.run_project_board_daily_check, name='run_project_board_daily_check'),
-    path('api/project-budget/notify', views.run_project_budget_notifier, name='run_project_budget_notifier'),
+    # Финансовый функционал (в планах) изолирован — view отсутствует:
+    # path('api/project-budget/notify', views.run_project_budget_notifier, name='run_project_budget_notifier'),
     path('api/report-employee-project', views.report_employee_project, name='report_employee_project'),
     path('api/report-project-employee', views.report_project_employee, name='report_project_employee'),
     path('api/report-daily-workload', views.report_daily_workload, name='report_daily_workload'),
     path('api/report-project-task-employee', views.report_project_task_employee, name='report_project_task_employee'),
+    path('api/report-project-task-employee-export', views.report_project_task_employee_export, name='report_project_task_employee_export'),
     path('api/report-revenue-leakage', views.report_revenue_leakage, name='report_revenue_leakage'),
     path('api/report-time-entry-discipline', views.report_time_entry_discipline, name='report_time_entry_discipline'),
     path('api/report-focus-analysis', views.report_focus_analysis, name='report_focus_analysis'),
@@ -46,6 +49,10 @@ urlpatterns = [
     path('api/timesheets', views.timesheet_list, name='list_timesheets'),      # Matches api.ts: /api/timesheets
     path('api/export-raw-data', views.export_raw_data, name='export_raw_data'),
 
+    # ИНН: дозаполнение в карточках списания
+    path('api/inn-backfill/scan', views.inn_backfill_scan, name='inn_backfill_scan'),
+    path('api/inn-backfill/apply', views.inn_backfill_apply, name='inn_backfill_apply'),
+
     # Configuration
     path('api/configuration', views.get_configuration, name='get_configuration'),
     path('api/configuration/save', views.save_configuration, name='save_configuration'),
@@ -53,7 +60,8 @@ urlpatterns = [
     path('api/smart-processes', views.get_smart_processes, name='get_smart_processes'),
     path('api/smart-processes/fields', views.get_sp_fields, name='get_sp_fields'),
     path('api/project-spa/validation', views.get_project_spa_validation, name='get_project_spa_validation'),
-    path('api/finance-spa/validation', views.get_finance_spa_validation, name='get_finance_spa_validation'),
+    # Финансовый функционал (в планах) изолирован — view отсутствует:
+    # path('api/finance-spa/validation', views.get_finance_spa_validation, name='get_finance_spa_validation'),
     path('api/project-spa/stages', views.get_project_spa_stages, name='get_project_spa_stages'),
     path('api/smart-processes/create', views.create_smart_process, name='create_smart_process'),
     path('api/smart-processes/create-fields', views.create_fields, name='create_fields'),

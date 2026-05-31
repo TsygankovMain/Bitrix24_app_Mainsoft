@@ -5,7 +5,7 @@
  * @param itemId - Item ID (id_elem from normalized data)
  */
 export function openCrmItemCard(entityTypeId: number | string, itemId: number | string) {
-    const BX24 = (window as any).BX24
+    const BX24 = (window as Window & { BX24?: { openPath: (path: string) => void } }).BX24
     const path = `/crm/type/${entityTypeId}/details/${itemId}/`
 
     if (typeof BX24 !== 'undefined') {

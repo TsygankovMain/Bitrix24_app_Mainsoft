@@ -39,6 +39,8 @@ from .report_queries import (
     materialize_rows,
     resolve_project_name_for_row,
 )
+from .report_excel import build_project_task_workbook
+from .inn_backfill_service import InnBackfillService
 
 __all__ = [
     "root",
@@ -69,6 +71,9 @@ __all__ = [
     "report_project_employee",
     "report_daily_workload",
     "report_project_task_employee",
+    "report_project_task_employee_export",
+    "inn_backfill_scan",
+    "inn_backfill_apply",
     "report_revenue_leakage",
     "report_time_entry_discipline",
     "report_focus_analysis",
@@ -899,6 +904,39 @@ def report_project_task_employee(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @require_GET
+@log_errors("report_project_task_employee_export")
+@auth_required
+def report_project_task_employee_export(request: AuthorizedRequest):
+    """Excel-выгрузка отчёта «Учет по проектам/задачам» с сохранением иерархии."""
+    queryset = _get_filtered_timesheet_queryset(request)
+    rows = materialize_rows(queryset, TREE_REPORT_FIELDS)
+    user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
+    user_map = _get_user_map(request, user_ids)
+    project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    items = build_tree_report_items(
+        rows,
+        include_task_id=True,
+        project_name_by_item=project_name_by_item,
+        project_name_by_group=project_name_by_group,
+    )
+    report = ReportService().generate_project_task_employees(items, user_map)
+
+    date_from = request.GET.get("date_from") or ""
+    date_to = request.GET.get("date_to") or ""
+    output = build_project_task_workbook(report, date_from=date_from, date_to=date_to)
+
+    suffix = f"_{date_from}_{date_to}".strip("_")
+    filename = f"report_project_task{('_' + suffix) if suffix else ''}.xlsx".replace("__", "_")
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@xframe_options_exempt
+@require_GET
 @log_errors("report_revenue_leakage")
 @auth_required
 def report_revenue_leakage(request: AuthorizedRequest):
@@ -1471,6 +1509,50 @@ def get_system_logs(request: AuthorizedRequest):
         "page": page_obj.number,
         "pages": paginator.num_pages,
     })
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("inn_backfill_scan")
+@auth_required
+def inn_backfill_scan(request: AuthorizedRequest):
+    """Поиск карточек списания без ИНН за период + предлагаемые значения из проекта."""
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    service = InnBackfillService(request.bitrix24_account.client, request.bitrix24_account, config)
+    err = service.ensure_inn_fields()
+    if err:
+        return JsonResponse({"error": err}, status=400)
+    date_from = request.GET.get("date_from", "")
+    date_to = request.GET.get("date_to", "")
+    project_ids = request.GET.getlist("project_ids[]")
+    result = service.scan(date_from, date_to, project_ids)
+    return JsonResponse(result, safe=False)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("inn_backfill_apply")
+@auth_required
+def inn_backfill_apply(request: AuthorizedRequest):
+    """Запись ИНН в поля OUR_INN/CLIENT_INN выбранных карточек списания (crm.item.update)."""
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    items = body.get("items", [])
+    if not isinstance(items, list) or not items:
+        return JsonResponse({"error": "Не переданы карточки для простановки"}, status=400)
+    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
+    config = config_service.get_configuration_sync()
+    service = InnBackfillService(request.bitrix24_account.client, request.bitrix24_account, config)
+    err = service.ensure_inn_fields()
+    if err:
+        return JsonResponse({"error": err}, status=400)
+    result = service.apply(items)
+    return JsonResponse(result, safe=False)
+
 
 @xframe_options_exempt
 @csrf_exempt

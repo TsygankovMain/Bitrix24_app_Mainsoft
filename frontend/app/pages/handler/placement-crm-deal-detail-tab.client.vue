@@ -18,6 +18,12 @@ const apiStore = useApiStore()
 
 let $b24: null | B24Frame = null
 
+// --- Финансовый функционал (в планах) изолирован ---
+// Бэкенд-эндпоинты finance отключены (см. backends/python/api/main/urls.py).
+// Пока флаг === false, страница не делает finance-вызовов и показывает заглушку «в разработке».
+// Для восстановления: выставить FINANCE_FEATURE_ENABLED = true (и вернуть регистрацию встройки в install.client.vue).
+const FINANCE_FEATURE_ENABLED = false
+
 const isInit = ref(false)
 const isLoading = ref(false)
 const isSaving = ref(false)
@@ -191,6 +197,16 @@ onMounted(async () => {
   try {
     $b24 = await $initializeB24Frame()
     await initApp($b24, localesI18n, setLocale)
+
+    // --- Финансовый функционал (в планах) изолирован ---
+    // Не выполняем finance-вызовы к отключённым эндпоинтам — показываем заглушку
+    // (рендерится по `v-if="!FINANCE_FEATURE_ENABLED"`).
+    if (!FINANCE_FEATURE_ENABLED) {
+      isInit.value = true
+      await fitIframeHeight()
+      return
+    }
+
     dealId.value = extractDealIdFromPlacement($b24)
     const configuration = await apiStore.getConfiguration()
     projectSpaEntityTypeId.value = Number(configuration?.project_sp_entity_type_id || 0)
@@ -219,6 +235,19 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-4">
+    <!-- --- Финансовый функционал (в планах) изолирован: заглушка «в разработке» (битых finance-вызовов нет) --- -->
+    <B24Card v-if="!FINANCE_FEATURE_ENABLED" title="Финансы проекта" variant="line">
+      <template #body>
+        <div class="py-6 text-sm">
+          <p class="font-semibold text-slate-800">Функционал в разработке</p>
+          <p class="mt-1 text-slate-500">
+            Финансовые операции по сделке появятся в одном из ближайших обновлений. Раздел временно недоступен.
+          </p>
+        </div>
+      </template>
+    </B24Card>
+
+    <template v-else>
     <B24Card title="Финоперации по сделке" variant="line">
       <template #body>
         <div v-if="isLoading && !isInit" class="py-6 text-sm text-slate-500">
@@ -369,5 +398,6 @@ onUnmounted(() => {
         </div>
       </template>
     </B24Card>
+    </template>
   </div>
 </template>

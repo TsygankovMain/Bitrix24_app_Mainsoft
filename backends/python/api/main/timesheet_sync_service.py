@@ -80,6 +80,7 @@ class TimesheetSyncService:
         limit = 50
         total_fetched = 0
         all_bitrix_ids = set()
+        all_new_cards: List[Dict[str, Any]] = []
 
         while True:
             try:
@@ -107,7 +108,8 @@ class TimesheetSyncService:
                     except (TypeError, ValueError, KeyError):
                         continue
 
-                self._save_batch(normalized_items)
+                new_cards = self._save_batch(normalized_items)
+                all_new_cards.extend(new_cards)
 
                 count = len(items)
                 total_fetched += count
@@ -131,11 +133,25 @@ class TimesheetSyncService:
             if deleted_count > 0:
                 logger.info("Deleted %s orphaned records", deleted_count)
 
+        self._autofill_inn(all_new_cards)
+
         logger.info("Sync complete. Total items: %s", total_fetched)
         return total_fetched
 
+    def _autofill_inn(self, new_cards: List[Dict[str, Any]]) -> None:
+        """Авто-простановка ИНН в новые карточки списания. Изолировано: ошибки не валят синк."""
+        if not new_cards:
+            return
+        try:
+            from .inn_backfill_service import InnBackfillService
+            service = InnBackfillService(self.client, self.account, self.config)
+            summary = service.autofill(new_cards)
+            logger.info("INN autofill after sync: %s", summary)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("INN autofill failed (sync not affected): %s", exc)
+
     @transaction.atomic
-    def _save_batch(self, normalized_items: List[Dict[str, Any]]) -> None:
+    def _save_batch(self, normalized_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         prepared_items: List[tuple[int, Dict[str, Any]]] = []
         bitrix_ids: List[int] = []
 
@@ -173,7 +189,7 @@ class TimesheetSyncService:
                 logger.error("Error saving item %s: %s", item.get("id_elem"), exc)
 
         if not prepared_items:
-            return
+            return []
 
         now = timezone.now()
         existing_items = {
@@ -218,6 +234,16 @@ class TimesheetSyncService:
                 self.UPSERT_FIELDS,
                 batch_size=self.BULK_BATCH_SIZE,
             )
+
+        # Новые карточки — для авто-простановки ИНН после синка
+        return [
+            {
+                "bitrix_id": obj.bitrix_id,
+                "project_id": obj.project_id,
+                "project_item_id": obj.project_item_id,
+            }
+            for obj in to_create
+        ]
 
     @staticmethod
     def _extract_items(response: Dict[str, Any]) -> List[Dict[str, Any]]:

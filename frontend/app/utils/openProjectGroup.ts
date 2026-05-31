@@ -5,7 +5,7 @@ export function openProjectGroup(projectId?: string | number | null) {
   }
 
   const path = `/workgroups/group/${normalizedProjectId}/`
-  const bx24 = (window as any)?.BX24
+  const bx24 = (window as Window & { BX24?: { openPath?: (path: string) => void } })?.BX24
 
   if (typeof bx24?.openPath === 'function') {
     bx24.openPath(path)
