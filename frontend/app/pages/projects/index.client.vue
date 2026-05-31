@@ -2,6 +2,7 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref } from 'vue'
 import SearchableSelect from '~/components/common/SearchableSelect.vue'
+import { useProgress } from '~/composables/useProgress'
 import ProjectBoardColumn from '~/components/projects/ProjectBoardColumn.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import ProjectTimelineLane from '~/components/projects/ProjectTimelineLane.vue'
@@ -24,6 +25,7 @@ useHead({
 
 const { initApp, processErrorGlobal } = useAppInit('ProjectBoardPage')
 const { $initializeB24Frame } = useNuxtApp()
+const progress = useProgress()
 
 let $b24: null | B24Frame = null
 
@@ -395,6 +397,7 @@ async function refreshReferenceOptions(showToast = true) {
 }
 
 async function syncBoard(showToast = true) {
+  progress.begin('Синхронизация проектов…')
   isSyncing.value = true
   try {
     const result = await apiStore.syncProjectCards()
@@ -421,6 +424,7 @@ async function syncBoard(showToast = true) {
     processErrorGlobal(error)
   } finally {
     isSyncing.value = false
+    progress.end()
   }
 }
 

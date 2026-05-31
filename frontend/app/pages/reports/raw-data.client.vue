@@ -4,6 +4,7 @@ import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import InnBackfillPanel from '../../components/reports/InnBackfillPanel.vue'
 import ProgressOverlay from '../../components/common/ProgressOverlay.vue'
+import { useProgress } from '~/composables/useProgress'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -17,6 +18,7 @@ const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
+const progress = useProgress()
 // endregion ////
 
 const { contextId, isLoading: isLoadingState, load } = useDashboard({ isLoading: ref(false), load: () => {} })
@@ -193,6 +195,7 @@ async function resetFilter() {
 
 
 async function handleSync() {
+    progress.begin('Синхронизация с Bitrix24…')
     isSyncing.value = true
     try {
         const result = await apiStore.syncTimesheets()
@@ -202,6 +205,7 @@ async function handleSync() {
          processErrorGlobal(e)
     } finally {
         isSyncing.value = false
+        progress.end()
     }
 }
 
