@@ -41,12 +41,16 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
     let fetchMs = 0
 
     try {
+      const reportTitle = config.reportName ? `Отчёт «${config.reportName}»` : 'Отчёт'
+      const willSync = config.syncTimesheets !== false
+
+      // Этап 1: синхронизация (если включена). Иначе сразу формирование — одним шагом.
       progress.begin(
-        config.reportName ? `Отчёт «${config.reportName}»: формирование…` : 'Формирование отчёта…',
+        willSync ? `${reportTitle} · шаг 1 из 2: синхронизация` : `${reportTitle}: формирование…`,
         0,
-        'Собираем данные из Bitrix24'
+        willSync ? 'Забираем свежие данные из Bitrix24' : 'Считаем таблицы и итоги'
       )
-      if (config.syncTimesheets !== false) {
+      if (willSync) {
         const syncStart = perfEnabled ? performance.now() : 0
         try {
           await apiStore.syncTimesheets()
@@ -61,6 +65,8 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
             syncMs = performance.now() - syncStart
           }
         }
+        // Этап 2: формирование отчёта
+        progress.stage(`${reportTitle} · шаг 2 из 2: формирование`, 'Считаем таблицы и итоги')
       }
 
       const fetchStart = perfEnabled ? performance.now() : 0

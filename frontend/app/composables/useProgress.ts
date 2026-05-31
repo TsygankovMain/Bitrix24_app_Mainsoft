@@ -21,6 +21,11 @@ export function useProgress() {
     state.done = done
     if (total !== undefined) state.total = total
   }
+  // Сменить надпись/подсказку этапа внутри уже идущей операции (счётчик и режим полосы не трогаем)
+  function stage(title: string, hint?: string) {
+    state.title = title
+    if (hint !== undefined) state.hint = hint
+  }
   function end() {
     state.count = Math.max(0, state.count - 1)
     if (state.count === 0) {
@@ -31,5 +36,5 @@ export function useProgress() {
     }
   }
   const active = computed(() => state.count > 0)
-  return { state, active, begin, update, end }
+  return { state, active, begin, update, stage, end }
 }
