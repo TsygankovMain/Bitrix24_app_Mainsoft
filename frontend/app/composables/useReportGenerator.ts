@@ -32,7 +32,6 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
   const syncWarning = ref('')
 
   async function generateReport<T>(config: GenerateReportOptions<T>) {
-    progress.begin('Формирование отчёта…')
     options.setLoading?.(true)
     syncWarning.value = ''
 
@@ -42,6 +41,7 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
     let fetchMs = 0
 
     try {
+      progress.begin('Формирование отчёта…')
       if (config.syncTimesheets !== false) {
         const syncStart = perfEnabled ? performance.now() : 0
         try {

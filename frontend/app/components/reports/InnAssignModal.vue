@@ -34,22 +34,26 @@ async function apply() {
       props.projectId, props.dateFrom, props.dateTo, localOur.value.trim(), localClient.value.trim(), overwrite.value
     )
     const items: InnApplyItem[] = resolved.items
-    if (!items.length) { error.value = 'Нет карточек для применения'; applying.value = false; return }
+    if (!items.length) { error.value = 'Нет карточек для применения'; return }
     const CHUNK = 25
     let updated = 0
+    // begin/end строго парные: end() только после успешного begin()
     globalProgress.begin('Простановка ИНН…', items.length)
-    for (let i = 0; i < items.length; i += CHUNK) {
-      const res = await apiStore.applyInnBackfill(items.slice(i, i + CHUNK))
-      updated += res.updated
-      globalProgress.update(Math.min(i + CHUNK, items.length))
+    try {
+      for (let i = 0; i < items.length; i += CHUNK) {
+        const res = await apiStore.applyInnBackfill(items.slice(i, i + CHUNK))
+        updated += res.updated
+        globalProgress.update(Math.min(i + CHUNK, items.length))
+      }
+      emit('applied', updated)
+      emit('close')
+    } finally {
+      globalProgress.end()
     }
-    emit('applied', updated)
-    emit('close')
   } catch (e: any) {
     error.value = e?.data?.error || e?.message || 'Ошибка применения'
   } finally {
     applying.value = false
-    globalProgress.end()
   }
 }
 </script>
