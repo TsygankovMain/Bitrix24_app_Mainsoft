@@ -1,3 +1,5 @@
+import { useProgress } from '~/composables/useProgress'
+
 interface UseReportGeneratorOptions {
   setLoading?: (value: boolean) => void
   onError?: (error: unknown) => void
@@ -24,11 +26,13 @@ function isPerfLoggingEnabled(): boolean {
 
 export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
   const apiStore = useApiStore()
+  const progress = useProgress()
 
   const hasGenerated = ref(false)
   const syncWarning = ref('')
 
   async function generateReport<T>(config: GenerateReportOptions<T>) {
+    progress.begin('Формирование отчёта…')
     options.setLoading?.(true)
     syncWarning.value = ''
 
@@ -77,6 +81,7 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
         })
       }
       options.setLoading?.(false)
+      progress.end()
     }
   }
 
