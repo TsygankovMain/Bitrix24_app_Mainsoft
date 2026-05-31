@@ -5,7 +5,6 @@ import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
-import { exportRowsToXlsx } from '~/utils/exportXlsx'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import type { RevenueLeakageReport } from '~/types/report'
@@ -98,21 +97,34 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-  if (!reportData.value) return
-
-  await exportRowsToXlsx({
-    rows: reportData.value.risk_rows.map((row: any) => ({
-      'Проект': row.project_name,
-      'Сотрудник': row.employee_name,
-      'Всего часов': row.total_hours,
-      'Учтено': row.billable_hours,
-      'Не учтено': row.non_billable_hours,
-      'Доля потерь %': row.loss_rate,
-    })),
-    sheetName: 'Потери выручки',
-    fileName: `Report_Revenue_Leakage_${dateFrom.value}_${dateTo.value}.xlsx`,
-    columnWidths: [28, 24, 14, 14, 16, 12]
-  })
+  try {
+    const blob = await apiStore.exportReportRevenueLeakage(
+      dateFrom.value,
+      dateTo.value,
+      employeeFilter.value,
+      projectFilter.value
+    )
+    if (blob.type && blob.type.includes('application/json')) {
+      const text = await blob.text()
+      let message = 'Не удалось сформировать файл'
+      try {
+        message = JSON.parse(text).error || message
+      } catch {
+        // оставляем дефолтное сообщение
+      }
+      throw new Error(message)
+    }
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Report_Revenue_Leakage_${dateFrom.value}_${dateTo.value}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    processErrorGlobal(e)
+  }
 }
 
 onMounted(async () => {

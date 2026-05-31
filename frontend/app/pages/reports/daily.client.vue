@@ -4,7 +4,6 @@ import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
-import { exportDailyWorkloadToXlsx } from '~/utils/reportExport'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import type { DailyWorkloadReport } from '~/types/report'
@@ -110,14 +109,34 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-    if (!hasRenderableReport.value) return;
-    if (!reportData.value) return
-
-    await exportDailyWorkloadToXlsx({
-        report: reportData.value,
-        sheetName: 'Ежедневная нагрузка',
-        fileName: `Report_Daily_${dateFrom.value}_${dateTo.value}.xlsx`
-    })
+    try {
+        const blob = await apiStore.exportReportDailyWorkload(
+            dateFrom.value,
+            dateTo.value,
+            employeeFilter.value,
+            projectFilter.value
+        )
+        if (blob.type && blob.type.includes('application/json')) {
+            const text = await blob.text()
+            let message = 'Не удалось сформировать файл'
+            try {
+                message = JSON.parse(text).error || message
+            } catch {
+                // оставляем дефолтное сообщение
+            }
+            throw new Error(message)
+        }
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `Report_Daily_${dateFrom.value}_${dateTo.value}.xlsx`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(url)
+    } catch (e) {
+        processErrorGlobal(e)
+    }
 }
 
 function openDetail(employeeName: string, date: string, items: any[]) {

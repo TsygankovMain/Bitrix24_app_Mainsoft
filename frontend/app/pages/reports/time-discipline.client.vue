@@ -5,7 +5,6 @@ import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
-import { exportRowsToXlsx } from '~/utils/exportXlsx'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import type { TimeEntryDisciplineReport } from '~/types/report'
@@ -96,23 +95,34 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-  if (!reportData.value) return
-
-  await exportRowsToXlsx({
-    rows: reportData.value.employee_rows.map((row: any) => ({
-      'Сотрудник': row.employee_name,
-      'Записей': row.entry_count,
-      'День-в-день %': `${(row.same_day_share * 100).toFixed(1)}%`,
-      'Средний лаг': row.avg_lag_days,
-      'Поздние записи (2+д)': row.late_entries,
-      'Макс. лаг': row.max_lag_days,
-      'Последняя поздняя запись': row.last_late_entry_date || '',
-      'Риск': row.risk_level,
-    })),
-    sheetName: 'Дисциплина времени',
-    fileName: `Report_Time_Discipline_${dateFrom.value}_${dateTo.value}.xlsx`,
-    columnWidths: [24, 10, 12, 14, 18, 12, 22, 12]
-  })
+  try {
+    const blob = await apiStore.exportReportTimeEntryDiscipline(
+      dateFrom.value,
+      dateTo.value,
+      employeeFilter.value,
+      projectFilter.value
+    )
+    if (blob.type && blob.type.includes('application/json')) {
+      const text = await blob.text()
+      let message = 'Не удалось сформировать файл'
+      try {
+        message = JSON.parse(text).error || message
+      } catch {
+        // оставляем дефолтное сообщение
+      }
+      throw new Error(message)
+    }
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Report_Time_Discipline_${dateFrom.value}_${dateTo.value}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    processErrorGlobal(e)
+  }
 }
 
 onMounted(async () => {

@@ -5,7 +5,6 @@ import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
-import { exportRowsToXlsx } from '~/utils/exportXlsx'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import type { FocusAnalysisReport } from '~/types/report'
@@ -116,24 +115,34 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-  if (!reportData.value) return
-
-  await exportRowsToXlsx({
-    rows: reportData.value.employee_rows.map((row: any) => ({
-      'Сотрудник': row.employee_name,
-      'Проектов': row.project_count,
-      'Задач': row.task_count,
-      'Записей': row.entry_count,
-      'Всего часов': row.total_hours,
-      'Ср. запись': row.avg_entry_hours,
-      'Индекс фокуса': row.focus_index,
-      'Часы в top-1 проекте': row.top_project_hours,
-      'Риск': row.risk_level,
-    })),
-    sheetName: 'Фокус и распыление',
-    fileName: `Report_Focus_Analysis_${dateFrom.value}_${dateTo.value}.xlsx`,
-    columnWidths: [24, 10, 10, 10, 12, 12, 12, 16, 12]
-  })
+  try {
+    const blob = await apiStore.exportReportFocusAnalysis(
+      dateFrom.value,
+      dateTo.value,
+      employeeFilter.value,
+      projectFilter.value
+    )
+    if (blob.type && blob.type.includes('application/json')) {
+      const text = await blob.text()
+      let message = 'Не удалось сформировать файл'
+      try {
+        message = JSON.parse(text).error || message
+      } catch {
+        // оставляем дефолтное сообщение
+      }
+      throw new Error(message)
+    }
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Report_Focus_Analysis_${dateFrom.value}_${dateTo.value}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    processErrorGlobal(e)
+  }
 }
 
 onMounted(async () => {

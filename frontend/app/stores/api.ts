@@ -399,6 +399,96 @@ export const useApiStore = defineStore(
       })
     }
 
+    const exportReportEmployeeProject = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<Blob> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
+      return await $api(`/api/report-employee-project-export?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        responseType: 'blob'
+      })
+    }
+
+    const exportReportProjectEmployee = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<Blob> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
+      return await $api(`/api/report-project-employee-export?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        responseType: 'blob'
+      })
+    }
+
+    const exportReportDailyWorkload = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<Blob> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
+      return await $api(`/api/report-daily-workload-export?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        responseType: 'blob'
+      })
+    }
+
+    const exportReportRevenueLeakage = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<Blob> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
+      return await $api(`/api/report-revenue-leakage-export?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        responseType: 'blob'
+      })
+    }
+
+    const exportReportTimeEntryDiscipline = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<Blob> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
+      return await $api(`/api/report-time-entry-discipline-export?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        responseType: 'blob'
+      })
+    }
+
+    const exportReportFocusAnalysis = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<Blob> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
+      return await $api(`/api/report-focus-analysis-export?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        responseType: 'blob'
+      })
+    }
+
     const scanInnBackfill = async (
       dateFrom?: string,
       dateTo?: string,
@@ -950,6 +1040,12 @@ export const useApiStore = defineStore(
       getReportProjectEmployee,
       getReportProjectTaskEmployee,
       exportReportProjectTaskEmployee,
+      exportReportEmployeeProject,
+      exportReportProjectEmployee,
+      exportReportDailyWorkload,
+      exportReportRevenueLeakage,
+      exportReportTimeEntryDiscipline,
+      exportReportFocusAnalysis,
       scanInnBackfill,
       applyInnBackfill,
       resolveInnProjectItems,

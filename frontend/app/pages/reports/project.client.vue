@@ -6,7 +6,6 @@ import ProjectEmployeeTable from '../../components/reports/ProjectEmployeeTable.
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import { readProjectReportPreset } from '~/utils/reportNavigation'
-import { exportHierarchyReportToXlsx } from '~/utils/reportExport'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import type { HierarchicalReportNode } from '~/types/report'
@@ -99,11 +98,34 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
-    await exportHierarchyReportToXlsx({
-        rows: reportData.value,
-        sheetName: 'Отчет по проектам',
-        fileName: `Report_Projects_${dateFrom.value}_${dateTo.value}.xlsx`
-    })
+    try {
+        const blob = await apiStore.exportReportProjectEmployee(
+            dateFrom.value,
+            dateTo.value,
+            employeeFilter.value,
+            projectFilter.value
+        )
+        if (blob.type && blob.type.includes('application/json')) {
+            const text = await blob.text()
+            let message = 'Не удалось сформировать файл'
+            try {
+                message = JSON.parse(text).error || message
+            } catch {
+                // оставляем дефолтное сообщение
+            }
+            throw new Error(message)
+        }
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `Report_Projects_${dateFrom.value}_${dateTo.value}.xlsx`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(url)
+    } catch (e) {
+        processErrorGlobal(e)
+    }
 }
 
 // region Lifecycle Hooks ////
