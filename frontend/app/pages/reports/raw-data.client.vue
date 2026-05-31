@@ -3,7 +3,6 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import InnBackfillPanel from '../../components/reports/InnBackfillPanel.vue'
-import ProgressOverlay from '../../components/common/ProgressOverlay.vue'
 import { useProgress } from '~/composables/useProgress'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
@@ -150,9 +149,10 @@ const handleExport = async () => {
     }
     
     isExporting.value = true
+    progress.begin('Формирование Excel…')
     try {
         const blob = await apiStore.exportRawData(dateFrom.value, dateTo.value, dateType.value, selectedFields.value)
-        
+
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
@@ -161,11 +161,12 @@ const handleExport = async () => {
         a.click()
         document.body.removeChild(a)
         window.URL.revokeObjectURL(url)
-        
+
     } catch (e: any) {
         processErrorGlobal(e)
     } finally {
         isExporting.value = false
+        progress.end()
     }
 }
 
@@ -456,8 +457,6 @@ onMounted(async () => {
             <InnBackfillPanel />
           </div>
       </B24Card>
-      <ProgressOverlay :visible="isSyncing" title="Синхронизация с Bitrix24…" />
-      <ProgressOverlay :visible="isExporting" title="Формирование Excel…" />
     </div>
   </div>
 </template>

@@ -7,7 +7,7 @@ import { useReportFilters } from '~/composables/useReportFilters'
 import { formatReportDate } from '~/utils/reportFormat'
 import type { InnScanResult, InnBackfillRow, InnBackfillGroup, InnApplyItem } from '~/types/inn'
 import InnAssignModal from './InnAssignModal.vue'
-import ProgressOverlay from '../common/ProgressOverlay.vue'
+import { useProgress } from '~/composables/useProgress'
 
 const apiStore = useApiStore()
 
@@ -22,7 +22,7 @@ const {
 
 // Простановка идёт чанками, чтобы не упереться в таймаут на больших объёмах
 const CHUNK = 25
-const progress = ref({ done: 0, total: 0 })
+const globalProgress = useProgress()
 
 const result = ref<InnScanResult | null>(null)
 const loading = ref(false)
@@ -120,14 +120,14 @@ async function applyItems(items: InnApplyItem[]) {
   message.value = ''
   let updated = 0
   let failedCount = 0
-  progress.value = { done: 0, total: payload.length }
+  globalProgress.begin('Простановка ИНН…', payload.length)
   try {
     for (let i = 0; i < payload.length; i += CHUNK) {
       const chunk = payload.slice(i, i + CHUNK)
       const res = await apiStore.applyInnBackfill(chunk)
       updated += res.updated
       failedCount += res.failed.length
-      progress.value = { done: Math.min(i + CHUNK, payload.length), total: payload.length }
+      globalProgress.update(Math.min(i + CHUNK, payload.length))
     }
     message.value = `Проставлено: ${updated}` + (failedCount ? `, ошибок: ${failedCount}` : '')
     await runScan()
@@ -135,7 +135,7 @@ async function applyItems(items: InnApplyItem[]) {
     errorMessage.value = e?.data?.error || e?.message || 'Ошибка при простановке ИНН'
   } finally {
     applying.value = false
-    progress.value = { done: 0, total: 0 }
+    globalProgress.end()
   }
 }
 
@@ -331,7 +331,6 @@ onMounted(async () => {
     <!-- Начальное состояние -->
     <div v-else class="ms-empty-state">Выберите период и нажмите «Найти»</div>
 
-    <ProgressOverlay :visible="applying" title="Простановка ИНН…" :done="progress.done" :total="progress.total" />
     <InnAssignModal
       :visible="modal.open"
       :project-id="modal.projectId"

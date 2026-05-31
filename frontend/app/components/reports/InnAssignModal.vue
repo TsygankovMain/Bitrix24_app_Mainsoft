@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import ProgressOverlay from '../common/ProgressOverlay.vue'
 import type { InnApplyItem } from '~/types/inn'
+import { useProgress } from '~/composables/useProgress'
 
 const props = defineProps<{
   visible: boolean
@@ -15,11 +15,11 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'close'): void; (e: 'applied', updated: number): void }>()
 
 const apiStore = useApiStore()
+const globalProgress = useProgress()
 const localOur = ref('')
 const localClient = ref('')
 const overwrite = ref(false)
 const applying = ref(false)
-const progress = ref({ done: 0, total: 0 })
 const error = ref('')
 
 watch(() => props.visible, (v) => {
@@ -37,11 +37,11 @@ async function apply() {
     if (!items.length) { error.value = 'Нет карточек для применения'; applying.value = false; return }
     const CHUNK = 25
     let updated = 0
-    progress.value = { done: 0, total: items.length }
+    globalProgress.begin('Простановка ИНН…', items.length)
     for (let i = 0; i < items.length; i += CHUNK) {
       const res = await apiStore.applyInnBackfill(items.slice(i, i + CHUNK))
       updated += res.updated
-      progress.value = { done: Math.min(i + CHUNK, items.length), total: items.length }
+      globalProgress.update(Math.min(i + CHUNK, items.length))
     }
     emit('applied', updated)
     emit('close')
@@ -49,7 +49,7 @@ async function apply() {
     error.value = e?.data?.error || e?.message || 'Ошибка применения'
   } finally {
     applying.value = false
-    progress.value = { done: 0, total: 0 }
+    globalProgress.end()
   }
 }
 </script>
@@ -75,6 +75,5 @@ async function apply() {
         </div>
       </div>
     </div>
-    <ProgressOverlay :visible="applying" title="Простановка ИНН…" :done="progress.done" :total="progress.total" />
   </Teleport>
 </template>
