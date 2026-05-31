@@ -50,6 +50,14 @@
             </p>
             <B24Button class="mt-4" label="Диагностика системы" color="default" @click="router.push('/settings/debug')" />
           </div>
+
+          <div class="ms-panel">
+            <h3 class="text-base font-semibold text-slate-900">Проекты</h3>
+            <p class="mt-2 text-sm text-slate-500">
+            Проверка заполненности данных проектов для ИНН.
+            </p>
+            <B24Button class="mt-4" label="Незаполненные проекты" color="default" @click="router.push('/settings/projects-health')" />
+          </div>
         </div>
 
         <div class="ms-panel">

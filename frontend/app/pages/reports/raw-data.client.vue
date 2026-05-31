@@ -3,6 +3,7 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import InnBackfillPanel from '../../components/reports/InnBackfillPanel.vue'
+import ProgressOverlay from '../../components/common/ProgressOverlay.vue'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -277,7 +278,7 @@ onMounted(async () => {
                   <ProseH2 class="!text-slate-900">Проверка данных</ProseH2>
                   <p class="mt-1 text-sm text-slate-500">Локальная база, ручная синхронизация и Excel-выгрузка по выбранным полям.</p>
                 </div>
-                <div class="flex gap-2 items-center">
+                <div v-if="activeTab === 'export'" class="flex gap-2 items-center">
                     <B24Button label="Синхронизировать с Б24" @click="handleSync" :loading="isSyncing" color="success" class="mr-2" />
                     <B24Button label="Обновить" @click="() => fetchTimesheetList(itemsPage)" loading-auto />
                 </div>
@@ -451,6 +452,8 @@ onMounted(async () => {
             <InnBackfillPanel />
           </div>
       </B24Card>
+      <ProgressOverlay :visible="isSyncing" title="Синхронизация с Bitrix24…" />
+      <ProgressOverlay :visible="isExporting" title="Формирование Excel…" />
     </div>
   </div>
 </template>
