@@ -41,13 +41,31 @@ docker build \
 - `JWT_SECRET`
 - `DB_*`
 
-### 4. Release step
+### 4. Release step — миграции БД (ОБЯЗАТЕЛЬНО)
 
-До старта контейнера:
+> ⚠️ `start.sh` **намеренно НЕ запускает миграции** при старте контейнера (`Skipping automatic migrations at runtime`). Их нужно прогнать **вручную как релизный шаг** — иначе после деплоя кода с новыми полями БД будет без колонок → **500 на каждом запросе к моделям** (`TimesheetItem`/`ProjectCard`).
 
 ```bash
+# 1. Сначала проверить состояние
+python manage.py showmigrations main
+
+# 2. Применить
 python manage.py migrate --noinput
 ```
+
+**Если `migrate` падает с `DuplicateColumn: column ... already exists`** — это расхождение лайнеджей миграций (схема уже содержит колонку, которую миграция пытается добавить; типично после merge ветки с другой историей миграций). Порядок реконсиляции:
+
+```bash
+# узнать, какие колонки уже есть
+python manage.py shell -c "from django.db import connection; c=connection.cursor(); c.execute(\"SELECT table_name||'.'||column_name FROM information_schema.columns WHERE table_name='timesheet_item'\"); print([r[0] for r in c.fetchall()])"
+
+# миграцию, чьи колонки УЖЕ существуют → пометить применённой без SQL:
+python manage.py migrate main <NNNN_name> --fake
+# миграции с НЕДОСТАЮЩИМИ колонками → применить обычно:
+python manage.py migrate main
+```
+
+После — `showmigrations main` должен показать все `[X]`.
 
 ### 5. Bitrix24 setup
 

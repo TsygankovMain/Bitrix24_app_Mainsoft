@@ -18,6 +18,7 @@
 | [architecture/feature-map.md](./architecture/feature-map.md) | Карта «фича → файлы кода» |
 | [TECHNICAL_DOCUMENTATION.md](./TECHNICAL_DOCUMENTATION.md) | Техническая документация |
 | [CHANGELOG.md](./CHANGELOG.md) | Технический лог изменений |
+| [BACKLOG.md](./BACKLOG.md) | Идеи и задачи на будущее |
 | [LOCAL_DEV_TROUBLESHOOTING.md](./LOCAL_DEV_TROUBLESHOOTING.md) | Локальная разработка, типовые проблемы |
 | [../DEPLOY_README.md](../DEPLOY_README.md) | Деплой |
 | [../CLAUDE.md](../CLAUDE.md) | Навигация по проекту, команды, скиллы |

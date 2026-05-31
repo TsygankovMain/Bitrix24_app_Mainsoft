@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+### Hotfix (prod) — реконсиляция миграций после деплоя — 2026-05-31
+
+#### Fixed
+- **Прод: 500 на всех запросах к `TimesheetItem`/`ProjectCard`** (`report-project-task-employee`, `timesheets` и др.). Причина: после деплоя merged `prod_2026` БД не была мигрирована (`start.sh` намеренно пропускает `migrate`). Миграции `0009–0011` пришли с merge, при этом схема прода уже содержала `project_item_id` (расхождение лайнеджей миграций dev/prod) → `migrate` падал с `DuplicateColumn`.
+- **Реконсиляция:** `migrate main 0009 --fake` (колонки `project_item_id` уже были) + `migrate main` (применены `0010` → `project_card.project_type/budget_mode/planned_budget_amount`, `0011` → `timesheet_item.hourly_rate_snapshot`). Все миграции `[X]`, 500-е устранены, данные не потеряны.
+
+#### Process
+- `PRODUCTION_ROLLOUT_GUIDE.md` (раздел 4) усилен: обязательный `migrate` как релизный шаг + процедура реконсиляции при `DuplicateColumn` (`showmigrations` → `--fake` для уже существующих, обычный `migrate` для недостающих).
+- ⏳ Известный не-блокирующий нюанс: `0009` зафейкан → unique-constraint `(account, project_item_id)` на `project_card` мог не создаться (на работу не влияет, upsert идёт по `bitrix_id`). Добавить при необходимости отдельно.
+
 ### Задача 3 — Единая база документации — 2026-05-31
 
 #### Added
