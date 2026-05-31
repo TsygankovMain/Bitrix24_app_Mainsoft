@@ -20,7 +20,7 @@ import type {
   SmartProcessOption,
 } from '~/types/config'
 import type { ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
-import type { InnScanResult, InnApplyItem, InnApplyResult } from '~/types/inn'
+import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 
 type SaveConfigurationResponse = {
   status?: string
@@ -424,6 +424,23 @@ export const useApiStore = defineStore(
           Authorization: `Bearer ${tokenJWT.value}`
         },
         body: JSON.stringify({ items })
+      })
+    }
+
+    const resolveInnProjectItems = async (
+      projectId: string, dateFrom: string, dateTo: string,
+      ourInn: string, clientInn: string, overwrite: boolean
+    ): Promise<InnProjectItemsResult> => {
+      return await $api<InnProjectItemsResult>('/api/inn-backfill/project-items', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: JSON.stringify({ project_id: projectId, date_from: dateFrom, date_to: dateTo, our_inn: ourInn, client_inn: clientInn, overwrite })
+      })
+    }
+
+    const getProjectsHealth = async (): Promise<ProjectsHealthResult> => {
+      return await $api<ProjectsHealthResult>('/api/projects-health', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
       })
     }
 
@@ -935,6 +952,8 @@ export const useApiStore = defineStore(
       exportReportProjectTaskEmployee,
       scanInnBackfill,
       applyInnBackfill,
+      resolveInnProjectItems,
+      getProjectsHealth,
       getReportDailyWorkload,
       getReportRevenueLeakage,
       getReportTimeEntryDiscipline,

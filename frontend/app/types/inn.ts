@@ -57,3 +57,21 @@ export interface InnApplyResult {
   failed: InnApplyFailure[]
   truncated?: boolean
 }
+
+export interface InnProjectItemsResult {
+  items: InnApplyItem[]
+  total: number
+}
+
+export interface ProjectHealthRow {
+  project_id: string
+  project_name: string
+  has_company: boolean
+  has_legal_entity: boolean
+  client_inn: string
+  our_inn: string
+}
+
+export interface ProjectsHealthResult {
+  projects: ProjectHealthRow[]
+}
