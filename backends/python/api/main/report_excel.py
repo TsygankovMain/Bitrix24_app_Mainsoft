@@ -252,3 +252,147 @@ def build_project_task_workbook(
     wb.save(output)
     output.seek(0)
     return output
+
+
+def build_hierarchy_workbook(roots, *, title, date_from="", date_to="",
+                             value_columns=(("Всего, ч", "total_hours"),
+                                            ("Учтено, ч", "billable_hours"),
+                                            ("Не учтено, ч", "non_billable_hours"))):
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Отчёт"
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    ncols = 1 + len(value_columns)
+    last_col = get_column_letter(ncols)
+    period = f"{date_from} — {date_to}".strip(" —")
+    full_title = f"{title} · период {period}" if period else title
+    ws.merge_cells(f"A1:{last_col}1")
+    c = ws.cell(1, 1, full_title); c.font = Font(bold=True, color="FFFFFF", size=12)
+    c.fill = _FILL_TITLE; c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    h = ws.cell(2, 1, "Название"); h.font = Font(bold=True, color="111827"); h.fill = _FILL_HEAD
+    h.border = _BORDER; h.alignment = Alignment(horizontal="left", vertical="center")
+    for i, (label, _) in enumerate(value_columns):
+        cell = ws.cell(2, 2 + i, label); cell.font = Font(bold=True, color="111827")
+        cell.fill = _FILL_HEAD; cell.border = _BORDER; cell.alignment = Alignment(horizontal="right", vertical="center")
+    row = 3
+    totals = [0.0] * len(value_columns)
+
+    def _write(node, depth):
+        nonlocal row
+        fill = _FILL_PROJECT if depth == 0 else (_FILL_TASK if depth == 1 else _FILL_SUBTASK)
+        bold = depth <= 1
+        nc = ws.cell(row, 1, node.get("name") or "—")
+        nc.alignment = Alignment(horizontal="left", vertical="center", indent=depth)
+        nc.font = Font(bold=bold); nc.fill = fill; nc.border = _BORDER
+        for i, (_, key) in enumerate(value_columns):
+            cell = ws.cell(row, 2 + i, round(_num(node.get(key)), 2))
+            cell.number_format = _HOURS_FORMAT; cell.alignment = Alignment(horizontal="right", vertical="center")
+            cell.font = Font(bold=bold); cell.fill = fill; cell.border = _BORDER
+        if depth > 0:
+            ws.row_dimensions[row].outline_level = min(depth, 7)
+        row += 1
+        for ch in node.get("children") or []:
+            _write(ch, depth + 1)
+
+    for node in roots:
+        for i, (_, key) in enumerate(value_columns):
+            totals[i] += _num(node.get(key))
+        _write(node, 0)
+
+    tc = ws.cell(row, 1, "ИТОГО"); tc.font = Font(bold=True); tc.fill = _FILL_TOTAL; tc.border = _BORDER
+    for i, t in enumerate(totals):
+        cell = ws.cell(row, 2 + i, round(t, 2)); cell.number_format = _HOURS_FORMAT
+        cell.font = Font(bold=True); cell.fill = _FILL_TOTAL
+        cell.alignment = Alignment(horizontal="right", vertical="center"); cell.border = _BORDER
+    ws.column_dimensions["A"].width = 55
+    for idx in range(2, ncols + 1):
+        ws.column_dimensions[get_column_letter(idx)].width = 14
+    ws.freeze_panes = "A3"
+    output = io.BytesIO(); wb.save(output); output.seek(0)
+    return output
+
+
+def build_matrix_workbook(header_days, rows, *, title, date_from="", date_to=""):
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Нагрузка"
+    days = [(d.get("date") if isinstance(d, dict) else d) for d in header_days]
+    ncols = 1 + len(days) + 1
+    last_col = get_column_letter(ncols)
+    period = f"{date_from} — {date_to}".strip(" —")
+    full_title = f"{title} · период {period}" if period else title
+    ws.merge_cells(f"A1:{last_col}1")
+    c = ws.cell(1, 1, full_title); c.font = Font(bold=True, color="FFFFFF", size=12)
+    c.fill = _FILL_TITLE; c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    hh = ws.cell(2, 1, "Сотрудник"); hh.font = Font(bold=True); hh.fill = _FILL_HEAD; hh.border = _BORDER
+    hh.alignment = Alignment(horizontal="left", vertical="center")
+    for i, day in enumerate(days):
+        cell = ws.cell(2, 2 + i, _format_iso_date(day) or str(day))
+        cell.font = Font(bold=True); cell.fill = _FILL_HEAD; cell.border = _BORDER
+        cell.alignment = Alignment(horizontal="right", vertical="center")
+    th = ws.cell(2, ncols, "Итого"); th.font = Font(bold=True); th.fill = _FILL_HEAD; th.border = _BORDER
+    th.alignment = Alignment(horizontal="right", vertical="center")
+    col_tot = [0.0] * len(days); grand = 0.0; row = 3
+    for r in rows:
+        ws.cell(row, 1, (r.get("employee") or {}).get("name") or "—").border = _BORDER
+        rowsum = 0.0; cells = r.get("days") or {}
+        for i, day in enumerate(days):
+            cd = cells.get(day) or {}
+            v = _num(cd.get("total")) if isinstance(cd, dict) else _num(cd)
+            cell = ws.cell(row, 2 + i, round(v, 2) if v else None)
+            cell.number_format = _HOURS_FORMAT; cell.alignment = Alignment(horizontal="right", vertical="center"); cell.border = _BORDER
+            rowsum += v; col_tot[i] += v
+        rc = ws.cell(row, ncols, round(rowsum, 2)); rc.number_format = _HOURS_FORMAT
+        rc.font = Font(bold=True); rc.fill = _FILL_TOTAL; rc.alignment = Alignment(horizontal="right", vertical="center"); rc.border = _BORDER
+        grand += rowsum; row += 1
+    tcell = ws.cell(row, 1, "ИТОГО"); tcell.font = Font(bold=True); tcell.fill = _FILL_TOTAL; tcell.border = _BORDER
+    for i, ct in enumerate(col_tot):
+        cell = ws.cell(row, 2 + i, round(ct, 2)); cell.number_format = _HOURS_FORMAT
+        cell.font = Font(bold=True); cell.fill = _FILL_TOTAL; cell.alignment = Alignment(horizontal="right", vertical="center"); cell.border = _BORDER
+    gc = ws.cell(row, ncols, round(grand, 2)); gc.number_format = _HOURS_FORMAT
+    gc.font = Font(bold=True); gc.fill = _FILL_TOTAL; gc.alignment = Alignment(horizontal="right", vertical="center"); gc.border = _BORDER
+    ws.column_dimensions["A"].width = 24
+    for idx in range(2, ncols + 1):
+        ws.column_dimensions[get_column_letter(idx)].width = 10
+    ws.freeze_panes = "B3"
+    output = io.BytesIO(); wb.save(output); output.seek(0)
+    return output
+
+
+_TABLE_FMT = {"text": "@", "hours": "0.0", "money": "#,##0", "percent": "0.0%"}
+
+
+def build_table_workbook(columns, rows, *, title, date_from="", date_to="", total_row=None):
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Отчёт"
+    ncols = len(columns); last_col = get_column_letter(max(ncols, 1))
+    period = f"{date_from} — {date_to}".strip(" —")
+    full_title = f"{title} · период {period}" if period else title
+    ws.merge_cells(f"A1:{last_col}1")
+    c = ws.cell(1, 1, full_title); c.font = Font(bold=True, color="FFFFFF", size=12)
+    c.fill = _FILL_TITLE; c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    for i, col in enumerate(columns):
+        cell = ws.cell(2, 1 + i, col["label"]); cell.font = Font(bold=True, color="111827")
+        cell.fill = _FILL_HEAD; cell.border = _BORDER
+        cell.alignment = Alignment(horizontal="left" if col.get("fmt", "text") == "text" else "right", vertical="center")
+    row = 3
+
+    def _put(r, rownum, bold=False, fill=None):
+        for i, col in enumerate(columns):
+            fmt = col.get("fmt", "text"); val = r.get(col["key"])
+            if fmt == "text" or val is None:
+                cell = ws.cell(rownum, 1 + i, "" if val is None else str(val))
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+            else:
+                cell = ws.cell(rownum, 1 + i, _num(val)); cell.number_format = _TABLE_FMT[fmt]
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+            cell.border = _BORDER
+            if bold:
+                cell.font = Font(bold=True)
+            if fill:
+                cell.fill = fill
+
+    for r in rows:
+        _put(r, row); row += 1
+    if total_row:
+        _put(total_row, row, bold=True, fill=_FILL_TOTAL)
+    for i, col in enumerate(columns):
+        ws.column_dimensions[get_column_letter(1 + i)].width = col.get("width", 18)
+    ws.freeze_panes = "A3"
+    output = io.BytesIO(); wb.save(output); output.seek(0)
+    return output
