@@ -27,6 +27,8 @@
 
 **Учёт по проектам/задачам — детали:** компоненты `components/reports/ProjectTaskReportTable.vue` / `ProjectTaskReportRow.vue` / `ProjectTaskReportEmployeeRow.vue`; форматтер `utils/reportFormat.ts`; кликабельные метки `composables/useProjectTaskLabel.ts`. Excel-выгрузка: `exportReportProjectTaskEmployee` → `GET /api/report-project-task-employee-export` → `views.py::report_project_task_employee_export` → `report_excel.py::build_project_task_workbook`.
 
+**Excel-выгрузка (все отчёты, серверная):** генераторы `report_excel.py::{build_hierarchy_workbook, build_matrix_workbook, build_table_workbook, build_project_task_workbook}`; на каждый отчёт — `views.py::report_*_export` (`…-export` endpoint) + `api.ts::exportReport*` + `handleExport` на странице. Тесты — `tests_report_excel.py`.
+
 ## 4. Выгрузка «Сырые данные» и дозаполнение ИНН
 - **Выгрузка:** `pages/reports/raw-data.client.vue` (вкладка «Выгрузка») → `stores/api.ts::exportRawData()` → `POST /api/export-raw-data` → `views.py::export_raw_data` (openpyxl, чтение СП напрямую).
 - **Дозаполнение ИНН:** вкладка «Дозаполнение ИНН» → `components/reports/InnBackfillPanel.vue` (+ `InnAssignModal.vue` — окно заполнения/замены на проект, `components/common/ProgressOverlay.vue` — прогресс с бобром); `stores/api.ts::scanInnBackfill()` / `applyInnBackfill()` / `resolveInnProjectItems()` / `getProjectsHealth()` → `/api/inn-backfill/scan|apply|project-items`, `/api/projects-health` → `views.py::inn_backfill_scan` / `inn_backfill_apply` / `inn_backfill_project_items` / `projects_health` → `inn_backfill_service.py::InnBackfillService` (`scan`/`apply`/`autofill`/`project_items`/`projects_health`). Настройки «Незаполненные проекты» — `pages/settings/projects-health.client.vue`. Типы — `types/inn.ts`.

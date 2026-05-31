@@ -7,6 +7,26 @@
 
 ## [Unreleased]
 
+### Спринт 4 — Единый структурный Excel во всех отчётах + техдолг — 2026-05-31
+
+#### Added
+- 3 переиспользуемых серверных генератора Excel (`report_excel.py`): `build_hierarchy_workbook` (employee/project, с листовыми записями), `build_matrix_workbook` (daily: сотрудник×день, заморозка, итоги по строке/дню), `build_table_workbook` (сводки: форматы text/hours/money/percent/int, опц. ИТОГО).
+- 6 серверных export-endpoint (employee/project/daily/revenue-leakage/time-discipline/focus-analysis) по образцу `report_project_task_employee_export`; в `api.ts` — 6 методов; `handleExport` 6 страниц переключён на серверное скачивание blob.
+- Тесты `backends/python/api/main/tests_report_excel.py`.
+
+#### Changed
+- Все отчёты выгружаются серверным структурным Excel (как project-task). Удалён мёртвый фронтовый xlsx (`utils/reportExport.ts` → заглушка, `utils/exportXlsx.ts` удалён).
+
+#### Fixed (техдолг + ревью)
+- ESLint-долг: предсуществующие ошибки в `utils` починены (`npm run lint` зелёный).
+- Изоляция finance на фронте: `FINANCE_FEATURE_ENABLED=false` в placement + методы-заглушки в `api.ts`.
+- Code-review MAJOR: иерархический Excel (employee/project) сохраняет **листовые записи (items)**, как на экране; счётчики — формат «0» (без «.0»).
+
+#### Verification
+- Бэк: 15 тестов OK, `django check` чист. Фронт: `nuxt prepare` чист, `npm run lint` 0.
+- Отложено в бэклог: удаление неиспользуемой зависимости `xlsx` (нужен pnpm-lock update); лимит объёма выгрузок; общий composable `useReportExport`; единообразие `loss_rate` (%).
+- ⏳ e2e на проде (скачать Excel во всех 6 отчётах).
+
 ### Спринт 3 — ИНН-UX: незаполненные проекты, окно заполнения/замены, прогресс с бобром — 2026-05-31
 
 #### Added
