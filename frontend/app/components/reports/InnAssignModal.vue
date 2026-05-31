@@ -56,7 +56,7 @@ async function apply() {
 
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="fixed inset-0 z-[900] flex items-center justify-center" style="background:rgba(15,23,42,.45)" @click.self="emit('close')">
+    <div v-if="visible" class="fixed inset-0 z-[900] flex items-center justify-center" style="background:rgba(15,23,42,.45)" @click.self="!applying && emit('close')">
       <div class="bg-white rounded-2xl shadow-xl w-[460px] p-5">
         <h3 class="text-lg font-bold text-slate-900">Заполнение ИНН · «{{ projectName }}»</h3>
         <p class="text-xs text-slate-500 mt-1 mb-4">Применится ко всем карточкам проекта за период</p>

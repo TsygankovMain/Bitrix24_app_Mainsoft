@@ -10,7 +10,7 @@ useHead({
 })
 
 // region Init
-const { $logger, initApp, processErrorGlobal } = useAppInit('ProjectsHealthPage')
+const { initApp, processErrorGlobal } = useAppInit('ProjectsHealthPage')
 const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 // endregion
@@ -19,7 +19,7 @@ const isInit = ref(false)
 const rows = ref<ProjectHealthRow[]>([])
 const loadingHealth = ref(false)
 
-const { t, locales: localesI18n, setLocale } = useI18n()
+const { locales: localesI18n, setLocale } = useI18n()
 
 async function loadHealth() {
   loadingHealth.value = true
@@ -103,7 +103,7 @@ onMounted(async () => {
                   <span v-else class="text-slate-400">—</span>
                 </td>
                 <td class="px-3 py-2 text-right">
-                  <B24Button label="Открыть проект" color="link" @click="$router.push('/projects?project=' + encodeURIComponent(row.project_id))" />
+                  <B24Button label="Открыть проект" color="link" @click="$router.push({ path: '/projects', query: { search: row.project_id } })" />
                 </td>
               </tr>
             </tbody>

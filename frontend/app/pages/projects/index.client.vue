@@ -11,6 +11,7 @@ import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 
 const router = useRouter()
+const route = useRoute()
 const { locales: localesI18n, setLocale } = useI18n()
 const fieldConfigStore = useFieldConfigStore()
 
@@ -44,7 +45,7 @@ const companyFilters = ref<ProjectBoardDirectoryOption[]>([])
 const legalEntityFilters = ref<ProjectBoardDirectoryOption[]>([])
 
 const activeView = ref<'board' | 'timeline' | 'archive'>('board')
-const searchQuery = ref('')
+const searchQuery = ref(typeof route.query.search === 'string' ? route.query.search : '')
 const supportFilter = ref<'all' | 'support' | 'delivery'>('all')
 const curatorFilter = ref('')
 const companyFilter = ref('')
