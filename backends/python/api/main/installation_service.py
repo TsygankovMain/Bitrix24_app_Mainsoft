@@ -23,6 +23,7 @@ TIMESHEET_FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     'project_title': {'suffix': 'PROJECT', 'label': 'Проект', 'type': 'string'},
     'project_id': {'suffix': 'PROJECT_ID', 'label': 'ID Проекта', 'type': 'integer'},
     'project_item_id': {'suffix': 'PROJECT_ITEM_ID', 'label': 'ID элемента проекта SPA', 'type': 'integer'},
+    'hourly_rate_snapshot': {'suffix': 'HOURLY_RATE_SNAPSHOT', 'label': 'Ставка часа (снимок)', 'type': 'double'},
     'data': {'suffix': 'DATE', 'label': 'Дата отражения', 'type': 'date'},
     'id_zadach_ierarhiya': {'suffix': 'HIER_IDS', 'label': 'Иерархия ID', 'type': 'string', 'multiple': True},
     'title_zadach_ierarhiya': {'suffix': 'HIER_TITLES', 'label': 'Иерархия Названий', 'type': 'string', 'multiple': True},
@@ -35,7 +36,10 @@ PROJECT_FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     'bitrix_group_id': {'suffix': 'BITRIX_GROUP_ID', 'label': 'ID группы Bitrix', 'type': 'integer'},
     'stage_id': {'suffix': 'STAGE_ID', 'label': 'Стадия проекта', 'type': 'stage', 'system': True},
     'is_support': {'suffix': 'IS_SUPPORT', 'label': 'Support-флаг', 'type': 'boolean'},
+    'project_type': {'suffix': 'PROJECT_TYPE', 'label': 'Тип проекта', 'type': 'string'},
+    'budget_mode': {'suffix': 'BUDGET_MODE', 'label': 'Режим бюджета', 'type': 'string'},
     'project_hours_budget': {'suffix': 'PROJECT_HOURS_BUDGET', 'label': 'Бюджет часов', 'type': 'double'},
+    'planned_budget_amount': {'suffix': 'PLANNED_BUDGET_AMOUNT', 'label': 'Бюджет в деньгах', 'type': 'double'},
     'hourly_rate': {'suffix': 'HOURLY_RATE', 'label': 'Ставка часа', 'type': 'double'},
     'curator_id': {'suffix': 'CURATOR_ID', 'label': 'Куратор', 'type': 'employee'},
     'company_id': {'suffix': 'COMPANY_ID', 'label': 'Компания', 'type': 'crm_company'},
@@ -43,6 +47,18 @@ PROJECT_FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     'start_date': {'suffix': 'START_DATE', 'label': 'Дата старта', 'type': 'date'},
     'finish_date': {'suffix': 'FINISH_DATE', 'label': 'Дата окончания', 'type': 'date'},
     'is_archived': {'suffix': 'IS_ARCHIVED', 'label': 'Архив', 'type': 'boolean'},
+}
+
+FINANCE_FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+    'project_item_id': {'suffix': 'PROJECT_ITEM_ID', 'label': 'ID карточки проекта', 'type': 'integer'},
+    'operation_type': {'suffix': 'OPERATION_TYPE', 'label': 'Тип операции', 'type': 'string'},
+    'amount': {'suffix': 'AMOUNT', 'label': 'Сумма', 'type': 'double'},
+    'currency': {'suffix': 'CURRENCY', 'label': 'Валюта', 'type': 'string'},
+    'operation_date': {'suffix': 'OPERATION_DATE', 'label': 'Дата операции', 'type': 'date'},
+    'source': {'suffix': 'SOURCE', 'label': 'Источник', 'type': 'string'},
+    'deal_id': {'suffix': 'DEAL_ID', 'label': 'ID сделки', 'type': 'integer'},
+    'comment': {'suffix': 'COMMENT', 'label': 'Комментарий', 'type': 'string'},
+    'responsible_user_id': {'suffix': 'RESPONSIBLE_USER_ID', 'label': 'Ответственный', 'type': 'employee'},
 }
 
 PROJECT_SYSTEM_MAPPINGS = {
@@ -53,6 +69,27 @@ PROJECT_SYSTEM_MAPPINGS = {
 PROJECT_FIELD_ALIASES = {
     'manual_stage': 'stage_id',
     'effective_stage': 'stage_id',
+}
+
+SMART_PROCESS_DEFINITIONS: Dict[str, Dict[str, str]] = {
+    'timesheet': {
+        'title': 'Учет трудозатрат (App)',
+        'code': 'timesheet_app',
+        'entity_key': 'sp_entity_type_id',
+        'mapping_key': 'fields_mapping',
+    },
+    'project': {
+        'title': 'Проекты (App)',
+        'code': 'project_app',
+        'entity_key': 'project_sp_entity_type_id',
+        'mapping_key': 'project_fields_mapping',
+    },
+    'finance': {
+        'title': 'Доходы-расходы (App)',
+        'code': 'finance_app',
+        'entity_key': 'finance_sp_entity_type_id',
+        'mapping_key': 'finance_fields_mapping',
+    },
 }
 
 class InstallationError(Exception):
@@ -99,34 +136,50 @@ class InstallationService:
             self._rollback_sync()
             raise InstallationError(f"Installation failed: {e}")
 
-    def create_smart_process_only(self) -> Dict[str, Any]:
+    def _normalize_mapping_type(self, mapping_type: str) -> str:
+        normalized = str(mapping_type or 'timesheet').strip().lower()
+        if normalized not in SMART_PROCESS_DEFINITIONS:
+            raise InstallationError(f"Неизвестный тип маппинга: {mapping_type}")
+        return normalized
+
+    def _get_mapping_config_keys(self, mapping_type: str) -> Tuple[str, str]:
+        normalized = self._normalize_mapping_type(mapping_type)
+        definition = SMART_PROCESS_DEFINITIONS[normalized]
+        return definition['entity_key'], definition['mapping_key']
+
+    def create_smart_process_only(self, mapping_type: str = 'timesheet') -> Dict[str, Any]:
         """
         Creates a Smart Process, creates default fields and saves ready mapping.
         """
-        logger.info("Creating Smart Process with default fields from settings...")
+        normalized_mapping_type = self._normalize_mapping_type(mapping_type)
+        logger.info("Creating Smart Process with default fields from settings (mapping=%s)...", normalized_mapping_type)
         try:
             config = self.config_service.get_configuration_sync()
-            existing_sp = config.get('sp_entity_type_id', 0)
+            entity_key, mapping_key = self._get_mapping_config_keys(normalized_mapping_type)
+            existing_sp = config.get(entity_key, 0)
 
             if existing_sp and existing_sp != 0:
                 raise InstallationError(f"Смарт-процесс уже существует (ID: {existing_sp}). Удалите его вручную перед созданием нового.")
 
-            sp_id = self._create_smart_process_sync()
-            fields_mapping, warnings = self._create_fields_mapping_sync(sp_id, 'timesheet')
+            sp_id = self._create_smart_process_sync(normalized_mapping_type)
+            fields_mapping, warnings = self._create_fields_mapping_sync(sp_id, normalized_mapping_type)
+            definitions = self._get_mapping_definitions(normalized_mapping_type)
 
             new_config = {
                 **config,
-                'sp_entity_type_id': sp_id,
-                'fields_mapping': fields_mapping,
-                'is_configured': len(fields_mapping) == len(TIMESHEET_FIELD_DEFINITIONS),
+                entity_key: sp_id,
+                mapping_key: fields_mapping,
             }
+            if normalized_mapping_type == 'timesheet':
+                new_config['is_configured'] = len(fields_mapping) == len(definitions)
             self.config_service.save_configuration_sync(new_config)
 
-            logger.info(f"Smart Process created: {sp_id}, mapped fields: {len(fields_mapping)}")
+            logger.info("Smart Process created for %s: %s, mapped fields: %s", normalized_mapping_type, sp_id, len(fields_mapping))
             return {
                 'config': new_config,
                 'created_fields_count': len(fields_mapping),
                 'field_warnings': warnings,
+                'mapping_type': normalized_mapping_type,
             }
 
         except InstallationError:
@@ -135,25 +188,29 @@ class InstallationService:
             logger.error(f"SP creation failed: {e}")
             raise InstallationError(f"Ошибка создания смарт-процесса: {e}")
 
-    def create_fields_only(self, sp_id: int) -> Dict[str, Any]:
+    def create_fields_only(self, sp_id: int, mapping_type: str = 'timesheet') -> Dict[str, Any]:
         """
         Creates all required fields in the specified Smart Process.
         Called from Settings page button.
         """
-        logger.info(f"Creating fields for SP {sp_id} from settings...")
+        normalized_mapping_type = self._normalize_mapping_type(mapping_type)
+        logger.info("Creating fields for SP %s from settings (mapping=%s)...", sp_id, normalized_mapping_type)
         try:
             if not sp_id or sp_id == 0:
                 raise InstallationError("Сначала выберите или создайте смарт-процесс.")
 
             config = self.config_service.get_configuration_sync()
-            fields_mapping, warnings = self._create_fields_mapping_sync(sp_id, 'timesheet')
+            entity_key, mapping_key = self._get_mapping_config_keys(normalized_mapping_type)
+            fields_mapping, warnings = self._create_fields_mapping_sync(sp_id, normalized_mapping_type)
+            definitions = self._get_mapping_definitions(normalized_mapping_type)
 
             new_config = {
                 **config,
-                'sp_entity_type_id': sp_id,
-                'fields_mapping': fields_mapping,
-                'is_configured': len(fields_mapping) == len(TIMESHEET_FIELD_DEFINITIONS),
+                entity_key: sp_id,
+                mapping_key: fields_mapping,
             }
+            if normalized_mapping_type == 'timesheet':
+                new_config['is_configured'] = len(fields_mapping) == len(definitions)
             self.config_service.save_configuration_sync(new_config)
 
             logger.info(f"Fields created: {len(fields_mapping)} fields")
@@ -161,6 +218,7 @@ class InstallationService:
                 'config': new_config,
                 'created_fields_count': len(fields_mapping),
                 'field_warnings': warnings,
+                'mapping_type': normalized_mapping_type,
             }
 
         except InstallationError:
@@ -173,13 +231,13 @@ class InstallationService:
         if not sp_id or sp_id == 0:
             raise InstallationError("Не указан ID смарт-процесса.")
 
+        normalized_mapping_type = self._normalize_mapping_type(mapping_type)
         config = self.config_service.get_configuration_sync()
-        mapping_key = 'fields_mapping' if mapping_type == 'timesheet' else 'project_fields_mapping'
-        entity_key = 'sp_entity_type_id' if mapping_type == 'timesheet' else 'project_sp_entity_type_id'
+        entity_key, mapping_key = self._get_mapping_config_keys(normalized_mapping_type)
         existing_mapping = dict(config.get(mapping_key) or {})
-        canonical_field_key = self._normalize_project_mapping_key(field_key) if mapping_type == 'project' else field_key
+        canonical_field_key = self._normalize_project_mapping_key(field_key) if normalized_mapping_type == 'project' else field_key
 
-        created_mapping, warnings = self._create_fields_mapping_sync(sp_id, mapping_type, [canonical_field_key])
+        created_mapping, warnings = self._create_fields_mapping_sync(sp_id, normalized_mapping_type, [canonical_field_key])
         if not created_mapping.get(canonical_field_key):
             raise InstallationError(f"Поле {canonical_field_key} не удалось создать или определить в Smart Process.")
 
@@ -195,16 +253,19 @@ class InstallationService:
             'field_key': canonical_field_key,
             'field_id': created_mapping[canonical_field_key],
             'field_warnings': warnings,
+            'mapping_type': normalized_mapping_type,
         }
 
-    def _create_smart_process_sync(self) -> int:
+    def _create_smart_process_sync(self, mapping_type: str = 'timesheet') -> int:
         """Creates a new Smart Process Type and returns its entityTypeId"""
-        title = "Учет трудозатрат (App)"
-        
+        normalized_mapping_type = self._normalize_mapping_type(mapping_type)
+        smart_definition = SMART_PROCESS_DEFINITIONS[normalized_mapping_type]
+        title = smart_definition['title']
+
         params = {
             'fields': {
                 'title': title,
-                'code': 'timesheet_app',
+                'code': smart_definition['code'],
                 'isBizProcEnabled': 'Y',
                 'isAutomationEnabled': 'Y',
                 'isClientEnabled': 'N', 
@@ -220,7 +281,7 @@ class InstallationService:
         if not sp_id:
             raise InstallationError("Failed to get entityTypeId from crm.type.add response")
             
-        logger.info(f"Created Smart Process {title}, ID: {sp_id}")
+        logger.info("Created Smart Process %s (%s), ID: %s", title, normalized_mapping_type, sp_id)
         return int(sp_id)
 
     def _resolve_spa_ordinal_id(self, entity_type_id: int) -> int:
@@ -243,10 +304,13 @@ class InstallationService:
         )
 
     def _get_mapping_definitions(self, mapping_type: str) -> Dict[str, Dict[str, Any]]:
-        if mapping_type == 'timesheet':
+        normalized_mapping_type = self._normalize_mapping_type(mapping_type)
+        if normalized_mapping_type == 'timesheet':
             return TIMESHEET_FIELD_DEFINITIONS
-        if mapping_type == 'project':
+        if normalized_mapping_type == 'project':
             return PROJECT_FIELD_DEFINITIONS
+        if normalized_mapping_type == 'finance':
+            return FINANCE_FIELD_DEFINITIONS
         raise InstallationError(f"Неизвестный тип маппинга: {mapping_type}")
 
     def _normalize_project_mapping_key(self, field_key: str) -> str:
@@ -270,15 +334,16 @@ class InstallationService:
         field_keys: Optional[List[str]] = None,
     ) -> Tuple[Dict[str, str], List[str]]:
         definitions = self._get_mapping_definitions(mapping_type)
+        normalized_mapping_type = self._normalize_mapping_type(mapping_type)
         target_keys = field_keys or list(definitions.keys())
-        if mapping_type == 'project':
+        if normalized_mapping_type == 'project':
             target_keys = self._normalize_project_mapping_keys(target_keys)
         mapping: Dict[str, str] = {}
         warnings: List[str] = []
         ordinal_id = self._resolve_spa_ordinal_id(entity_type_id)
         entity_id = f"CRM_{ordinal_id}"
 
-        if mapping_type == 'project':
+        if normalized_mapping_type == 'project':
             for key, system_field_id in PROJECT_SYSTEM_MAPPINGS.items():
                 if key in target_keys:
                     mapping[key] = system_field_id
@@ -316,7 +381,7 @@ class InstallationService:
                     or full_field_name
                 )
                 mapping[key] = self._build_user_field_api_id(raw_field_name)
-                logger.info("Created %s field %s -> %s", mapping_type, key, mapping[key])
+                logger.info("Created %s field %s -> %s", normalized_mapping_type, key, mapping[key])
             except Exception as e:
                 error_msg = str(e)
                 if 'already' in error_msg.lower() or 'exist' in error_msg.lower() or 'уже' in error_msg.lower():
@@ -326,7 +391,7 @@ class InstallationService:
                     continue
 
                 warnings.append(f"{field_definition['label']}: {error_msg}")
-                logger.warning("Failed to create field %s (%s): %s", key, mapping_type, error_msg)
+                logger.warning("Failed to create field %s (%s): %s", key, normalized_mapping_type, error_msg)
 
         available_fields = self.config_service.get_sp_fields_sync(entity_type_id)
         available_field_ids = {str(field.get('id') or '').lower() for field in available_fields}
@@ -338,7 +403,7 @@ class InstallationService:
             else:
                 warnings.append(f"{key}: поле не найдено в crm.item.fields после создания")
 
-        logger.info("Final %s mapping (%s fields): %s", mapping_type, len(verified_mapping), verified_mapping)
+        logger.info("Final %s mapping (%s fields): %s", normalized_mapping_type, len(verified_mapping), verified_mapping)
         return verified_mapping, warnings
 
     def _install_placements_sync(self) -> None:
@@ -348,6 +413,7 @@ class InstallationService:
             base_url = f"https://{base_url}"
             
         handler_url = f"{base_url}" # App handles routing on client side via placement checks
+        deal_handler_url = f"{base_url}/handler/placement-crm-deal-detail-tab"
 
         # Ensure we unbind before bind to avoid duplicates?
         # placement.unbind is safe
@@ -372,6 +438,16 @@ class InstallationService:
 
         logger.info("Placement SONET_GROUP_DETAIL_TAB unbind attempt finished")
 
+        try:
+             self.client._bitrix_token.call_method('placement.unbind', {
+                 'PLACEMENT': 'CRM_DEAL_DETAIL_TAB',
+                 'HANDLER': deal_handler_url
+             })
+        except Exception:
+             pass
+
+        logger.info("Placement CRM_DEAL_DETAIL_TAB unbind attempt finished")
+
         # 3. Bind Placements
         try:
              self.client._bitrix_token.call_method('placement.bind', {
@@ -394,6 +470,17 @@ class InstallationService:
              logger.info("Bound SONET_GROUP_DETAIL_TAB")
         except Exception as e:
              logger.error(f"Failed to bind SONET_GROUP_DETAIL_TAB: {e}")
+
+        try:
+             self.client._bitrix_token.call_method('placement.bind', {
+                 'PLACEMENT': 'CRM_DEAL_DETAIL_TAB',
+                 'HANDLER': deal_handler_url,
+                 'TITLE': 'Финансы проекта',
+                 'DESCRIPTION': 'Доходы и расходы проекта из сделки'
+             })
+             logger.info("Bound CRM_DEAL_DETAIL_TAB")
+        except Exception as e:
+             logger.error(f"Failed to bind CRM_DEAL_DETAIL_TAB: {e}")
 
     def _get_or_create_installation(self) -> ApplicationInstallation:
         installation, _ = ApplicationInstallation.objects.get_or_create(

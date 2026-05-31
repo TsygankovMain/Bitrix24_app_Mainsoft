@@ -14,11 +14,13 @@ import type {
 } from '~/types/report'
 import type {
   AppConfigurationPayload,
+  FinanceSpaValidationPayload,
   ProjectSpaValidationPayload,
   SmartProcessFieldOption,
   SmartProcessOption,
 } from '~/types/config'
 import type { ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
+import type { InnScanResult, InnApplyItem, InnApplyResult } from '~/types/inn'
 
 type SaveConfigurationResponse = {
   status?: string
@@ -26,6 +28,7 @@ type SaveConfigurationResponse = {
   project_sync?: Record<string, unknown>
   timesheet_backfill?: Record<string, unknown>
   validation?: ProjectSpaValidationPayload
+  finance_validation?: FinanceSpaValidationPayload
   error?: string
 }
 
@@ -42,6 +45,42 @@ type MappedFieldCreateResponse = {
   field_key: string
   field_id: string
   field_warnings?: string[]
+}
+
+type MappingType = 'timesheet' | 'project' | 'finance'
+
+export type FinanceOperationRecord = {
+  id?: string | null
+  title?: string | null
+  project_item_id?: string | null
+  deal_id?: string | null
+  operation_type?: string | null
+  amount?: number
+  currency?: string | null
+  operation_date?: string | null
+  source?: string | null
+  comment?: string | null
+  responsible_user_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+type FinanceOperationsResponse = {
+  operations: FinanceOperationRecord[]
+  count: number
+  entity_type_id?: number
+}
+
+type FinanceOperationCreatePayload = {
+  project_item_id: string
+  deal_id?: string | null
+  operation_type: 'income' | 'expense' | string
+  amount: number
+  currency?: string | null
+  operation_date: string
+  source?: string | null
+  comment?: string | null
+  responsible_user_id?: string | null
 }
 
 export const useApiStore = defineStore(
@@ -229,14 +268,14 @@ export const useApiStore = defineStore(
     const postInstall = async (data: Record<string, any>): Promise<Record<string, any>> => {
       return await $api('/api/install', {
         method: 'POST',
-        body: JSON.stringify(data),
+        body: data,
       })
     }
 
     const getToken = async (data: Record<string, any>): Promise<{ token: string }> => {
       return await $api('/api/getToken', {
         method: 'POST',
-        body: JSON.stringify(data),
+        body: data,
       })
     }
 
@@ -345,6 +384,49 @@ export const useApiStore = defineStore(
       return await runReportRequest<ProjectTaskReportNode[]>('/api/report-project-task-employee', dateFrom, dateTo, empIds, projIds)
     }
 
+    const exportReportProjectTaskEmployee = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<Blob> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
+      return await $api(`/api/report-project-task-employee-export?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        responseType: 'blob'
+      })
+    }
+
+    const scanInnBackfill = async (
+      dateFrom?: string,
+      dateTo?: string,
+      projectIds?: string[]
+    ): Promise<InnScanResult> => {
+      const params = new URLSearchParams()
+      if (dateFrom) params.append('date_from', dateFrom)
+      if (dateTo) params.append('date_to', dateTo)
+      for (const id of projectIds || []) {
+        params.append('project_ids[]', String(id))
+      }
+      return await $api<InnScanResult>(`/api/inn-backfill/scan?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    const applyInnBackfill = async (items: InnApplyItem[]): Promise<InnApplyResult> => {
+      return await $api<InnApplyResult>('/api/inn-backfill/apply', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        body: JSON.stringify({ items })
+      })
+    }
+
     const getReportRevenueLeakage = async (
       dateFrom?: string,
       dateTo?: string,
@@ -448,6 +530,63 @@ export const useApiStore = defineStore(
       return response.card || null
     }
 
+    // --- Финансовый функционал (в планах) изолирован ---
+    // Бэкенд-endpoint `/api/finance-operations` отключён (см. backends/python/api/main/urls.py).
+    // Заглушка не выполняет сетевой вызов, чтобы не было битых запросов.
+    // Для восстановления: удалить throw и раскомментировать оригинальное тело ниже.
+    const getFinanceOperations = async (_params: {
+      project_item_id?: string | null
+      deal_id?: string | null
+      limit?: number
+    }): Promise<FinanceOperationsResponse> => {
+      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-operations отключён.')
+      /*
+      const search = new URLSearchParams()
+      if (_params.project_item_id) {
+        search.set('project_item_id', String(_params.project_item_id))
+      }
+      if (_params.deal_id) {
+        search.set('deal_id', String(_params.deal_id))
+      }
+      if (_params.limit && Number(_params.limit) > 0) {
+        search.set('limit', String(_params.limit))
+      }
+
+      const query = search.toString()
+      return await $api<FinanceOperationsResponse>(`/api/finance-operations${query ? `?${query}` : ''}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+      */
+    }
+
+    // --- Финансовый функционал (в планах) изолирован ---
+    // Бэкенд-endpoint `/api/finance-operations/create` отключён (см. backends/python/api/main/urls.py).
+    // Для восстановления: удалить throw и раскомментировать оригинальное тело ниже.
+    const createFinanceOperation = async (_payload: FinanceOperationCreatePayload): Promise<{
+      status: string
+      operation?: FinanceOperationRecord
+      idempotency_key?: string
+    }> => {
+      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-operations/create отключён.')
+      /*
+      const result = await $api('/api/finance-operations/create', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        body: JSON.stringify(_payload)
+      })
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result as {
+        status: string
+        operation?: FinanceOperationRecord
+        idempotency_key?: string
+      }
+      */
+    }
+
     const getHomepagePortfolio = async (forceRefresh = false): Promise<any> => {
       return await withBrowserCache('homepage-portfolio', browserCacheTtl.homepage, async () => {
         return await $api('/api/homepage/portfolio', {
@@ -545,6 +684,26 @@ export const useApiStore = defineStore(
       })
       clearCache('project-board', 'homepage-portfolio')
       return result
+    }
+
+    // --- Финансовый функционал (в планах) изолирован ---
+    // Бэкенд-endpoint `/api/project-budget/notify` отключён (см. backends/python/api/main/urls.py).
+    // В фронте больше не вызывается; заглушка оставлена для лёгкого восстановления.
+    const runProjectBudgetNotifier = async (_payload?: {
+      project_ids?: string[]
+      project_item_ids?: string[]
+    }): Promise<any> => {
+      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/project-budget/notify отключён.')
+      /*
+      return await $api('/api/project-budget/notify', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(_payload || {})
+      })
+      */
     }
 
     const runProjectSpaBackfill = async (): Promise<any> => {
@@ -671,27 +830,42 @@ export const useApiStore = defineStore(
       })
     }
 
-    const createSmartProcess = async (): Promise<SmartProcessCreateResponse> => {
+    // --- Финансовый функционал (в планах) изолирован ---
+    // Бэкенд-endpoint `/api/finance-spa/validation` отключён (см. backends/python/api/main/urls.py).
+    // В фронте больше не вызывается; заглушка оставлена для лёгкого восстановления.
+    const getFinanceSpaValidation = async (): Promise<FinanceSpaValidationPayload> => {
+      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-spa/validation отключён.')
+      /*
+      return await $api('/api/finance-spa/validation', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+      */
+    }
+
+    const createSmartProcess = async (mappingType: MappingType = 'timesheet'): Promise<SmartProcessCreateResponse> => {
       const result = await $api('/api/smart-processes/create', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({})
+        body: JSON.stringify({ mappingType })
       })
       clearCache('app-configuration')
       return result as SmartProcessCreateResponse
     }
 
-    const createFields = async (entityTypeId: number): Promise<SmartProcessCreateResponse> => {
+    const createFields = async (
+      entityTypeId: number,
+      mappingType: MappingType = 'timesheet'
+    ): Promise<SmartProcessCreateResponse> => {
       const result = await $api('/api/smart-processes/create-fields', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ entityTypeId })
+        body: JSON.stringify({ entityTypeId, mappingType })
       })
       clearCache('app-configuration')
       return result as SmartProcessCreateResponse
@@ -700,7 +874,7 @@ export const useApiStore = defineStore(
     const createMappedField = async (
       entityTypeId: number,
       fieldKey: string,
-      mappingType: 'timesheet' | 'project'
+      mappingType: MappingType
     ): Promise<MappedFieldCreateResponse> => {
       const result = await $api('/api/smart-processes/create-field', {
         method: 'POST',
@@ -727,10 +901,23 @@ export const useApiStore = defineStore(
       })
     }
 
-    const getSystemLogs = async (page: number = 1, limit: number = 50): Promise<any> => {
+    const getSystemLogs = async (
+      page: number = 1,
+      limit: number = 50,
+      options?: {
+        module?: string
+        level?: string
+      }
+    ): Promise<any> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
       params.append('limit', limit.toString())
+      if (options?.module) {
+        params.append('module', options.module)
+      }
+      if (options?.level) {
+        params.append('level', options.level)
+      }
       return await $api(`/api/logs/system?${params.toString()}`, {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
       })
@@ -745,6 +932,9 @@ export const useApiStore = defineStore(
       getReportEmployeeProject,
       getReportProjectEmployee,
       getReportProjectTaskEmployee,
+      exportReportProjectTaskEmployee,
+      scanInnBackfill,
+      applyInnBackfill,
       getReportDailyWorkload,
       getReportRevenueLeakage,
       getReportTimeEntryDiscipline,
@@ -754,6 +944,8 @@ export const useApiStore = defineStore(
       getProjectBoard,
       getProjectBoardMeta,
       getProjectBoardCard,
+      getFinanceOperations,
+      createFinanceOperation,
       getHomepagePortfolio,
       getSupportStatus,
       connectSupportLine,
@@ -762,6 +954,7 @@ export const useApiStore = defineStore(
       updateProjectStage,
       archiveProject,
       runProjectBoardDailyCheck,
+      runProjectBudgetNotifier,
       runProjectSpaBackfill,
       getCompaniesForProjectBinding,
       getBitrixInternalLists,
@@ -775,6 +968,7 @@ export const useApiStore = defineStore(
       getSmartProcesses,
       getSpFields,
       getProjectSpaValidation,
+      getFinanceSpaValidation,
       getRequestLogs,
       getSystemLogs,
       createSmartProcess,

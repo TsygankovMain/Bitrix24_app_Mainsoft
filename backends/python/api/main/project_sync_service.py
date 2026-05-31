@@ -289,6 +289,9 @@ class ProjectSyncService:
                     project_hours_budget=normalized.get("project_hours_budget"),
                     hourly_rate=normalized.get("hourly_rate") or 0.0,
                     is_support=normalized.get("is_support", False),
+                    project_type=normalized.get("project_type"),
+                    budget_mode=normalized.get("budget_mode"),
+                    planned_budget_amount=normalized.get("planned_budget_amount"),
                     curator_user_id=normalized.get("curator_user_id"),
                     curator_name=normalized.get("curator_name"),
                     company_id=normalized.get("company_id"),
@@ -318,6 +321,9 @@ class ProjectSyncService:
             self._set_if_changed(existing, "project_hours_budget", normalized.get("project_hours_budget"), changed_fields)
             self._set_if_changed(existing, "hourly_rate", normalized.get("hourly_rate") or 0.0, changed_fields)
             self._set_if_changed(existing, "is_support", normalized.get("is_support", False), changed_fields)
+            self._set_if_changed(existing, "project_type", normalized.get("project_type"), changed_fields)
+            self._set_if_changed(existing, "budget_mode", normalized.get("budget_mode"), changed_fields)
+            self._set_if_changed(existing, "planned_budget_amount", normalized.get("planned_budget_amount"), changed_fields)
             self._set_if_changed(existing, "curator_user_id", normalized.get("curator_user_id"), changed_fields)
             self._set_if_changed(existing, "curator_name", normalized.get("curator_name"), changed_fields)
             self._set_if_changed(existing, "company_id", normalized.get("company_id"), changed_fields)
@@ -443,6 +449,21 @@ class ProjectSyncService:
         budget = ProjectCardService._to_optional_float(
             self._get_mapped_value(item, mapping, "project_hours_budget", "UF_CRM_PROJECT_HOURS_BUDGET", "ufCrmProjectHoursBudget")
         )
+        project_type = self._extract_scalar(
+            self._get_mapped_value(item, mapping, "project_type", "UF_CRM_PROJECT_TYPE", "ufCrmProjectType")
+        )
+        budget_mode = self._extract_scalar(
+            self._get_mapped_value(item, mapping, "budget_mode", "UF_CRM_BUDGET_MODE", "ufCrmBudgetMode")
+        )
+        planned_budget_amount = ProjectCardService._to_optional_float(
+            self._get_mapped_value(
+                item,
+                mapping,
+                "planned_budget_amount",
+                "UF_CRM_PLANNED_BUDGET_AMOUNT",
+                "ufCrmPlannedBudgetAmount",
+            )
+        )
         hourly_rate = ProjectCardService._to_float(
             self._get_mapped_value(item, mapping, "hourly_rate", "UF_CRM_HOURLY_RATE", "ufCrmHourlyRate"),
             default=0.0,
@@ -471,6 +492,10 @@ class ProjectSyncService:
 
         company_id, company_name = self.card_service._resolve_company_reference(company_id, company_name)
         legal_entity_id, legal_entity_name = self.card_service._resolve_legal_entity_reference(legal_entity_id, legal_entity_name)
+        if not project_type:
+            project_type = "support" if is_support else "delivery"
+        if not budget_mode:
+            budget_mode = "support" if is_support else "hours_and_amount"
 
         return {
             "project_item_id": project_item_id,
@@ -482,6 +507,9 @@ class ProjectSyncService:
             "is_archived": is_archived,
             "is_support": is_support,
             "project_hours_budget": budget,
+            "project_type": project_type,
+            "budget_mode": budget_mode,
+            "planned_budget_amount": planned_budget_amount,
             "hourly_rate": hourly_rate,
             "curator_user_id": curator_user_id,
             "curator_name": None,

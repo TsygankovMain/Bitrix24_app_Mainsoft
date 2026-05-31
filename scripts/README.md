@@ -33,6 +33,22 @@
 
 Legacy-скрипт для старого PHP-контура. К production-модели текущего Django/Nuxt-приложения не относится.
 
+### `release-readiness-check.sh`
+
+Локальная проверка technical gate перед UAT/релизом.
+
+Что проверяет:
+
+- `py_compile` для backend Python файлов;
+- `tsc --noEmit` для frontend;
+- наличие миграции `0011_timesheetitem_hourly_rate_snapshot.py`.
+
+Запуск:
+
+```bash
+./scripts/release-readiness-check.sh
+```
+
 ## Что не нужно делать через scripts
 
 Не использовать эти скрипты как production deploy pipeline.

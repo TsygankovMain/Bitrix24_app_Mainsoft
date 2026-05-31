@@ -439,9 +439,20 @@ async function runDailyCheck() {
   }
 }
 
-function openCard(card: ProjectBoardCardRecord) {
+async function openCard(card: ProjectBoardCardRecord) {
   selectedCard.value = card
   isDrawerOpen.value = true
+
+  try {
+    const detailedCard = await apiStore.getProjectBoardCard(card.project_id)
+    if (detailedCard) {
+      applyUpdatedCard(detailedCard)
+      selectedCard.value = detailedCard
+    }
+  } catch (error) {
+    // Keep fallback card state if detail loading fails.
+    console.warn('[ProjectBoard] Failed to load detailed card', error)
+  }
 }
 
 function closeDrawer() {

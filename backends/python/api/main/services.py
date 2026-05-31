@@ -1,5 +1,8 @@
 from .bitrix_data_access import BitrixDataService
 from .configuration_service import ConfigurationService
+from .finance_operation_service import FinanceOperationService
+from .project_budget_notifier import ProjectBudgetNotifier
+from .project_budget_service import ProjectBudgetService
 from .project_board_service import ProjectCardService
 from .project_board_shared import (
     BITRIX_REFERENCE_CACHE_TTL,
@@ -29,6 +32,7 @@ from .report_services import (
     FIELD_DATE,
     FIELD_DESCRIPTION,
     FIELD_EMPLOYEE,
+    FIELD_HOURLY_RATE_SNAPSHOT,
     FIELD_HOURS,
     FIELD_IS_BILLABLE,
     FIELD_NON_BILLABLE_HOURS,
@@ -53,6 +57,7 @@ __all__ = [
     "FIELD_DATE",
     "FIELD_DESCRIPTION",
     "FIELD_EMPLOYEE",
+    "FIELD_HOURLY_RATE_SNAPSHOT",
     "FIELD_HOURS",
     "FIELD_IS_BILLABLE",
     "FIELD_NON_BILLABLE_HOURS",
@@ -63,6 +68,7 @@ __all__ = [
     "FIELD_TASK_ID",
     "FIELD_TITLE_HIERARCHY",
     "FILTER_EMPLOYEES_CACHE_SUFFIX",
+    "FinanceOperationService",
     "HOMEPAGE_CACHE_TTL",
     "PROJECT_AUTO_STAGES",
     "PROJECT_BOARD_CACHE_TTL",
@@ -75,6 +81,8 @@ __all__ = [
     "PROJECT_STAGE_NO_WRITEOFF_90",
     "PROJECT_STAGE_ORDER",
     "PROJECT_STAGE_SUCCESS",
+    "ProjectBudgetService",
+    "ProjectBudgetNotifier",
     "ProjectCardService",
     "ProjectStageAutomationService",
     "ProjectSyncService",

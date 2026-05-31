@@ -26,6 +26,41 @@ export interface ProjectBoardDirectoryOption {
   search_text?: string | null
 }
 
+export type ProjectBudgetHealthStatus = 'Норма' | 'Риск' | 'Перерасход' | 'Без лимита' | string
+
+export interface ProjectBudgetSnapshot {
+  planned_hours: number | null
+  planned_amount: number | null
+  actual_hours: number
+  actual_cost_amount: number
+  actual_income_amount: number
+  actual_expense_amount: number
+  actual_financial_result: number
+  hours_remaining: number | null
+  budget_remaining: number | null
+  budget_utilization_mode: 'hours' | 'amount' | 'none' | string
+  budget_utilization_ratio: number | null
+  budget_utilization_percent: number | null
+  budget_health_status: ProjectBudgetHealthStatus
+  budget_health_reason?: string | null
+}
+
+export interface ProjectFinanceOperationRecord {
+  id?: string | null
+  title?: string | null
+  project_item_id?: string | null
+  deal_id?: string | null
+  operation_type?: string | null
+  amount?: number
+  currency?: string | null
+  operation_date?: string | null
+  source?: string | null
+  comment?: string | null
+  responsible_user_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
 export interface ProjectBoardCardRecord {
   id: string
   project_item_id: string | null
@@ -38,6 +73,25 @@ export interface ProjectBoardCardRecord {
   project_hours_budget: number | null
   hourly_rate: number
   is_support: boolean
+  project_type: 'delivery' | 'support' | string
+  budget_mode: 'hours' | 'amount' | 'hours_and_amount' | 'support' | string
+  planned_budget_amount: number | null
+  planned_hours: number | null
+  planned_amount: number | null
+  actual_hours: number
+  actual_cost_amount: number
+  actual_income_amount: number
+  actual_expense_amount: number
+  actual_financial_result: number
+  hours_remaining: number | null
+  budget_remaining: number | null
+  budget_utilization_mode: 'hours' | 'amount' | 'none' | string
+  budget_utilization_ratio: number | null
+  budget_utilization_percent: number | null
+  budget_health_status: ProjectBudgetHealthStatus
+  budget_health_reason?: string | null
+  budget?: ProjectBudgetSnapshot
+  recent_finance_operations?: ProjectFinanceOperationRecord[]
   curator_user_id: string | null
   curator_name: string | null
   project_start_date: string | null

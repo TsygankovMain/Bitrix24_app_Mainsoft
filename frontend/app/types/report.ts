@@ -155,6 +155,7 @@ export interface ProjectTaskReportItem {
   uchitivaem?: boolean
   nazvanie_zadachi?: string
   opisanie?: string
+  id_elem?: string | number
 }
 
 export interface ProjectTaskReportEmployee {

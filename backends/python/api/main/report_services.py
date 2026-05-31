@@ -13,6 +13,7 @@ FIELD_TITLE_HIERARCHY = "title_zadach_ierarhiya"
 FIELD_PROJECT_NAME = "project_title"
 FIELD_PROJECT_ID = "project_id"
 FIELD_PROJECT_ITEM_ID = "project_item_id"
+FIELD_HOURLY_RATE_SNAPSHOT = "hourly_rate_snapshot"
 FIELD_IS_BILLABLE = "uchitivaem"
 FIELD_HOURS = "kolichestvo_chasov"
 FIELD_NON_BILLABLE_HOURS = "ne_uchitivaemie_chasi"
@@ -27,6 +28,7 @@ DEFAULT_FIELDS_MAPPING = {
     "project_title": FIELD_PROJECT_NAME,
     FIELD_PROJECT_ID: FIELD_PROJECT_ID,
     FIELD_PROJECT_ITEM_ID: FIELD_PROJECT_ITEM_ID,
+    FIELD_HOURLY_RATE_SNAPSHOT: FIELD_HOURLY_RATE_SNAPSHOT,
     FIELD_IS_BILLABLE: FIELD_IS_BILLABLE,
     FIELD_HOURS: FIELD_HOURS,
     FIELD_NON_BILLABLE_HOURS: FIELD_NON_BILLABLE_HOURS,
@@ -55,6 +57,7 @@ class DataProcessingService:
         field_project_name = get_f("project_title")
         field_project_id = get_f(FIELD_PROJECT_ID)
         field_project_item_id = get_f(FIELD_PROJECT_ITEM_ID)
+        field_hourly_rate_snapshot = get_f(FIELD_HOURLY_RATE_SNAPSHOT)
         field_is_billable = get_f(FIELD_IS_BILLABLE)
         field_hours = get_f(FIELD_HOURS)
         field_non_billable = get_f(FIELD_NON_BILLABLE_HOURS)
@@ -103,6 +106,7 @@ class DataProcessingService:
                     "project_name": project_name,
                     "project_id": self._stringify_value(item.get(field_project_id)),
                     "project_item_id": self._stringify_value(item.get(field_project_item_id)),
+                    "hourly_rate_snapshot": self._to_optional_float(item.get(field_hourly_rate_snapshot)),
                     "data": item.get(field_date) or item.get("createdTime"),
                     "source_created_at": item.get("createdTime"),
                 }
@@ -153,6 +157,22 @@ class DataProcessingService:
             return float(normalized)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Invalid numeric value: {value}") from exc
+
+    @staticmethod
+    def _to_optional_float(value: Any) -> Optional[float]:
+        if value in (None, "", False):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        normalized = str(value).strip().replace(",", ".")
+        if not normalized:
+            return None
+
+        try:
+            return float(normalized)
+        except (TypeError, ValueError):
+            return None
 
 
 class ReportService:

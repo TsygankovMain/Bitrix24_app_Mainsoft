@@ -5,7 +5,7 @@
  */
 
 export function requestIframeResize(height: number) {
-    // @ts-ignore
+    // @ts-expect-error BX24 is injected globally by Bitrix24 and is not typed on window
     if (typeof window.BX24 !== 'undefined') {
         try {
             // Official way: BX24.resizeWindow(width, height, callback)
@@ -14,7 +14,7 @@ export function requestIframeResize(height: number) {
             // But often BX24.fitWindow() is better for auto-sizing.
 
             // If explicit height is given:
-            // @ts-ignore
+            // @ts-expect-error BX24 is injected globally by Bitrix24 and is not typed on window
             window.BX24.resizeWindow(window.innerWidth, height)
             return
         } catch (e) {
@@ -50,9 +50,9 @@ export function requestIframeFullHeight() {
 }
 
 export function requestIframeAutoHeight() {
-    // @ts-ignore
+    // @ts-expect-error BX24 is injected globally by Bitrix24 and is not typed on window
     if (typeof window.BX24 !== 'undefined') {
-        // @ts-ignore
+        // @ts-expect-error BX24 is injected globally by Bitrix24 and is not typed on window
         window.BX24.fitWindow();
         return;
     }

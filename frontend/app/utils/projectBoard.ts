@@ -1,10 +1,14 @@
 import type {
+  ProjectBudgetHealthStatus,
   ProjectBoardCardRecord,
   ProjectBoardResponse,
   ProjectBoardStage,
 } from '../types/project-board'
 
 export type {
+  ProjectBudgetHealthStatus,
+  ProjectBudgetSnapshot,
+  ProjectFinanceOperationRecord,
   ProjectBoardCardRecord,
   ProjectBoardDirectoryOption,
   ProjectBoardMetaPayload,
@@ -43,6 +47,16 @@ export const PROJECT_STAGE_META = {
     column: 'from-slate-100 to-white',
   }
 } as const
+
+export const PROJECT_BUDGET_STATUS_META: Record<ProjectBudgetHealthStatus, string> = {
+  'Норма': 'bg-emerald-100 text-emerald-700',
+  'Риск': 'bg-amber-100 text-amber-800',
+  'Перерасход': 'bg-rose-100 text-rose-700',
+  'Без лимита': 'bg-slate-200 text-slate-700',
+  'Плюс': 'bg-emerald-100 text-emerald-700',
+  'Граница': 'bg-amber-100 text-amber-800',
+  'Минус': 'bg-rose-100 text-rose-700',
+}
 
 const PROJECT_STAGE_FALLBACK_PALETTE = [
   {
@@ -118,12 +132,35 @@ export function formatProjectMoney(value?: number | null) {
   return `${Number(value).toFixed(0)} ₽/ч`
 }
 
+export function formatProjectCurrency(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return '—'
+  }
+
+  return `${new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 0
+  }).format(Number(value))} ₽`
+}
+
 export function formatProjectHours(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
     return '—'
   }
 
   return `${Number(value).toFixed(0)} ч`
+}
+
+export function formatProjectPercent(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return '—'
+  }
+
+  return `${Number(value).toFixed(1)}%`
+}
+
+export function getBudgetStatusBadgeClass(status?: ProjectBudgetHealthStatus | null) {
+  const normalizedStatus = String(status || '').trim() as ProjectBudgetHealthStatus
+  return PROJECT_BUDGET_STATUS_META[normalizedStatus] || PROJECT_BUDGET_STATUS_META['Без лимита']
 }
 
 export function getTimelineAnchor(card: ProjectBoardCardRecord) {

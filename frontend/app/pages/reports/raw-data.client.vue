@@ -2,6 +2,7 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
+import InnBackfillPanel from '../../components/reports/InnBackfillPanel.vue'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 
@@ -26,6 +27,7 @@ const isLoading = computed({
 })
 
 // Report State
+const activeTab = ref<'export' | 'inn'>('export')
 const isInit = ref(false)
 const isSyncing = ref(false)
 const timesheetItems = ref<any[]>([])
@@ -282,6 +284,23 @@ onMounted(async () => {
             </div>
           </template>
 
+          <!-- Вкладки -->
+          <div class="mb-4 flex gap-1 border-b border-slate-200">
+            <button
+              class="px-4 py-2 text-sm font-medium transition"
+              :class="activeTab === 'export' ? 'border-b-2 border-lime-500 text-slate-900' : 'text-slate-500 hover:text-slate-700'"
+              @click="activeTab = 'export'"
+            >Выгрузка</button>
+            <button
+              class="px-4 py-2 text-sm font-medium transition"
+              :class="activeTab === 'inn' ? 'border-b-2 border-lime-500 text-slate-900' : 'text-slate-500 hover:text-slate-700'"
+              @click="activeTab = 'inn'"
+            >Дозаполнение ИНН</button>
+          </div>
+
+          <!-- Вкладка: Выгрузка -->
+          <div v-show="activeTab === 'export'">
+
           <!-- Filter by creation date -->
           <div class="ms-filter-wrap mb-4 flex flex-wrap items-end gap-3">
               <div class="flex flex-col gap-1">
@@ -424,6 +443,12 @@ onMounted(async () => {
                     Next
                   </button>
               </div>
+          </div>
+          </div><!-- /tab: Выгрузка -->
+
+          <!-- Вкладка: Дозаполнение ИНН -->
+          <div v-if="activeTab === 'inn'">
+            <InnBackfillPanel />
           </div>
       </B24Card>
     </div>

@@ -10,6 +10,9 @@ from django.utils import timezone
 from .bitrix_data_access import BitrixDataService
 from .middleware import ApiTrailingSlashNormalizeMiddleware, RequestLoggingMiddleware
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
+from .finance_operation_service import FinanceOperationService
+from .project_budget_notifier import ProjectBudgetNotifier
+from .project_budget_service import ProjectBudgetService
 from .report_queries import build_filtered_timesheet_queryset
 from .report_services import (
     DataProcessingService,
@@ -891,3 +894,381 @@ class StageAutomationStabilityTest(TestCase):
         self.assertEqual(move_30.stage, PROJECT_STAGE_NO_WRITEOFF_30)
         self.assertEqual(move_90.stage, PROJECT_STAGE_NO_WRITEOFF_90)
         self.assertEqual(restore_manual.stage, PROJECT_STAGE_ESTIMATE)
+
+
+class ProjectBudgetServiceTest(TestCase):
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=3,
+            is_b24_user_admin=True,
+            member_id="member-3",
+            is_master_account=True,
+            domain_url="budget.bitrix24.ru",
+            status="active",
+            application_version=1,
+        )
+
+    def test_build_metrics_map_calculates_risk_status_for_hours_mode(self):
+        card = ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_item_id="101",
+            project_id="501",
+            project_name="Budget Hours Project",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            project_hours_budget=100.0,
+            planned_budget_amount=120000.0,
+            hourly_rate=1000.0,
+            budget_mode="hours_and_amount",
+        )
+
+        reflected_at = timezone.make_aware(datetime(2026, 4, 10, 10, 0))
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=601,
+            task_id="601",
+            employee_id="u-1",
+            hours=85.0,
+            project_item_id="101",
+            project_id="501",
+            project_title="Budget Hours Project",
+            date_reflection=reflected_at,
+        )
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=602,
+            task_id="602",
+            employee_id="u-1",
+            hours=10.0,
+            project_id="501",
+            project_title="Budget Hours Project",
+            date_reflection=reflected_at,
+        )
+
+        metrics = ProjectBudgetService(self.account).build_metrics_map([card])[card.project_id]
+
+        self.assertEqual(metrics["actual_hours"], 95.0)
+        self.assertEqual(metrics["actual_cost_amount"], 95000.0)
+        self.assertEqual(metrics["hours_remaining"], 5.0)
+        self.assertEqual(metrics["budget_remaining"], 25000.0)
+        self.assertEqual(metrics["budget_health_status"], "Риск")
+
+    def test_build_metrics_map_calculates_overrun_for_amount_mode(self):
+        card = ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_item_id="102",
+            project_id="502",
+            project_name="Budget Amount Project",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            project_hours_budget=None,
+            planned_budget_amount=10000.0,
+            hourly_rate=1000.0,
+            budget_mode="amount",
+        )
+
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=603,
+            task_id="603",
+            employee_id="u-2",
+            hours=12.0,
+            project_item_id="102",
+            project_id="502",
+            project_title="Budget Amount Project",
+            date_reflection=timezone.make_aware(datetime(2026, 4, 11, 10, 0)),
+        )
+
+        metrics = ProjectBudgetService(self.account).build_metrics_map([card])[card.project_id]
+
+        self.assertEqual(metrics["actual_hours"], 12.0)
+        self.assertEqual(metrics["actual_cost_amount"], 12000.0)
+        self.assertIsNone(metrics["hours_remaining"])
+        self.assertEqual(metrics["budget_remaining"], -2000.0)
+        self.assertEqual(metrics["budget_health_status"], "Перерасход")
+
+    def test_build_metrics_map_returns_no_limit_when_budget_not_defined(self):
+        card = ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_item_id="103",
+            project_id="503",
+            project_name="Support Project",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            project_hours_budget=None,
+            planned_budget_amount=None,
+            hourly_rate=1200.0,
+            budget_mode="support",
+            project_type="support",
+            is_support=True,
+        )
+
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=604,
+            task_id="604",
+            employee_id="u-3",
+            hours=7.0,
+            project_item_id="103",
+            project_id="503",
+            project_title="Support Project",
+            date_reflection=timezone.make_aware(datetime(2026, 4, 12, 10, 0)),
+        )
+
+        metrics = ProjectBudgetService(self.account).build_metrics_map([card])[card.project_id]
+
+        self.assertEqual(metrics["actual_hours"], 7.0)
+        self.assertEqual(metrics["actual_cost_amount"], 8400.0)
+        self.assertEqual(metrics["budget_health_status"], "Граница")
+        self.assertIsNone(metrics["budget_utilization_ratio"])
+
+    def test_build_metrics_map_uses_hourly_rate_snapshot_for_historical_cost(self):
+        card = ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_item_id="104",
+            project_id="504",
+            project_name="Snapshot Project",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            project_hours_budget=20.0,
+            planned_budget_amount=40000.0,
+            hourly_rate=2000.0,
+            budget_mode="hours_and_amount",
+        )
+
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=605,
+            task_id="605",
+            employee_id="u-4",
+            hours=10.0,
+            project_item_id="104",
+            project_id="504",
+            project_title="Snapshot Project",
+            hourly_rate_snapshot=1000.0,
+            date_reflection=timezone.make_aware(datetime(2026, 4, 13, 10, 0)),
+        )
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=606,
+            task_id="606",
+            employee_id="u-4",
+            hours=5.0,
+            project_item_id="104",
+            project_id="504",
+            project_title="Snapshot Project",
+            hourly_rate_snapshot=None,
+            date_reflection=timezone.make_aware(datetime(2026, 4, 13, 12, 0)),
+        )
+
+        metrics = ProjectBudgetService(self.account).build_metrics_map([card])[card.project_id]
+
+        self.assertEqual(metrics["actual_hours"], 15.0)
+        self.assertEqual(metrics["actual_cost_amount"], 20000.0)  # 10*1000 + 5*2000
+
+    @patch("main.project_budget_service.FinanceOperationService")
+    def test_support_project_uses_plus_status_when_financial_result_positive(self, finance_service_cls):
+        finance_service_cls.return_value.get_sums_by_project_item_id.return_value = {
+            "105": {"income": 50000.0, "expense": 10000.0}
+        }
+
+        card = ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_item_id="105",
+            project_id="505",
+            project_name="Support Plus",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            project_hours_budget=None,
+            planned_budget_amount=None,
+            hourly_rate=2000.0,
+            budget_mode="support",
+            project_type="support",
+            is_support=True,
+        )
+
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account,
+            bitrix_id=607,
+            task_id="607",
+            employee_id="u-5",
+            hours=10.0,
+            project_item_id="105",
+            project_id="505",
+            project_title="Support Plus",
+            date_reflection=timezone.make_aware(datetime(2026, 4, 14, 10, 0)),
+        )
+
+        metrics = ProjectBudgetService(self.account).build_metrics_map([card])[card.project_id]
+
+        self.assertEqual(metrics["actual_financial_result"], 20000.0)
+        self.assertEqual(metrics["budget_health_status"], "Плюс")
+
+
+class FinanceOperationServiceTest(TestCase):
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=4,
+            is_b24_user_admin=True,
+            member_id="member-4",
+            is_master_account=True,
+            domain_url="finance.bitrix24.ru",
+            status="active",
+            application_version=1,
+        )
+
+    def _build_service(self, call_method_mock):
+        client = Mock()
+        client._bitrix_token.call_method = call_method_mock
+        self.account.client = client
+        return FinanceOperationService(client, self.account)
+
+    def test_list_operations_normalizes_rows(self):
+        def call_method(method, params):
+            if method == "app.option.get":
+                return {
+                    "result": {
+                        "timestamp_config": '{"finance_sp_entity_type_id":170,"finance_fields_mapping":{"project_item_id":"UF_PROJECT_ITEM","operation_type":"UF_TYPE","amount":"UF_AMOUNT","operation_date":"UF_DATE","source":"UF_SOURCE","deal_id":"UF_DEAL_ID","comment":"UF_COMMENT","currency":"UF_CURRENCY"}}'
+                    }
+                }
+            if method == "crm.item.list":
+                return {
+                    "result": [
+                        {
+                            "id": 11,
+                            "UF_PROJECT_ITEM": "101",
+                            "UF_TYPE": "income",
+                            "UF_AMOUNT": "3000",
+                            "UF_DATE": "2026-04-18T10:00:00+03:00",
+                            "UF_SOURCE": "deal_embed",
+                            "UF_DEAL_ID": "45",
+                            "UF_COMMENT": "Оплата",
+                            "UF_CURRENCY": "RUB",
+                        }
+                    ]
+                }
+            raise AssertionError(f"Unexpected method {method}")
+
+        service = self._build_service(call_method)
+        response = service.list_operations(project_item_id="101", deal_id="45", limit=10)
+
+        self.assertEqual(response["count"], 1)
+        self.assertEqual(response["operations"][0]["operation_type"], "income")
+        self.assertEqual(response["operations"][0]["amount"], 3000.0)
+        self.assertEqual(response["operations"][0]["operation_date"], "2026-04-18")
+
+    def test_create_operation_returns_duplicate_when_idempotency_matches(self):
+        existing_row = {
+            "id": "777",
+            "project_item_id": "101",
+            "deal_id": "45",
+            "operation_type": "income",
+            "amount": 3000.0,
+            "operation_date": "2026-04-18",
+            "source": "deal_embed",
+            "comment": "Оплата",
+        }
+        service = Mock(spec=FinanceOperationService)
+        service.list_operations.return_value = {"operations": [existing_row], "count": 1}
+        service._build_idempotency_key = FinanceOperationService._build_idempotency_key
+        service._normalize_create_payload = FinanceOperationService._normalize_create_payload
+        service._find_duplicate = FinanceOperationService._find_duplicate
+
+        payload = {
+            "project_item_id": "101",
+            "deal_id": "45",
+            "operation_type": "income",
+            "amount": 3000,
+            "operation_date": "2026-04-18",
+            "source": "deal_embed",
+            "comment": "Оплата",
+        }
+        normalized = FinanceOperationService._normalize_create_payload(service, payload)
+        duplicate = FinanceOperationService._find_duplicate(service, normalized)
+        self.assertIsNotNone(duplicate)
+        self.assertEqual(duplicate["id"], "777")
+
+    def test_normalize_create_payload_requires_deal_id_for_non_manual_source(self):
+        service = FinanceOperationService.__new__(FinanceOperationService)
+
+        with self.assertRaisesMessage(ValueError, "deal_id is required for non-manual finance operations"):
+            FinanceOperationService._normalize_create_payload(
+                service,
+                {
+                    "project_item_id": "101",
+                    "operation_type": "income",
+                    "amount": 1500,
+                    "operation_date": "2026-04-18",
+                    "source": "deal_embed",
+                    "deal_id": "",
+                },
+            )
+
+    def test_normalize_create_payload_allows_manual_source_without_deal_id(self):
+        service = FinanceOperationService.__new__(FinanceOperationService)
+
+        normalized = FinanceOperationService._normalize_create_payload(
+            service,
+            {
+                "project_item_id": "101",
+                "operation_type": "expense",
+                "amount": 500,
+                "operation_date": "2026-04-18",
+                "source": "manual",
+                "comment": "Ручная корректировка",
+            },
+        )
+
+        self.assertEqual(normalized["source"], "manual")
+        self.assertIsNone(normalized["deal_id"])
+
+
+class ProjectBudgetNotifierTest(TestCase):
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=5,
+            is_b24_user_admin=True,
+            member_id="member-5",
+            is_master_account=True,
+            domain_url="notifier.bitrix24.ru",
+            status="active",
+            application_version=1,
+        )
+        self.card = ProjectCard.objects.create(
+            bitrix24_account=self.account,
+            project_item_id="201",
+            project_id="701",
+            project_name="Notifier Project",
+            stage=PROJECT_STAGE_IN_WORK,
+            manual_stage=PROJECT_STAGE_IN_WORK,
+            curator_user_id="42",
+            curator_name="Куратор Тест",
+        )
+        self.notifier = ProjectBudgetNotifier(Mock(), self.account)
+
+    @patch.object(ProjectBudgetNotifier, "_send_notification", return_value=(True, None))
+    def test_dispatch_event_respects_cooldown(self, send_notification_mock):
+        metrics = {
+            "budget_health_status": "Риск",
+            "actual_cost_amount": 1000.0,
+            "actual_income_amount": 0.0,
+            "actual_expense_amount": 0.0,
+            "actual_financial_result": -1000.0,
+        }
+        event = {
+            "code": "budget_risk",
+            "title": "Статус проекта: Риск",
+            "details": {},
+        }
+
+        first = self.notifier._dispatch_event(self.card, metrics, event, source="test")
+        second = self.notifier._dispatch_event(self.card, metrics, event, source="test")
+
+        self.assertEqual(first["status"], "sent")
+        self.assertEqual(second["status"], "cooldown")
+        self.assertEqual(send_notification_mock.call_count, 1)
+
+    def test_large_change_detection_uses_absolute_and_relative_thresholds(self):
+        self.assertTrue(self.notifier._is_large_change(120000.0, 0.0))
+        self.assertTrue(self.notifier._is_large_change(15000.0, 100000.0))
+        self.assertFalse(self.notifier._is_large_change(5000.0, 100000.0))

@@ -57,7 +57,7 @@ export const useAppInit = (loggerTitle?: string) => {
       ]
       try {
         await initB24Helper($b24, loadTypes)
-      } catch (error) {
+      } catch {
         // Network can be unstable in embedded mode; retry once before failing hard.
         $logger.warn('InitApp initB24Helper first attempt failed, retrying once')
         await new Promise((resolve) => setTimeout(resolve, 250))

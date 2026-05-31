@@ -84,6 +84,13 @@ class ConfigurationService:
             normalized_project_mapping['effective_stage'] = root_stage_value
 
         normalized['project_fields_mapping'] = normalized_project_mapping
+        if not isinstance(normalized.get('finance_fields_mapping'), dict):
+            normalized['finance_fields_mapping'] = {}
+
+        try:
+            normalized['finance_sp_entity_type_id'] = int(normalized.get('finance_sp_entity_type_id') or 0)
+        except (TypeError, ValueError):
+            normalized['finance_sp_entity_type_id'] = 0
         return normalized
 
     def _merge_with_defaults(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -129,6 +136,8 @@ class ConfigurationService:
             'fields_mapping': {},
             'project_sp_entity_type_id': 0,
             'project_fields_mapping': {},
+            'finance_sp_entity_type_id': 0,
+            'finance_fields_mapping': {},
             'is_configured': False,
             'hourly_rate': 0,
             'legal_entity_directory': {
