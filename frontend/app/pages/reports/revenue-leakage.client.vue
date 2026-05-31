@@ -7,6 +7,7 @@ import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
+import { useProgress } from '~/composables/useProgress'
 import type { RevenueLeakageReport } from '~/types/report'
 
 const { locales: localesI18n, setLocale } = useI18n()
@@ -56,6 +57,8 @@ const { hasGenerated, generateReport } = useReportGenerator({
   onError: processErrorGlobal
 })
 
+const progress = useProgress()
+
 const maxLeakageHours = computed(() =>
   Math.max(...(reportData.value?.project_rows || []).map((row: any) => row.non_billable_hours || 0), 0)
 )
@@ -97,6 +100,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
+  progress.begin('Формирование Excel…')
   try {
     const blob = await apiStore.exportReportRevenueLeakage(
       dateFrom.value,
@@ -124,6 +128,8 @@ async function handleExportExcel() {
     window.URL.revokeObjectURL(url)
   } catch (e) {
     processErrorGlobal(e)
+  } finally {
+    progress.end()
   }
 }
 

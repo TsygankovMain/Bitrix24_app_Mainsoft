@@ -11,6 +11,7 @@ import { openCrmItemCard } from '~/utils/openCrmItem'
 import { PROJECT_TASK_LABEL_KEY } from '~/composables/useProjectTaskLabel'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
+import { useProgress } from '~/composables/useProgress'
 import type { ProjectTaskReportNode } from '~/types/report'
 import { formatHours, formatPercent } from '~/utils/reportFormat'
 
@@ -83,6 +84,8 @@ const { hasGenerated, generateReport, resetGenerated } = useReportGenerator({
     onError: processErrorGlobal
 })
 
+const progress = useProgress()
+
 // KPI Metrics (computed from reportData)
 const kpiMetrics = computed(() => {
     const totalHours = reportData.value.reduce((sum, node) => sum + (node.total_hours || 0), 0)
@@ -128,6 +131,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
+    progress.begin('Формирование Excel…')
     try {
         const blob = await apiStore.exportReportProjectTaskEmployee(
             dateFrom.value,
@@ -156,6 +160,8 @@ async function handleExportExcel() {
         window.URL.revokeObjectURL(url)
     } catch (error) {
         processErrorGlobal(error)
+    } finally {
+        progress.end()
     }
 }
 

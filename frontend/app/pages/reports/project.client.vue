@@ -8,6 +8,7 @@ import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import { readProjectReportPreset } from '~/utils/reportNavigation'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
+import { useProgress } from '~/composables/useProgress'
 import type { HierarchicalReportNode } from '~/types/report'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
@@ -67,6 +68,8 @@ const { hasGenerated, generateReport, resetGenerated } = useReportGenerator({
     onError: processErrorGlobal
 })
 
+const progress = useProgress()
+
 function applyProjectPresetFromRoute() {
     return applyRouteProjectPreset(route.query as Record<string, unknown>)
 }
@@ -98,6 +101,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
+    progress.begin('Формирование Excel…')
     try {
         const blob = await apiStore.exportReportProjectEmployee(
             dateFrom.value,
@@ -125,6 +129,8 @@ async function handleExportExcel() {
         window.URL.revokeObjectURL(url)
     } catch (e) {
         processErrorGlobal(e)
+    } finally {
+        progress.end()
     }
 }
 

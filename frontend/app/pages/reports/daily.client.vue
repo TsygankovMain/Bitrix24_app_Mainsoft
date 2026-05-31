@@ -6,6 +6,7 @@ import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
+import { useProgress } from '~/composables/useProgress'
 import type { DailyWorkloadReport } from '~/types/report'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
@@ -62,6 +63,8 @@ const { hasGenerated, syncWarning, generateReport } = useReportGenerator({
     onError: processErrorGlobal
 })
 
+const progress = useProgress()
+
 const normalizedHeaderDays = computed(() =>
     Array.isArray(reportData.value?.header_days) ? reportData.value.header_days : []
 )
@@ -109,6 +112,7 @@ async function fetchReport() {
 }
 
 async function handleExportExcel() {
+    progress.begin('Формирование Excel…')
     try {
         const blob = await apiStore.exportReportDailyWorkload(
             dateFrom.value,
@@ -136,6 +140,8 @@ async function handleExportExcel() {
         window.URL.revokeObjectURL(url)
     } catch (e) {
         processErrorGlobal(e)
+    } finally {
+        progress.end()
     }
 }
 
