@@ -29,7 +29,7 @@
 
 ## 4. Выгрузка «Сырые данные» и дозаполнение ИНН
 - **Выгрузка:** `pages/reports/raw-data.client.vue` (вкладка «Выгрузка») → `stores/api.ts::exportRawData()` → `POST /api/export-raw-data` → `views.py::export_raw_data` (openpyxl, чтение СП напрямую).
-- **Дозаполнение ИНН:** вкладка «Дозаполнение ИНН» → `components/reports/InnBackfillPanel.vue`; `stores/api.ts::scanInnBackfill()` / `applyInnBackfill()` → `GET /api/inn-backfill/scan`, `POST /api/inn-backfill/apply` → `views.py::inn_backfill_scan` / `inn_backfill_apply` → `inn_backfill_service.py::InnBackfillService` (`scan`/`apply`/`autofill`). Типы — `types/inn.ts`.
+- **Дозаполнение ИНН:** вкладка «Дозаполнение ИНН» → `components/reports/InnBackfillPanel.vue` (+ `InnAssignModal.vue` — окно заполнения/замены на проект, `components/common/ProgressOverlay.vue` — прогресс с бобром); `stores/api.ts::scanInnBackfill()` / `applyInnBackfill()` / `resolveInnProjectItems()` / `getProjectsHealth()` → `/api/inn-backfill/scan|apply|project-items`, `/api/projects-health` → `views.py::inn_backfill_scan` / `inn_backfill_apply` / `inn_backfill_project_items` / `projects_health` → `inn_backfill_service.py::InnBackfillService` (`scan`/`apply`/`autofill`/`project_items`/`projects_health`). Настройки «Незаполненные проекты» — `pages/settings/projects-health.client.vue`. Типы — `types/inn.ts`.
 
 ## 5. Проектный контур (доска / timeline / карточка)
 - **Фронт:** `pages/projects/index.client.vue`; компоненты `components/projects/ProjectBoardCard.vue`, `ProjectBoardColumn.vue`, `ProjectBoardDrawer.vue`, `ProjectTimelineLane.vue`; утилиты `utils/projectBoard.ts`, `utils/openProjectGroup.ts`.
