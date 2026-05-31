@@ -7,6 +7,22 @@
 
 ## [Unreleased]
 
+### Глобальный прогресс-оверлей во всех фоновых операциях — 2026-05-31
+
+#### Added
+- Композабл-синглтон `frontend/app/composables/useProgress.ts` (`begin/update/end`, геттер `active`, счётчик `count` параллельных операций) + единый `<ProgressOverlay>` (🦫 Бобёр) смонтирован в `app.vue`. Тест `frontend/tests/progress.test.ts`.
+
+#### Changed
+- Прогресс-оверлей теперь показывается во **всех** фоновых операциях: формирование отчётов (`useReportGenerator`), выгрузки Excel (7 страниц), синхронизации (raw-data, доска проектов), ИНН-простановка (с прогрессом X/Y). Локальные `ProgressOverlay` (ИНН-панель/модалка, raw-data) удалены — одна точка правды (`app.vue`).
+
+#### Fixed (code-review)
+- BLOCKER: `InnAssignModal.apply` — `begin/end` сделаны строго парными (вложенный `try/finally` только после `begin`), чтобы при пустом списке/параллельной операции не гасить чужой оверлей.
+- `useReportGenerator`: `begin` перенесён внутрь `try` (надёжное гашение при ошибке).
+
+#### Verification
+- `npx tsx --test tests/progress.test.ts` PASS; `nuxt prepare` чист; `ProgressOverlay` используется только в `app.vue`.
+- ⏳ e2e на проде.
+
 ### Спринт 4 — Единый структурный Excel во всех отчётах + техдолг — 2026-05-31
 
 #### Added

@@ -53,6 +53,7 @@
 - **Бэк:** `views.py::get_request_logs / get_system_logs`; модели `models.py::RequestLog`, `SystemLog`.
 
 ## Прочее
+- **Глобальный прогресс:** `composables/useProgress.ts` (синглтон `begin/update/end`, счётчик параллельных операций) + единый `<ProgressOverlay>` (🦫) в `app.vue`. `begin/end` — в `useReportGenerator` (генерация отчётов), `handleExport*` (выгрузки), синках, ИНН-простановке. Тест `tests/progress.test.ts`.
 - **Главная/портфолио:** `pages/index.client.vue` → `getHomepagePortfolio` → `/api/homepage/portfolio`.
 - **Поддержка:** `/api/support/status`, `/api/support/connect`.
 - **Финансовый контур** — **в планах**, на текущий момент изолирован (см. CHANGELOG, секции про finance).
