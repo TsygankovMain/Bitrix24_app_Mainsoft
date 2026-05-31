@@ -5,7 +5,9 @@ import MultiSelectFilter from '../common/MultiSelectFilter.vue'
 import DateRangeFilter from '../common/DateRangeFilter.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { formatReportDate } from '~/utils/reportFormat'
-import type { InnScanResult, InnBackfillRow, InnApplyItem } from '~/types/inn'
+import type { InnScanResult, InnBackfillRow, InnBackfillGroup, InnApplyItem } from '~/types/inn'
+import InnAssignModal from './InnAssignModal.vue'
+import ProgressOverlay from '../common/ProgressOverlay.vue'
 
 const apiStore = useApiStore()
 
@@ -145,12 +147,36 @@ function fillAllPossible() {
   applyItems(allRows().filter(r => r.status === 'ready').map(rowToItem))
 }
 
-function applyGroup(rows: InnBackfillRow[]) {
-  applyItems(rows.filter(r => r.status === 'ready').map(rowToItem))
-}
-
 function groupReadyCount(rows: InnBackfillRow[]): number {
   return rows.filter(r => r.status === 'ready').length
+}
+
+// Сворачивание групп
+const collapsed = ref<Set<string>>(new Set())
+function toggleCollapse(key: string) {
+  collapsed.value.has(key) ? collapsed.value.delete(key) : collapsed.value.add(key)
+  collapsed.value = new Set(collapsed.value)
+}
+function isCollapsed(key: string): boolean {
+  return collapsed.value.has(key)
+}
+
+// Окно заполнения/замены ИНН на проект
+const modal = ref<{ open: boolean, projectId: string, projectName: string, ourInn: string, clientInn: string }>({
+  open: false, projectId: '', projectName: '', ourInn: '', clientInn: ''
+})
+function openAssign(group: InnBackfillGroup) {
+  modal.value = {
+    open: true,
+    projectId: group.project_id || '',
+    projectName: group.project_name,
+    ourInn: group.our_inn,
+    clientInn: group.client_inn
+  }
+}
+function onAssigned() {
+  modal.value.open = false
+  runScan()
 }
 
 onMounted(async () => {
@@ -236,7 +262,9 @@ onMounted(async () => {
                   <input type="checkbox" :checked="groupAllSelected(group.rows)" @change="toggleGroup(group.rows)">
                 </td>
                 <td class="px-3 py-2.5 font-bold text-lime-800" colspan="3">
+                  <span class="cursor-pointer select-none mr-1 text-lime-700" @click="toggleCollapse(group.key)">{{ isCollapsed(group.key) ? '▶' : '▼' }}</span>
                   {{ group.project_name }} · {{ group.count }} карт.
+                  <span v-if="groupReadyCount(group.rows)" class="ml-2 inline-flex rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">готовы {{ groupReadyCount(group.rows) }}</span>
                 </td>
                 <td class="px-3 py-2.5 text-xs">
                   <span v-if="group.our_inn" class="text-sky-800">наш: {{ group.our_inn }}</span>
@@ -246,15 +274,16 @@ onMounted(async () => {
                   <span v-if="group.client_inn" class="text-sky-800">клиент: {{ group.client_inn }}</span>
                   <span v-else class="text-amber-700">клиент не определён</span>
                   <button
-                    v-if="groupReadyCount(group.rows) > 0"
-                    class="ml-2 font-semibold text-emerald-700 hover:underline"
+                    v-if="group.project_id"
+                    class="ml-2 font-semibold text-sky-700 hover:underline"
                     :disabled="applying"
-                    @click="applyGroup(group.rows)"
-                  >заполнить ({{ groupReadyCount(group.rows) }}) →</button>
+                    @click="openAssign(group)"
+                  >Заполнить / Изменить ИНН →</button>
                 </td>
               </tr>
 
               <!-- Строки карточек -->
+              <template v-if="!isCollapsed(group.key)">
               <tr
                 v-for="row in group.rows"
                 :key="row.bitrix_id"
@@ -278,6 +307,7 @@ onMounted(async () => {
                   <input v-else v-model="manualFor(row).client" class="w-32 rounded border border-slate-300 px-2 py-1 text-xs" placeholder="ИНН клиента">
                 </td>
               </tr>
+              </template>
             </template>
           </tbody>
         </table>
@@ -287,7 +317,6 @@ onMounted(async () => {
       <div v-if="result?.groups.length" class="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3">
         <div class="text-sm text-slate-600">
           Выбрано: <b>{{ selectedCount }}</b> · с готовым ИНН: <b class="text-emerald-700">{{ selectedReadyCount }}</b>
-          <span v-if="applying && progress.total" class="ml-2 text-xs text-slate-500">· простановка {{ progress.done }} / {{ progress.total }}</span>
         </div>
         <B24Button
           label="Проставить выбранным"
@@ -301,5 +330,18 @@ onMounted(async () => {
 
     <!-- Начальное состояние -->
     <div v-else class="ms-empty-state">Выберите период и нажмите «Найти»</div>
+
+    <ProgressOverlay :visible="applying" title="Простановка ИНН…" :done="progress.done" :total="progress.total" />
+    <InnAssignModal
+      :visible="modal.open"
+      :project-id="modal.projectId"
+      :project-name="modal.projectName"
+      :our-inn="modal.ourInn"
+      :client-inn="modal.clientInn"
+      :date-from="dateFrom"
+      :date-to="dateTo"
+      @close="modal.open = false"
+      @applied="onAssigned"
+    />
   </div>
 </template>
