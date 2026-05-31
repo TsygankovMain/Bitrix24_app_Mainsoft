@@ -1164,11 +1164,11 @@ def report_time_entry_discipline_export(request: AuthorizedRequest):
     table_rows = report.get("employee_rows", [])
     columns = [
         {"key": "employee_name", "label": "Сотрудник", "fmt": "text", "width": 20},
-        {"key": "entry_count", "label": "Записей", "fmt": "hours", "width": 12},
+        {"key": "entry_count", "label": "Записей", "fmt": "int", "width": 12},
         {"key": "same_day_share", "label": "В день записи, доля", "fmt": "percent", "width": 16},
         {"key": "avg_lag_days", "label": "Средн. отставание, дней", "fmt": "hours", "width": 16},
-        {"key": "late_entries", "label": "Запис. >1дня назад", "fmt": "hours", "width": 14},
-        {"key": "max_lag_days", "label": "Макс. отставание, дней", "fmt": "hours", "width": 16},
+        {"key": "late_entries", "label": "Запис. >1дня назад", "fmt": "int", "width": 14},
+        {"key": "max_lag_days", "label": "Макс. отставание, дней", "fmt": "int", "width": 16},
         {"key": "risk_level", "label": "Уровень риска", "fmt": "text", "width": 14},
     ]
 
@@ -1215,9 +1215,9 @@ def report_focus_analysis_export(request: AuthorizedRequest):
     table_rows = report.get("employee_rows", [])
     columns = [
         {"key": "employee_name", "label": "Сотрудник", "fmt": "text", "width": 20},
-        {"key": "project_count", "label": "Кол-во проектов", "fmt": "hours", "width": 14},
-        {"key": "task_count", "label": "Кол-во задач", "fmt": "hours", "width": 14},
-        {"key": "entry_count", "label": "Записей", "fmt": "hours", "width": 12},
+        {"key": "project_count", "label": "Кол-во проектов", "fmt": "int", "width": 14},
+        {"key": "task_count", "label": "Кол-во задач", "fmt": "int", "width": 14},
+        {"key": "entry_count", "label": "Записей", "fmt": "int", "width": 12},
         {"key": "total_hours", "label": "Всего часов", "fmt": "hours", "width": 14},
         {"key": "avg_entry_hours", "label": "Средняя запись, ч", "fmt": "hours", "width": 14},
         {"key": "focus_index", "label": "Индекс фокуса", "fmt": "percent", "width": 14},

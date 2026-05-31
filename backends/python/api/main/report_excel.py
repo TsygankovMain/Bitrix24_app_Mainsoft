@@ -291,6 +291,11 @@ def build_hierarchy_workbook(roots, *, title, date_from="", date_to="",
         row += 1
         for ch in node.get("children") or []:
             _write(ch, depth + 1)
+        # Листовые записи времени (как на экране) — только для дефолтного hours-layout
+        if len(value_columns) == 3:
+            for item in node.get("items") or []:
+                _write_item(ws, row, item, depth + 1)
+                row += 1
 
     for node in roots:
         for i, (_, key) in enumerate(value_columns):
@@ -355,7 +360,7 @@ def build_matrix_workbook(header_days, rows, *, title, date_from="", date_to="")
     return output
 
 
-_TABLE_FMT = {"text": "@", "hours": "0.0", "money": "#,##0", "percent": "0.0%"}
+_TABLE_FMT = {"text": "@", "hours": "0.0", "money": "#,##0", "percent": "0.0%", "int": "0"}
 
 
 def build_table_workbook(columns, rows, *, title, date_from="", date_to="", total_row=None):
