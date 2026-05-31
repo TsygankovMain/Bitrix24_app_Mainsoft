@@ -320,3 +320,58 @@ class InnBackfillService:
         items = items[:AUTOFILL_LIMIT]
         res = self.apply(items) if items else {"updated": 0}
         return {"updated": res.get("updated", 0), "resolved": len(items), "over_limit": over_limit}
+
+    # --- PROJECT_ITEMS ---
+    def project_items(self, project_id: str, date_from: str, date_to: str,
+                      our_inn: str, client_inn: str, overwrite: bool) -> Dict[str, Any]:
+        """Резолвит карточки проекта за период и формирует items для простановки.
+        overwrite=False -> только пустые поля; True -> перезаписать непустые."""
+        our_inn = _clean(our_inn)
+        client_inn = _clean(client_inn)
+        target = _clean(project_id)
+        raw = self._fetch_cards(date_from, date_to)
+        by_item, by_id = build_project_lookup(get_project_card_queryset(self.account))
+        f_our, f_client = self.field("our_inn"), self.field("client_inn")
+        f_pid, f_pitem = self.field("project_id"), self.field("project_item_id")
+        items: List[Dict[str, Any]] = []
+        for it in raw:
+            proj_item = _clean(it.get(f_pitem)) if f_pitem else ""
+            proj_id_v = _clean(it.get(f_pid)) if f_pid else ""
+            card = by_item.get(proj_item) or by_id.get(proj_id_v)
+            card_pid = _clean(getattr(card, "project_id", "")) if card else proj_id_v
+            if card_pid != target:
+                continue
+            our_blank = is_blank(it.get(f_our)) if f_our else True
+            client_blank = is_blank(it.get(f_client)) if f_client else True
+            entry: Dict[str, Any] = {"bitrix_id": it.get("id") or it.get("ID")}
+            if our_inn and (overwrite or our_blank):
+                entry["our_inn"] = our_inn
+            if client_inn and (overwrite or client_blank):
+                entry["client_inn"] = client_inn
+            if entry.get("our_inn") or entry.get("client_inn"):
+                items.append(entry)
+        return {"items": items, "total": len(items)}
+
+    # --- PROJECTS_HEALTH ---
+    def projects_health(self) -> Dict[str, Any]:
+        """Список проектов, которым не хватает данных для ИНН."""
+        companies_inn, legal_inn = self._inn_maps()
+        out: List[Dict[str, Any]] = []
+        for card in get_project_card_queryset(self.account):
+            company_id = _clean(getattr(card, "company_id", ""))
+            legal_id = _clean(getattr(card, "our_legal_entity_id", ""))
+            client_inn = companies_inn.get(company_id, "")
+            our_inn = legal_inn.get(legal_id, "")
+            has_company = bool(company_id)
+            has_legal = bool(legal_id)
+            if has_company and has_legal and client_inn and our_inn:
+                continue
+            out.append({
+                "project_id": _clean(getattr(card, "project_id", "")),
+                "project_name": _clean(getattr(card, "project_name", "")) or "Без названия",
+                "has_company": has_company,
+                "has_legal_entity": has_legal,
+                "client_inn": _clean(client_inn),
+                "our_inn": _clean(our_inn),
+            })
+        return {"projects": out}

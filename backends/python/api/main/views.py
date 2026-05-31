@@ -74,6 +74,8 @@ __all__ = [
     "report_project_task_employee_export",
     "inn_backfill_scan",
     "inn_backfill_apply",
+    "inn_backfill_project_items",
+    "projects_health",
     "report_revenue_leakage",
     "report_time_entry_discipline",
     "report_focus_analysis",
@@ -1552,6 +1554,40 @@ def inn_backfill_apply(request: AuthorizedRequest):
         return JsonResponse({"error": err}, status=400)
     result = service.apply(items)
     return JsonResponse(result, safe=False)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("inn_backfill_project_items")
+@auth_required
+def inn_backfill_project_items(request: AuthorizedRequest):
+    """Резолв карточек проекта для простановки/замены ИНН (запись делает фронт чанками)."""
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    config = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account).get_configuration_sync()
+    service = InnBackfillService(request.bitrix24_account.client, request.bitrix24_account, config)
+    err = service.ensure_inn_fields()
+    if err:
+        return JsonResponse({"error": err}, status=400)
+    result = service.project_items(
+        body.get("project_id", ""), body.get("date_from", ""), body.get("date_to", ""),
+        body.get("our_inn", ""), body.get("client_inn", ""), bool(body.get("overwrite")),
+    )
+    return JsonResponse(result, safe=False)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("projects_health")
+@auth_required
+def projects_health(request: AuthorizedRequest):
+    """Список незаполненных проектов (нет данных для ИНН)."""
+    config = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account).get_configuration_sync()
+    service = InnBackfillService(request.bitrix24_account.client, request.bitrix24_account, config)
+    return JsonResponse(service.projects_health(), safe=False)
 
 
 @xframe_options_exempt

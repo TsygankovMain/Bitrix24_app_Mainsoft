@@ -52,6 +52,8 @@ urlpatterns = [
     # ИНН: дозаполнение в карточках списания
     path('api/inn-backfill/scan', views.inn_backfill_scan, name='inn_backfill_scan'),
     path('api/inn-backfill/apply', views.inn_backfill_apply, name='inn_backfill_apply'),
+    path('api/inn-backfill/project-items', views.inn_backfill_project_items, name='inn_backfill_project_items'),
+    path('api/projects-health', views.projects_health, name='projects_health'),
 
     # Configuration
     path('api/configuration', views.get_configuration, name='get_configuration'),

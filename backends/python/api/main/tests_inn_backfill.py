@@ -178,6 +178,43 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(calls[0][1]["id"], 1)
         self.assertEqual(calls[0][1]["fields"], {"UF_OUR": "7709876543", "UF_CLIENT": "7701234567"})
 
+    @mock.patch("main.inn_backfill_service.get_project_card_queryset")
+    def test_project_items_blank_only_vs_overwrite(self, m_qs):
+        m_qs.return_value = [self.card]
+        svc = self._service()
+        svc._fetch_cards = lambda df, dt: [
+            {"id": 1, "UF_PITEM": "100", "UF_OUR": "", "UF_CLIENT": ""},
+            {"id": 2, "UF_PITEM": "100", "UF_OUR": "OLD", "UF_CLIENT": "OLD"},
+            {"id": 3, "UF_PITEM": "999", "UF_OUR": "", "UF_CLIENT": ""},
+        ]
+        r1 = svc.project_items("G1", "2026-05-01", "2026-05-31", "NEWOUR", "NEWCLI", overwrite=False)
+        self.assertEqual({i["bitrix_id"] for i in r1["items"]}, {1})
+        r2 = svc.project_items("G1", "2026-05-01", "2026-05-31", "NEWOUR", "NEWCLI", overwrite=True)
+        self.assertEqual({i["bitrix_id"] for i in r2["items"]}, {1, 2})
+        by_id = {i["bitrix_id"]: i for i in r2["items"]}
+        self.assertEqual(by_id[2]["our_inn"], "NEWOUR")
+        self.assertEqual(by_id[2]["client_inn"], "NEWCLI")
+
+
+class HealthTests(unittest.TestCase):
+    @mock.patch("main.inn_backfill_service.get_project_card_queryset")
+    def test_projects_health_flags(self, m_qs):
+        m_qs.return_value = [
+            SimpleNamespace(project_id="G1", project_name="OK",    company_id="C1", our_legal_entity_id="L1"),
+            SimpleNamespace(project_id="G2", project_name="NoCo",  company_id="",   our_legal_entity_id="L1"),
+            SimpleNamespace(project_id="G3", project_name="NoInn", company_id="C2", our_legal_entity_id="L1"),
+        ]
+        cfg = {"sp_entity_type_id": 1, "fields_mapping": {"our_inn": "UF_OUR", "client_inn": "UF_CLIENT"}}
+        svc = InnBackfillService(FakeClient(), object(), cfg)
+        svc._inn_maps = lambda: ({"C1": "7701"}, {"L1": "7709"})
+        res = svc.projects_health()
+        names = {r["project_name"]: r for r in res["projects"]}
+        self.assertNotIn("OK", names)
+        self.assertIn("NoCo", names)
+        self.assertFalse(names["NoCo"]["has_company"])
+        self.assertIn("NoInn", names)
+        self.assertEqual(names["NoInn"]["client_inn"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
