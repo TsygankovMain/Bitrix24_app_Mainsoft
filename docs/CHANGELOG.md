@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+### Миграция на B24 UI Kit — S0/S1 — 2026-06-01
+
+#### Docs
+- Оценка: `docs/architecture/ui-kit-migration-assessment.md`. План спринтов: `docs/superpowers/plans/2026-06-01-b24-ui-kit-migration.md`. Смоук-чек-лист: `docs/superpowers/plans/ui-migration-smoke-checklist.md`.
+
+#### S0 — защитная сетка
+- Зафиксирован зелёный базлайн (nuxt prepare/lint/progress.test). Пин версии kit обеспечен `pnpm-lock` (2.5.3) + правилом «не запускать `pnpm update`» (package.json не трогаем — избегаем рассинхронизации lock). Без изменений кода.
+
+#### S1 — нативные токены вместо бренда (Changed)
+- `app/assets/css/main.css`: бренд-токены → нативные значения Air (light): акцент лайм `#b7ea2c` → Bitrix-синий `#0075ff` (`--ui-color-accent-main-primary`); градиентный фон → плоский нейтральный (`#f1f4f6`); нейтрали/бордеры под `--ui-color-base-*`; скругления 24–28px → шкала Air (≤20px). **Имена классов `ms-*` сохранены** → разметка не менялась (обратимо одним файлом). Тёмная тема — отдельно (S5).
+- Verify: **`nuxt build` успешен** (CSS компилируется под Tailwind v4); `nuxt prepare`/`lint`/`progress.test` зелёные. Визуальная сверка — на проде после редеплоя (смоук-чек-лист).
+
 ### Оптимизация Bitrix-вызовов, Фаза 2 (партия 2): синк проектов канбана — 2026-06-01
 
 #### Changed

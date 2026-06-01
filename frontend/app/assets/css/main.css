@@ -5,25 +5,34 @@
 
 }
 
+/*
+ * S1 миграции на B24 UI Kit: бренд-токены заменены на нативные значения Air
+ * (light-контекст @bitrix24/b24ui-nuxt 2.5.3):
+ *  - акцент: лайм #b7ea2c -> Bitrix-синий #0075ff (--ui-color-accent-main-primary)
+ *  - фон страницы: лаймовый градиент -> плоский нейтральный (--ui-color-bg-content-tertiary)
+ *  - нейтрали/бордеры под базовую шкалу (--ui-color-base-*)
+ *  - скругления приведены к шкале Air (макс 20px)
+ * Имена классов ms-* сохранены -> разметка во всех файлах не меняется (обратимо одним файлом).
+ * Тёмная тема включается отдельно (S5).
+ */
 :root {
-  --ms-page-bg: #f4f7fb;
-  --ms-border: #d8e2ee;
-  --ms-border-strong: #c5d3e1;
-  --ms-surface: rgba(255, 255, 255, 0.94);
-  --ms-surface-muted: rgba(241, 245, 249, 0.92);
-  --ms-text: #0f172a;
-  --ms-text-muted: #64748b;
-  --ms-accent: #b7ea2c;
-  --ms-accent-soft: #eef8c8;
+  --ms-page-bg: #f1f4f6;       /* --ui-color-bg-content-tertiary */
+  --ms-border: #dfe0e3;        /* --ui-color-base-6 */
+  --ms-border-strong: #c9ccd0; /* --ui-color-base-5 */
+  --ms-surface: #ffffff;       /* --ui-color-bg-content-primary */
+  --ms-surface-muted: #fbfbfb; /* --ui-color-bg-content-secondary */
+  --ms-text: #333333;          /* --ui-color-base-1 */
+  --ms-text-muted: #525c69;    /* --ui-color-base-2 */
+  --ms-accent: #0075ff;        /* --ui-color-accent-main-primary */
+  --ms-accent-strong: #1b79e6; /* --ui-color-accent-main-primary-alt */
+  --ms-accent-soft: #e8f3ff;   /* лёгкий синий фон под акцент */
 }
 
 @layer components {
   .ms-page-shell {
     min-height: 100vh;
     color: var(--ms-text);
-    background:
-      radial-gradient(circle at top left, rgba(183, 234, 44, 0.18), transparent 24%),
-      linear-gradient(180deg, #f8fafc 0%, var(--ms-page-bg) 100%);
+    background: var(--ms-page-bg);
     @apply p-4 sm:p-6;
   }
 
@@ -40,19 +49,27 @@
   }
 
   .ms-surface {
-    @apply rounded-[28px] border border-slate-200/90 bg-white/95 shadow-sm;
+    @apply rounded-[20px] border shadow-sm;
+    border-color: var(--ms-border);
+    background: var(--ms-surface);
   }
 
   .ms-surface-muted {
-    @apply rounded-[24px] border border-slate-200 bg-slate-50/80 shadow-sm;
+    @apply rounded-2xl border shadow-sm;
+    border-color: var(--ms-border);
+    background: var(--ms-surface-muted);
   }
 
   .ms-surface-hero {
-    @apply rounded-[28px] border border-lime-100 bg-gradient-to-br from-lime-50 via-white to-slate-50 shadow-sm;
+    @apply rounded-[20px] border shadow-sm;
+    border-color: #cfe5ff;
+    background: var(--ms-accent-soft);
   }
 
   .ms-eyebrow {
-    @apply inline-flex rounded-full bg-lime-100 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-lime-700;
+    @apply inline-flex rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em];
+    background: var(--ms-accent-soft);
+    color: var(--ms-accent);
   }
 
   .ms-title {
@@ -64,7 +81,7 @@
   }
 
   .ms-filter-wrap {
-    @apply rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 shadow-sm;
+    @apply rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm;
   }
 
   .ms-report-surface {
@@ -121,7 +138,8 @@
   }
 
   .ms-segmented-btn-active-lime {
-    @apply bg-lime-300 text-slate-900 shadow-sm;
+    @apply text-white shadow-sm;
+    background: var(--ms-accent);
   }
 
   .ms-stat-card {
@@ -129,7 +147,13 @@
   }
 
   .ms-action-card {
-    @apply rounded-2xl border border-slate-200 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:border-lime-200 hover:bg-lime-50;
+    @apply rounded-2xl border px-4 py-3 text-left text-sm font-medium text-slate-700 transition;
+    border-color: var(--ms-border);
+  }
+
+  .ms-action-card:hover {
+    border-color: var(--ms-accent);
+    background: var(--ms-accent-soft);
   }
 
   .ms-empty-state {
@@ -193,7 +217,7 @@
   }
 
   .ms-modal-panel {
-    @apply relative z-10 overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-2xl;
+    @apply relative z-10 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl;
   }
 
   .ms-modal-header {
@@ -217,7 +241,8 @@
   .ms-page-shell input:not([type='checkbox']):not([type='radio']):not([type='range']):focus,
   .ms-page-shell select:focus,
   .ms-page-shell textarea:focus {
-    @apply border-lime-500 ring-4 ring-lime-100;
+    border-color: var(--ms-accent);
+    box-shadow: 0 0 0 4px var(--ms-accent-soft);
   }
 
   .ms-page-shell input::placeholder,
