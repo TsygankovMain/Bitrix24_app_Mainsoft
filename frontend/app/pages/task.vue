@@ -11,6 +11,7 @@ import { useTaskTreeLoader } from '@/composables/useTaskTreeLoader'
 const { t, locales: localesI18n, setLocale } = useI18n()
 const { $logger, initApp, processErrorGlobal } = useAppInit('TaskPage')
 const { $initializeB24Frame } = useNuxtApp()
+const toast = useToast()
 
 let $b24: null | B24Frame = null
 
@@ -113,7 +114,7 @@ async function handleSaveItem(data: any) {
         })
         if (rootTaskId.value) await loadTaskTree($b24!, rootTaskId.value)
     } catch (e: any) {
-        alert("Ошибка сохранения: " + e.message)
+        toast.add({ title: "Ошибка сохранения: " + e.message, color: 'air-primary-alert' })
         isLoading.value = false
     }
     
@@ -198,7 +199,7 @@ async function handleTransferToReport() {
     collect(taskTree.value)
     
     if (count === 0) {
-        alert("Нет данных для переноса (0 учтенных часов).")
+        toast.add({ title: "Нет данных для переноса (0 учтенных часов).", color: 'air-primary-alert' })
         isReporting.value = false
         isReportModalOpen.value = false
         return
@@ -207,9 +208,9 @@ async function handleTransferToReport() {
     try {
          // @ts-ignore
         await $b24.callBatch(batch)
-        alert("Часы успешно перенесены в стандартный отчет Битрикс24!")
+        toast.add({ title: "Часы успешно перенесены в стандартный отчет Битрикс24!", color: 'air-primary-success' })
     } catch (e: any) {
-        alert("Ошибка переноса: " + e.message)
+        toast.add({ title: "Ошибка переноса: " + e.message, color: 'air-primary-alert' })
     } finally {
         isReporting.value = false
         isReportModalOpen.value = false

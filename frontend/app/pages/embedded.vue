@@ -10,6 +10,7 @@ import { filterTaskTree, findTaskIdForItem, findTaskNodeById, flattenTaskItems }
 const { $logger, initApp, processErrorGlobal } = useAppInit('EmbeddedPage')
 const { $initializeB24Frame } = useNuxtApp()
 const { t, locales: localesI18n, setLocale } = useI18n()
+const toast = useToast()
 
 // --- STATE ---
 const isHelpOpen = ref(false)
@@ -656,7 +657,7 @@ async function saveCurrentItem() {
         }
         const bindingError = validateProjectBindingForSave(fields, hierarchy)
         if (bindingError) {
-            alert(`⚠️ ${bindingError}`)
+            toast.add({ title: `⚠️ ${bindingError}`, color: 'air-primary-alert' })
             isLoading.value = false
             return
         }
@@ -744,7 +745,7 @@ async function saveCurrentItem() {
         await reloadWorkspace()
         closeEditor()
     } catch (e: any) {
-        alert("Ошибка сохранения: " + e.message)
+        toast.add({ title: "Ошибка сохранения: " + e.message, color: 'air-primary-alert' })
         isLoading.value = false
     }
 }
@@ -754,7 +755,7 @@ async function splitItem() {
     
     const splitHours = parseFloat(editingItem.value.splitHours) || 0
     if (splitHours <= 0 || splitHours >= editingItem.value.hours) {
-        alert('⚠️ Некорректное значение для разделения')
+        toast.add({ title: '⚠️ Некорректное значение для разделения', color: 'air-primary-alert' })
         return
     }
 
@@ -772,7 +773,7 @@ async function splitItem() {
         const newConsidered = editingItem.value.splitInvert ? !editingItem.value.isConsidered : editingItem.value.isConsidered
         const splitTaskId = findTaskIdForItem(editingItem.value.id, taskTree.value)
         if (!splitTaskId) {
-            alert('⚠️ Не удалось определить задачу для разделяемой записи.')
+            toast.add({ title: '⚠️ Не удалось определить задачу для разделяемой записи.', color: 'air-primary-alert' })
             isLoading.value = false
             return
         }
@@ -792,7 +793,7 @@ async function splitItem() {
         await enrichFieldsWithProjectContext(splitFields, splitTaskId, hierarchy)
         const bindingError = validateProjectBindingForSave(splitFields, hierarchy)
         if (bindingError) {
-            alert(`⚠️ ${bindingError}`)
+            toast.add({ title: `⚠️ ${bindingError}`, color: 'air-primary-alert' })
             isLoading.value = false
             return
         }
@@ -817,7 +818,7 @@ async function splitItem() {
         await reloadWorkspace()
         closeEditor()
     } catch (e: any) {
-        alert("Ошибка разделения: " + e.message)
+        toast.add({ title: "Ошибка разделения: " + e.message, color: 'air-primary-alert' })
         isLoading.value = false
     }
 }
@@ -835,7 +836,7 @@ async function deleteItem() {
         await reloadWorkspace()
         closeEditor()
     } catch (e: any) {
-        alert("Ошибка удаления: " + e.message)
+        toast.add({ title: "Ошибка удаления: " + e.message, color: 'air-primary-alert' })
         isLoading.value = false
     }
 }
@@ -855,7 +856,7 @@ async function deleteItemDirect(item: any) {
         if (currentEditingId.value === item.id) closeEditor()
         await reloadWorkspace()
     } catch (e: any) {
-        alert("Ошибка удаления: " + e.message)
+        toast.add({ title: "Ошибка удаления: " + e.message, color: 'air-primary-alert' })
         isLoading.value = false
     }
 }
