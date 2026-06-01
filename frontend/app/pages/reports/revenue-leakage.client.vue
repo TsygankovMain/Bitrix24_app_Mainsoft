@@ -87,6 +87,8 @@ function lossBadgeClass(value: number) {
 async function fetchReport() {
   const payload = await generateReport({
     reportName: 'Потери выручки',
+    syncDateFrom: dateFrom.value,
+    syncDateTo: dateTo.value,
     loader: () => apiStore.getReportRevenueLeakage(
       dateFrom.value,
       dateTo.value,

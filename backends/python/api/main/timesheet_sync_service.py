@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from b24pysdk import Client
 from django.db import transaction
@@ -18,6 +18,7 @@ class TimesheetSyncService:
     BASE_RETRY_DELAY = 2.0
     THROTTLE_DELAY = 0.5
     BULK_BATCH_SIZE = 200
+    SCOPED_SAVE_CHUNK = 500
     UPSERT_FIELDS = [
         "task_id",
         "employee_id",
@@ -69,13 +70,37 @@ class TimesheetSyncService:
                     continue
                 raise
 
-    def sync_all(self) -> int:
-        logger.info("Starting sync for account %s", self.account.pk)
+    def sync_all(self, date_from: Optional[str] = None, date_to: Optional[str] = None) -> int:
+        """Синхронизация записей трудозатрат из Битрикс24.
+
+        Если переданы обе даты и маппинг поля даты задан — выполняется быстрый
+        scoped-синк только по периоду (два фильтра + батч-офсеты). При ошибке
+        в scoped-пути автоматически выполняется полный синк (фолбэк).
+        """
+        logger.info("Starting sync for account %s (date_from=%s, date_to=%s)", self.account.pk, date_from, date_to)
 
         if not self.entity_type_id:
             logger.error("No SP Entity Type ID configured cannot sync.")
             return 0
 
+        fdate = self.processing_service.mapping.get("data")
+        scoped = bool(date_from and date_to and fdate and self.entity_type_id)
+
+        if scoped:
+            try:
+                return self._sync_scoped(date_from, date_to, fdate)
+            except Exception as exc:
+                logger.warning(
+                    "Scoped sync failed (date_from=%s, date_to=%s), falling back to full sync. Error: %s",
+                    date_from,
+                    date_to,
+                    exc,
+                )
+
+        return self._sync_full()
+
+    def _sync_full(self) -> int:
+        """Полный keyset-синк (без изменений по сравнению с исходным sync_all)."""
         # Быстрая выборка больших объёмов (apidocs Bitrix, performance/huge-data):
         #  - start=-1 отключает медленный подсчёт total на каждой странице;
         #  - keyset-пагинация: order id ASC + filter {">id": last_id} вместо offset,
@@ -162,6 +187,189 @@ class TimesheetSyncService:
 
         logger.info("Sync complete. Total items: %s", total_fetched)
         return total_fetched
+
+    def _sync_scoped(self, date_from: str, date_to: str, fdate: str) -> int:
+        """Быстрый синк только за период [date_from, date_to].
+
+        Собирает ОБЪЕДИНЕНИЕ двух выборок по полю даты-отражения и по createdTime,
+        дедуплицирует по id, сохраняет через _save_batch, удаляет из БД только
+        записи внутри окна, которые не вернул Битрикс24.
+        """
+        logger.info(
+            "Running scoped sync for account %s, period %s – %s (fdate=%s)",
+            self.account.pk, date_from, date_to, fdate,
+        )
+
+        # Выборка A: по полю даты-отражения
+        filter_a = {f">={fdate}": date_from, f"<={fdate}": date_to}
+        items_a = self._fetch_all_pages_batched(filter_a)
+        logger.info("Scoped fetch A (%s) returned %s items", fdate, len(items_a))
+
+        # Выборка B: по createdTime
+        filter_b = {">=createdTime": date_from, "<=createdTime": date_to}
+        items_b = self._fetch_all_pages_batched(filter_b)
+        logger.info("Scoped fetch B (createdTime) returned %s items", len(items_b))
+
+        # Дедупликация по str(id)
+        union: Dict[str, Dict[str, Any]] = {}
+        for item in items_a:
+            key = str(item.get("id", ""))
+            if key:
+                union[key] = item
+        for item in items_b:
+            key = str(item.get("id", ""))
+            if key:
+                union.setdefault(key, item)
+
+        union_items = list(union.values())
+        fetched_ids = set(union.keys())
+        logger.info("Scoped union: %s unique items", len(union_items))
+
+        # Нормализация и сохранение чанками
+        normalized = self.processing_service.normalize_items(union_items)
+        all_new_cards: List[Dict[str, Any]] = []
+        chunk_size = self.SCOPED_SAVE_CHUNK
+        for i in range(0, max(1, len(normalized)), chunk_size):
+            chunk = normalized[i:i + chunk_size]
+            if chunk:
+                new_cards = self._save_batch(chunk)
+                all_new_cards.extend(new_cards)
+
+        # Scoped-сверка удалений: только внутри окна
+        self._delete_scoped_orphans(date_from, date_to, fetched_ids)
+
+        self._autofill_inn(all_new_cards)
+
+        logger.info("Scoped sync complete. Total unique items: %s", len(union_items))
+        return len(union_items)
+
+    def _fetch_all_pages_batched(self, filter_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Получает ВСЕ страницы crm.item.list для заданного фильтра.
+
+        Первая страница — одиночный _call_with_retry (start=0), затем если
+        total > 50 — строит словарь офсетов и вызывает call_batches одним
+        запросом. Разбор ответа батча — оборонительный.
+        """
+        base_params: Dict[str, Any] = {
+            "entityTypeId": self.entity_type_id,
+            "select": ["*", "UF_*"],
+            "order": {"id": "ASC"},
+            "filter": filter_dict,
+            "start": 0,
+        }
+
+        # Первая страница
+        first_response = self._call_with_retry("crm.item.list", base_params)
+        first_items = self._extract_items(first_response)
+
+        # total — на верхнем уровне ответа (см. views.py ~1985-1986)
+        result_root = first_response.get("result", {})
+        total = first_response.get("total", result_root.get("total", 0) if isinstance(result_root, dict) else 0)
+        try:
+            total = int(total)
+        except (TypeError, ValueError):
+            total = len(first_items)
+
+        all_items: List[Dict[str, Any]] = list(first_items)
+
+        if total <= 50:
+            return all_items
+
+        # Батчевые офсеты для оставшихся страниц
+        offsets = list(range(50, total, 50))
+        methods = {
+            f"p{off}": (
+                "crm.item.list",
+                {
+                    "entityTypeId": self.entity_type_id,
+                    "select": ["*", "UF_*"],
+                    "order": {"id": "ASC"},
+                    "filter": filter_dict,
+                    "start": off,
+                },
+            )
+            for off in offsets
+        }
+
+        logger.info(
+            "Fetching %s batch-offset pages (total=%s) for filter %s",
+            len(offsets), total, list(filter_dict.keys()),
+        )
+
+        batches_resp = self.client._bitrix_token.call_batches(methods, halt=False)
+
+        # call_batches возвращает:
+        #   batches_resp["result"]["result"][key] = содержимое response["result"]
+        #   одиночного crm.item.list, т.е. {"items": [...], ...}
+        try:
+            sub_results = batches_resp.get("result", {}).get("result", {})
+        except Exception:
+            sub_results = {}
+
+        if not isinstance(sub_results, dict):
+            # Если вдруг list — конвертируем
+            try:
+                sub_results = {str(i): v for i, v in enumerate(sub_results)}
+            except Exception:
+                sub_results = {}
+
+        for key, sub_result in sub_results.items():
+            try:
+                # sub_result — это то, что было в response["result"] одиночного вызова,
+                # т.е. {"items": [...]} или просто список
+                page_items = self._extract_items({"result": sub_result})
+                all_items.extend(page_items)
+            except Exception as exc:
+                logger.warning("Could not parse batch sub-result for key=%s: %s", key, exc)
+                continue
+
+        return all_items
+
+    def _delete_scoped_orphans(
+        self, date_from: str, date_to: str, fetched_ids: set
+    ) -> None:
+        """Удаляет записи внутри окна [date_from, date_to], которых нет в fetched_ids.
+
+        Записи за пределами окна НЕ трогает. ВАЖНО: если из Битрикс за период не
+        получено ни одной записи (пустой fetched_ids) — удаление ПРОПУСКАЕТСЯ
+        (защита от потери данных при сбое выборки/парсинга батча; реальная
+        очистка пустого периода произойдёт при следующем полном синке).
+        """
+        if not fetched_ids:
+            logger.info(
+                "Scoped: fetched 0 items for window %s – %s; skip deletion (safety).",
+                date_from, date_to,
+            )
+            return
+
+        # bitrix_id в БД — целое; нормализуем id выборки в int (исключаем нечисловые)
+        int_ids = set()
+        for x in fetched_ids:
+            try:
+                int_ids.add(int(x))
+            except (TypeError, ValueError):
+                continue
+        if not int_ids:
+            logger.warning("Scoped: no valid integer ids in fetch; skip deletion (safety).")
+            return
+
+        try:
+            deleted_count, _ = (
+                TimesheetItem.objects.filter(
+                    bitrix24_account=self.account,
+                    date_reflection__date__gte=date_from,
+                    date_reflection__date__lte=date_to,
+                )
+                .exclude(bitrix_id__in=int_ids)
+                .delete()
+            )
+            if deleted_count > 0:
+                logger.info(
+                    "Scoped: deleted %s orphaned records in window %s – %s",
+                    deleted_count, date_from, date_to,
+                )
+        except Exception as exc:
+            logger.warning("Scoped orphan deletion failed: %s", exc)
 
     def _autofill_inn(self, new_cards: List[Dict[str, Any]]) -> None:
         """Авто-простановка ИНН в новые карточки списания. Изолировано: ошибки не валят синк."""

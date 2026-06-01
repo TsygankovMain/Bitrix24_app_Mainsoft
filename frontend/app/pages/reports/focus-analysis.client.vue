@@ -105,6 +105,8 @@ function getBubbleStyle(row: any) {
 async function fetchReport() {
   const payload = await generateReport({
     reportName: 'Фокус и распыление',
+    syncDateFrom: dateFrom.value,
+    syncDateTo: dateTo.value,
     loader: () => apiStore.getReportFocusAnalysis(
       dateFrom.value,
       dateTo.value,

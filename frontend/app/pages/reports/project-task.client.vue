@@ -118,6 +118,8 @@ async function syncWithRoutePreset() {
 async function fetchReport() {
     const payload = await generateReport({
         reportName: 'По проектам/задачам',
+        syncDateFrom: dateFrom.value,
+        syncDateTo: dateTo.value,
         loader: () => apiStore.getReportProjectTaskEmployee(
             dateFrom.value,
             dateTo.value,

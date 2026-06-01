@@ -70,6 +70,8 @@ const progress = useProgress()
 async function fetchReport() {
     const payload = await generateReport({
         reportName: 'По сотрудникам',
+        syncDateFrom: dateFrom.value,
+        syncDateTo: dateTo.value,
         loader: () => apiStore.getReportEmployeeProject(
             dateFrom.value,
             dateTo.value,

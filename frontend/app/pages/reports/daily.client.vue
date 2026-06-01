@@ -96,6 +96,8 @@ function getDayCell(row: any, dateKey: string) {
 async function fetchReport() {
     const payload = await generateReport({
         reportName: 'Ежедневная нагрузка',
+        syncDateFrom: dateFrom.value,
+        syncDateTo: dateTo.value,
         loader: () => apiStore.getReportDailyWorkload(
             dateFrom.value,
             dateTo.value,

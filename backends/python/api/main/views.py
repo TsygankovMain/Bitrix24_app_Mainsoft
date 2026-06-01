@@ -1373,13 +1373,25 @@ def timesheet_sync(request: AuthorizedRequest):
         config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
         config = config_service.get_configuration_sync()
 
+    # Читаем необязательные даты из тела запроса (scoped/отчётный путь)
+    try:
+        body = json.loads(request.body or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        body = {}
+    date_from = body.get("date_from")
+    date_to = body.get("date_to")
+    is_scoped = bool(date_from and date_to)
+
     service = TimesheetSyncService(request.bitrix24_account.client, request.bitrix24_account, config)
     try:
         with profiler.stage("sync_all"):
-            count = service.sync_all()
-        with profiler.stage("refresh_writeoff_stats"):
-            project_card_service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
-            project_card_service.refresh_writeoff_stats()
+            count = service.sync_all(date_from=date_from, date_to=date_to)
+        # refresh_writeoff_stats нужен только для доски проектов (полный синк).
+        # При scoped-запросе (отчёт за период) пропускаем — экономит время.
+        if not is_scoped:
+            with profiler.stage("refresh_writeoff_stats"):
+                project_card_service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+                project_card_service.refresh_writeoff_stats()
     except Exception as exc:
         logger.exception("Timesheet sync failed for account %s", request.bitrix24_account.pk)
         profiler.set_metric("status", "error")

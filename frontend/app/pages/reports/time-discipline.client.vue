@@ -85,6 +85,8 @@ function riskBadgeClass(value: string) {
 async function fetchReport() {
   const payload = await generateReport({
     reportName: 'Дисциплина внесения',
+    syncDateFrom: dateFrom.value,
+    syncDateTo: dateTo.value,
     loader: () => apiStore.getReportTimeEntryDiscipline(
       dateFrom.value,
       dateTo.value,

@@ -12,6 +12,8 @@ interface GenerateReportOptions<T> {
   allowSyncFallback?: boolean
   syncWarningMessage?: string
   reportName?: string
+  syncDateFrom?: string
+  syncDateTo?: string
 }
 
 function isPerfLoggingEnabled(): boolean {
@@ -53,7 +55,7 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
       if (willSync) {
         const syncStart = perfEnabled ? performance.now() : 0
         try {
-          await apiStore.syncTimesheets()
+          await apiStore.syncTimesheets(config.syncDateFrom, config.syncDateTo)
         } catch (error) {
           if (!config.allowSyncFallback) {
             throw error

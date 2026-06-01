@@ -10,7 +10,9 @@
 
 ## 2. Синхронизация списаний (Bitrix СП → локальная БД)
 - **Фронт:** `pages/reports/raw-data.client.vue` (кнопка «Синхронизировать»); `stores/api.ts::syncTimesheets()`.
-- **Бэк:** `views.py::timesheet_sync` → `timesheet_sync_service.py::TimesheetSyncService.sync_all()` (чтение `crm.item.list`, нормализация по `fields_mapping`, bulk upsert в `TimesheetItem`). После синка — авто-простановка ИНН (`_autofill_inn` → `inn_backfill_service`).
+- **Бэк:** `views.py::timesheet_sync` → `timesheet_sync_service.py::TimesheetSyncService.sync_all(date_from?, date_to?)` (чтение `crm.item.list`, нормализация по `fields_mapping`, bulk upsert в `TimesheetItem`). После синка — авто-простановка ИНН (`_autofill_inn` → `inn_backfill_service`).
+- **Два режима синка:** `_sync_full()` — полный (keyset `>id` + `start=-1`, сверка осиротевших по всей базе) для кнопки «Синхронизировать» и фонового; `_sync_scoped(date_from, date_to)` — **быстрый по периоду отчёта** (`POST /api/sync-timesheets` с датами): объединение выборок по полю даты и `createdTime`, страницы через `rest.batch` (`_fetch_all_pages_batched` → `call_batches`), scoped-сверка удалений только в окне (`_delete_scoped_orphans`, пропуск при пустом fetch). Ошибка scoped → фолбэк на полный. При scoped эндпоинт пропускает `refresh_writeoff_stats()`. Тест `tests_sync_scoped.py`.
+- **Фронт скоупа:** отчёты зовут `syncTimesheets(dateFrom, dateTo)` (через `useReportGenerator` поля `syncDateFrom/To` + 7 страниц); raw-data — без дат (полный синк).
 
 ## 3. Отчёты
 Общий путь: `pages/reports/*.client.vue` → `stores/api.ts::getReport*` → `GET /api/report-*` → `views.py::report_*` → `report_queries.py` + `report_services.py::ReportService`. Фильтры — `composables/useReportFilters.ts`, генерация — `useReportGenerator.ts`.
