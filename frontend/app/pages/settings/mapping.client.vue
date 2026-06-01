@@ -521,26 +521,24 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="ms-page-shell">
-    <div class="ms-page-frame">
-      <div class="ms-page-header">
-        <div>
-          <h1 class="ms-title">Настройка полей</h1>
-          <p class="ms-subtitle mt-2">Привязка полей приложения к Smart Process и проверка структуры данных.</p>
-        </div>
-        <div class="flex gap-2">
-          <B24Button label="Назад" color="link" @click="router.push('/settings')" />
-          <B24Button label="Сохранить" color="success" @click="handleSave" :loading="isSaving" />
-        </div>
-      </div>
+  <B24Container>
+    <B24PageHeader
+      title="Настройка полей"
+      description="Привязка полей приложения к Smart Process и проверка структуры данных."
+    >
+      <template #links>
+        <B24Button label="Назад" color="link" @click="router.push('/settings')" />
+        <B24Button label="Сохранить" color="success" @click="handleSave" :loading="isSaving" />
+      </template>
+    </B24PageHeader>
 
-      <div v-if="isLoading && !isInit" class="text-center py-10">
-          Загрузка...
-      </div>
+    <div v-if="isLoading && !isInit" class="mt-6">
+      <B24Empty title="Загрузка…" size="sm" />
+    </div>
 
-      <div v-else class="flex flex-col gap-6">
+    <div v-else class="mt-6 flex flex-col gap-6">
           <!-- SP Selector -->
-          <B24Card title="Выбор Смарт-Процесса" class="ms-surface">
+          <B24Card title="Выбор Смарт-Процесса">
               <!-- Status Message -->
               <div v-if="statusMessage" class="mb-4 ms-note" :class="statusMessage.type === 'success' ? 'ms-note-success' : 'ms-note-danger'">
                   {{ statusMessage.text }}
@@ -549,9 +547,9 @@ onMounted(async () => {
               <div class="w-full space-y-4">
                   <div>
                       <label class="mb-1 block text-sm font-semibold text-slate-800">Смарт-процесс</label>
-                      <select 
-                        v-model="selectedSpId" 
-                        class="block w-full sm:text-sm"
+                      <select
+                        v-model="selectedSpId"
+                        class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#0075ff]"
                       >
                           <option :value="null">-- Не выбрано --</option>
                           <option v-for="sp in smartProcesses" :key="sp.id" :value="sp.entityTypeId">
@@ -606,13 +604,13 @@ onMounted(async () => {
               </div>
           </B24Card>
 
-          <B24Card title="Смарт-процесс ПРОЕКТ (мастер-данные)" class="ms-surface">
+          <B24Card title="Смарт-процесс ПРОЕКТ (мастер-данные)">
               <div class="w-full space-y-4">
                   <div>
                       <label class="mb-1 block text-sm font-semibold text-slate-800">Смарт-процесс проектов</label>
                       <select
                         v-model="selectedProjectSpId"
-                        class="block w-full sm:text-sm"
+                        class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#0075ff]"
                       >
                           <option :value="null">-- Не выбрано --</option>
                           <option v-for="sp in smartProcesses" :key="`project-${sp.id}`" :value="sp.entityTypeId">
@@ -644,7 +642,7 @@ onMounted(async () => {
               </div>
           </B24Card>
 
-          <B24Card title="Проверка связности Project SPA" v-if="selectedProjectSpId" class="ms-surface">
+          <B24Card title="Проверка связности Project SPA" v-if="selectedProjectSpId">
               <div v-if="projectSpaValidation" class="space-y-3 text-sm">
                   <div class="ms-note" :class="projectSpaValidation.is_valid ? 'ms-note-success' : 'ms-note-danger'">
                       {{ projectSpaValidation.is_valid ? 'Валидация пройдена: контур Project SPA готов.' : 'Есть проблемы конфигурации Project SPA.' }}
@@ -722,12 +720,10 @@ onMounted(async () => {
                       </div>
                   </div>
               </div>
-              <div v-else class="ms-empty-state">
-                  Нажмите «Проверить Project SPA», чтобы увидеть статус маппинга и связности.
-              </div>
+              <B24Empty v-else title="Нажмите «Проверить Project SPA», чтобы увидеть статус маппинга и связности." size="sm" />
           </B24Card>
 
-          <B24Card title="Доступные поля Project SPA" v-if="selectedProjectSpId" class="ms-surface">
+          <B24Card title="Доступные поля Project SPA" v-if="selectedProjectSpId">
              <div v-if="projectSpFields.length > 0" class="ms-table-shell max-h-60 overflow-y-auto">
                  <table class="ms-table">
                      <thead class="sticky top-0">
@@ -746,13 +742,11 @@ onMounted(async () => {
                      </tbody>
                  </table>
              </div>
-             <div v-else class="ms-empty-state">
-                 Поля еще не загружены. Нажмите "Подгрузить поля проекта".
-             </div>
+             <B24Empty v-else title='Поля ещё не загружены. Нажмите "Подгрузить поля проекта".' size="sm" />
           </B24Card>
 
           <!-- Field List (Read-Only) -->
-          <B24Card title="Доступные поля сущности" v-if="selectedSpId" class="ms-surface">
+          <B24Card title="Доступные поля сущности" v-if="selectedSpId">
              <div v-if="spFields.length > 0" class="ms-table-shell max-h-60 overflow-y-auto">
                  <table class="ms-table">
                      <thead class="sticky top-0">
@@ -771,13 +765,11 @@ onMounted(async () => {
                      </tbody>
                  </table>
              </div>
-             <div v-else class="ms-empty-state">
-                 Поля еще не загружены. Нажмите "Подгрузить поля".
-             </div>
+             <B24Empty v-else title='Поля ещё не загружены. Нажмите "Подгрузить поля".' size="sm" />
           </B24Card>
 
           <!-- Mapping Table -->
-          <B24Card title="Сопоставление полей" v-if="selectedSpId" class="ms-surface">
+          <B24Card title="Сопоставление полей" v-if="selectedSpId">
               <div class="ms-table-shell">
                   <table class="ms-table">
                       <thead>
@@ -795,7 +787,7 @@ onMounted(async () => {
                               <td>
                                   <div class="text-sm font-medium text-slate-900">{{ field.label }}</div>
                                   <div class="text-xs text-slate-500">{{ field.desc }}</div>
-                                  <div class="mt-1 text-xs text-lime-700">Тип: {{ field.type }}</div>
+                                  <div class="mt-1 text-xs text-slate-500">Тип: {{ field.type }}</div>
                               </td>
                               <td>
                                   <select 
@@ -816,7 +808,7 @@ onMounted(async () => {
               </div>
           </B24Card>
 
-          <B24Card title="Сопоставление полей проекта (Project SPA)" v-if="selectedProjectSpId" class="ms-surface">
+          <B24Card title="Сопоставление полей проекта (Project SPA)" v-if="selectedProjectSpId">
               <div class="ms-table-shell">
                   <table class="ms-table">
                       <thead>
@@ -834,7 +826,7 @@ onMounted(async () => {
                               <td>
                                   <div class="text-sm font-medium text-slate-900">{{ field.label }}</div>
                                   <div class="text-xs text-slate-500">{{ field.desc }}</div>
-                                  <div class="mt-1 text-xs text-lime-700">Тип: {{ field.type }}</div>
+                                  <div class="mt-1 text-xs text-slate-500">Тип: {{ field.type }}</div>
                               </td>
                               <td>
                                   <select
@@ -854,9 +846,8 @@ onMounted(async () => {
                   </table>
               </div>
           </B24Card>
-      </div>
     </div>
-  </div>
+  </B24Container>
 </template>
 
 <style scoped>
