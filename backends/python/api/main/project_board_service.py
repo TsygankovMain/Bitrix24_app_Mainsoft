@@ -1244,22 +1244,114 @@ class ProjectCardService:
         return ProjectCard.objects.get(bitrix24_account=self.account, project_id=str(project_id))
 
     def _fetch_paginated(self, method: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
-        start = 0
-        items: List[Dict[str, Any]] = []
+        """Загружает все страницы списочного метода Bitrix24.
 
-        while True:
-            request_params = dict(params)
-            request_params["start"] = start
-            response = self.client._bitrix_token.call_method(method, request_params)
-            batch, next_value = _extract_items_from_response(response)
-            if not batch:
-                break
-            items.extend(batch)
-            if next_value is None or int(next_value) <= start:
-                break
-            start = int(next_value)
+        Алгоритм:
+        1. Первый вызов (start=0) — достаём items + total.
+        2. При total > 50 — батч-офсеты одним call_batches.
+        3. Фолбэк: при любой ошибке батча (или нулевом результате при total>50)
+           — предупреждение + исходный offset-цикл (корректность важнее скорости).
+        """
 
-        return items
+        def _offset_loop_fallback() -> List[Dict[str, Any]]:
+            """Исходный offset-цикл (фолбэк при сбое батча)."""
+            fb_start = 0
+            fb_items: List[Dict[str, Any]] = []
+            while True:
+                fb_params = dict(params)
+                fb_params["start"] = fb_start
+                fb_resp = self.client._bitrix_token.call_method(method, fb_params)
+                fb_batch, fb_next = _extract_items_from_response(fb_resp)
+                if not fb_batch:
+                    break
+                fb_items.extend(fb_batch)
+                if fb_next is None or int(fb_next) <= fb_start:
+                    break
+                fb_start = int(fb_next)
+            return fb_items
+
+        try:
+            # --- Шаг 1: первая страница ---
+            first_params = dict(params)
+            first_params["start"] = 0
+            first_response = self.client._bitrix_token.call_method(method, first_params)
+            first_items, _ = _extract_items_from_response(first_response)
+
+            # total лежит на верхнем уровне ответа; для crm.item.list он там же
+            # (см. views.py ~2036-2039 и timesheet_sync_service.py ~265-267)
+            result_root = first_response.get("result", {})
+            raw_total = first_response.get(
+                "total",
+                result_root.get("total", 0) if isinstance(result_root, dict) else 0,
+            )
+            try:
+                total = int(raw_total)
+            except (TypeError, ValueError):
+                total = len(first_items)
+
+            all_items: List[Dict[str, Any]] = list(first_items)
+
+            # --- Шаг 2: батч-офсеты при total > 50 ---
+            if total <= 50:
+                return all_items
+
+            offsets = list(range(50, total, 50))
+            methods_batch = {
+                f"p{off}": (method, {**params, "start": off})
+                for off in offsets
+            }
+
+            logger.info(
+                "[_fetch_paginated] batch-offset pages=%s total=%s method=%s",
+                len(offsets), total, method,
+            )
+
+            batches_resp = self.client._bitrix_token.call_batches(methods_batch, halt=False)
+
+            # call_batches возвращает:
+            #   batches_resp["result"]["result"][key] = содержимое response["result"]
+            #   одиночного вызова, т.е. dict или list
+            try:
+                sub_results = batches_resp.get("result", {}).get("result", {})
+            except Exception:
+                sub_results = {}
+
+            if not isinstance(sub_results, dict):
+                try:
+                    sub_results = {str(i): v for i, v in enumerate(sub_results)}
+                except Exception:
+                    sub_results = {}
+
+            batch_items_count = 0
+            for key, sub_result in sub_results.items():
+                try:
+                    page_items, _ = _extract_items_from_response({"result": sub_result})
+                    all_items.extend(page_items)
+                    batch_items_count += len(page_items)
+                except Exception as exc:
+                    logger.warning(
+                        "[_fetch_paginated] batch sub-result parse error key=%s method=%s: %s",
+                        key, method, exc,
+                    )
+
+            # --- Шаг 3: оборонительный фолбэк ---
+            if batch_items_count == 0 and total > 50:
+                logger.warning(
+                    "[_fetch_paginated] batch returned 0 items (total=%s, offsets=%s) "
+                    "for method=%s; falling back to offset loop.",
+                    total, len(offsets), method,
+                )
+                return _offset_loop_fallback()
+
+            return all_items
+
+        except Exception as exc:
+            logger.warning(
+                "[_fetch_paginated] batched fetch failed for method=%s (%s); "
+                "falling back to offset loop.",
+                method, exc,
+            )
+            return _offset_loop_fallback()
 
     @staticmethod
     def _clean_str(value: Any) -> Optional[str]:
