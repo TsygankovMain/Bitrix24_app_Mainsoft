@@ -47,7 +47,7 @@ function deleteItem(item: any) {
         <div @click="toggleTask" class="task-group-header">
             <div class="flex-1 min-w-0">
                 <h3 class="text-sm font-bold text-slate-900 truncate">
-                    <span v-if="level > 0" class="font-normal text-lime-700">[Подзадача] </span>
+                    <span v-if="level > 0" class="font-normal text-[#0075ff]">[Подзадача] </span>
                     {{ task.taskTitle }}
                 </h3>
                 <p class="text-xs text-slate-600 mt-1">ID: {{ task.taskId }}</p>
@@ -196,7 +196,7 @@ function deleteItem(item: any) {
     align-items: center;
     gap: 6px;
     border-radius: 12px;
-    background: #b7ea2c;
+    background: #0075ff;
     color: #0f172a;
     padding: 8px 10px;
     font-size: 12px;

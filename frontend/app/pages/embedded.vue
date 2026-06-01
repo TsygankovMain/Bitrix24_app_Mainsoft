@@ -897,7 +897,7 @@ async function deleteItemDirect(item: any) {
 
     <section v-if="isLoading" class="ms-surface embedded-state">
         <div class="embedded-state__content">
-            <span class="material-symbols-outlined text-5xl animate-spin text-lime-600">progress_activity</span>
+            <span class="material-symbols-outlined text-5xl animate-spin text-[#0075ff]">progress_activity</span>
             <div class="text-base font-semibold text-slate-900">Загрузка данных</div>
             <p class="text-sm text-slate-500">Получаем задачи и записи времени.</p>
         </div>
@@ -1007,7 +1007,7 @@ async function deleteItemDirect(item: any) {
 
                 <label class="embedded-toggle">
                     <span class="text-sm font-medium text-slate-700">Учитывать в аналитике</span>
-                    <input type="checkbox" v-model="editingItem.isConsidered" class="h-4 w-4 accent-lime-600">
+                    <input type="checkbox" v-model="editingItem.isConsidered" class="h-4 w-4 accent-[#0075ff]">
                 </label>
 
                 <div class="embedded-split-card">
@@ -1160,7 +1160,7 @@ async function deleteItemDirect(item: any) {
 }
 
 .embedded-primary-btn {
-    background: #b7ea2c;
+    background: #0075ff;
     color: #0f172a;
     box-shadow: 0 10px 24px rgba(183, 234, 44, 0.28);
 }

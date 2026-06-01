@@ -25,7 +25,7 @@ const totalMoney = computed(() => props.node.cumulativeConsidered * props.rate)
         <!-- ROW -->
         <div 
             class="group flex items-center gap-3 border-b border-slate-200/80 p-3 transition-colors"
-            :class="level === 0 ? 'bg-slate-50/70' : 'bg-white hover:bg-lime-50/40'"
+            :class="level === 0 ? 'bg-slate-50/70' : 'bg-white hover:bg-blue-50/40'"
             :style="indentStyle"
         >
             <div class="flex-1 min-w-0 flex items-center gap-2">
@@ -41,7 +41,7 @@ const totalMoney = computed(() => props.node.cumulativeConsidered * props.rate)
                 <div class="flex flex-col min-w-0">
                     <div class="flex items-center gap-2">
                         <span class="font-semibold text-sm text-slate-800 truncate" :title="node.taskTitle">{{ node.taskTitle }}</span>
-                         <a :href="`/company/personal/user/0/tasks/task/view/${node.taskId}/`" target="_blank" class="text-slate-300 opacity-0 transition-opacity hover:text-lime-700 group-hover:opacity-100">
+                         <a :href="`/company/personal/user/0/tasks/task/view/${node.taskId}/`" target="_blank" class="text-slate-300 opacity-0 transition-opacity hover:text-[#0075ff] group-hover:opacity-100">
                             <span class="material-symbols-outlined text-xs">open_in_new</span>
                         </a>
                     </div>

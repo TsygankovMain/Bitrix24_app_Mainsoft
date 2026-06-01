@@ -224,7 +224,7 @@ async function handleTransferToReport() {
         <section class="ms-surface px-5 py-5">
             <div class="ms-page-header-row">
                 <div class="flex items-center gap-4">
-                    <div class="rounded-2xl bg-lime-100 p-3 text-lime-700">
+                    <div class="rounded-2xl bg-blue-100 p-3 text-[#0075ff]">
                         <span class="material-symbols-outlined text-[26px]">schedule</span>
                     </div>
                     <div>
@@ -249,7 +249,7 @@ async function handleTransferToReport() {
 
         <section v-if="isLoading" class="ms-surface px-6 py-14 text-center">
             <div class="mx-auto flex max-w-sm flex-col items-center gap-3 text-slate-500">
-                <span class="material-symbols-outlined text-4xl animate-spin text-lime-600">progress_activity</span>
+                <span class="material-symbols-outlined text-4xl animate-spin text-[#0075ff]">progress_activity</span>
                 <div class="text-base font-medium text-slate-700">Загрузка данных задачи</div>
                 <div class="text-sm text-slate-500">Получаем дерево подзадач и записи времени.</div>
             </div>
@@ -310,7 +310,7 @@ async function handleTransferToReport() {
                     </div>
                     <label class="task-toggle">
                         <span class="text-sm font-medium text-slate-700">Учитывать в аналитике</span>
-                        <input type="checkbox" v-model="editingItem.isConsidered" class="h-4 w-4 rounded border-slate-300 text-lime-600">
+                        <input type="checkbox" v-model="editingItem.isConsidered" class="h-4 w-4 rounded border-slate-300 text-[#0075ff]">
                     </label>
                 </div>
                  <div>
@@ -335,7 +335,7 @@ async function handleTransferToReport() {
         <div v-if="isReportModalOpen" class="ms-modal-overlay" @click.self="isReportModalOpen = false">
             <div class="ms-modal-panel flex w-full max-w-lg flex-col text-center">
                 <div class="ms-modal-body px-6 py-8">
-                    <div class="mx-auto mb-4 inline-flex rounded-2xl bg-lime-100 p-3 text-lime-700">
+                    <div class="mx-auto mb-4 inline-flex rounded-2xl bg-blue-100 p-3 text-[#0075ff]">
                         <span class="material-symbols-outlined text-3xl">cloud_upload</span>
                     </div>
                     <h3 class="text-xl font-semibold text-slate-900">Отправить часы в отчет Bitrix24?</h3>
@@ -372,7 +372,7 @@ async function handleTransferToReport() {
 }
 
 .task-primary-btn {
-  background: #b7ea2c;
+  background: #0075ff;
   color: #0f172a;
   box-shadow: 0 8px 20px rgba(183, 234, 44, 0.28);
 }
