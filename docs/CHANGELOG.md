@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+### Оптимизация Bitrix-вызовов, Фаза 2 (партия 2): синк проектов канбана — 2026-06-01
+
+#### Changed
+- **Загрузка/синхронизация проектов канбана (`project_sync_service.py::fetch_project_sp_items`)**: offset-пагинация `crm.item.list` (`start`/`next`) заменена на быструю keyset-выборку (`order id ASC` + `filter {">id": last_id}` + `start=-1`, курсор по максимальному id пачки). Инкрементальный режим (`>updatedTime`) и фолбэк инкремент→полный сохранены; защита от зацикливания. Тест `tests_project_fetch_keyset.py` (13 кейсов).
+
+#### Заметки по аудиту
+- Построение доски (`get_board_data`) кэшируется; справочники компаний/юрлиц (`get_companies`/`get_legal_entities` → `_fetch_paginated`) и карта ИНН (`_fetch_company_inn_map` — один `crm.requisite.list`) — НЕ N+1, кэшируются. Остаток низкого приоритета: `user.get` (`bitrix_data_access.py`) и `_fetch_paginated` (можно `start=-1`).
+
+#### Verification
+- `py_compile` чист; `tests_project_fetch_keyset.py` 13/13 — PASS.
+- ⏳ e2e: синхронизация проектов канбана — заметно быстрее на больших наборах.
+
 ### Карточка проекта на главном экране — 2026-06-01
 
 #### Added

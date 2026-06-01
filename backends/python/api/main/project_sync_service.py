@@ -351,19 +351,25 @@ class ProjectSyncService:
         return created, updated, skipped_missing_group_link, skipped_conflict_linking
 
     def fetch_project_sp_items(self, entity_type_id: int, updated_since: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        start = 0
+        # Быстрая keyset-пагинация: start=-1 отключает медленный подсчёт total,
+        # фильтр {">id": last_id} + order {"id":"ASC"} заменяет offset-скан.
+        PAGE = 50
+        last_id = 0
         items: List[Dict[str, Any]] = []
         filter_enabled = updated_since is not None
-        filter_payload = {">updatedTime": updated_since.isoformat()} if updated_since else None
 
         while True:
+            filt: Dict[str, Any] = {">id": last_id}
+            if filter_enabled and updated_since is not None:
+                filt[">updatedTime"] = updated_since.isoformat()
+
             request_payload: Dict[str, Any] = {
                 "entityTypeId": int(entity_type_id),
                 "select": ["id", "title", "createdTime", "updatedTime", "*", "UF_*"],
-                "start": start,
+                "order": {"id": "ASC"},
+                "filter": filt,
+                "start": -1,
             }
-            if filter_enabled and filter_payload:
-                request_payload["filter"] = filter_payload
 
             try:
                 response = self.client._bitrix_token.call_method("crm.item.list", request_payload)
@@ -371,17 +377,34 @@ class ProjectSyncService:
                 if filter_enabled:
                     logger.warning("Incremental Project SPA filter failed, retrying full list: %s", exc)
                     filter_enabled = False
-                    start = 0
+                    last_id = 0
                     items = []
                     continue
                 raise
-            batch, next_value = self.extract_items_from_response(response)
+
+            batch, _ = self.extract_items_from_response(response)
             if not batch:
                 break
+
+            # Курсор keyset: максимальный id в пачке
+            batch_max_id = last_id
+            for raw in batch:
+                try:
+                    rid = int(raw["id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if rid > batch_max_id:
+                    batch_max_id = rid
+
             items.extend(batch)
-            if next_value is None or int(next_value) <= start:
+
+            # Защита от зацикливания при неподвижном курсоре
+            if batch_max_id <= last_id:
                 break
-            start = int(next_value)
+            last_id = batch_max_id
+
+            if len(batch) < PAGE:
+                break
 
         return items
 
