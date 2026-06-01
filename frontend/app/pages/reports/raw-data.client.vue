@@ -18,6 +18,7 @@ let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
 const progress = useProgress()
+const toast = useToast()
 // endregion ////
 
 const { contextId, isLoading: isLoadingState, load } = useDashboard({ isLoading: ref(false), load: () => {} })
@@ -140,11 +141,11 @@ const selectAllFields = () => {
 
 const handleExport = async () => {
     if (!dateFrom.value || !dateTo.value) {
-        alert("Пожалуйста, выберите начальную и конечную даты")
+        toast.add({ title: 'Пожалуйста, выберите начальную и конечную даты', color: 'air-primary-alert' })
         return
     }
     if (selectedFields.value.length === 0) {
-        alert("Выберите хотя бы одно поле для выгрузки")
+        toast.add({ title: 'Выберите хотя бы одно поле для выгрузки', color: 'air-primary-alert' })
         return
     }
 
@@ -200,7 +201,7 @@ async function handleSync() {
     isSyncing.value = true
     try {
         const result = await apiStore.syncTimesheets()
-        alert(`Синхронизировано ${result.count} записей!`)
+        toast.add({ title: `Синхронизировано ${result.count} записей!`, color: 'air-primary-success' })
         await fetchTimesheetList()
     } catch (e) {
          processErrorGlobal(e)

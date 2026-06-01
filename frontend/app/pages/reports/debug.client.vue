@@ -17,6 +17,7 @@ const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
+const toast = useToast()
 // endregion ////
 
 const { contextId, isLoading: isLoadingState, load } = useDashboard({ isLoading: ref(false), load: () => {} })
@@ -75,7 +76,7 @@ async function handleSync() {
     isSyncing.value = true
     try {
         const result = await apiStore.syncTimesheets()
-        alert(`Синхронизировано ${result.count} записей!`)
+        toast.add({ title: `Синхронизировано ${result.count} записей!`, color: 'air-primary-success' })
         if (activeTab.value === 'raw-data') {
             await fetchTimesheetList()
         }
