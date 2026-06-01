@@ -7,6 +7,25 @@
 
 ## [Unreleased]
 
+### Прод-инцидент: исчерпание соединений PostgreSQL → переход на gunicorn/WSGI — 2026-06-01
+
+#### Контекст
+- В логах: `FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute` (падало на первом же запросе к БД в `auth_required → get_from_jwt_token`).
+- Диагностика по `pg_stat_activity` (Adminer, боевая БД `5.129.243.140/default_db`): `max_connections=25` (мелкий тариф), приложение `gen_user` держит **19** соединений, из них **18 в состоянии `idle`** (некоторые 7+ минут) — утечка соединений, а не нагрузка (`active=1`, `idle_in_txn=0`).
+
+#### Root cause
+- Приложение полностью синхронное (нет `async def`/channels/websocket), но боевой `start.sh` запускал его через **`uvicorn asgi:application`**. Под ASGI синхронные вьюхи Django идут через пул потоков; `close_old_connections` не закрывает потоко-локальные соединения надёжно → они зависают как `idle` и упираются в лимит 25.
+
+#### Fixed
+- `backends/python/api/start.sh`: запуск переведён с uvicorn/ASGI на **`gunicorn wsgi:application`** (`gthread`, `--workers 2 --threads 4`, `--timeout 300`, `--max-requests 1000 --max-requests-jitter 100`). Под WSGI соединение закрывается в конце каждого запроса (`CONN_MAX_AGE=0`) — утечки нет; пик соединений ≈ 8 (2×4), c запасом ниже лимита. `gunicorn` уже был в `requirements.txt`; prod-стадия Dockerfile и так задумана под gunicorn.
+
+#### Ops / runbook
+- Немедленное освобождение слотов без редеплоя (роль убивает свои коннекты):
+  `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='default_db' AND usename='gen_user' AND state='idle' AND now()-state_change > interval '1 minute';`
+- Деплой: пересобрать/перезапустить backend, чтобы применился новый `start.sh`. Миграций нет.
+- Контроль после редеплоя: повторить запрос №1 — `idle` должен держаться в районе 0–8, не расти до лимита.
+- TODO (отдельно): попросить Timeweb поднять `max_connections` (25 — мало); устойчивость `auth_required` к `OperationalError` (ретрай + 503 вместо 500); ретеншн `request_log` (~248 тыс. строк, 62 МБ).
+
 ### Прогресс-оверлей: «живой» индетерминированный бар + подписи по разделам — 2026-05-31
 
 #### Fixed
