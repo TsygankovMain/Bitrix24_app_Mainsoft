@@ -7,6 +7,20 @@
 
 ## [Unreleased]
 
+### Техдолг: ESLint — 0 ошибок по всему проекту — 2026-06-01
+
+#### Changed
+- Полная типизация проекта: **213 ошибок ESLint → 0** (`eslint .`). Ранее официальный гейт `npm run lint` покрывал только `app/utils`/`app/composables`; теперь чисто во всех 42 файлах.
+  - `@typescript-eslint/no-explicit-any` (150): `any` → корректные типы (`HierarchicalReportNode`, `TaskWorkspaceNode/Item`, `ProjectBoardCardRecord`, локальные `interface`) либо `unknown`/`Record<string, unknown>` для внешних/CRM-динамических структур. Ответы методов `api.ts` — `Promise<unknown>` (без tsc-гейта потребители не ломаются).
+  - `no-unused-vars` (31): удаление неиспользуемого (`t`/`$logger`/`closeDrawer`/`emit`/`router`/`isInitTokenJWT` — проверено: 0 ссылок в script и template).
+  - `ban-ts-comment` (20): `@ts-ignore` → `@ts-expect-error` с пояснением (или удаление избыточных).
+  - Семантические: `no-dynamic-delete` → `Reflect.deleteProperty` (реактивность Vue сохранена); `no-useless-catch` (убран лишний `try/catch` с rethrow); `no-empty`, `no-unused-expressions` (тернарник→`if/else`), `unified-signatures` (объединение перегрузок `emit`), `vue/multi-word-component-names` (`Logo.vue` — локальный eslint-disable).
+- **Только аннотации типов/касты/комментарии/удаление мёртвого кода — runtime не менялся.** `nuxt build` EXIT=0. УТП-экран отражения (`embedded.vue`/`task.vue`) проверен построчно: имена методов `crm.item.add/update/get/delete` и payload (`OUR_INN`/`CLIENT_INN`/иерархия/Split) идентичны (`as any`→`as B24Frame` — каст-онли).
+- Изоляция finance подтверждена: `placement-crm-deal-detail-tab` гейтит finance-вызовы флагом `FINANCE_FEATURE_ENABLED=false` и показывает заглушку «в разработке» — битых запросов нет.
+
+#### Notes
+- Осталось 1 предсуществующее предупреждение `vue/require-default-prop` (`SearchableSelect.vue`); полная tsc-строгость — в [BACKLOG.md](./BACKLOG.md) (в проекте нет `vue-tsc`-гейта).
+
 ### Миграция на B24 UI Kit — ЗАВЕРШЕНА (S2–S5) — 2026-06-01
 
 > **Итог:** миграция на Bitrix24 UI Kit завершена на светлой теме. Достигнуты заявленные драйверы — нативный вид Bitrix, доступность/UX, меньше кастомного CSS. Бренд-лайм полностью вытеснен Bitrix-синим. УТП (рекурсивные таблицы отчётов) сохранено — только ре-скин, без замены на `B24Table`, Excel-контракт цел. Тёмная тема — отдельный будущий спринт.
