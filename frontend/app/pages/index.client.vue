@@ -411,90 +411,70 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="ms-page-shell">
-    <div v-if="isInit" class="ms-page-frame space-y-6">
-      <section class="ms-surface-hero p-6">
-        <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <div class="ms-eyebrow">Workspace / Clear Operator</div>
-            <h1 class="ms-title mt-2">Рабочее пространство</h1>
-            <p class="ms-subtitle mt-2">
-              Единая новая главная: список проектов, контекст и переходы во все разделы приложения.
-            </p>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
-              @click="openSettings"
-            >
-              Настройки
-            </button>
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
-              @click="openGuide"
-            >
-              Юзергайд
-            </button>
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-xl border border-lime-200 bg-lime-50 px-4 py-2 text-sm font-semibold text-lime-700 shadow-sm transition hover:border-lime-300"
-              @click="router.push('/projects')"
-            >
-              Канбан проектов
-            </button>
-          </div>
-        </div>
+  <B24Container>
+    <!-- ms-page-header: шапка страницы с кнопками в слоте #links -->
+    <B24PageHeader
+      title="Рабочее пространство"
+      description="Единая главная: список проектов, контекст и переходы во все разделы приложения."
+    >
+      <template #links>
+        <B24Button label="Настройки" color="default" @click="openSettings" />
+        <B24Button label="Юзергайд" color="default" @click="openGuide" />
+        <B24Button label="Канбан проектов" color="primary" @click="router.push('/projects')" />
+      </template>
+    </B24PageHeader>
 
-        <div class="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <article class="ms-stat-card">
-            <div class="text-xs text-slate-400">Активные проекты</div>
-            <div class="mt-2 text-3xl font-semibold text-slate-900">{{ summary.active_count }}</div>
-            <div class="mt-1 text-xs text-slate-500">Портфель в работе</div>
-          </article>
-          <article class="ms-stat-card">
-            <div class="text-xs text-slate-400">Нет списаний 1 месяц</div>
-            <div class="mt-2 text-3xl font-semibold text-amber-600">{{ summary.inactive_30_count }}</div>
-            <div class="mt-1 text-xs text-slate-500">Требуют внимания</div>
-          </article>
-          <article class="ms-stat-card">
-            <div class="text-xs text-slate-400">Нет списаний 3 месяца</div>
-            <div class="mt-2 text-3xl font-semibold text-rose-600">{{ summary.inactive_90_count }}</div>
-            <div class="mt-1 text-xs text-slate-500">Высокий риск</div>
-          </article>
-          <article class="ms-stat-card">
-            <div class="text-xs text-slate-400">Support-проекты</div>
-            <div class="mt-2 text-3xl font-semibold text-cyan-700">{{ summary.support_count }}</div>
-            <div class="mt-1 text-xs text-slate-500">Отдельный режим</div>
-          </article>
-        </div>
-      </section>
+    <div v-if="isInit" class="mt-6 space-y-6">
+      <!-- ms-kpi-grid: ряд KPI-карточек → B24PageGrid + B24Card -->
+      <B24PageGrid>
+        <B24Card>
+          <div class="text-xs text-slate-400">Активные проекты</div>
+          <div class="mt-2 text-3xl font-semibold text-slate-900">{{ summary.active_count }}</div>
+          <div class="mt-1 text-xs text-slate-500">Портфель в работе</div>
+        </B24Card>
+        <B24Card>
+          <div class="text-xs text-slate-400">Нет списаний 1 месяц</div>
+          <div class="mt-2 text-3xl font-semibold text-amber-600">{{ summary.inactive_30_count }}</div>
+          <div class="mt-1 text-xs text-slate-500">Требуют внимания</div>
+        </B24Card>
+        <B24Card>
+          <div class="text-xs text-slate-400">Нет списаний 3 месяца</div>
+          <div class="mt-2 text-3xl font-semibold text-rose-600">{{ summary.inactive_90_count }}</div>
+          <div class="mt-1 text-xs text-slate-500">Высокий риск</div>
+        </B24Card>
+        <B24Card>
+          <div class="text-xs text-slate-400">Support-проекты</div>
+          <div class="mt-2 text-3xl font-semibold text-cyan-700">{{ summary.support_count }}</div>
+          <div class="mt-1 text-xs text-slate-500">Отдельный режим</div>
+        </B24Card>
+      </B24PageGrid>
 
-      <section class="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-        <section class="ms-surface p-5">
-          <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-            <div>
-              <h2 class="text-lg font-semibold text-slate-900">Проекты</h2>
-              <p class="mt-1 text-sm text-slate-500">Выберите проект и работайте с ним справа.</p>
+      <!-- ms-surface (список) + ms-surface (панель) → два B24Card в сетке -->
+      <div class="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+        <!-- Список проектов -->
+        <B24Card>
+          <template #header>
+            <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div>
+                <span class="text-base font-semibold text-slate-900">Проекты</span>
+                <p class="mt-1 text-sm text-slate-500">Выберите проект и работайте с ним справа.</p>
+              </div>
+              <!-- Поиск: нативный input без lime, фокус на синем #0075ff -->
+              <label class="grid gap-1 text-sm">
+                <span class="font-medium text-slate-700">Поиск проекта</span>
+                <input
+                  v-model="projectSearch"
+                  type="search"
+                  placeholder="Название, компания, стадия"
+                  class="w-full min-w-[250px] rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-[#0075ff] focus:ring-1 focus:ring-[#0075ff]"
+                >
+              </label>
             </div>
-            <label class="grid gap-1 text-sm">
-              <span class="font-medium text-slate-700">Поиск проекта</span>
-              <input
-                v-model="projectSearch"
-                type="search"
-                placeholder="Название, компания, стадия"
-                class="w-full min-w-[250px] rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
-              >
-            </label>
-          </div>
+          </template>
 
-          <div v-if="isPortfolioLoading" class="ms-empty-state mt-4">
-            Загружаем портфель проектов...
-          </div>
-          <div v-else-if="activePortfolioCards.length === 0" class="ms-empty-state mt-4">
-            Проекты не найдены по текущему фильтру.
-          </div>
+          <!-- ms-empty-state → B24Empty -->
+          <B24Empty v-if="isPortfolioLoading" title="Загружаем портфель проектов…" size="sm" />
+          <B24Empty v-else-if="activePortfolioCards.length === 0" title="Проекты не найдены по текущему фильтру." size="sm" />
           <div v-else class="mt-4 max-h-[560px] space-y-2 overflow-y-auto pr-1">
             <button
               v-for="card in activePortfolioCards"
@@ -502,7 +482,7 @@ onMounted(async () => {
               type="button"
               class="w-full rounded-2xl border px-4 py-3 text-left transition"
               :class="selectedProject?.project_id === card.project_id
-                ? 'border-lime-300 bg-lime-50/40 shadow-sm'
+                ? 'border-[#0075ff] bg-blue-50/40 shadow-sm'
                 : 'border-slate-200 bg-white hover:border-slate-300'"
               @click="selectedProjectId = card.project_id"
             >
@@ -519,9 +499,10 @@ onMounted(async () => {
               </div>
             </button>
           </div>
-        </section>
+        </B24Card>
 
-        <aside class="ms-surface p-5">
+        <!-- Правая панель выбранного проекта -->
+        <B24Card>
           <div v-if="selectedProject" class="space-y-4">
             <div class="flex flex-wrap items-center gap-2">
               <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold" :class="getStageClass(selectedProject.stage)">
@@ -558,56 +539,56 @@ onMounted(async () => {
               </div>
             </div>
 
+            <!-- ms-action-card → B24PageCard (кликабельные карточки-действия) -->
             <div class="grid grid-cols-2 gap-2">
-              <button type="button" class="ms-action-card text-left" @click="openProject(selectedProject)">
-                Открыть проект
-                <div class="mt-1 text-xs font-normal text-slate-500">Группа проекта в Bitrix24</div>
-              </button>
-              <button type="button" class="ms-action-card text-left" @click="openSelectedProjectReport('project')">
-                Сформировать отчет
-                <div class="mt-1 text-xs font-normal text-slate-500">Отчет по проекту с пресетом</div>
-              </button>
-              <button type="button" class="ms-action-card text-left" @click="router.push('/projects')">
-                Открыть канбан проектов
-                <div class="mt-1 text-xs font-normal text-slate-500">Перейти в управление проектами</div>
-              </button>
-              <button type="button" class="ms-action-card text-left" @click="openProjectCard(selectedProject)">
-                Карточка проекта
-                <div class="mt-1 text-xs font-normal text-slate-500">Ставка, юрлицо и параметры</div>
-              </button>
+              <B24PageCard
+                title="Открыть проект"
+                description="Группа проекта в Bitrix24"
+                :onClick="() => openProject(selectedProject)"
+              />
+              <B24PageCard
+                title="Сформировать отчет"
+                description="Отчет по проекту с пресетом"
+                :onClick="() => openSelectedProjectReport('project')"
+              />
+              <B24PageCard
+                title="Открыть канбан проектов"
+                description="Перейти в управление проектами"
+                :onClick="() => router.push('/projects')"
+              />
+              <B24PageCard
+                title="Карточка проекта"
+                description="Ставка, юрлицо и параметры"
+                :onClick="() => openProjectCard(selectedProject)"
+              />
             </div>
           </div>
 
-          <div v-else class="ms-empty-state">
-            Нет доступных проектов для отображения.
-          </div>
-        </aside>
-      </section>
+          <!-- ms-empty-state → B24Empty -->
+          <B24Empty v-else title="Нет доступных проектов для отображения." size="sm" />
+        </B24Card>
+      </div>
 
-      <section class="ms-surface p-5">
-        <div class="flex items-start justify-between gap-4">
+      <!-- ms-surface (рабочие разделы) → B24Card + B24PageGrid -->
+      <B24Card>
+        <template #header>
           <div>
-            <h2 class="text-lg font-semibold text-slate-900">Рабочие разделы</h2>
+            <span class="text-base font-semibold text-slate-900">Рабочие разделы</span>
             <p class="mt-1 text-sm text-slate-500">
               Ключевые рабочие сценарии на главной. Служебные и настройочные разделы перенесены в «Настройки».
             </p>
           </div>
-        </div>
-        <div class="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <button
+        </template>
+        <B24PageGrid class="mt-2">
+          <B24PageCard
             v-for="section in appSections"
             :key="section.id"
-            type="button"
-            class="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-sm"
-            @click="section.action"
-          >
-            <div class="inline-flex rounded-full px-2 py-1 text-xs font-semibold" :class="section.toneClass">
-              {{ section.title }}
-            </div>
-            <div class="mt-2 text-sm text-slate-500">{{ section.description }}</div>
-          </button>
-        </div>
-      </section>
+            :title="section.title"
+            :description="section.description"
+            :onClick="section.action"
+          />
+        </B24PageGrid>
+      </B24Card>
     </div>
 
     <ProjectBoardDrawer
@@ -623,5 +604,5 @@ onMounted(async () => {
       @open-project="openProject"
       @open-spa="openSpa"
     />
-  </div>
+  </B24Container>
 </template>
