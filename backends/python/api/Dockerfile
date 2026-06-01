@@ -10,7 +10,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY api/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Устойчивость к таймаутам/флуктуациям PyPI на этапе сборки:
+# увеличенный таймаут запроса + повторные попытки на сетевых ошибках.
+RUN pip install --default-timeout=100 --retries 10 --no-cache-dir -r requirements.txt
 
 # ---------- Development stage ----------
 FROM base AS dev
