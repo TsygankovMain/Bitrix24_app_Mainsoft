@@ -4,15 +4,27 @@ import { onMounted } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import EmployeeProjectTable from '../../components/reports/EmployeeProjectTable.vue'
 import ProjectEmployeeTable from '../../components/reports/ProjectEmployeeTable.vue'
+import type { HierarchicalReportNode } from '~/types/report'
 
-const { t, locales: localesI18n, setLocale } = useI18n()
+interface DebugTimesheetRow {
+  id: string | number
+  date?: string | null
+  employee_id?: string | number
+  project_title?: string | null
+  task_id?: string | number
+  task_hierarchy_titles?: string[]
+  hours?: number
+  non_billable_hours?: number
+}
+
+const { locales: localesI18n, setLocale } = useI18n()
 
 useHead({
   title: 'Диагностика отчетов'
 })
 
 // region Init ////
-const { $logger, initApp, processErrorGlobal } = useAppInit('ReportsDebugPage')
+const { initApp, processErrorGlobal } = useAppInit('ReportsDebugPage')
 const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 
@@ -30,12 +42,12 @@ const isLoading = computed({
 
 // Report State
 const activeTab = ref('employee-project')
-const reportData = ref<any[]>([])
+const reportData = ref<HierarchicalReportNode[]>([])
 const dateFrom = ref('') // YYYY-MM-DD
 const isInit = ref(false)
 
 const isSyncing = ref(false)
-const timesheetItems = ref<any[]>([])
+const timesheetItems = ref<DebugTimesheetRow[]>([])
 const itemsPage = ref(1)
 const itemsTotal = ref(0)
 const itemsPages = ref(0)
@@ -61,15 +73,12 @@ async function fetchReport() {
 async function fetchTimesheetList(page = 1) {
     // specialized fetch for raw data that supports pagination
     // we don't set global isLoading to full blocking if we just change pages, but consistency is key
-    try {
-         const result = await apiStore.getTimesheetsList(page, itemsLimit)
-         timesheetItems.value = result.items
-         itemsTotal.value = result.total
-         itemsPage.value = result.page
-         itemsPages.value = result.pages
-    } catch (e) {
-        throw e // caught by fetchReport or called directly
-    }
+    // ошибки пробрасываются вызывающему (fetchReport ловит их в своём try/catch)
+    const result = await apiStore.getTimesheetsList(page, itemsLimit)
+    timesheetItems.value = result.items as DebugTimesheetRow[]
+    itemsTotal.value = result.total
+    itemsPage.value = result.page
+    itemsPages.value = result.pages
 }
 
 async function handleSync() {

@@ -142,8 +142,8 @@ const router = useRouter()
 const api = useApiStore()
 const activeTab = ref<'requests' | 'system'>('requests')
 
-const requestLogs = ref<any[]>([])
-const systemLogs = ref<any[]>([])
+const requestLogs = ref<Array<Record<string, unknown>>>([])
+const systemLogs = ref<Array<Record<string, unknown>>>([])
 const expandedRequestId = ref<number | string | null>(null)
 const expandedSystemId = ref<number | string | null>(null)
 
@@ -211,7 +211,7 @@ const parseOrRaw = (value: unknown) => {
             return value
         }
         return JSON.stringify(value, null, 2)
-    } catch { }
+    } catch { /* не-JSON значение — отдаём как строку ниже */ }
     return String(value ?? '')
 }
 

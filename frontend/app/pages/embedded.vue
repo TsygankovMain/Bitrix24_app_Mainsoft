@@ -10,9 +10,9 @@ import { filterTaskTree, findTaskIdForItem, findTaskNodeById, flattenTaskItems }
 
 import { requestIframeFullHeight } from '@/utils/iframe-resizer'
 
-const { $logger, initApp, processErrorGlobal } = useAppInit('EmbeddedPage')
+const { initApp, processErrorGlobal } = useAppInit('EmbeddedPage')
 const { $initializeB24Frame } = useNuxtApp()
-const { t, locales: localesI18n, setLocale } = useI18n()
+const { locales: localesI18n, setLocale } = useI18n()
 const toast = useToast()
 
 // --- STATE ---
@@ -21,7 +21,7 @@ const isHelpOpen = ref(false)
 // --- Diagnostics & Navigation ---
 const isNativeSidePanelAvailable = ref(false)
 
-function openHelp() {
+function _openHelp() {
     if (isNativeSidePanelAvailable.value) {
         // Try native slider first
         try {
@@ -29,7 +29,7 @@ function openHelp() {
                 Using BX24.openApplication to open the guide route in a native slider. 
                 This puts the guide OUTSIDE the iframe constraints.
              */
-             // @ts-ignore
+             // @ts-expect-error BX24 is injected globally by the Bitrix24 frame and is not typed
              window.BX24.openApplication(
                 { 
                     url: '/guide?from=slider' 
@@ -57,15 +57,28 @@ useIframeResizeOnToggle(isHelpOpen)
 let $b24: null | B24Frame = null
 const apiStore = useApiStore()
 
+interface EditingItem {
+    id: string | number | null
+    taskId: string | null
+    description: string
+    employeeId: string | number
+    date: string
+    hours: number
+    isConsidered: boolean
+    splitHours: number
+    splitInvert?: boolean
+    keepOriginalConsidered?: boolean
+    [key: string]: unknown
+}
+
 const rootTaskId = ref<string | null>(null)
 const expandedTasks = ref<Set<string>>(new Set())
 const currentEditingId = ref<string | null>(null)
-const editingItem = ref<any>(null)
+const editingItem = ref<EditingItem | null>(null)
 
 const {
     isLoading,
     error,
-    usersMap,
     usersList,
     currentUserId,
     taskTree,
@@ -80,7 +93,7 @@ const filterEmployeeId = ref<string>('')
 const filterDateFrom = ref<string>('')
 const filterDateTo = ref<string>('')
 
-const projectCardCache = new Map<string, any>()
+const projectCardCache = new Map<string, Record<string, unknown>>()
 
 async function reloadWorkspace() {
     if (!$b24 || !rootTaskId.value) {
@@ -100,7 +113,7 @@ onMounted(async () => {
 
     // Diagnostics
     const isInIframe = window.self !== window.top
-    const hasBX24 = typeof (window as any).BX24 !== 'undefined'
+    const hasBX24 = typeof (window as unknown as Record<string, unknown>).BX24 !== 'undefined'
     
     console.info('[Diagnostics] Env:', { isInIframe, hasBX24 })
     
@@ -129,9 +142,9 @@ onMounted(async () => {
             await reloadWorkspace()
         }
 
-    } catch (e: any) {
+    } catch (e: unknown) {
         processErrorGlobal(e)
-        error.value = e.message
+        error.value = (e as { message?: string }).message
         isLoading.value = false
     }
 })
@@ -162,7 +175,7 @@ function resetFilter() {
     filterDateTo.value = ''
 }
 
-function assignMappedField(target: Record<string, any>, fieldCode: string | undefined, value: any) {
+function assignMappedField(target: Record<string, unknown>, fieldCode: string | undefined, value: unknown) {
     if (!fieldCode || value === undefined) {
         return
     }
@@ -182,7 +195,15 @@ function resolveInnFieldCode(kind: 'OUR_INN' | 'CLIENT_INN'): string {
     ).trim()
 }
 
-function extractCreatedItemId(rawData: any): string | null {
+interface CreatedItemResultObject {
+    id?: string | number
+    itemId?: string | number
+    item?: { id?: string | number, ID?: string | number }
+}
+
+function extractCreatedItemId(
+    rawData: { result?: string | number | CreatedItemResultObject } | null | undefined
+): string | null {
     const result = rawData?.result
     if (!result) {
         return null
@@ -234,7 +255,7 @@ async function resolveTaskTitleSafe(taskId: string | null | undefined, hierarchy
     }
 
     try {
-        const taskRes = await ($b24 as any).callMethod('tasks.task.get', {
+        const taskRes = await ($b24 as B24Frame).callMethod('tasks.task.get', {
             taskId: normalizedTaskId,
             select: ['ID', 'TITLE'],
         })
@@ -276,7 +297,7 @@ function toNumberOrNull(value: unknown): number | null {
 }
 
 function validateProjectBindingForSave(
-    fields: Record<string, any>,
+    fields: Record<string, unknown>,
     hierarchy?: {
         projectId?: string | null
         projectTitle?: string
@@ -359,7 +380,7 @@ async function getProjectCardByProjectId(projectId?: string | null) {
 }
 
 async function enrichFieldsWithProjectContext(
-    fields: Record<string, any>,
+    fields: Record<string, unknown>,
     taskId: string | null | undefined,
     hierarchy?: {
         idPath?: string[]
@@ -477,7 +498,7 @@ async function getTaskHierarchy(taskId: string) {
 
         while (currentTaskId && loopCount < 20) { // Safety break
             try {
-                const result = await ($b24 as any).callMethod('tasks.task.get', {
+                const result = await ($b24 as B24Frame).callMethod('tasks.task.get', {
                     taskId: currentTaskId,
                     select: [
                         'ID',
@@ -514,7 +535,7 @@ async function getTaskHierarchy(taskId: string) {
 
                 const tid = task.id || task.ID || task.Id
                 const ttitle = task.title || task.TITLE || task.Title
-                const tparent: any = task.parentId || task.parent_id || task.PARENT_ID || task.ParentId
+                const tparent: unknown = task.parentId || task.parent_id || task.PARENT_ID || task.ParentId
 
                 if (tid) idPath.unshift(String(tid))
                 if (ttitle) titlePath.unshift(String(ttitle))
@@ -534,7 +555,7 @@ async function getTaskHierarchy(taskId: string) {
 
         if (projectId) {
             try {
-                const groupRes = await ($b24 as any).callMethod('sonet_group.get', {
+                const groupRes = await ($b24 as B24Frame).callMethod('sonet_group.get', {
                     FILTER: { ID: projectId }
                 })
                 const groupData = groupRes.getData()
@@ -580,10 +601,10 @@ function toggleTask(taskId: string) {
     }
 }
 
-function selectItem(item: any) {
-    currentEditingId.value = item.id
+function selectItem(item: Record<string, unknown>) {
+    currentEditingId.value = item.id as string | null
     const taskId = findTaskIdForItem(item.id, taskTree.value)
-    editingItem.value = { ...item, taskId, splitHours: 0, splitInvert: false }
+    editingItem.value = { ...item, taskId, splitHours: 0, splitInvert: false } as EditingItem
 }
 
 function closeEditor() {
@@ -639,7 +660,7 @@ async function saveCurrentItem() {
         const taskIdToSave = editingItem.value.taskId ||  rootTaskId.value
         
         // Base fields
-        const fields: any = {
+        const fields: Record<string, unknown> = {
             [config.value.FIELDS.HOURS]: editingItem.value.hours,
             [config.value.FIELDS.IS_CONSIDERED]: editingItem.value.isConsidered ? 'Y' : 'N',
             [config.value.FIELDS.DESCRIPTION]: editingItem.value.description,
@@ -681,7 +702,7 @@ async function saveCurrentItem() {
                 hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
                 payloadHourlyRateSnapshot: fields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
             })
-            await ($b24 as any).callMethod('crm.item.update', {
+            await ($b24 as B24Frame).callMethod('crm.item.update', {
                 entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
                 id: editingItem.value.id,
                 fields: fields
@@ -704,7 +725,7 @@ async function saveCurrentItem() {
                 hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
                 payloadHourlyRateSnapshot: fields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
             })
-            const createRes = await ($b24 as any).callMethod('crm.item.add', {
+            const createRes = await ($b24 as B24Frame).callMethod('crm.item.add', {
                 entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
                 fields: fields
             })
@@ -718,7 +739,7 @@ async function saveCurrentItem() {
             const clientInnFieldCode = resolveInnFieldCode('CLIENT_INN')
             if (createdItemId && (ourInnFieldCode || clientInnFieldCode)) {
                 try {
-                    const verifyRes = await ($b24 as any).callMethod('crm.item.get', {
+                    const verifyRes = await ($b24 as B24Frame).callMethod('crm.item.get', {
                         entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
                         id: createdItemId,
                     })
@@ -744,8 +765,8 @@ async function saveCurrentItem() {
         
         await reloadWorkspace()
         closeEditor()
-    } catch (e: any) {
-        toast.add({ title: "Ошибка сохранения: " + e.message, color: 'air-primary-alert' })
+    } catch (e: unknown) {
+        toast.add({ title: "Ошибка сохранения: " + (e as { message?: string }).message, color: 'air-primary-alert' })
         isLoading.value = false
     }
 }
@@ -763,7 +784,7 @@ async function splitItem() {
     try {
         // Update original
         const remainingHours = editingItem.value.hours - splitHours
-        await ($b24 as any).callMethod('crm.item.update', {
+        await ($b24 as B24Frame).callMethod('crm.item.update', {
             entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
             id: editingItem.value.id,
             fields: { [config.value.FIELDS.HOURS]: remainingHours }
@@ -778,7 +799,7 @@ async function splitItem() {
             return
         }
         
-        const splitFields: any = {
+        const splitFields: Record<string, unknown> = {
             TITLE: editingItem.value.description + ' (разделено)',
             [config.value.FIELDS.HOURS]: splitHours,
             [config.value.FIELDS.IS_CONSIDERED]: newConsidered ? 'Y' : 'N',
@@ -798,7 +819,7 @@ async function splitItem() {
             return
         }
 
-        await ($b24 as any).callMethod('crm.item.add', {
+        await ($b24 as B24Frame).callMethod('crm.item.add', {
             entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
             fields: splitFields
         })
@@ -817,8 +838,8 @@ async function splitItem() {
 
         await reloadWorkspace()
         closeEditor()
-    } catch (e: any) {
-        toast.add({ title: "Ошибка разделения: " + e.message, color: 'air-primary-alert' })
+    } catch (e: unknown) {
+        toast.add({ title: "Ошибка разделения: " + (e as { message?: string }).message, color: 'air-primary-alert' })
         isLoading.value = false
     }
 }
@@ -829,34 +850,34 @@ async function deleteItem() {
 
     isLoading.value = true
     try {
-        await ($b24 as any).callMethod('crm.item.delete', {
+        await ($b24 as B24Frame).callMethod('crm.item.delete', {
             entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
             id: editingItem.value.id
         })
         await reloadWorkspace()
         closeEditor()
-    } catch (e: any) {
-        toast.add({ title: "Ошибка удаления: " + e.message, color: 'air-primary-alert' })
+    } catch (e: unknown) {
+        toast.add({ title: "Ошибка удаления: " + (e as { message?: string }).message, color: 'air-primary-alert' })
         isLoading.value = false
     }
 }
 
-async function deleteItemDirect(item: any) {
+async function deleteItemDirect(item: Record<string, unknown>) {
     if (!config.value || !item?.id) return
     const label = item.description ? `«${item.description.substring(0, 60)}»` : `#${item.id}`
     if (!confirm(`Удалить запись ${label}?`)) return
 
     isLoading.value = true
     try {
-        await ($b24 as any).callMethod('crm.item.delete', {
+        await ($b24 as B24Frame).callMethod('crm.item.delete', {
             entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
             id: item.id
         })
         // If this item was open in the editor — close it
         if (currentEditingId.value === item.id) closeEditor()
         await reloadWorkspace()
-    } catch (e: any) {
-        toast.add({ title: "Ошибка удаления: " + e.message, color: 'air-primary-alert' })
+    } catch (e: unknown) {
+        toast.add({ title: "Ошибка удаления: " + (e as { message?: string }).message, color: 'air-primary-alert' })
         isLoading.value = false
     }
 }

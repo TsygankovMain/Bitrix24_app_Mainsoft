@@ -115,10 +115,6 @@ export const useApiStore = defineStore(
 
     const tokenJWT = ref('')
 
-    const isInitTokenJWT = computed(() => {
-      return tokenJWT.value.length > 2
-    })
-
     const $api = $fetch.create({
       baseURL: apiUrl,
       headers: {
@@ -265,14 +261,14 @@ export const useApiStore = defineStore(
       })
     }
 
-    const postInstall = async (data: Record<string, any>): Promise<Record<string, any>> => {
+    const postInstall = async (data: Record<string, unknown>): Promise<Record<string, unknown>> => {
       return await $api('/api/install', {
         method: 'POST',
         body: data,
       })
     }
 
-    const getToken = async (data: Record<string, any>): Promise<{ token: string }> => {
+    const getToken = async (data: Record<string, unknown>): Promise<{ token: string }> => {
       return await $api('/api/getToken', {
         method: 'POST',
         body: data,
@@ -573,7 +569,7 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const getTimesheetsList = async (page: number = 1, limit: number = 50, createdFrom?: string, createdTo?: string): Promise<any> => {
+    const getTimesheetsList = async (page: number = 1, limit: number = 50, createdFrom?: string, createdTo?: string): Promise<{ items: unknown[], total: number, page: number, pages: number }> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
       params.append('limit', limit.toString())
@@ -695,7 +691,7 @@ export const useApiStore = defineStore(
       */
     }
 
-    const getHomepagePortfolio = async (forceRefresh = false): Promise<any> => {
+    const getHomepagePortfolio = async (forceRefresh = false): Promise<unknown> => {
       return await withBrowserCache('homepage-portfolio', browserCacheTtl.homepage, async () => {
         return await $api('/api/homepage/portfolio', {
           headers: {
@@ -705,7 +701,7 @@ export const useApiStore = defineStore(
       }, forceRefresh)
     }
 
-    const getSupportStatus = async (forceRefresh = false): Promise<any> => {
+    const getSupportStatus = async (forceRefresh = false): Promise<unknown> => {
       return await withBrowserCache('support-status', browserCacheTtl.support, async () => {
         return await $api('/api/support/status', {
           headers: {
@@ -715,7 +711,7 @@ export const useApiStore = defineStore(
       }, forceRefresh)
     }
 
-    const connectSupportLine = async (): Promise<any> => {
+    const connectSupportLine = async (): Promise<unknown> => {
       const result = await $api('/api/support/connect', {
         method: 'POST',
         headers: {
@@ -727,7 +723,7 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const syncProjectCards = async (incrementalSinceMinutes?: number): Promise<any> => {
+    const syncProjectCards = async (incrementalSinceMinutes?: number): Promise<unknown> => {
       const query = incrementalSinceMinutes && incrementalSinceMinutes > 0
         ? `?incremental_since_minutes=${encodeURIComponent(String(incrementalSinceMinutes))}`
         : ''
@@ -741,7 +737,7 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const updateProjectCard = async (payload: Record<string, any>): Promise<any> => {
+    const updateProjectCard = async (payload: Record<string, unknown>): Promise<unknown> => {
       const result = await $api('/api/project-board/update', {
         method: 'POST',
         headers: {
@@ -753,7 +749,7 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const updateProjectStage = async (projectId: string, stage: string): Promise<any> => {
+    const updateProjectStage = async (projectId: string, stage: string): Promise<unknown> => {
       const result = await $api('/api/project-board/update-stage', {
         method: 'POST',
         headers: {
@@ -768,7 +764,7 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const archiveProject = async (projectId: string, isArchived: boolean): Promise<any> => {
+    const archiveProject = async (projectId: string, isArchived: boolean): Promise<unknown> => {
       const result = await $api('/api/project-board/archive', {
         method: 'POST',
         headers: {
@@ -783,7 +779,7 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const runProjectBoardDailyCheck = async (): Promise<any> => {
+    const runProjectBoardDailyCheck = async (): Promise<unknown> => {
       const result = await $api('/api/project-board/run-daily-check', {
         method: 'POST',
         headers: {
@@ -800,7 +796,7 @@ export const useApiStore = defineStore(
     const runProjectBudgetNotifier = async (_payload?: {
       project_ids?: string[]
       project_item_ids?: string[]
-    }): Promise<any> => {
+    }): Promise<unknown> => {
       throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/project-budget/notify отключён.')
       /*
       return await $api('/api/project-budget/notify', {
@@ -814,7 +810,7 @@ export const useApiStore = defineStore(
       */
     }
 
-    const runProjectSpaBackfill = async (): Promise<any> => {
+    const runProjectSpaBackfill = async (): Promise<unknown> => {
       const result = await $api('/api/project-spa/backfill-timesheet', {
         method: 'POST',
         headers: {
@@ -836,9 +832,9 @@ export const useApiStore = defineStore(
       }))
     }
 
-    const getBitrixInternalLists = async (iblockTypeId: string = 'lists', forceRefresh = false): Promise<any[]> => {
+    const getBitrixInternalLists = async (iblockTypeId: string = 'lists', forceRefresh = false): Promise<unknown[]> => {
       return await withBrowserCache(`bitrix-lists:${iblockTypeId}`, browserCacheTtl.lists, async () => {
-        const response = await $api<{ lists?: any[] }>(`/api/bitrix/internal-lists?iblockTypeId=${encodeURIComponent(iblockTypeId)}`, {
+        const response = await $api<{ lists?: unknown[] }>(`/api/bitrix/internal-lists?iblockTypeId=${encodeURIComponent(iblockTypeId)}`, {
           headers: {
             Authorization: `Bearer ${tokenJWT.value}`
           }
@@ -1000,7 +996,7 @@ export const useApiStore = defineStore(
       return result as MappedFieldCreateResponse
     }
 
-    const getRequestLogs = async (page: number = 1, limit: number = 50): Promise<any> => {
+    const getRequestLogs = async (page: number = 1, limit: number = 50): Promise<unknown> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
       params.append('limit', limit.toString())
@@ -1016,7 +1012,7 @@ export const useApiStore = defineStore(
         module?: string
         level?: string
       }
-    ): Promise<any> => {
+    ): Promise<unknown> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
       params.append('limit', limit.toString())

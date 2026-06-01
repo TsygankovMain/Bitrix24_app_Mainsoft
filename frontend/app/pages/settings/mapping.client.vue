@@ -9,7 +9,7 @@ import type {
   SmartProcessOption,
 } from '~/types/config'
 
-const { t, locales: localesI18n, setLocale } = useI18n()
+const { locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
 const apiStore = useApiStore()
 
@@ -18,7 +18,7 @@ useHead({
 })
 
 // region Init
-const { $logger, initApp, processErrorGlobal } = useAppInit('MappingPage')
+const { initApp, processErrorGlobal } = useAppInit('MappingPage')
 const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 // endregion
@@ -138,7 +138,7 @@ function normalizeProjectMappingState(configSource: AppConfigurationPayload) {
   const stageValue = getLegacyStageValue(configSource)
 
   for (const legacyKey of ['stage_id', ...LEGACY_PROJECT_STAGE_KEYS, 'project_stage', PROJECT_STAGE_FIELD_KEY]) {
-    delete next[legacyKey]
+    Reflect.deleteProperty(next, legacyKey)
   }
 
   if (stageValue) {
@@ -160,7 +160,7 @@ function serializeProjectMappingState(source: Record<string, string>) {
   ).trim()
 
   for (const legacyKey of ['stage_id', ...LEGACY_PROJECT_STAGE_KEYS, 'project_stage', PROJECT_STAGE_FIELD_KEY]) {
-    delete next[legacyKey]
+    Reflect.deleteProperty(next, legacyKey)
   }
 
   if (stageValue) {
@@ -313,8 +313,9 @@ async function handleSave() {
             await validateProjectSpa()
         }
         router.push('/settings')
-    } catch (e: any) {
-        const errData = e?.data
+    } catch (e: unknown) {
+        const err = e as { data?: { validation?: unknown, error?: string } } | null
+        const errData = err?.data
         if (errData?.validation) {
             projectSpaValidation.value = errData.validation as ProjectSpaValidationPayload
             const errorText = errData?.error || 'Конфигурация Project SPA не прошла валидацию.'
@@ -432,8 +433,9 @@ async function handleCreateSmartProcess() {
           'success',
           `Смарт-процесс создан и автоматически заполнен полями (ID: ${newConfig.sp_entity_type_id}, полей: ${result.created_fields_count || 0}).${warnings}`
         )
-    } catch (e: any) {
-        const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
+    } catch (e: unknown) {
+        const err = e as { data?: { error?: string }, message?: string } | null
+        const errMsg = err?.data?.error || err?.message || 'Неизвестная ошибка'
         showStatus('error', `Ошибка: ${errMsg}`)
     } finally {
         isCreatingSP.value = false
@@ -471,8 +473,9 @@ async function handleCreateMappedField(mappingType: 'timesheet' | 'project', fie
 
         const warnings = result.field_warnings?.length ? ` Предупреждения: ${result.field_warnings.join('; ')}` : ''
         showStatus('success', `Поле «${fieldLabel}» создано и сразу привязано к маппингу.${warnings}`)
-    } catch (e: any) {
-        const errMsg = e?.data?.error || e?.message || 'Неизвестная ошибка'
+    } catch (e: unknown) {
+        const err = e as { data?: { error?: string }, message?: string } | null
+        const errMsg = err?.data?.error || err?.message || 'Неизвестная ошибка'
         showStatus('error', `Ошибка создания поля «${fieldLabel}»: ${errMsg}`)
     } finally {
         creatingMappedField.value = null
@@ -497,7 +500,7 @@ async function handleMappingSelectChange(
         if (nextValue) {
             mapping.value[fieldKey] = nextValue
         } else {
-            delete mapping.value[fieldKey]
+            Reflect.deleteProperty(mapping.value, fieldKey)
         }
         return
     }
@@ -505,7 +508,7 @@ async function handleMappingSelectChange(
     if (nextValue) {
         projectMapping.value[fieldKey] = nextValue
     } else {
-        delete projectMapping.value[fieldKey]
+        Reflect.deleteProperty(projectMapping.value, fieldKey)
     }
 }
 

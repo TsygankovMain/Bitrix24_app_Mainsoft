@@ -101,8 +101,9 @@ async function runScan() {
       dateTo.value,
       selectedProjects.value.map(String)
     )
-  } catch (e: any) {
-    errorMessage.value = e?.data?.error || e?.message || 'Ошибка при поиске карточек'
+  } catch (e: unknown) {
+    const err = e as { data?: { error?: string }, message?: string } | null
+    errorMessage.value = err?.data?.error || err?.message || 'Ошибка при поиске карточек'
     result.value = null
   } finally {
     loading.value = false
@@ -131,8 +132,9 @@ async function applyItems(items: InnApplyItem[]) {
     }
     message.value = `Проставлено: ${updated}` + (failedCount ? `, ошибок: ${failedCount}` : '')
     await runScan()
-  } catch (e: any) {
-    errorMessage.value = e?.data?.error || e?.message || 'Ошибка при простановке ИНН'
+  } catch (e: unknown) {
+    const err = e as { data?: { error?: string }, message?: string } | null
+    errorMessage.value = err?.data?.error || err?.message || 'Ошибка при простановке ИНН'
   } finally {
     applying.value = false
     globalProgress.end()
@@ -154,7 +156,11 @@ function groupReadyCount(rows: InnBackfillRow[]): number {
 // Сворачивание групп
 const collapsed = ref<Set<string>>(new Set())
 function toggleCollapse(key: string) {
-  collapsed.value.has(key) ? collapsed.value.delete(key) : collapsed.value.add(key)
+  if (collapsed.value.has(key)) {
+    collapsed.value.delete(key)
+  } else {
+    collapsed.value.add(key)
+  }
   collapsed.value = new Set(collapsed.value)
 }
 function isCollapsed(key: string): boolean {

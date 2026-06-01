@@ -97,7 +97,7 @@ function getOperationTypeLabel(value?: string | null) {
 
 function extractDealIdFromPlacement(frame: B24Frame | null): string {
   const candidateKeys = ['ID', 'id', 'DEAL_ID', 'deal_id', 'ENTITY_VALUE_ID', 'entityValueId', 'ENTITY_ID', 'entityId']
-  const options = (frame as any)?.placement?.options || {}
+  const options = (frame as unknown as { placement?: { options?: Record<string, unknown> } } | null)?.placement?.options || {}
   for (const key of candidateKeys) {
     const value = String(options?.[key] || '').trim()
     if (value) {
@@ -106,8 +106,8 @@ function extractDealIdFromPlacement(frame: B24Frame | null): string {
   }
 
   try {
-    const info = (window as any)?.BX24?.placement?.info?.()
-    const infoOptions = info?.options || {}
+    const info = (window as unknown as { BX24?: { placement?: { info?: () => Record<string, unknown> } } })?.BX24?.placement?.info?.()
+    const infoOptions = (info?.options as Record<string, unknown> | undefined) || {}
     for (const key of candidateKeys) {
       const value = String(infoOptions?.[key] || info?.[key] || '').trim()
       if (value) {

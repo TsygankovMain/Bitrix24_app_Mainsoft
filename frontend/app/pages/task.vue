@@ -3,13 +3,14 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { resolveTaskPlacementId, useIframeResizeOnToggle } from '@/composables/useTaskPlacement'
 import { useTaskTreeLoader } from '@/composables/useTaskTreeLoader'
+import type { TaskWorkspaceItem, TaskWorkspaceNode } from '~/types/task-workspace'
 
 // --- ICONS ---
 // Using Material Symbols directly via class "material-symbols-outlined" 
 // assuming they are loaded via nuxt.config head link.
 
-const { t, locales: localesI18n, setLocale } = useI18n()
-const { $logger, initApp, processErrorGlobal } = useAppInit('TaskPage')
+const { locales: localesI18n, setLocale } = useI18n()
+const { initApp, processErrorGlobal } = useAppInit('TaskPage')
 const { $initializeB24Frame } = useNuxtApp()
 const toast = useToast()
 
@@ -32,7 +33,17 @@ const {
 } = useTaskTreeLoader()
 
 // Modals
-const editingItem = ref<any>(null)
+interface EditingItem {
+    id: string | number | null
+    hours: number
+    isConsidered: boolean
+    description: string
+    employeeId: string | number
+    date: string
+    [key: string]: unknown
+}
+
+const editingItem = ref<EditingItem | null>(null)
 const isReportModalOpen = ref(false)
 const isReporting = ref(false)
 
@@ -51,13 +62,13 @@ onMounted(async () => {
         console.log('TaskPage: $b24.placement', $b24.placement);
         
         // Try to get options from various sources
-        // @ts-ignore
+        // @ts-expect-error placement.info is not part of the typed B24Frame surface
         let options = $b24.placement?.options || ($b24.placement?.info && $b24.placement.info.options);
         
         // Fallback to window.BX24 if options are missing but we expect them
         if (!options && typeof window.BX24 !== 'undefined') {
              try {
-                 // @ts-ignore
+                 // @ts-expect-error BX24 is injected globally by the Bitrix24 frame and is not typed
                  const rawInfo = window.BX24.placement.info();
                  if (rawInfo) options = rawInfo.options;
              } catch(e) { console.warn('BX24.placement.info failed', e); }
@@ -85,22 +96,22 @@ onMounted(async () => {
         }
 
         isInit.value = true
-    } catch (e: any) {
+    } catch (e: unknown) {
         processErrorGlobal(e)
-        error.value = e.message
+        error.value = (e as { message?: string }).message
         isLoading.value = false
     }
 })
 
 // --- ACTIONS ---
 
-async function handleSaveItem(data: any) {
+async function handleSaveItem(data: EditingItem) {
     if (!config.value) return
     const { id, hours, isConsidered, description, employeeId, date } = data
     isLoading.value = true 
     
     try {
-        // @ts-ignore
+        // @ts-expect-error $b24 is guaranteed initialized in onMounted before this handler runs
         await $b24.callMethod('crm.item.update', {
             entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
             id: id,
@@ -113,11 +124,11 @@ async function handleSaveItem(data: any) {
             }
         })
         if (rootTaskId.value) await loadTaskTree($b24!, rootTaskId.value)
-    } catch (e: any) {
-        toast.add({ title: "Ошибка сохранения: " + e.message, color: 'air-primary-alert' })
+    } catch (e: unknown) {
+        toast.add({ title: "Ошибка сохранения: " + (e as { message?: string }).message, color: 'air-primary-alert' })
         isLoading.value = false
     }
-    
+
     editingItem.value = null
 }
 
@@ -129,7 +140,7 @@ function handleExportExcel() {
     let csvContent = "data:text/csv;charset=utf-8," 
     csvContent += "Type,Title,Employee,Date,Hours Total,Hours Billable,Amount,Comment\n"
 
-    const traverse = (node: any, depth = 0) => {
+    const traverse = (node: TaskWorkspaceNode, depth = 0) => {
         const indent = "   ".repeat(depth)
         const row = [
             "Task",
@@ -143,7 +154,7 @@ function handleExportExcel() {
         ]
         csvContent += row.join(",") + "\n"
 
-        node.items.forEach((item: any) => {
+        node.items.forEach((item: TaskWorkspaceItem) => {
             const iRow = [
                 "Item",
                 `"${indent} - ${item.title}"`,
@@ -156,7 +167,7 @@ function handleExportExcel() {
             ]
             csvContent += iRow.join(",") + "\n"
         })
-        node.children.forEach((c: any) => traverse(c, depth + 1))
+        node.children.forEach((c: TaskWorkspaceNode) => traverse(c, depth + 1))
     }
 
     taskTree.value.forEach(root => traverse(root))
@@ -171,12 +182,12 @@ function handleExportExcel() {
 
 async function handleTransferToReport() {
     isReporting.value = true
-    const batch: any = {}
+    const batch: Record<string, unknown> = {}
     let count = 0
-    
-    const collect = (nodes: any[]) => {
+
+    const collect = (nodes: TaskWorkspaceNode[]) => {
         nodes.forEach(node => {
-            node.items.forEach((item: any) => {
+            node.items.forEach((item: TaskWorkspaceItem) => {
                 if (item.isConsidered && item.hours > 0) {
                     batch[`report_${item.id}`] = {
                         method: 'task.elapseditem.add',
@@ -206,11 +217,11 @@ async function handleTransferToReport() {
     }
 
     try {
-         // @ts-ignore
+         // @ts-expect-error $b24 is guaranteed initialized in onMounted before this handler runs
         await $b24.callBatch(batch)
         toast.add({ title: "Часы успешно перенесены в стандартный отчет Битрикс24!", color: 'air-primary-success' })
-    } catch (e: any) {
-        toast.add({ title: "Ошибка переноса: " + e.message, color: 'air-primary-alert' })
+    } catch (e: unknown) {
+        toast.add({ title: "Ошибка переноса: " + (e as { message?: string }).message, color: 'air-primary-alert' })
     } finally {
         isReporting.value = false
         isReportModalOpen.value = false
