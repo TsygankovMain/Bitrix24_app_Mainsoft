@@ -10,8 +10,11 @@ OUR_INN/CLIENT_INN элемента СП через crm.item.update.
 закрывает разрыв (Спринт 2, вариант A: пишем ИНН обратно в Bitrix).
 """
 
+import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from .project_board_service import ProjectCardService
 from .project_board_shared import get_project_card_queryset
@@ -261,16 +264,23 @@ class InnBackfillService:
 
         Защита от таймаута: не более MAX_APPLY_BATCH за вызов; лишнее отбрасывается
         (truncated=True), фронт обязан слать чанками.
+
+        Батчинг: до 50 crm.item.update за один HTTP-запрос (call_batch).
+        При исключении вызова call_batch — фолбэк на пер-элементный crm.item.update для чанка.
+        Пауза THROTTLE_DELAY делается только МЕЖДУ чанками (не между элементами).
         """
         items = list(items or [])
         truncated = len(items) > MAX_APPLY_BATCH
         if truncated:
             items = items[:MAX_APPLY_BATCH]
+
         f_our, f_client = self.field("our_inn"), self.field("client_inn")
         updated = 0
         failed: List[Dict[str, Any]] = []
 
-        for idx, item in enumerate(items):
+        # --- 1. Предобработка: собираем валидные (bitrix_id, fields) ---
+        valid: List[tuple] = []
+        for item in items:
             bitrix_id = item.get("bitrix_id") or item.get("id")
             fields: Dict[str, Any] = {}
             our_inn = _clean(item.get("our_inn"))
@@ -281,16 +291,60 @@ class InnBackfillService:
                 fields[f_client] = client_inn
             if not bitrix_id or not fields:
                 continue
-            try:
-                self.client._bitrix_token.call_method(
-                    "crm.item.update",
-                    {"entityTypeId": self.entity_type_id, "id": int(bitrix_id), "fields": fields},
-                )
-                updated += 1
-            except Exception as exc:  # noqa: BLE001
-                failed.append({"bitrix_id": bitrix_id, "error": str(exc)})
-            if idx + 1 < len(items):
+            valid.append((bitrix_id, fields))
+
+        # --- 2. Разбиваем на чанки по 50 и батчим ---
+        CHUNK_SIZE = 50
+        chunks = [valid[i: i + CHUNK_SIZE] for i in range(0, len(valid), CHUNK_SIZE)]
+
+        for chunk_idx, chunk in enumerate(chunks):
+            # Пауза между чанками (не перед первым)
+            if chunk_idx > 0:
                 time.sleep(THROTTLE_DELAY)
+
+            methods = {
+                str(bitrix_id): (
+                    "crm.item.update",
+                    {"entityTypeId": self.entity_type_id, "id": int(bitrix_id), "fields": flds},
+                )
+                for bitrix_id, flds in chunk
+            }
+
+            try:
+                resp = self.client._bitrix_token.call_batch(methods, halt=False)
+                # Форма ответа батча: resp["result"]["result"][key] — успех,
+                # resp["result"]["result_error"][key] — ошибка (подтверждено по SDK и timesheet_sync_service.py)
+                result_map = resp.get("result", {})
+                successes = result_map.get("result", {}) or {}
+                errors = result_map.get("result_error", {}) or {}
+                for bitrix_id, _ in chunk:
+                    key = str(bitrix_id)
+                    if key in errors:
+                        err = errors[key]
+                        failed.append({
+                            "bitrix_id": bitrix_id,
+                            "error": str(err) if not isinstance(err, str) else err,
+                        })
+                    else:
+                        # Если ключа нет ни в errors, ни в successes — считаем успехом:
+                        # Bitrix может вернуть пустой result для успешного update
+                        updated += 1
+
+            except Exception as exc:  # noqa: BLE001 — фолбэк на пер-элементный update
+                logger.warning(
+                    "call_batch failed for chunk %d/%d (%d items): %s. "
+                    "Falling back to per-element crm.item.update.",
+                    chunk_idx + 1, len(chunks), len(chunk), exc,
+                )
+                for bitrix_id, flds in chunk:
+                    try:
+                        self.client._bitrix_token.call_method(
+                            "crm.item.update",
+                            {"entityTypeId": self.entity_type_id, "id": int(bitrix_id), "fields": flds},
+                        )
+                        updated += 1
+                    except Exception as inner_exc:  # noqa: BLE001
+                        failed.append({"bitrix_id": bitrix_id, "error": str(inner_exc)})
 
         return {"status": "success", "updated": updated, "failed": failed, "truncated": truncated}
 

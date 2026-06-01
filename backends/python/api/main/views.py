@@ -1972,37 +1972,155 @@ def export_raw_data(request: AuthorizedRequest):
     if date_to:
         crm_filter[date_field_to] = date_to
 
-    # Fetch all items with pagination
-    all_items = []
-    start = 0
-    page_size = 50
+    # ---------------------------------------------------------------------------
+    # Helpers — локальные, не зависят от Django/request
+    # ---------------------------------------------------------------------------
+    def _extract_raw_items(response: dict) -> list:
+        """Извлекает список items из ответа crm.item.list (одиночного или батчевого)."""
+        result = response.get("result", {})
+        if isinstance(result, dict):
+            items = result.get("items")
+            if items is None:
+                items = result.get("result", [])
+        else:
+            items = result
+        return items if isinstance(items, list) else []
 
-    while True:
-        try:
-            response = request.bitrix24_account.client._bitrix_token.call_method(
+    def _raw_data_offset_fallback(bx_token, eid, f_filter, f_select, page_size=50) -> list:
+        """Резервный offset-цикл (исходная реализация). Используется при сбое батч-выборки."""
+        fallback_items = []
+        fb_start = 0
+        while True:
+            fb_resp = bx_token.call_method(
                 "crm.item.list",
                 {
-                    "entityTypeId": int(entity_type_id),
-                    "filter": crm_filter,
-                    "select": selected_fields if selected_fields else ["*"],
-                    "start": start,
-                }
+                    "entityTypeId": int(eid),
+                    "filter": f_filter,
+                    "select": f_select if f_select else ["*"],
+                    "start": fb_start,
+                },
             )
-            # BUG FIX #3: Bitrix24 returns 'total' at the TOP level of the response,
-            # not inside 'result'. Must read from raw response before it's unpacked.
-            result = response.get("result", {})
-            items = result.get("items", [])
-            all_items.extend(items)
-
-            # total is at root level for crm.item.list
-            total = response.get("total", result.get("total", 0))
-            start += page_size
-            # BUG FIX #4: also stop if we got fewer items than page_size (last page)
-            if not items or len(items) < page_size or start >= total:
+            fb_result = fb_resp.get("result", {})
+            fb_page = fb_result.get("items", [])
+            fallback_items.extend(fb_page)
+            fb_total = fb_resp.get("total", fb_result.get("total", 0))
+            fb_start += page_size
+            if not fb_page or len(fb_page) < page_size or fb_start >= fb_total:
                 break
-        except Exception as e:
+        return fallback_items
+
+    # ---------------------------------------------------------------------------
+    # Fetch all items — батч-выборка по образцу _fetch_all_pages_batched
+    # ---------------------------------------------------------------------------
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    bx_token = request.bitrix24_account.client._bitrix_token
+    _select = selected_fields if selected_fields else ["*"]
+    _eid = int(entity_type_id)
+
+    all_items = []
+    try:
+        # Первая страница — получаем items + total
+        first_response = bx_token.call_method(
+            "crm.item.list",
+            {
+                "entityTypeId": _eid,
+                "filter": crm_filter,
+                "select": _select,
+                "start": 0,
+            },
+        )
+        first_items = _extract_raw_items(first_response)
+        first_result = first_response.get("result", {})
+        # total лежит на верхнем уровне ответа (BUG FIX #3)
+        total = first_response.get(
+            "total",
+            first_result.get("total", 0) if isinstance(first_result, dict) else 0,
+        )
+        try:
+            total = int(total)
+        except (TypeError, ValueError):
+            total = len(first_items)
+
+        all_items = list(first_items)
+        page_size = 50
+
+        if total > page_size:
+            # Строим батч для всех оставшихся офсетов одним HTTP-запросом
+            offsets = list(range(page_size, total, page_size))
+            methods = {
+                f"p{off}": (
+                    "crm.item.list",
+                    {
+                        "entityTypeId": _eid,
+                        "filter": crm_filter,
+                        "select": _select,
+                        "start": off,
+                    },
+                )
+                for off in offsets
+            }
+            _log.info(
+                "export_raw_data: fetching %s batch-offset pages (total=%s)",
+                len(offsets),
+                total,
+            )
+            batches_resp = bx_token.call_batches(methods, halt=False)
+
+            # batches_resp["result"]["result"][key] = содержимое response["result"]
+            # одиночного crm.item.list, т.е. {"items": [...]}
+            try:
+                sub_results = batches_resp.get("result", {}).get("result", {})
+            except Exception:
+                sub_results = {}
+
+            if not isinstance(sub_results, dict):
+                try:
+                    sub_results = {str(i): v for i, v in enumerate(sub_results)}
+                except Exception:
+                    sub_results = {}
+
+            batch_items_count = 0
+            for key, sub_result in sub_results.items():
+                try:
+                    page_items = _extract_raw_items({"result": sub_result})
+                    all_items.extend(page_items)
+                    batch_items_count += len(page_items)
+                except Exception as exc:
+                    _log.warning(
+                        "export_raw_data: could not parse batch sub-result key=%s: %s",
+                        key,
+                        exc,
+                    )
+
+            # Оборонительная проверка: если батч вернул 0 при ненулевом total — fallback
+            if batch_items_count == 0 and total > page_size:
+                _log.warning(
+                    "export_raw_data: batch returned 0 items (total=%s, offsets=%s); "
+                    "falling back to offset pagination.",
+                    total,
+                    len(offsets),
+                )
+                all_items = _raw_data_offset_fallback(bx_token, _eid, crm_filter, _select)
+
+    except Exception as e:
+        # Батч-выборка упала полностью — пробуем резервный offset-цикл
+        _log.warning(
+            "export_raw_data: batched fetch failed (%s); falling back to offset pagination.",
+            e,
+        )
+        try:
+            all_items = _raw_data_offset_fallback(bx_token, _eid, crm_filter, _select)
+        except Exception as e2:
             import traceback
-            return JsonResponse({"error": f"Ошибка при получении данных из Bitrix24: {str(e)}", "trace": traceback.format_exc()}, status=500)
+            return JsonResponse(
+                {
+                    "error": f"Ошибка при получении данных из Bitrix24: {str(e2)}",
+                    "trace": traceback.format_exc(),
+                },
+                status=500,
+            )
 
     # --- Resolve employee IDs to names ---
     user_map = {}  # {str(user_id): "Фамилия Имя"}
