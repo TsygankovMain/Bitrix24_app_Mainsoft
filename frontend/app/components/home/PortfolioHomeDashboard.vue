@@ -242,7 +242,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
         <span class="font-medium text-slate-700">Куратор</span>
         <select
           v-model="curatorFilter"
-          class="rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
+          class="rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-[#0075ff]"
         >
           <option value="all">Все</option>
           <option v-for="curator in data?.curators || []" :key="curator.id" :value="curator.id">
@@ -257,7 +257,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
           v-model="searchQuery"
           type="search"
           placeholder="Например, ACME"
-          class="rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-lime-500"
+          class="rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-[#0075ff]"
         >
       </label>
 
@@ -308,7 +308,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
                 v-for="card in column.cards.slice(0, 4)"
                 :key="card.project_id"
                 type="button"
-                class="w-full rounded-2xl border border-white bg-white px-3 py-3 text-left shadow-sm transition hover:border-lime-200 hover:shadow"
+                class="w-full rounded-2xl border border-white bg-white px-3 py-3 text-left shadow-sm transition hover:border-blue-200 hover:shadow"
                 @click="selectProject(card)"
               >
                 <div class="truncate text-sm font-semibold text-slate-900">{{ card.project_name }}</div>
@@ -328,7 +328,7 @@ function getTimelineStyle(card: ProjectBoardCardRecord, index: number) {
             v-for="(card, index) in sortedTimelineCards.slice(0, 8)"
             :key="card.project_id"
             type="button"
-            class="grid w-full grid-cols-[220px_minmax(0,1fr)] gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-lime-200"
+            class="grid w-full grid-cols-[220px_minmax(0,1fr)] gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-blue-200"
             @click="selectProject(card)"
           >
             <div class="min-w-0">

@@ -55,7 +55,7 @@ function handleDrop(event: DragEvent) {
     :class="[
       'flex min-h-[540px] w-[320px] flex-col rounded-3xl border border-slate-200 bg-gradient-to-b p-4 shadow-sm transition',
       columnClass,
-      isDragOver ? 'border-lime-400 shadow-lg' : ''
+      isDragOver ? 'border-[#0075ff] shadow-lg' : ''
     ]"
     @dragover.prevent="handleDragOver"
     @dragleave="handleDragLeave"

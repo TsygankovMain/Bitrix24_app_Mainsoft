@@ -56,7 +56,7 @@
                   <td class="font-mono" :class="getStatusColor(log.status_code)">{{ log.status_code }}</td>
                   <td class="text-slate-500">{{ log.duration_ms?.toFixed(0) }}ms</td>
                   <td>
-                    <button @click="toggleRequestDetails(log.id)" class="text-xs font-medium text-lime-700 hover:text-lime-800">
+                    <button @click="toggleRequestDetails(log.id)" class="text-xs font-medium text-[#0075ff] hover:text-blue-700">
                       {{ expandedRequestId === log.id ? 'Скрыть' : 'Подробнее' }}
                     </button>
                   </td>

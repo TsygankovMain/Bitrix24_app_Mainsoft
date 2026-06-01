@@ -39,8 +39,8 @@ export const PROJECT_STAGE_META = {
     column: 'from-rose-50 to-white',
   },
   'Успех': {
-    badge: 'bg-lime-100 text-lime-700',
-    column: 'from-lime-50 to-white',
+    badge: 'bg-emerald-100 text-emerald-700',
+    column: 'from-emerald-50 to-white',
   },
   'Провал': {
     badge: 'bg-slate-200 text-slate-700',

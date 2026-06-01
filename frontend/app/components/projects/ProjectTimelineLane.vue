@@ -112,7 +112,7 @@ function diffDays(start: Date, end: Date) {
       <div class="relative h-14 w-full overflow-hidden rounded-2xl bg-slate-50 px-3">
         <div class="absolute inset-x-3 top-1/2 h-2 -translate-y-1/2 rounded-full bg-slate-200" />
         <div
-          class="absolute top-1/2 h-6 -translate-y-1/2 rounded-full bg-lime-300 shadow-sm"
+          class="absolute top-1/2 h-6 -translate-y-1/2 rounded-full bg-blue-300 shadow-sm"
           :style="range"
         />
       </div>

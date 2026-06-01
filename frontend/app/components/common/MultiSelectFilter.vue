@@ -121,7 +121,7 @@ onBeforeUnmount(() => {
         <button 
             @click="toggleDropdown"
             type="button" 
-            class="inline-flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-lime-500"
+            class="inline-flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-[#0075ff]"
         >
             <span class="truncate">{{ displayLabel }}</span>
             <svg class="-mr-1 ml-2 h-5 w-5 text-slate-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -138,7 +138,7 @@ onBeforeUnmount(() => {
                         v-model="query"
                         type="search"
                         placeholder="Поиск"
-                        class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-lime-500"
+                        class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-[#0075ff]"
                     >
                     <div class="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
                         <button
@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
                         </button>
                     </div>
                     <div class="flex justify-between">
-                        <button @click="selectAll" class="text-xs font-medium text-lime-700 transition hover:text-lime-800">{{ selectAllLabel }}</button>
+                        <button @click="selectAll" class="text-xs font-medium text-[#0075ff] transition hover:text-blue-700">{{ selectAllLabel }}</button>
                         <button @click="deselectAll" class="text-xs text-slate-500 transition hover:text-slate-700">{{ clearLabel }}</button>
                     </div>
                 </div>
@@ -183,7 +183,7 @@ onBeforeUnmount(() => {
                         <input 
                             type="checkbox" 
                             :checked="modelValue.includes(opt.id)" 
-                            class="h-4 w-4 rounded border-slate-300 text-lime-600 focus:ring-lime-500"
+                            class="h-4 w-4 rounded border-slate-300 text-[#0075ff] focus:ring-[#0075ff]"
                         >
                         <span class="ml-3 block truncate text-sm text-slate-700" :title="String(opt.name)">
                             {{ opt.name }}

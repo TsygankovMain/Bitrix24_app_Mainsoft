@@ -132,7 +132,7 @@ onBeforeUnmount(() => {
 
     <button
       type="button"
-      class="inline-flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-lime-500"
+      class="inline-flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-[#0075ff]"
       :disabled="disabled"
       @click="toggleDropdown"
     >
@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
           v-model="query"
           type="search"
           :placeholder="searchPlaceholder"
-          class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-lime-500"
+          class="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-[#0075ff]"
         >
         <div class="mt-2 flex items-center justify-between text-xs">
           <button type="button" class="text-slate-500 transition hover:text-slate-700" @click="clearValue">
@@ -178,7 +178,7 @@ onBeforeUnmount(() => {
           :class="[
             'mb-1 w-full rounded-xl px-3 py-3 text-left transition',
             String(option.id) === normalizedModelValue
-              ? 'bg-lime-50 text-slate-900 ring-1 ring-lime-200'
+              ? 'bg-blue-50 text-slate-900 ring-1 ring-blue-200'
               : 'text-slate-700 hover:bg-slate-50'
           ]"
           @click="selectOption(option)"
