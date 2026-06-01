@@ -43,84 +43,90 @@ const faqItems = [
 </script>
 
 <template>
-  <div class="ms-page-shell">
-    <div class="ms-page-frame space-y-8">
-      <section class="ms-surface-hero px-6 py-7">
-        <B24Button label="Назад к меню" color="link" @click="router.push('/')" class="mb-4 pl-0" />
+  <B24Container>
+    <!-- Hero-секция: шапка гайда -->
+    <B24PageHeader
+      title="Как работать с приложением"
+      description="Этот гайд показывает только основные рабочие сценарии: где фиксировать время, как открыть и вести проект, и как быстро собрать нужный отчет без лишних действий."
+    >
+      <template #links>
+        <B24Button label="Назад к меню" color="link" @click="router.push('/')" />
+      </template>
+    </B24PageHeader>
 
+    <div class="mt-6 space-y-6">
+      <!-- Hero-карточка с иконкой и шагами -->
+      <B24Card>
         <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
           <div class="min-w-0">
             <div class="flex items-start gap-4">
-              <div class="rounded-2xl bg-lime-100 p-4 text-lime-700">
+              <!-- лаймовый фон убран → нейтральный синий -->
+              <div class="rounded-2xl bg-blue-50 p-4 text-[#0075ff]">
                 <BookOpen1Icon class="h-8 w-8" />
               </div>
-
-              <div class="min-w-0 flex-1 space-y-3">
-                <div class="ms-eyebrow">Guide</div>
-                <div>
-                  <h1 class="ms-title">Как работать с приложением</h1>
-                  <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-                    Этот гайд показывает только основные рабочие сценарии: где фиксировать время, как открыть и вести проект,
-                    и как быстро собрать нужный отчет без лишних действий.
-                  </p>
-                </div>
+              <div class="min-w-0 flex-1">
+                <div class="text-xs uppercase tracking-[0.16em] text-slate-400">Guide</div>
+                <h1 class="mt-2 text-2xl font-semibold text-slate-900">Как работать с приложением</h1>
               </div>
             </div>
           </div>
 
           <div class="grid content-start gap-3 sm:grid-cols-3 xl:grid-cols-1">
-            <div class="ms-stat-card">
+            <B24Card>
               <div class="text-xs uppercase tracking-[0.16em] text-slate-400">Шаг 1</div>
               <div class="mt-2 text-sm font-semibold text-slate-900">Фиксируйте время внутри задачи</div>
-            </div>
-            <div class="ms-stat-card">
+            </B24Card>
+            <B24Card>
               <div class="text-xs uppercase tracking-[0.16em] text-slate-400">Шаг 2</div>
               <div class="mt-2 text-sm font-semibold text-slate-900">Открывайте проект из карточки или главной</div>
-            </div>
-            <div class="ms-stat-card">
+            </B24Card>
+            <B24Card>
               <div class="text-xs uppercase tracking-[0.16em] text-slate-400">Шаг 3</div>
               <div class="mt-2 text-sm font-semibold text-slate-900">Собирайте отчет по кнопке «Сформировать»</div>
-            </div>
+            </B24Card>
           </div>
         </div>
-      </section>
+      </B24Card>
 
-      <section class="grid gap-4 lg:grid-cols-3">
-        <article
+      <!-- Карточки разделов (ЗАДАЧИ / ПРОЕКТЫ / ОТЧЕТЫ) -->
+      <B24PageGrid>
+        <B24Card
           v-for="card in workspaceCards"
           :key="card.title"
-          class="ms-panel"
         >
-          <div class="ms-eyebrow">{{ card.title }}</div>
+          <div class="text-xs uppercase tracking-[0.16em] text-slate-400">{{ card.title }}</div>
           <p class="mt-4 text-sm leading-6 text-slate-600">
             {{ card.text }}
           </p>
-        </article>
-      </section>
+        </B24Card>
+      </B24PageGrid>
 
-      <section class="ms-surface p-6">
-        <div class="mb-5">
-          <h2 class="text-2xl font-semibold text-slate-900">1. Как фиксировать время в задаче</h2>
-          <p class="mt-2 text-sm leading-6 text-slate-500">
-            Это основной пользовательский сценарий. Вся дальнейшая аналитика строится на этих записях.
-          </p>
-        </div>
+      <!-- Секция 1: Фиксация времени -->
+      <B24Card>
+        <template #header>
+          <div>
+            <h2 class="text-xl font-semibold text-slate-900">1. Как фиксировать время в задаче</h2>
+            <p class="mt-2 text-sm leading-6 text-slate-500">
+              Это основной пользовательский сценарий. Вся дальнейшая аналитика строится на этих записях.
+            </p>
+          </div>
+        </template>
 
         <div class="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(320px,1.05fr)] xl:items-start">
           <div class="space-y-3">
-            <div class="ms-panel-muted">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div class="text-sm font-semibold text-slate-900">Откройте вкладку приложения внутри задачи</div>
               <p class="mt-2 text-sm leading-6 text-slate-600">
                 В задаче отображается дерево подзадач и уже сохраненные записи времени.
               </p>
             </div>
-            <div class="ms-panel-muted">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div class="text-sm font-semibold text-slate-900">Нажмите на нужную запись или создайте новую</div>
               <p class="mt-2 text-sm leading-6 text-slate-600">
                 В форме задаются сотрудник, часы, дата и описание. При необходимости запись можно исправить позже.
               </p>
             </div>
-            <div class="ms-panel-muted">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div class="text-sm font-semibold text-slate-900">Отметьте, учитывать ли часы</div>
               <p class="mt-2 text-sm leading-6 text-slate-600">
                 Учитываемые часы попадают в основную аналитику. Неучитываемые остаются в истории, но считаются отдельно.
@@ -181,38 +187,41 @@ const faqItems = [
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                  <span class="guide-pill guide-pill-lime">Сохранить</span>
+                  <span class="guide-pill guide-pill-blue">Сохранить</span>
                   <span class="guide-pill guide-pill-default">В отчет Bitrix24</span>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </section>
+      </B24Card>
 
-      <section class="ms-surface p-6">
-        <div class="mb-5">
-          <h2 class="text-2xl font-semibold text-slate-900">2. Как работать с проектом</h2>
-          <p class="mt-2 text-sm leading-6 text-slate-500">
-            Проект можно открыть с новой главной или из раздела управления проектами. Карточка открывается справа, сам проект Bitrix24 открывается отдельной кнопкой.
-          </p>
-        </div>
+      <!-- Секция 2: Работа с проектом -->
+      <B24Card>
+        <template #header>
+          <div>
+            <h2 class="text-xl font-semibold text-slate-900">2. Как работать с проектом</h2>
+            <p class="mt-2 text-sm leading-6 text-slate-500">
+              Проект можно открыть с новой главной или из раздела управления проектами. Карточка открывается справа, сам проект Bitrix24 открывается отдельной кнопкой.
+            </p>
+          </div>
+        </template>
 
         <div class="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(320px,1.05fr)] xl:items-start">
           <div class="space-y-3">
-            <div class="ms-panel-muted">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div class="text-sm font-semibold text-slate-900">Откройте карточку проекта</div>
               <p class="mt-2 text-sm leading-6 text-slate-600">
                 Справа откроется слайдер с локальными полями проекта: куратор, компания, наше юрлицо, даты, ставка и бюджет.
               </p>
             </div>
-            <div class="ms-panel-muted">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div class="text-sm font-semibold text-slate-900">Используйте поиск по справочникам</div>
               <p class="mt-2 text-sm leading-6 text-slate-600">
                 В компаниях и юрлицах поиск работает и по названию, и по ИНН. Это помогает быстро найти нужную запись в длинном списке.
               </p>
             </div>
-            <div class="ms-panel-muted">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div class="text-sm font-semibold text-slate-900">Нажмите «Открыть проект»</div>
               <p class="mt-2 text-sm leading-6 text-slate-600">
                 Кнопка переводит в сам проект Bitrix24 по его рабочей ссылке, а не в отдельный внутренний отчет.
@@ -256,7 +265,7 @@ const faqItems = [
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                  <span class="guide-pill guide-pill-lime">Сохранить</span>
+                  <span class="guide-pill guide-pill-blue">Сохранить</span>
                   <span class="guide-pill guide-pill-default">Открыть проект</span>
                   <span class="guide-pill guide-pill-ghost">В архив</span>
                 </div>
@@ -264,31 +273,34 @@ const faqItems = [
             </div>
           </div>
         </div>
-      </section>
+      </B24Card>
 
-      <section class="ms-surface p-6">
-        <div class="mb-5">
-          <h2 class="text-2xl font-semibold text-slate-900">3. Как собрать отчет</h2>
-          <p class="mt-2 text-sm leading-6 text-slate-500">
-            Все отчеты работают по одной схеме: сначала период и фильтры, потом формирование, после этого при необходимости выгрузка в Excel.
-          </p>
-        </div>
+      <!-- Секция 3: Отчёты -->
+      <B24Card>
+        <template #header>
+          <div>
+            <h2 class="text-xl font-semibold text-slate-900">3. Как собрать отчет</h2>
+            <p class="mt-2 text-sm leading-6 text-slate-500">
+              Все отчеты работают по одной схеме: сначала период и фильтры, потом формирование, после этого при необходимости выгрузка в Excel.
+            </p>
+          </div>
+        </template>
 
         <div class="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(320px,1.05fr)] xl:items-start">
           <div class="space-y-3">
-            <div class="ms-panel-muted">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div class="text-sm font-semibold text-slate-900">Выберите период</div>
               <p class="mt-2 text-sm leading-6 text-slate-600">
                 Можно задать даты вручную или выбрать готовый пресет: неделя, прошлый месяц и другие быстрые интервалы.
               </p>
             </div>
-            <div class="ms-panel-muted">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div class="text-sm font-semibold text-slate-900">Настройте фильтры</div>
               <p class="mt-2 text-sm leading-6 text-slate-600">
                 Сотрудников, проекты и юрлица можно выбирать напрямую или использовать режим исключения, если удобнее убрать несколько значений из выборки.
               </p>
             </div>
-            <div class="ms-panel-muted">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div class="text-sm font-semibold text-slate-900">Нажмите «Сформировать»</div>
               <p class="mt-2 text-sm leading-6 text-slate-600">
                 Отчет строится только по кнопке. Если данные подходят, их можно сразу выгрузить в Excel.
@@ -339,27 +351,27 @@ const faqItems = [
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                  <span class="guide-pill guide-pill-lime">Сформировать</span>
+                  <span class="guide-pill guide-pill-blue">Сформировать</span>
                   <span class="guide-pill guide-pill-default">Скачать Excel</span>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </section>
+      </B24Card>
 
-      <section class="grid gap-4 lg:grid-cols-2">
-        <article
+      <!-- FAQ -->
+      <B24PageGrid>
+        <B24Card
           v-for="item in faqItems"
           :key="item.title"
-          class="ms-panel"
         >
           <h3 class="text-base font-semibold text-slate-900">{{ item.title }}</h3>
           <p class="mt-2 text-sm leading-6 text-slate-600">{{ item.text }}</p>
-        </article>
-      </section>
+        </B24Card>
+      </B24PageGrid>
     </div>
-  </div>
+  </B24Container>
 </template>
 
 <style scoped>
@@ -533,7 +545,7 @@ const faqItems = [
 }
 
 .guide-switch-active {
-  background: #b7ea2c;
+  background: #0075ff;
 }
 
 .guide-switch-active::after {
@@ -550,9 +562,9 @@ const faqItems = [
   font-weight: 700;
 }
 
-.guide-pill-lime {
-  background: #b7ea2c;
-  color: #0f172a;
+.guide-pill-blue {
+  background: #0075ff;
+  color: #fff;
 }
 
 .guide-pill-default {
