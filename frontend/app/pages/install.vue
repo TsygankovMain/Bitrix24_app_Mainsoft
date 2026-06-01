@@ -7,8 +7,31 @@ useHead({
     script: [{ src: 'https://api.bitrix24.com/api/v1/', async: true }]
 })
 
+interface BX24CallResultError {
+    ex: { error_description: string }
+}
+
+interface BX24CallResult {
+    error: () => BX24CallResultError | false | null | undefined
+}
+
+interface BX24Api {
+    init: (callback: () => void) => void
+    callMethod: (
+        method: string,
+        params: Record<string, unknown>,
+        callback: (result: BX24CallResult) => void
+    ) => void
+    installFinish: () => void
+}
+
+type BX24Window = Window & typeof globalThis & {
+    BX24?: BX24Api
+    doInstall?: () => void
+}
+
 onMounted(() => {
-    (window as any).doInstall = function() {
+    (window as BX24Window).doInstall = function() {
         const btn = document.getElementById('install-btn') as HTMLButtonElement | null
         const content = document.getElementById('install-content')
         const success = document.getElementById('install-success')
@@ -21,33 +44,33 @@ onMounted(() => {
         }
         if (errorDiv) errorDiv.style.display = 'none'
 
-        if (typeof (window as any).BX24 === 'undefined') {
+        if (typeof (window as BX24Window).BX24 === 'undefined') {
             if (errorDiv) errorDiv.style.display = 'block'
             if (errorText) errorText.textContent = 'BX24 SDK не загружен. Откройте приложение из Битрикс24.'
             if (btn) { btn.disabled = false; btn.textContent = 'Установить встройку' }
             return
         }
 
-        ;(window as any).BX24.init(function() {
+        ;(window as BX24Window).BX24!.init(function() {
             const currentUrl = window.location.href
             const baseUrl = currentUrl.substring(0, currentUrl.lastIndexOf('/'))
             const handlerUrl = baseUrl
 
-            ;(window as any).BX24.callMethod('placement.bind', {
+            ;(window as BX24Window).BX24!.callMethod('placement.bind', {
                 PLACEMENT: 'TASK_VIEW_TAB',
                 HANDLER: handlerUrl,
                 TITLE: 'Учет трудозатрат',
                 DESCRIPTION: 'Встройка для учета времени по задачам'
-            }, function(result: any) {
+            }, function(result: BX24CallResult) {
                 if (result.error()) {
                     if (errorDiv) errorDiv.style.display = 'block'
-                    if (errorText) errorText.textContent = 'Ошибка: ' + result.error().ex.error_description
+                    if (errorText) errorText.textContent = 'Ошибка: ' + (result.error() as BX24CallResultError).ex.error_description
                     if (btn) { btn.disabled = false; btn.textContent = 'Установить встройку' }
                 } else {
                     if (content) content.style.display = 'none'
                     if (success) success.style.display = 'block'
                     setTimeout(function() {
-                        ;(window as any).BX24.installFinish()
+                        ;(window as BX24Window).BX24!.installFinish()
                     }, 2000)
                 }
             })

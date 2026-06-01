@@ -50,8 +50,9 @@ async function apply() {
     } finally {
       globalProgress.end()
     }
-  } catch (e: any) {
-    error.value = e?.data?.error || e?.message || 'Ошибка применения'
+  } catch (e: unknown) {
+    const err = e as { data?: { error?: string }, message?: string } | null
+    error.value = err?.data?.error || err?.message || 'Ошибка применения'
   } finally {
     applying.value = false
   }

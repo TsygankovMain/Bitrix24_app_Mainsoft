@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { ref, onMounted, computed } from 'vue'
+import type { ProjectBoardCardRecord } from '~/types/project-board'
 
-const { $logger, initApp, processErrorGlobal } = useAppInit('ProjectReport')
+const { initApp, processErrorGlobal } = useAppInit('ProjectReport')
 const { $initializeB24Frame } = useNuxtApp()
-const { t, locales: localesI18n, setLocale } = useI18n()
+const { locales: localesI18n, setLocale } = useI18n()
 
 let $b24: null | B24Frame = null
 const fieldConfigStore = useFieldConfigStore()
@@ -13,7 +14,7 @@ const apiStore = useApiStore()
 // --- STATE ---
 const isLoading = ref(true)
 const error = ref<string | null>(null)
-const items = ref<any[]>([])
+const items = ref<Array<Record<string, unknown>>>([])
 const users = ref<Record<string, string>>({})
 const currentGroupId = ref<string | null>(null)
 const currentUserId = ref<string | null>(null)
@@ -21,7 +22,7 @@ const currentUserId = ref<string | null>(null)
 const isModalOpen = ref(false)
 const modalError = ref<string | null>(null)
 const isSaving = ref(false)
-const projectCardCache = new Map<string, any>()
+const projectCardCache = new Map<string, ProjectBoardCardRecord>()
 
 useHead({
   title: 'Отчет по проекту'
@@ -54,11 +55,16 @@ onMounted(async () => {
         }
 
         // Get placement context (Group ID)
-        let options = ($b24 as any).placement?.options || (($b24 as any).placement?.info && ($b24 as any).placement.info.options)
+        type PlacementOptions = { GROUP_ID?: string, groupId?: string, [key: string]: unknown }
+        type PlacementHost = { placement?: { options?: PlacementOptions, info?: { options?: PlacementOptions } } }
+        type BX24Host = { BX24?: { placement: { info: () => { options?: PlacementOptions } | undefined } } }
+        const b24Host = $b24 as unknown as PlacementHost
+        let options: PlacementOptions | undefined = b24Host.placement?.options || (b24Host.placement?.info && b24Host.placement.info.options)
 
-        if (!options && typeof (window as any).BX24 !== 'undefined') {
+        const windowHost = window as unknown as BX24Host
+        if (!options && typeof windowHost.BX24 !== 'undefined') {
             try {
-                const rawInfo = (window as any).BX24.placement.info()
+                const rawInfo = windowHost.BX24.placement.info()
                 if (rawInfo) options = rawInfo.options
             } catch(e) { console.warn('BX24.placement.info failed', e) }
         }
@@ -74,9 +80,9 @@ onMounted(async () => {
         await loadUser()
         await fetchData()
 
-    } catch (e: any) {
+    } catch (e: unknown) {
         processErrorGlobal(e)
-        error.value = e.message
+        error.value = (e as Error).message
         isLoading.value = false
     }
 })
@@ -84,7 +90,6 @@ onMounted(async () => {
 // --- METHODS ---
 async function loadUser() {
     try {
-        // @ts-ignore
         const result = await $b24!.callMethod('user.current', {})
         const res = result.getData()?.result
         if (res) {
@@ -105,7 +110,6 @@ async function fetchData() {
 
     try {
         // 1. Fetch Items filtered by PROJECT_ID
-        // @ts-ignore
         const result = await $b24!.callMethod('crm.item.list', {
             entityTypeId: entityTypeId.value,
             filter: { ['=' + F.PROJECT_ID]: currentGroupId.value },
@@ -123,13 +127,12 @@ async function fetchData() {
         items.value = rawItems
 
         // 2. Fetch Users
-        const userIds = [...new Set(rawItems.map((i: any) => i[F.EMPLOYEE]).filter((id: any) => id))]
+        const userIds = [...new Set(rawItems.map((i: Record<string, unknown>) => i[F.EMPLOYEE]).filter((id: unknown) => id))]
         if (userIds.length > 0) {
-            const batchCalls: Record<string, any> = {}
+            const batchCalls: Record<string, { method: string, params: Record<string, unknown> }> = {}
             userIds.forEach((id: unknown) => {
                 batchCalls[`user_${id}`] = { method: 'user.get', params: { ID: id } }
             })
-            // @ts-ignore
             const userResults = await $b24!.callBatch(batchCalls)
             const userData = userResults.getData()
             const usersData: Record<string, string> = {}
@@ -143,8 +146,8 @@ async function fetchData() {
             users.value = usersData
         }
 
-    } catch (e: any) {
-        error.value = "Ошибка загрузки данных: " + e.message
+    } catch (e: unknown) {
+        error.value = "Ошибка загрузки данных: " + (e as Error).message
     } finally {
         isLoading.value = false
     }
@@ -174,7 +177,9 @@ function resolveInnFieldCode(kind: 'OUR_INN' | 'CLIENT_INN'): string {
     ).trim()
 }
 
-function extractCreatedItemId(rawData: any): string | null {
+function extractCreatedItemId(
+    rawData: { result?: string | number | { id?: unknown, itemId?: unknown, item?: { id?: unknown, ID?: unknown } } | null } | null | undefined
+): string | null {
     const result = rawData?.result
     if (!result) {
         return null
@@ -250,7 +255,6 @@ const handleSaveMeeting = async () => {
         // Get group name
         let groupName = ''
         if (currentGroupId.value) {
-            // @ts-ignore
             const gRes = await $b24!.callMethod('sonet_group.get', { ID: currentGroupId.value })
             const gData = gRes.getData()?.result
             if (Array.isArray(gData) && gData[0]) groupName = gData[0].NAME
@@ -279,7 +283,7 @@ const handleSaveMeeting = async () => {
             })
         }
 
-        const fields: Record<string, any> = {
+        const fields: Record<string, unknown> = {
             title: formData.value.description.substring(0, 255),
             [F.HOURS]: parseFloat(formData.value.hours),
             [F.IS_CONSIDERED]: formData.value.isConsidered ? 'Y' : 'N',
@@ -317,7 +321,6 @@ const handleSaveMeeting = async () => {
             payloadMycompanyId: fields.mycompanyId,
         })
 
-        // @ts-ignore
         const createRes = await $b24!.callMethod('crm.item.add', {
             entityTypeId: entityTypeId.value,
             fields
@@ -330,7 +333,6 @@ const handleSaveMeeting = async () => {
 
         if (createdItemId && (ourInnFieldCode || clientInnFieldCode)) {
             try {
-                // @ts-ignore
                 const verifyRes = await $b24!.callMethod('crm.item.get', {
                     entityTypeId: entityTypeId.value,
                     id: createdItemId,
@@ -360,8 +362,8 @@ const handleSaveMeeting = async () => {
         apiStore.syncTimesheets().then(() => {
             projectCardCache.clear()
         }).catch(e => console.warn('[ProjectReport] Background sync failed', e))
-    } catch (e: any) {
-        modalError.value = e.message
+    } catch (e: unknown) {
+        modalError.value = (e as Error).message
     } finally {
         isSaving.value = false
     }

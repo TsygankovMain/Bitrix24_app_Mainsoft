@@ -14,7 +14,7 @@ export const useAppSettingsStore = defineStore(
       someValue_2: string
       isSomeOption: boolean
     }
-    type CombinedConfigTyp = ConfigType & { [key: string]: any }
+    type CombinedConfigTyp = ConfigType & { [key: string]: unknown }
 
     const version = ref(0)
     const status = ref<TypeEnumAppStatus>('Free')
@@ -41,7 +41,7 @@ export const useAppSettingsStore = defineStore(
     function initFromBatch(data: {
       version?: number
       status?: TypeEnumAppStatus
-      configSettings?: Record<string, any>
+      configSettings?: Record<string, unknown>
     }) {
       if (data.status) {
         status.value = data.status

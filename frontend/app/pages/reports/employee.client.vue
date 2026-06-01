@@ -10,7 +10,7 @@ import { useReportGenerator } from '~/composables/useReportGenerator'
 import { useProgress } from '~/composables/useProgress'
 import type { HierarchicalReportNode } from '~/types/report'
 
-const { t, locales: localesI18n, setLocale } = useI18n()
+const { locales: localesI18n, setLocale } = useI18n()
 
 useHead({
   title: 'Отчет по сотрудникам',
@@ -20,7 +20,7 @@ useHead({
 })
 
 // region Init ////
-const { $logger, initApp, processErrorGlobal } = useAppInit('EmployeeReportPage')
+const { initApp, processErrorGlobal } = useAppInit('EmployeeReportPage')
 const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 

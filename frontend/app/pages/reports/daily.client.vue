@@ -7,10 +7,9 @@ import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import { useProgress } from '~/composables/useProgress'
-import type { DailyWorkloadReport } from '~/types/report'
+import type { DailyWorkloadReport, DailyWorkloadRow, DailyWorkloadItem } from '~/types/report'
 
-const { t, locales: localesI18n, setLocale } = useI18n()
-const router = useRouter()
+const { locales: localesI18n, setLocale } = useI18n()
 const apiStore = useApiStore()
 
 useHead({
@@ -21,7 +20,7 @@ useHead({
 })
 
 // region Init
-const { $logger, initApp, processErrorGlobal } = useAppInit('DailyReportPage')
+const { initApp, processErrorGlobal } = useAppInit('DailyReportPage')
 const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 
@@ -39,8 +38,13 @@ const isInit = ref(false)
 const domain = ref('') // Store domain for links
 
 // Modal State
+interface DailyModalData {
+  employeeName: string
+  date: string
+  items: DailyWorkloadItem[]
+}
 const showModal = ref(false)
-const modalData = ref<any>(null) // { employeeName, date, items: [] }
+const modalData = ref<DailyModalData | null>(null) // { employeeName, date, items: [] }
 
 const {
     dateFrom,
@@ -84,7 +88,7 @@ function normalizeDailyReportPayload(payload: DailyWorkloadReport | null | undef
     }
 }
 
-function getDayCell(row: any, dateKey: string) {
+function getDayCell(row: DailyWorkloadRow, dateKey: string) {
     const cell = row?.days?.[dateKey]
     return {
         total: Number(cell?.total || 0),
@@ -148,7 +152,7 @@ async function handleExportExcel() {
     }
 }
 
-function openDetail(employeeName: string, date: string, items: any[]) {
+function openDetail(employeeName: string, date: string, items: DailyWorkloadItem[]) {
     if (!items || items.length === 0) return
     modalData.value = {
         employeeName,
@@ -165,7 +169,7 @@ function closeModal() {
 
 const openTask = (id: string | number) => {
     // Attempt to use global BX24 or window.open
-    // @ts-ignore
+    // @ts-expect-error BX24 is injected globally by Bitrix24 and is not typed on window
     const BX24 = window.BX24;
     
     if (typeof BX24 !== 'undefined') {
@@ -189,7 +193,7 @@ onMounted(async () => {
     await initApp($b24, localesI18n, setLocale)
     
     // Extract domain safely
-    const b24Any = $b24 as any
+    const b24Any = $b24 as unknown as { auth?: { domain?: string }, getAuthData?: () => { domain?: string } | undefined }
     domain.value = b24Any?.auth?.domain || b24Any?.getAuthData?.()?.domain || ''
     
     await $b24.parent.setTitle('Ежедневная нагрузка') 

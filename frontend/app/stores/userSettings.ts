@@ -16,7 +16,7 @@ export const useUserSettingsStore = defineStore(
       clickableLabelsEnabled: boolean
       homePageMode: 'legacy' | 'portfolio'
     }
-    type CombinedConfigTyp = ConfigType & { [key: string]: any }
+    type CombinedConfigTyp = ConfigType & { [key: string]: unknown }
 
     const configSettings = reactive<CombinedConfigTyp>({
       someValue_1: 30,
@@ -38,7 +38,7 @@ export const useUserSettingsStore = defineStore(
      * @param data.configSettings
      */
     const initFromBatch = (data: {
-      configSettings?: Record<string, any>
+      configSettings?: Record<string, unknown>
     }) => {
       if (data.configSettings) {
         Object.assign(configSettings, data.configSettings)

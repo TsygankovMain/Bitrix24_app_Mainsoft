@@ -5,14 +5,14 @@ import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import InnBackfillPanel from '../../components/reports/InnBackfillPanel.vue'
 import { useProgress } from '~/composables/useProgress'
 
-const { t, locales: localesI18n, setLocale } = useI18n()
+const { locales: localesI18n, setLocale } = useI18n()
 
 useHead({
   title: 'Проверка данных'
 })
 
 // region Init ////
-const { $logger, initApp, processErrorGlobal } = useAppInit('RawDataPage')
+const { initApp, processErrorGlobal } = useAppInit('RawDataPage')
 const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 
@@ -29,11 +29,30 @@ const isLoading = computed({
   }
 })
 
+interface TimesheetItem {
+  id: number | string
+  date?: string | null
+  employee_id?: number | string | null
+  project_title?: string | null
+  task_id?: number | string | null
+  task_hierarchy_titles?: string[] | null
+  hours?: number | string | null
+  non_billable_hours?: number | string | null
+  is_billable?: boolean | null
+  description?: string | null
+  created_at?: string | null
+}
+
+interface SpField {
+  id: string
+  title: string
+}
+
 // Report State
 const activeTab = ref<'export' | 'inn'>('export')
 const isInit = ref(false)
 const isSyncing = ref(false)
-const timesheetItems = ref<any[]>([])
+const timesheetItems = ref<TimesheetItem[]>([])
 const itemsPage = ref(1)
 const itemsTotal = ref(0)
 const itemsPages = ref(0)
@@ -64,7 +83,7 @@ async function fetchTimesheetList(page = 1) {
 const dateType = ref('reflection')
 const dateFrom = ref('')
 const dateTo = ref('')
-const spFields = ref<any[]>([])
+const spFields = ref<SpField[]>([])
 const selectedFields = ref<string[]>([])
 const isExporting = ref(false)
 const isLoadingFields = ref(false)
@@ -102,7 +121,7 @@ const loadSpFields = async () => {
                 if (Array.isArray(fieldsResp.fields)) {
                     spFields.value = fieldsResp.fields
                 } else if (typeof fieldsResp.fields === 'object') {
-                    const flds: any = fieldsResp.fields
+                    const flds: Record<string, { listLabel?: string, formLabel?: string, title?: string }> = fieldsResp.fields
                     spFields.value = Object.keys(flds).map(k => ({
                         id: k,
                         title: flds[k].listLabel || flds[k].formLabel || flds[k].title || k
@@ -163,7 +182,7 @@ const handleExport = async () => {
         document.body.removeChild(a)
         window.URL.revokeObjectURL(url)
 
-    } catch (e: any) {
+    } catch (e: unknown) {
         processErrorGlobal(e)
     } finally {
         isExporting.value = false

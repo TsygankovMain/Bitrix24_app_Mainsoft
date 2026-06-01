@@ -103,7 +103,7 @@ async function makeSave() {
   }
 }
 
-async function makeSendPullCommand(command: string, params: Record<string, any> = {}) {
+async function makeSendPullCommand(command: string, params: Record<string, unknown> = {}) {
   try {
     $logger.warn('>> pull.send >>>', {
       COMMAND: command,

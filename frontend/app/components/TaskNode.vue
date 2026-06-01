@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import type { TaskWorkspaceNode } from '~/types/task-workspace'
 
 const props = defineProps<{
-    node: any
+    node: TaskWorkspaceNode
     rate: number
     level?: number
 }>()
 
-const emit = defineEmits(['edit'])
+defineEmits(['edit'])
 
 const level = props.level || 0
 const isExpanded = ref(true)

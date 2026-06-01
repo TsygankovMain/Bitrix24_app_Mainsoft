@@ -8,7 +8,7 @@ import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import { useProgress } from '~/composables/useProgress'
-import type { RevenueLeakageReport } from '~/types/report'
+import type { RevenueLeakageReport, RevenueLeakageProjectRow } from '~/types/report'
 
 const { locales: localesI18n, setLocale } = useI18n()
 
@@ -60,7 +60,7 @@ const { hasGenerated, generateReport } = useReportGenerator({
 const progress = useProgress()
 
 const maxLeakageHours = computed(() =>
-  Math.max(...(reportData.value?.project_rows || []).map((row: any) => row.non_billable_hours || 0), 0)
+  Math.max(...(reportData.value?.project_rows || []).map((row: RevenueLeakageProjectRow) => row.non_billable_hours || 0), 0)
 )
 
 const topRiskRows = computed(() => (reportData.value?.risk_rows || []).slice(0, 6))
@@ -73,7 +73,7 @@ function formatPercent(value: number) {
   return `${Number(value || 0).toFixed(1)}%`
 }
 
-function projectBarWidth(row: any) {
+function projectBarWidth(row: RevenueLeakageProjectRow) {
   if (!maxLeakageHours.value) return '0%'
   return `${Math.max((row.non_billable_hours / maxLeakageHours.value) * 100, 4)}%`
 }

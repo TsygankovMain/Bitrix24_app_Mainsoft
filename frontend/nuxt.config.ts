@@ -1,6 +1,14 @@
 import tailwindcss from '@tailwindcss/vite'
 import { contentLocales } from './i18n/i18n.map'
 
+type FsEntryMiddleware = (req: { url?: string }, res: unknown, next: () => void) => void
+
+interface FsEntryDevServer {
+  middlewares: {
+    stack: Array<{ route: string, handle: FsEntryMiddleware }>
+  }
+}
+
 const normalizePublicUrl = (rawValue: unknown): string => {
   const raw = String(rawValue || '').trim()
   if (!raw) {
@@ -39,8 +47,8 @@ const mainsoftFsEntryRewrite = {
   transformIndexHtml(html: string) {
     return html.replaceAll('/_nuxt/Users/', '/_nuxt/@fs/Users/')
   },
-  configureServer(server: any) {
-    const rewriteFsEntry = (req: any, _res: any, next: () => void) => {
+  configureServer(server: FsEntryDevServer) {
+    const rewriteFsEntry: FsEntryMiddleware = (req, _res, next) => {
       const url = req.url || ''
       if (url.startsWith('/_nuxt/Users/')) {
         req.url = url.replace('/_nuxt/Users/', '/_nuxt/@fs/Users/')

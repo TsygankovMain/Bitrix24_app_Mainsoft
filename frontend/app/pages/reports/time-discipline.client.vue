@@ -8,7 +8,7 @@ import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import { useProgress } from '~/composables/useProgress'
-import type { TimeEntryDisciplineReport } from '~/types/report'
+import type { TimeEntryDisciplineReport, TimeDisciplineLagBucket } from '~/types/report'
 
 const { locales: localesI18n, setLocale } = useI18n()
 
@@ -60,7 +60,7 @@ const { hasGenerated, generateReport } = useReportGenerator({
 const progress = useProgress()
 
 const maxBucketCount = computed(() =>
-  Math.max(...(reportData.value?.lag_buckets || []).map((bucket: any) => bucket.count || 0), 0)
+  Math.max(...(reportData.value?.lag_buckets || []).map((bucket: TimeDisciplineLagBucket) => bucket.count || 0), 0)
 )
 
 function formatPercent(value: number) {

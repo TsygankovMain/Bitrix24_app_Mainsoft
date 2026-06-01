@@ -62,10 +62,11 @@ export default defineNuxtRouteMiddleware(async (
     }
 
     $logger.log('>> stop')
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string } | null
     const appError = createError({
       statusCode: 404,
-      statusMessage: error?.message || error,
+      statusMessage: err?.message || error,
       data: { description: 'Problem in middleware' },
       cause: error,
       fatal: true

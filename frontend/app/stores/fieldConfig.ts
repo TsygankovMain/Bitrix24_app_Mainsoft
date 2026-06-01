@@ -56,6 +56,20 @@ const AUTO_DETECT_MAPPING_RULES: Record<string, { labels: string[]; codeHints: s
     },
 }
 
+/**
+ * Possible shapes returned by app.option.get via $b24.callMethod().getData().
+ * Either the raw config string, or an object exposing timestamp_config
+ * directly or nested under `result`.
+ */
+type OptionGetPayload =
+    | string
+    | {
+        result?: { timestamp_config?: string | null }
+        timestamp_config?: string | null
+    }
+    | null
+    | undefined
+
 export interface FieldConfigState {
     entityTypeId: number
     fields: Record<string, string>  // e.g. { TASK_ID: 'ufCrm87_xxx', HOURS: 'ufCrm87_yyy', ... }
@@ -86,14 +100,14 @@ export const useFieldConfigStore = defineStore(
         async function loadFromB24($b24: B24Frame) {
             loadError.value = null
             try {
-                // @ts-ignore - callMethod typing
+                // @ts-expect-error - callMethod typing
                 const result = await $b24.callMethod('app.option.get', {})
                 const data = result.getData()
-                const payload: any = data as any
+                const payload = data as OptionGetPayload
                 console.log('[FieldConfig] Raw app.option.get response:', JSON.stringify(data))
 
                 // Try multiple paths to find timestamp_config
-                let rawConfigStr: string | null = null
+                let rawConfigStr: string | null | undefined = null
 
                 if (typeof payload === 'object' && payload !== null) {
                     // Path 1: data.result.timestamp_config (if getData returns whole response)
@@ -115,9 +129,9 @@ export const useFieldConfigStore = defineStore(
                     console.warn('[FieldConfig] No timestamp_config found in response. Data keys:', data ? Object.keys(data) : 'null')
                     loadError.value = 'Конфигурация не найдена. Зайдите в Настройки → Настройка полей и настройте поля.'
                 }
-            } catch (e: any) {
+            } catch (e: unknown) {
                 console.error('[FieldConfig] Load error:', e)
-                loadError.value = e.message || 'Ошибка загрузки конфигурации'
+                loadError.value = (e as { message?: string })?.message || 'Ошибка загрузки конфигурации'
             } finally {
                 isLoaded.value = true
             }
@@ -130,36 +144,38 @@ export const useFieldConfigStore = defineStore(
                 .replace(/\s+/g, ' ')
         }
 
-        function extractSpFieldsMap(raw: any): Record<string, any> {
-            const result = raw?.result
+        function extractSpFieldsMap(raw: unknown): Record<string, unknown> {
+            const rawObj = raw as { result?: unknown, fields?: unknown } | null | undefined
+            const result = rawObj?.result as { fields?: unknown } | null | undefined
             if (result && typeof result === 'object' && result.fields && typeof result.fields === 'object') {
-                return result.fields
+                return result.fields as Record<string, unknown>
             }
-            if (raw?.fields && typeof raw.fields === 'object') {
-                return raw.fields
+            if (rawObj?.fields && typeof rawObj.fields === 'object') {
+                return rawObj.fields as Record<string, unknown>
             }
             if (result && typeof result === 'object') {
-                return result
+                return result as Record<string, unknown>
             }
             return {}
         }
 
-        function getFieldMetaTitle(meta: any) {
+        function getFieldMetaTitle(meta: unknown) {
+            const metaObj = meta as Record<string, unknown> | null | undefined
             return String(
-                meta?.title
-                || meta?.TITLE
-                || meta?.formLabel
-                || meta?.FORM_LABEL
-                || meta?.listLabel
-                || meta?.LIST_LABEL
-                || meta?.label
-                || meta?.LABEL
+                metaObj?.title
+                || metaObj?.TITLE
+                || metaObj?.formLabel
+                || metaObj?.FORM_LABEL
+                || metaObj?.listLabel
+                || metaObj?.LIST_LABEL
+                || metaObj?.label
+                || metaObj?.LABEL
                 || ''
             ).trim()
         }
 
         function matchFieldByRule(
-            spFieldsList: Array<{ id: string; title: string; meta: any }>,
+            spFieldsList: Array<{ id: string; title: string; meta: unknown }>,
             backendKey: string,
         ) {
             const rule = AUTO_DETECT_MAPPING_RULES[backendKey]
@@ -189,11 +205,12 @@ export const useFieldConfigStore = defineStore(
             const byHint = spFieldsList.find((field) => {
                 const fieldIdNormalized = normalizeLabel(field.id).replace(/_/g, '')
                 const titleNormalized = normalizeLabel(field.title).replace(/_/g, '')
+                const fieldMeta = field.meta as Record<string, unknown> | null | undefined
                 const logicalNameNormalized = normalizeLabel(
-                    field.meta?.name
-                    || field.meta?.NAME
-                    || field.meta?.fieldName
-                    || field.meta?.FIELD_NAME
+                    fieldMeta?.name
+                    || fieldMeta?.NAME
+                    || fieldMeta?.fieldName
+                    || fieldMeta?.FIELD_NAME
                     || ''
                 ).replace(/_/g, '')
 
@@ -236,14 +253,14 @@ export const useFieldConfigStore = defineStore(
             }
 
             try {
-                // @ts-ignore - callMethod typing
+                // @ts-expect-error - callMethod typing
                 const fieldsRes = await $b24.callMethod('crm.item.fields', { entityTypeId: spEntityTypeId })
                 const fieldsData = fieldsRes?.getData?.()
                 const spFieldsMap = extractSpFieldsMap(fieldsData)
                 const spFieldsList = Object.entries(spFieldsMap).map(([fieldId, meta]) => ({
                     id: String(fieldId || ''),
                     title: getFieldMetaTitle(meta),
-                    type: String((meta as any)?.type || (meta as any)?.TYPE || ''),
+                    type: String((meta as Record<string, unknown>)?.type || (meta as Record<string, unknown>)?.TYPE || ''),
                     meta,
                 }))
 
@@ -291,7 +308,7 @@ export const useFieldConfigStore = defineStore(
 
                 // Persist the auto-detected mappings back to Bitrix
                 try {
-                    // @ts-ignore - callMethod typing
+                    // @ts-expect-error - callMethod typing
                     await $b24.callMethod('app.option.set', {
                         options: {
                             timestamp_config: JSON.stringify(rawConfig)

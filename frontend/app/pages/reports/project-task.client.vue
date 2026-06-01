@@ -15,7 +15,7 @@ import { useProgress } from '~/composables/useProgress'
 import type { ProjectTaskReportNode } from '~/types/report'
 import { formatHours, formatPercent } from '~/utils/reportFormat'
 
-const { t, locales: localesI18n, setLocale } = useI18n()
+const { locales: localesI18n, setLocale } = useI18n()
 
 useHead({
   title: 'Учет по проектам/задачам',
@@ -25,7 +25,7 @@ useHead({
 })
 
 // region Init ////
-const { $logger, initApp, processErrorGlobal } = useAppInit('ProjectTaskReportPage')
+const { initApp, processErrorGlobal } = useAppInit('ProjectTaskReportPage')
 const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 

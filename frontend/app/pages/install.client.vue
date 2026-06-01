@@ -15,7 +15,7 @@ useHead({
 
 // region Init ////
 const config = useRuntimeConfig()
-const appUrl = withoutTrailingSlash(config.public.appUrl)
+const _appUrl = withoutTrailingSlash(config.public.appUrl)
 
 const { $logger, initLang, processErrorGlobal } = useAppInit('Install')
 const { $initializeB24Frame } = useNuxtApp()
@@ -140,7 +140,7 @@ const steps = ref<Record<string, IStep>>({
   serverSide: {
     caption: t('page.install.step.serverSide.caption'),
     action: async () => {
-      const authData = $b24.auth.getAuthData() as Record<string, any> | false
+      const authData = $b24.auth.getAuthData() as Record<string, unknown> | false
 
       if(authData === false) {
         throw new Error('Some problem with auth. See App logic')
@@ -148,19 +148,19 @@ const steps = ref<Record<string, IStep>>({
 
       const rawPlacementInfo = (() => {
         try {
-          return (window as any)?.BX24?.placement?.info?.() || {}
+          return (window as unknown as { BX24?: { placement?: { info?: () => unknown } } })?.BX24?.placement?.info?.() || {}
         } catch {
           return {}
         }
-      })() as Record<string, any>
+      })() as Record<string, unknown>
 
       const legacyAuth = (() => {
         try {
-          return (window as any)?.BX24?.getAuth?.() || {}
+          return (window as unknown as { BX24?: { getAuth?: () => unknown } })?.BX24?.getAuth?.() || {}
         } catch {
           return {}
         }
-      })() as Record<string, any>
+      })() as Record<string, unknown>
 
       const accessToken = String(
         authData.access_token
@@ -191,11 +191,13 @@ const steps = ref<Record<string, IStep>>({
         throw new Error('Install auth payload is missing AUTH_ID/access_token')
       }
 
+      const initData = steps.value.init?.data as InitStepData | undefined
+
       await apiStore.postInstall({
         DOMAIN: withoutTrailingSlash(String(authData.domain || rawPlacementInfo.DOMAIN || '')).replace('https://', '').replace('http://', ''),
         PROTOCOL: Number(rawPlacementInfo.PROTOCOL || (String(authData.domain || '').includes('https://') ? 1 : 0)),
-        LICENSE: steps.value.init?.data?.appInfo.LICENSE,
-        LICENSE_FAMILY: steps.value.init?.data?.appInfo.LICENSE_FAMILY,
+        LICENSE: initData?.appInfo.LICENSE,
+        LICENSE_FAMILY: initData?.appInfo.LICENSE_FAMILY,
         LANG: $b24.getLang(),
         APP_SID: $b24.getAppSid(),
         AUTH_ID: accessToken,
@@ -203,11 +205,11 @@ const steps = ref<Record<string, IStep>>({
         REFRESH_ID: refreshToken,
         REFRESH_TOKEN: refreshToken,
         member_id: memberId,
-        user_id: Number(steps.value.init?.data?.profile.ID),
-        status: steps.value.init?.data?.appInfo.STATUS,
-        appVersion: Number(steps.value.init?.data?.appInfo.VERSION),
-        appCode: steps.value.init?.data?.appInfo.CODE,
-        appId: Number(steps.value.init?.data?.appInfo.ID),
+        user_id: Number(initData?.profile.ID),
+        status: initData?.appInfo.STATUS,
+        appVersion: Number(initData?.appInfo.VERSION),
+        appCode: initData?.appInfo.CODE,
+        appId: Number(initData?.appInfo.ID),
         PLACEMENT: $b24.placement.title,
         PLACEMENT_OPTIONS: $b24.placement.options
       })
@@ -222,6 +224,38 @@ const stepCode = ref<string>('init' as const)
 // endregion ////
 
 // region Actions ////
+type InitStepData = {
+  appInfo: {
+    ID: number
+    CODE: string
+    VERSION: string
+    STATUS: string
+    LICENSE: string
+    LICENSE_FAMILY: string
+    INSTALLED: boolean
+  }
+  profile: {
+    ID: number
+    ADMIN: boolean
+    LAST_NAME?: string
+    NAME?: string
+  }
+  userFieldTypeList: {
+    USER_TYPE_ID: string
+    HANDLER: string
+    TITLE: string
+    DESCRIPTION: string
+  }[]
+  placementList: {
+    placement: string
+    userId: number
+    handler: string
+    options: Record<string, unknown>
+    title: string
+    description: string
+  }[]
+}
+
 async function makeInit(): Promise<void> {
   if (steps.value.init) {
     const response = await $b24.callBatch({
@@ -231,37 +265,7 @@ async function makeInit(): Promise<void> {
       placementList: { method: 'placement.get' }
     })
 
-    steps.value.init.data = response.getData() as {
-      appInfo: {
-        ID: number
-        CODE: string
-        VERSION: string
-        STATUS: string
-        LICENSE: string
-        LICENSE_FAMILY: string
-        INSTALLED: boolean
-      },
-      profile: {
-        ID: number
-        ADMIN: boolean
-        LAST_NAME?: string
-        NAME?: string
-      }
-      userFieldTypeList: {
-        USER_TYPE_ID: string
-        HANDLER: string
-        TITLE: string
-        DESCRIPTION: string
-      }[]
-      placementList: {
-        placement: string
-        userId: number
-        handler: string
-        options: any
-        title: string
-        description: string
-      }[]
-    }
+    steps.value.init.data = response.getData() as InitStepData
   }
 }
 
@@ -296,7 +300,7 @@ onMounted(async () => {
       stepCode.value = key
       await step.action()
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     processErrorGlobal(error)
   }
 })

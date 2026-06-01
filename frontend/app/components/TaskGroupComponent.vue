@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import type { TaskWorkspaceNode, TaskWorkspaceItem } from '~/types/task-workspace'
+
 const props = defineProps<{
-    task: any
+    task: TaskWorkspaceNode
     level: number
     clientHourRate: number
     expandedTasks: Set<string>
@@ -9,9 +11,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     toggle: [taskId: string]
-    select: [item: any]
+    select: [item: TaskWorkspaceItem]
     createForTask: [taskId: string]
-    delete: [item: any]
+    delete: [item: TaskWorkspaceItem]
 }>()
 
 const isExpanded = computed(() => props.expandedTasks.has(props.task.taskId))
@@ -27,7 +29,7 @@ function toggleTask() {
     emit('toggle', props.task.taskId)
 }
 
-function selectItem(item: any) {
+function selectItem(item: TaskWorkspaceItem) {
     emit('select', item)
 }
 
@@ -35,7 +37,7 @@ function createForTask() {
     emit('createForTask', props.task.taskId)
 }
 
-function deleteItem(item: any) {
+function deleteItem(item: TaskWorkspaceItem) {
     emit('delete', item)
 }
 </script>

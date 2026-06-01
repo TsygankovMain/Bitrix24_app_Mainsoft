@@ -460,10 +460,6 @@ async function openCard(card: ProjectBoardCardRecord) {
   }
 }
 
-function closeDrawer() {
-  isDrawerOpen.value = false
-}
-
 function openProject(card?: ProjectBoardCardRecord | null) {
   const targetCard = card || selectedCard.value
   if (!targetCard) {
@@ -517,7 +513,7 @@ async function handleDropCard(payload: { projectId: string; stage: string }) {
   }
 }
 
-async function handleSaveProject(payload: Record<string, any>) {
+async function handleSaveProject(payload: Record<string, unknown>) {
   isSaving.value = true
   try {
     const response = await apiStore.updateProjectCard(payload)

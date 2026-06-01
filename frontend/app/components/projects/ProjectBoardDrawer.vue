@@ -22,14 +22,12 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (event: 'update:modelValue', value: boolean): void
-  (event: 'save', payload: Record<string, any>): void
-  (event: 'archive', value: boolean): void
-  (event: 'open-project', card: ProjectBoardCardRecord): void
-  (event: 'open-spa', card: ProjectBoardCardRecord): void
+  (event: 'update:modelValue' | 'archive', value: boolean): void
+  (event: 'save', payload: Record<string, unknown>): void
+  (event: 'open-project' | 'open-spa', card: ProjectBoardCardRecord): void
 }>()
 
-const draft = ref<Record<string, any>>({})
+const draft = ref<Record<string, unknown>>({})
 
 const stageBadgeClass = computed(() => getStageBadgeClass(props.card?.stage || ''))
 const budgetBadgeClass = computed(() => getBudgetStatusBadgeClass(props.card?.budget_health_status || 'Без лимита'))

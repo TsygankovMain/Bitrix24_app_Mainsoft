@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { PropType } from 'vue'
+import type { HierarchicalReportNode } from '~/types/report'
 import RecursiveTableRow from './RecursiveTableRow.vue'
 
 defineProps({
   data: {
-    type: Array as PropType<any[]>,
+    type: Array as PropType<HierarchicalReportNode[]>,
     required: true
   },
   clickableLabels: {

@@ -8,7 +8,7 @@ import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import { useProgress } from '~/composables/useProgress'
-import type { FocusAnalysisReport } from '~/types/report'
+import type { FocusAnalysisReport, FocusAnalysisEmployeeRow } from '~/types/report'
 
 const { locales: localesI18n, setLocale } = useI18n()
 
@@ -60,13 +60,13 @@ const { hasGenerated, generateReport } = useReportGenerator({
 const progress = useProgress()
 
 const maxProjectCount = computed(() =>
-  Math.max(...(reportData.value?.employee_rows || []).map((row: any) => row.project_count || 0), 1)
+  Math.max(...(reportData.value?.employee_rows || []).map((row: FocusAnalysisEmployeeRow) => row.project_count || 0), 1)
 )
 const maxHours = computed(() =>
-  Math.max(...(reportData.value?.employee_rows || []).map((row: any) => row.total_hours || 0), 1)
+  Math.max(...(reportData.value?.employee_rows || []).map((row: FocusAnalysisEmployeeRow) => row.total_hours || 0), 1)
 )
 const maxEntries = computed(() =>
-  Math.max(...(reportData.value?.employee_rows || []).map((row: any) => row.entry_count || 0), 1)
+  Math.max(...(reportData.value?.employee_rows || []).map((row: FocusAnalysisEmployeeRow) => row.entry_count || 0), 1)
 )
 
 function formatIndex(value: number) {
@@ -89,7 +89,7 @@ function bubbleClass(value: string) {
   return 'bg-emerald-500/85 text-white'
 }
 
-function getBubbleStyle(row: any) {
+function getBubbleStyle(row: FocusAnalysisEmployeeRow) {
   const xRatio = maxProjectCount.value <= 1 ? 0.5 : (row.project_count - 1) / (maxProjectCount.value - 1)
   const yRatio = maxHours.value <= 0 ? 0 : row.total_hours / maxHours.value
   const size = 30 + (row.entry_count / maxEntries.value) * 26

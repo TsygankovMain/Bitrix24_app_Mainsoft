@@ -48,9 +48,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (event: 'open-card', card: ProjectBoardCardRecord): void
+  (event: 'open-card' | 'open-project', card: ProjectBoardCardRecord): void
   (event: 'open-board'): void
-  (event: 'open-project', card: ProjectBoardCardRecord): void
   (event: 'open-report', payload: string | ReportRoutePayload): void
 }>()
 

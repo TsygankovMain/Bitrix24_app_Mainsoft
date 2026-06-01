@@ -51,7 +51,7 @@ const rowClass = computed(() => {
 })
 const openTask = (id: string | number) => {
     // Attempt to use global BX24 or window.open
-    // @ts-ignore
+    // @ts-expect-error BX24 is injected globally by Bitrix24 and is not typed on window
     const BX24 = window.BX24;
     
     if (typeof BX24 !== 'undefined') {

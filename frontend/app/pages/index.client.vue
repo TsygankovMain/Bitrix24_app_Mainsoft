@@ -28,9 +28,34 @@ let $b24: null | B24Frame = null
 const apiStore = useApiStore()
 const fieldConfigStore = useFieldConfigStore()
 
+type PortfolioSummary = {
+  total_count: number
+  active_count: number
+  archived_count: number
+  support_count: number
+  inactive_30_count: number
+  inactive_90_count: number
+}
+
+type PortfolioData = {
+  cards?: ProjectBoardCardRecord[]
+  summary?: PortfolioSummary
+}
+
+type ProjectBoardMetaLike = {
+  directories?: {
+    employees?: ProjectBoardDirectoryOption[]
+    companies?: ProjectBoardDirectoryOption[]
+    legal_entities?: ProjectBoardDirectoryOption[]
+  }
+  employees?: ProjectBoardDirectoryOption[]
+  companies?: ProjectBoardDirectoryOption[]
+  legal_entities?: ProjectBoardDirectoryOption[]
+}
+
 const isInit = ref(false)
 const isPortfolioLoading = ref(false)
-const portfolioData = ref<any | null>(null)
+const portfolioData = ref<PortfolioData | null>(null)
 const projectSearch = ref('')
 const selectedProjectId = ref('')
 
@@ -285,11 +310,11 @@ function openProject(card?: ProjectBoardCardRecord | null) {
 async function loadMeta() {
   // Best-effort: справочники для карточки проекта не должны рушить главный экран
   try {
-    const meta = await apiStore.getProjectBoardMeta()
-    const directories = (meta as any).directories || {}
-    employeeDirectory.value = directories.employees || (meta as any).employees || []
-    companyDirectory.value = directories.companies || (meta as any).companies || []
-    legalEntityDirectory.value = directories.legal_entities || (meta as any).legal_entities || []
+    const meta = await apiStore.getProjectBoardMeta() as ProjectBoardMetaLike
+    const directories = meta.directories || {}
+    employeeDirectory.value = directories.employees || meta.employees || []
+    companyDirectory.value = directories.companies || meta.companies || []
+    legalEntityDirectory.value = directories.legal_entities || meta.legal_entities || []
   } catch (error) {
     console.warn('[IndexPage] Failed to load project board meta (drawer directories)', error)
   }
@@ -311,7 +336,7 @@ async function openProjectCard(project: ProjectBoardCardRecord | null | undefine
   }
 }
 
-async function handleSaveProjectCard(payload: Record<string, any>) {
+async function handleSaveProjectCard(payload: Record<string, unknown>) {
   isSaving.value = true
   try {
     await apiStore.updateProjectCard(payload)
@@ -374,7 +399,7 @@ onMounted(async () => {
     await initApp($b24, localesI18n, setLocale)
     await $b24.parent.setTitle(t('page.index.seo.title'))
 
-    // @ts-ignore
+    // @ts-expect-error - placement typing
     const placementCode = $b24.placement?.title || $b24.placement?.placement || ($b24.placement?.info && $b24.placement.info.placement)
     if (placementCode === 'TASK_VIEW_TAB') {
       router.push('/task')
@@ -385,11 +410,11 @@ onMounted(async () => {
       return
     }
 
-    // @ts-ignore
+    // @ts-expect-error - BX24 global typing
     if (typeof window.BX24 !== 'undefined') {
-      // @ts-ignore
+      // @ts-expect-error - BX24 global typing
       window.BX24.init(() => {
-        // @ts-ignore
+        // @ts-expect-error - BX24 global typing
         const rawPlacement = window.BX24.placement.info()
         if (rawPlacement && rawPlacement.placement === 'TASK_VIEW_TAB') {
           router.push('/task')
