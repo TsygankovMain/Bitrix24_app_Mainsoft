@@ -331,11 +331,11 @@ onMounted(async () => {
                       <tbody>
                           <tr v-for="(item, idx) in modalData.items" :key="idx">
                               <td class="text-sm text-slate-900">{{ item.project_title || '-' }}</td>
-                              <td class="text-sm text-lime-700">
-                                <span 
+                              <td class="text-sm text-[#0075ff]">
+                                <span
                                     v-if="item.task_id"
                                     @click="openTask(item.task_id)"
-                                    class="cursor-pointer hover:text-lime-800 hover:underline"
+                                    class="cursor-pointer hover:text-blue-700 hover:underline"
                                 >
                                     {{ item.task_title }}
                                 </span>

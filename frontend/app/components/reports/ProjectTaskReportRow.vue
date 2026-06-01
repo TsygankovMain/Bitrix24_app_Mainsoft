@@ -21,7 +21,7 @@ const hasChildren = computed(() =>
 )
 
 const nameClass = computed(() => {
-  if (isProject.value) return 'font-bold text-lime-800'
+  if (isProject.value) return 'font-bold text-slate-900'
   if (props.depth === 1) return 'font-semibold text-slate-700'
   return 'text-slate-600'
 })
@@ -40,7 +40,7 @@ function toggle() {
   <tr
     class="border-b border-slate-100 transition-colors"
     :class="[
-      isProject ? 'bg-lime-50/60 hover:bg-lime-100/60' : 'hover:bg-slate-50',
+      isProject ? 'bg-blue-50/60 hover:bg-blue-100/60' : 'hover:bg-slate-50',
       hasChildren ? 'cursor-pointer' : ''
     ]"
     @click="toggle"

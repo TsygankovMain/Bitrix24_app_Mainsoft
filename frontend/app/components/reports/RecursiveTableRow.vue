@@ -45,7 +45,7 @@ const typeLabel = computed(() => {
 
 // Color coding based on level/type
 const rowClass = computed(() => {
-    if (props.node.type === 'employee') return 'bg-lime-50/70 hover:bg-lime-100/80 font-bold'
+    if (props.node.type === 'employee') return 'bg-blue-50/70 hover:bg-blue-100/80 font-bold'
     if (props.node.type === 'project') return 'bg-slate-50 hover:bg-slate-100 font-semibold'
     return 'hover:bg-slate-50'
 })
@@ -90,7 +90,7 @@ const handleLabelClick = (itemIdElem: string | number) => {
                 <span 
                     v-if="node.type === 'task'" 
                     @click.stop="openTask(node.id)"
-                    class="whitespace-normal break-words text-lime-700 hover:text-lime-800 hover:underline"
+                    class="whitespace-normal break-words text-[#0075ff] hover:text-blue-700 hover:underline"
                 >
                     {{ node.name || node.id }}
                 </span>
@@ -134,7 +134,7 @@ const handleLabelClick = (itemIdElem: string | number) => {
                    <span 
                        v-if="clickableLabels && entityTypeId && item.id_elem"
                        @click.stop="handleLabelClick(item.id_elem)"
-                       class="cursor-pointer whitespace-normal break-words text-lime-700 hover:text-lime-800 hover:underline"
+                       class="cursor-pointer whitespace-normal break-words text-[#0075ff] hover:text-blue-700 hover:underline"
                    >{{ item.opisanie || 'Без описания' }}</span>
                    <span v-else class="whitespace-normal break-words">{{ item.opisanie || 'Без описания' }}</span>
                </td>

@@ -257,12 +257,12 @@ onMounted(async () => {
           <tbody class="divide-y divide-slate-100">
             <template v-for="group in result?.groups" :key="group.key">
               <!-- Заголовок группы -->
-              <tr class="bg-lime-50/60">
+              <tr class="bg-blue-50/60">
                 <td class="px-3 py-2.5">
                   <input type="checkbox" :checked="groupAllSelected(group.rows)" @change="toggleGroup(group.rows)">
                 </td>
-                <td class="px-3 py-2.5 font-bold text-lime-800" colspan="3">
-                  <span class="cursor-pointer select-none mr-1 text-lime-700" @click="toggleCollapse(group.key)">{{ isCollapsed(group.key) ? '▶' : '▼' }}</span>
+                <td class="px-3 py-2.5 font-bold text-slate-900" colspan="3">
+                  <span class="cursor-pointer select-none mr-1 text-[#0075ff]" @click="toggleCollapse(group.key)">{{ isCollapsed(group.key) ? '▶' : '▼' }}</span>
                   {{ group.project_name }} · {{ group.count }} карт.
                   <span v-if="groupReadyCount(group.rows)" class="ml-2 inline-flex rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">готовы {{ groupReadyCount(group.rows) }}</span>
                 </td>

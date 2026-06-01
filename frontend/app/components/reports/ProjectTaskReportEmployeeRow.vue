@@ -62,7 +62,7 @@ function toggle() {
         <div class="flex items-center gap-2" :style="indent(depth + 1)">
           <span
             v-if="labelClickable && item.id_elem"
-            class="cursor-pointer text-lime-700 hover:text-lime-800 hover:underline"
+            class="cursor-pointer text-[#0075ff] hover:text-blue-700 hover:underline"
             @click.stop="labelCtx!.onClick(item.id_elem)"
           >{{ item.nazvanie_zadachi || item.opisanie || 'Без названия' }}</span>
           <span v-else class="text-slate-500">{{ item.nazvanie_zadachi || item.opisanie || 'Без названия' }}</span>
