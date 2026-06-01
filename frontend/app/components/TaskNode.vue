@@ -31,12 +31,12 @@ const totalMoney = computed(() => props.node.cumulativeConsidered * props.rate)
             <div class="flex-1 min-w-0 flex items-center gap-2">
                 <button 
                     v-if="hasChildren" 
-                    @click="isExpanded = !isExpanded" 
-                    class="flex h-7 w-7 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
+                    class="flex h-7 w-7 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700" 
+                    @click="isExpanded = !isExpanded"
                 >
                      <span class="material-symbols-outlined">{{ isExpanded ? "expand_more" : "chevron_right" }}</span>
                 </button>
-                <div v-else class="w-6"></div>
+                <div v-else class="w-6"/>
 
                 <div class="flex flex-col min-w-0">
                     <div class="flex items-center gap-2">

@@ -44,7 +44,7 @@ function deleteItem(item: any) {
 <div :style="{ marginLeft: level > 0 ? `${level}rem` : '0' }">
     <div class="task-group-card">
         <!-- TASK HEADER -->
-        <div @click="toggleTask" class="task-group-header">
+        <div class="task-group-header" @click="toggleTask">
             <div class="flex-1 min-w-0">
                 <h3 class="text-sm font-bold text-slate-900 truncate">
                     <span v-if="level > 0" class="font-normal text-[#0075ff]">[Подзадача] </span>
@@ -72,11 +72,11 @@ function deleteItem(item: any) {
                     </p>
                 </div>
                 <div class="flex flex-col items-center gap-1">
-                    <button @click.stop="createForTask" title="Отразить время" class="task-group-create-btn">
+                    <button title="Отразить время" class="task-group-create-btn" @click.stop="createForTask">
                         <span class="material-symbols-outlined text-sm">add_circle</span>
                         Отразить
                     </button>
-                    <button @click.stop="toggleTask" title="Развернуть/Свернуть" class="rounded-full p-1 transition hover:bg-slate-200">
+                    <button title="Развернуть/Свернуть" class="rounded-full p-1 transition hover:bg-slate-200" @click.stop="toggleTask">
                         <span class="material-symbols-outlined text-slate-500 transition-transform" :class="{ 'rotate-180': isExpanded }">expand_more</span>
                     </button>
                 </div>
@@ -89,16 +89,16 @@ function deleteItem(item: any) {
             <div
                 v-for="item in task.items"
                 :key="item.id"
-                @click="selectItem(item)"
                 class="task-group-row"
                 :class="currentEditingId === item.id ? 'task-group-row-active' : ''"
                 style="min-height: 34px;"
+                @click="selectItem(item)"
             >
                 <!-- Indicator dot -->
                 <span
                     class="w-2 h-2 rounded-full shrink-0"
                     :class="item.isConsidered ? 'bg-emerald-500' : 'bg-rose-400'"
-                ></span>
+                />
 
                 <!-- Description -->
                 <span class="flex-1 text-sm text-slate-700 truncate" :title="item.description || ''">
@@ -122,18 +122,18 @@ function deleteItem(item: any) {
 
                 <!-- Edit button (hover only) -->
                 <button
-                    @click.stop="selectItem(item)"
                     class="task-group-action-btn"
                     title="Редактировать"
+                    @click.stop="selectItem(item)"
                 >
                     <span class="material-symbols-outlined text-base leading-none">edit</span>
                 </button>
 
                 <!-- Delete button (hover only) -->
                 <button
-                    @click.stop="deleteItem(item)"
                     class="task-group-delete-btn"
                     title="Удалить запись"
+                    @click.stop="deleteItem(item)"
                 >
                     <span class="material-symbols-outlined text-base leading-none">delete</span>
                 </button>
@@ -146,12 +146,12 @@ function deleteItem(item: any) {
                     :key="child.taskId"
                     :task="child"
                     :level="level + 1"
-                    :clientHourRate="clientHourRate"
-                    :expandedTasks="expandedTasks"
-                    :currentEditingId="currentEditingId"
+                    :client-hour-rate="clientHourRate"
+                    :expanded-tasks="expandedTasks"
+                    :current-editing-id="currentEditingId"
                     @toggle="(id) => emit('toggle', id)"
                     @select="(item) => emit('select', item)"
-                    @createForTask="(taskId) => emit('createForTask', taskId)"
+                    @create-for-task="(taskId) => emit('createForTask', taskId)"
                     @delete="(item) => emit('delete', item)"
                 />
             </div>

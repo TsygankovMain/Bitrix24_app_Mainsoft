@@ -124,8 +124,8 @@ onUnmounted(() => {
           </B24FormField>
           <B24FormField :label="$t('uf.demo.field.label')" class="w-full">
             <B24InputNumber
-              class="w-[200px]"
               v-model="dataField"
+              class="w-[200px]"
               @change="setData"
             />
           </B24FormField>

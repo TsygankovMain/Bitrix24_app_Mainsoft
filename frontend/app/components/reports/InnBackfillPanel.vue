@@ -198,7 +198,7 @@ onMounted(async () => {
         <p class="mt-1 text-xs text-slate-500">Поиск карточек без ИНН за период и простановка из проекта</p>
       </div>
       <div class="flex gap-2 shrink-0">
-        <B24Button label="Найти" @click="runScan" :loading="loading" />
+        <B24Button label="Найти" :loading="loading" @click="runScan" />
         <B24Button
           label="Заполнить всё возможное"
           color="success"
@@ -210,11 +210,11 @@ onMounted(async () => {
 
     <!-- Фильтры -->
     <div class="ms-filter-wrap flex flex-wrap items-end gap-4">
-      <DateRangeFilter v-model:dateFrom="dateFrom" v-model:dateTo="dateTo" />
+      <DateRangeFilter v-model:date-from="dateFrom" v-model:date-to="dateTo" />
       <MultiSelectFilter
+        v-model="selectedProjects"
         label="Проекты"
         :options="filterOptions.projects"
-        v-model="selectedProjects"
       />
     </div>
 
@@ -246,7 +246,7 @@ onMounted(async () => {
         <table class="min-w-full text-sm">
           <thead class="bg-slate-50">
             <tr class="text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-              <th class="px-3 py-3 w-8"></th>
+              <th class="px-3 py-3 w-8"/>
               <th class="px-3 py-3">Дата</th>
               <th class="px-3 py-3">Сотрудник</th>
               <th class="px-3 py-3">Задача</th>

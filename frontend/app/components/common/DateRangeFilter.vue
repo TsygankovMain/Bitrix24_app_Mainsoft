@@ -39,15 +39,15 @@ function setPreset(preset: 'prev_month' | 'prev_week' | 'cur_month' | 'cur_week'
     <div class="flex flex-col gap-2">
         <label class="block text-sm font-medium text-slate-700">Период</label>
         <div class="flex items-center gap-2">
-            <input type="date" v-model="localFrom" @change="update" class="min-w-[174px]" />
+            <input v-model="localFrom" type="date" class="min-w-[174px]" @change="update" >
             <span class="self-center text-slate-400">-</span>
-            <input type="date" v-model="localTo" @change="update" class="min-w-[174px]" />
+            <input v-model="localTo" type="date" class="min-w-[174px]" @change="update" >
         </div>
         <div class="flex flex-wrap gap-1.5">
-            <button type="button" @click="setPreset('cur_week')" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900">Эта неделя</button>
-            <button type="button" @click="setPreset('prev_week')" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900">Пред. неделя</button>
-            <button type="button" @click="setPreset('cur_month')" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900">Этот месяц</button>
-            <button type="button" @click="setPreset('prev_month')" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900">Пред. месяц</button>
+            <button type="button" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900" @click="setPreset('cur_week')">Эта неделя</button>
+            <button type="button" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900" @click="setPreset('prev_week')">Пред. неделя</button>
+            <button type="button" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900" @click="setPreset('cur_month')">Этот месяц</button>
+            <button type="button" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900" @click="setPreset('prev_month')">Пред. месяц</button>
         </div>
     </div>
 </template>

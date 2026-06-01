@@ -78,7 +78,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleOutsideClick))
 </script>
 
 <template>
-  <div class="dp-wrapper" ref="pickerRef">
+  <div ref="pickerRef" class="dp-wrapper">
     <!-- Trigger -->
     <div class="dp-trigger" :class="{ 'dp-open': isOpen, 'dp-filled': !!modelValue }" @click="openPicker">
       <svg class="dp-cal-icon" viewBox="0 0 20 20" fill="currentColor">
@@ -87,7 +87,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleOutsideClick))
       <span class="dp-value" :class="{ 'dp-placeholder': !modelValue }">
         {{ displayText || placeholder || 'Выберите дату' }}
       </span>
-      <button v-if="modelValue" class="dp-clear" @click.stop="clearValue" title="Очистить">
+      <button v-if="modelValue" class="dp-clear" title="Очистить" @click.stop="clearValue">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
         </svg>

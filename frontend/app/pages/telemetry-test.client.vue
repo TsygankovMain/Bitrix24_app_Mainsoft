@@ -241,14 +241,14 @@ onMounted(async () => {
           </div>
 
           <!-- ui_form_submit -->
-          <form @submit.prevent="doFormSubmit" class="flex flex-col gap-2">
+          <form class="flex flex-col gap-2" @submit.prevent="doFormSubmit">
             <ProseP class="text-sm font-medium mb-0">{{ $t('page.telemetry-test.label.form_field') }}</ProseP>
             <div class="flex flex-row items-center gap-3 flex-wrap">
               <input
                 v-model="formText"
                 class="w-[240px] rounded border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-blue-400"
                 placeholder="test value"
-              />
+              >
               <B24Button type="submit" :label="$t('page.telemetry-test.action.form_submit')" color="air-secondary" />
               <span :class="statusClass(state.formSubmit.status)">{{ statusLabel(state.formSubmit.status) }}</span>
             </div>

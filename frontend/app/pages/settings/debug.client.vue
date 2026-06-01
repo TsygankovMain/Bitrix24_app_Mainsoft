@@ -11,16 +11,16 @@
 
       <div class="ms-tabbar mb-6">
       <button 
-        @click="activeTab = 'requests'" 
-        class="ms-tab-btn"
+        class="ms-tab-btn" 
         :class="activeTab === 'requests' ? 'ms-tab-btn-active' : ''"
+        @click="activeTab = 'requests'"
       >
         Запросы
       </button>
       <button 
-        @click="activeTab = 'system'" 
-        class="ms-tab-btn"
+        class="ms-tab-btn" 
         :class="activeTab === 'system' ? 'ms-tab-btn-active' : ''"
+        @click="activeTab = 'system'"
       >
         Системные события
       </button>
@@ -56,7 +56,7 @@
                   <td class="font-mono" :class="getStatusColor(log.status_code)">{{ log.status_code }}</td>
                   <td class="text-slate-500">{{ log.duration_ms?.toFixed(0) }}ms</td>
                   <td>
-                    <button @click="toggleRequestDetails(log.id)" class="text-xs font-medium text-[#0075ff] hover:text-blue-700">
+                    <button class="text-xs font-medium text-[#0075ff] hover:text-blue-700" @click="toggleRequestDetails(log.id)">
                       {{ expandedRequestId === log.id ? 'Скрыть' : 'Подробнее' }}
                     </button>
                   </td>
@@ -110,7 +110,7 @@
                   <td class="text-xs text-slate-500">{{ log.module }}</td>
                   <td class="max-w-md truncate" :title="log.message">{{ log.message }}</td>
                   <td>
-                    <button v-if="log.traceback" @click="toggleSystemDetails(log.id)" class="text-xs font-medium text-rose-600 hover:text-rose-700">
+                    <button v-if="log.traceback" class="text-xs font-medium text-rose-600 hover:text-rose-700" @click="toggleSystemDetails(log.id)">
                       {{ expandedSystemId === log.id ? 'Скрыть' : 'Стек' }}
                     </button>
                   </td>

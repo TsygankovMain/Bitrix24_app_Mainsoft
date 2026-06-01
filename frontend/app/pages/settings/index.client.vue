@@ -23,7 +23,7 @@
             </p>
           </div>
           <label class="relative inline-flex items-center cursor-pointer ml-4">
-            <input type="checkbox" v-model="clickableLabelsEnabled" @change="saveUserSettings" class="sr-only peer">
+            <input v-model="clickableLabelsEnabled" type="checkbox" class="sr-only peer" @change="saveUserSettings">
             <div class="h-6 w-11 rounded-full bg-slate-300 transition peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-200 peer-checked:bg-[#0075ff] peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-white after:transition-all after:content-['']" />
           </label>
         </div>

@@ -119,9 +119,9 @@ onBeforeUnmount(() => {
     <div ref="rootRef" class="relative inline-block w-full max-w-[320px] text-left">
         <label class="mb-1 block text-sm font-medium text-slate-700">{{ label }}</label>
         <button 
+            type="button"
+            class="inline-flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-[#0075ff]" 
             @click="toggleDropdown"
-            type="button" 
-            class="inline-flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-[#0075ff]"
         >
             <span class="truncate">{{ displayLabel }}</span>
             <svg class="-mr-1 ml-2 h-5 w-5 text-slate-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -143,28 +143,28 @@ onBeforeUnmount(() => {
                     <div class="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
                         <button
                             type="button"
-                            @click="setMode('include')"
                             :class="[
                                 'rounded-lg px-2 py-1.5 text-xs font-medium transition-colors',
                                 currentMode === 'include' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                             ]"
+                            @click="setMode('include')"
                         >
                             Включить
                         </button>
                         <button
                             type="button"
-                            @click="setMode('exclude')"
                             :class="[
                                 'rounded-lg px-2 py-1.5 text-xs font-medium transition-colors',
                                 currentMode === 'exclude' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                             ]"
+                            @click="setMode('exclude')"
                         >
                             Кроме
                         </button>
                     </div>
                     <div class="flex justify-between">
-                        <button @click="selectAll" class="text-xs font-medium text-[#0075ff] transition hover:text-blue-700">{{ selectAllLabel }}</button>
-                        <button @click="deselectAll" class="text-xs text-slate-500 transition hover:text-slate-700">{{ clearLabel }}</button>
+                        <button class="text-xs font-medium text-[#0075ff] transition hover:text-blue-700" @click="selectAll">{{ selectAllLabel }}</button>
+                        <button class="text-xs text-slate-500 transition hover:text-slate-700" @click="deselectAll">{{ clearLabel }}</button>
                     </div>
                 </div>
                 <div class="max-h-72 overflow-y-auto p-2">

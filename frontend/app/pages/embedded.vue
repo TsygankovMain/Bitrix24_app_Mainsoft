@@ -7,6 +7,9 @@ import { canOpenNativeApplication, resolveTaskPlacementId, useIframeResizeOnTogg
 import { useTaskTreeLoader } from '@/composables/useTaskTreeLoader'
 import { filterTaskTree, findTaskIdForItem, findTaskNodeById, flattenTaskItems } from '@/utils/taskTree'
 
+
+import { requestIframeFullHeight } from '@/utils/iframe-resizer'
+
 const { $logger, initApp, processErrorGlobal } = useAppInit('EmbeddedPage')
 const { $initializeB24Frame } = useNuxtApp()
 const { t, locales: localesI18n, setLocale } = useI18n()
@@ -14,9 +17,6 @@ const toast = useToast()
 
 // --- STATE ---
 const isHelpOpen = ref(false)
-
-
-import { requestIframeFullHeight } from '@/utils/iframe-resizer'
 
 // --- Diagnostics & Navigation ---
 const isNativeSidePanelAvailable = ref(false)
@@ -878,7 +878,7 @@ async function deleteItemDirect(item: any) {
         </div>
 
         <div class="embedded-topbar__actions">
-            <button @click="createNewEntry" class="embedded-primary-btn">
+            <button class="embedded-primary-btn" @click="createNewEntry">
                 <span class="material-symbols-outlined">add</span>
                 <span>Отразить</span>
             </button>
@@ -886,7 +886,7 @@ async function deleteItemDirect(item: any) {
             <div class="embedded-summary">
                 <label class="embedded-summary__card">
                     <span class="embedded-summary__label">Стоимость часа</span>
-                    <input type="number" v-model="clientHourRate" class="embedded-rate-input">
+                    <input v-model="clientHourRate" type="number" class="embedded-rate-input">
                 </label>
                 <div class="embedded-summary__card embedded-summary__card--accent">
                     <span class="embedded-summary__label">Сумма для клиента</span>
@@ -926,16 +926,16 @@ async function deleteItemDirect(item: any) {
                 </div>
                 <div class="flex flex-col gap-1">
                     <label class="embedded-filter-label">Дата от</label>
-                    <input type="date" v-model="filterDateFrom">
+                    <input v-model="filterDateFrom" type="date">
                 </div>
                 <div class="flex flex-col gap-1">
                     <label class="embedded-filter-label">Дата до</label>
-                    <input type="date" v-model="filterDateTo">
+                    <input v-model="filterDateTo" type="date">
                 </div>
                 <button
                     v-if="isFilterActive"
-                    @click="resetFilter"
                     class="embedded-secondary-btn"
+                    @click="resetFilter"
                 >
                     <span class="material-symbols-outlined text-base">filter_alt_off</span>
                     Сбросить
@@ -952,12 +952,12 @@ async function deleteItemDirect(item: any) {
                     :key="task.taskId"
                     :task="task"
                     :level="0"
-                    :clientHourRate="clientHourRate"
-                    :expandedTasks="expandedTasks"
-                    :currentEditingId="currentEditingId"
+                    :client-hour-rate="clientHourRate"
+                    :expanded-tasks="expandedTasks"
+                    :current-editing-id="currentEditingId"
                     @toggle="toggleTask"
                     @select="selectItem"
-                    @createForTask="createEntryForTask"
+                    @create-for-task="createEntryForTask"
                     @delete="deleteItemDirect"
                 />
             </div>
@@ -969,7 +969,7 @@ async function deleteItemDirect(item: any) {
                     <h2 class="text-lg font-semibold text-slate-900">Редактирование</h2>
                     <p class="mt-1 text-xs text-slate-500">Поля записи и дополнительные действия.</p>
                 </div>
-                <button @click="closeEditor" class="embedded-icon-btn">
+                <button class="embedded-icon-btn" @click="closeEditor">
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
@@ -987,7 +987,7 @@ async function deleteItemDirect(item: any) {
             <div v-else class="embedded-editor-body">
                 <div>
                     <label class="embedded-filter-label">Описание</label>
-                    <textarea v-model="editingItem.description" rows="2" class="resize-none"></textarea>
+                    <textarea v-model="editingItem.description" rows="2" class="resize-none"/>
                 </div>
                 <div>
                     <label class="embedded-filter-label">Сотрудник</label>
@@ -998,17 +998,17 @@ async function deleteItemDirect(item: any) {
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div>
                         <label class="embedded-filter-label">Дата</label>
-                        <input type="date" v-model="editingItem.date">
+                        <input v-model="editingItem.date" type="date">
                     </div>
                     <div>
                         <label class="embedded-filter-label">Часы</label>
-                        <input type="number" v-model.number="editingItem.hours" step="0.25" min="0" class="font-semibold">
+                        <input v-model.number="editingItem.hours" type="number" step="0.25" min="0" class="font-semibold">
                     </div>
                 </div>
 
                 <label class="embedded-toggle">
                     <span class="text-sm font-medium text-slate-700">Учитывать в аналитике</span>
-                    <input type="checkbox" v-model="editingItem.isConsidered" class="h-4 w-4 accent-[#0075ff]">
+                    <input v-model="editingItem.isConsidered" type="checkbox" class="h-4 w-4 accent-[#0075ff]">
                 </label>
 
                 <div class="embedded-split-card">
@@ -1018,25 +1018,25 @@ async function deleteItemDirect(item: any) {
                     </h3>
                     <p class="mt-2 text-xs leading-5 text-slate-500">Отделите часть времени в новую запись, если нужно разнести ее отдельно.</p>
                     <div class="mt-4 grid grid-cols-[120px_1fr] gap-2">
-                        <input type="number" v-model="editingItem.splitHours" step="0.5" placeholder="0">
+                        <input v-model="editingItem.splitHours" type="number" step="0.5" placeholder="0">
                         <div class="flex items-center text-xs text-slate-500">часов отделить</div>
                     </div>
                     <label class="mt-3 flex items-center gap-2 text-xs text-slate-600">
-                        <input type="checkbox" v-model="editingItem.splitInvert" class="h-3.5 w-3.5 accent-slate-700">
+                        <input v-model="editingItem.splitInvert" type="checkbox" class="h-3.5 w-3.5 accent-slate-700">
                         <span>Инвертировать признак «Учитывать»</span>
                     </label>
-                    <button @click="splitItem" class="embedded-secondary-btn mt-4 w-full justify-center">Выполнить разделение</button>
+                    <button class="embedded-secondary-btn mt-4 w-full justify-center" @click="splitItem">Выполнить разделение</button>
                 </div>
 
-                <button v-if="editingItem.id" @click="deleteItem" class="embedded-danger-btn">
+                <button v-if="editingItem.id" class="embedded-danger-btn" @click="deleteItem">
                     <span class="material-symbols-outlined text-base">delete</span>
                     Удалить запись
                 </button>
             </div>
 
             <div v-if="editingItem" class="embedded-editor-footer">
-                <button @click="closeEditor" class="embedded-secondary-btn">Отмена</button>
-                <button @click="saveCurrentItem" class="embedded-primary-btn">Сохранить</button>
+                <button class="embedded-secondary-btn" @click="closeEditor">Отмена</button>
+                <button class="embedded-primary-btn" @click="saveCurrentItem">Сохранить</button>
             </div>
         </aside>
     </div>

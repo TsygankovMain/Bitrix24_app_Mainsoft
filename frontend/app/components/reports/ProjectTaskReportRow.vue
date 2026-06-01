@@ -52,7 +52,7 @@ function toggle() {
           class="inline-block w-3 text-xs text-slate-400 transition-transform"
           :class="expanded ? 'rotate-90' : ''"
         >▶</span>
-        <span v-else class="inline-block w-3"></span>
+        <span v-else class="inline-block w-3"/>
         <span :class="nameClass">{{ node.name }}</span>
       </div>
     </td>

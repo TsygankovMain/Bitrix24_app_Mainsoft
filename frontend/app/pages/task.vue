@@ -236,11 +236,11 @@ async function handleTransferToReport() {
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                    <button @click="handleExportExcel" class="task-secondary-btn">
+                    <button class="task-secondary-btn" @click="handleExportExcel">
                         <span class="material-symbols-outlined text-lg">download</span>
                         <span>Excel (CSV)</span>
                     </button>
-                    <button @click="isReportModalOpen = true" class="task-primary-btn">
+                    <button class="task-primary-btn" @click="isReportModalOpen = true">
                         <span class="material-symbols-outlined text-lg">send</span>
                         <span>В отчет Bitrix24</span>
                     </button>
@@ -292,7 +292,7 @@ async function handleTransferToReport() {
                     <div class="text-sm font-semibold text-slate-900">Редактирование записи</div>
                     <div class="mt-1 text-xs text-slate-500">Измените сотрудника, часы, дату и описание.</div>
                 </div>
-                <button @click="editingItem = null" class="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+                <button class="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" @click="editingItem = null">
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
@@ -307,26 +307,26 @@ async function handleTransferToReport() {
                 <div class="grid gap-4 md:grid-cols-2">
                      <div>
                         <label class="task-field-label">Часы</label>
-                        <input type="number" v-model="editingItem.hours" class="task-field-input w-full" step="0.5">
+                        <input v-model="editingItem.hours" type="number" class="task-field-input w-full" step="0.5">
                     </div>
                     <label class="task-toggle">
                         <span class="text-sm font-medium text-slate-700">Учитывать в аналитике</span>
-                        <input type="checkbox" v-model="editingItem.isConsidered" class="h-4 w-4 rounded border-slate-300 text-[#0075ff]">
+                        <input v-model="editingItem.isConsidered" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-[#0075ff]">
                     </label>
                 </div>
                  <div>
                     <label class="task-field-label">Дата</label>
-                    <input type="date" v-model="editingItem.date" class="task-field-input w-full">
+                    <input v-model="editingItem.date" type="date" class="task-field-input w-full">
                 </div>
                  <div>
                     <label class="task-field-label">Описание</label>
-                    <textarea v-model="editingItem.description" class="task-field-input min-h-28 w-full"></textarea>
+                    <textarea v-model="editingItem.description" class="task-field-input min-h-28 w-full"/>
                 </div>
             </div>
 
             <div class="ms-modal-footer flex flex-wrap justify-end gap-2">
-                <button @click="editingItem = null" class="task-secondary-btn">Отмена</button>
-                <button @click="handleSaveItem(editingItem)" class="task-primary-btn">Сохранить</button>
+                <button class="task-secondary-btn" @click="editingItem = null">Отмена</button>
+                <button class="task-primary-btn" @click="handleSaveItem(editingItem)">Сохранить</button>
             </div>
         </div>
     </div>
@@ -345,8 +345,8 @@ async function handleTransferToReport() {
                     </p>
                 </div>
                 <div class="ms-modal-footer flex flex-wrap justify-center gap-2">
-                     <button @click="isReportModalOpen = false" class="task-secondary-btn">Отмена</button>
-                     <button @click="handleTransferToReport" :disabled="isReporting" class="task-primary-btn">
+                     <button class="task-secondary-btn" @click="isReportModalOpen = false">Отмена</button>
+                     <button :disabled="isReporting" class="task-primary-btn" @click="handleTransferToReport">
                         <span v-if="isReporting" class="material-symbols-outlined animate-spin text-sm">progress_activity</span>
                         <span>{{ isReporting ? 'Отправка...' : 'Подтвердить' }}</span>
                      </button>

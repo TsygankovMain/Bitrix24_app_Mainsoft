@@ -113,7 +113,7 @@ onMounted(() => {
         <div id="install-error" style="display:none;">
             <div class="error-box">
                 <h3 class="error-title">Ошибка</h3>
-                <p id="error-text" class="error-text"></p>
+                <p id="error-text" class="error-text"/>
                 <button class="retry-btn" onclick="doInstall()">Попробовать снова</button>
             </div>
         </div>

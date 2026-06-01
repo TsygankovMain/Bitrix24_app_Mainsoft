@@ -544,22 +544,22 @@ onMounted(async () => {
               <B24PageCard
                 title="Открыть проект"
                 description="Группа проекта в Bitrix24"
-                :onClick="() => openProject(selectedProject)"
+                :on-click="() => openProject(selectedProject)"
               />
               <B24PageCard
                 title="Сформировать отчет"
                 description="Отчет по проекту с пресетом"
-                :onClick="() => openSelectedProjectReport('project')"
+                :on-click="() => openSelectedProjectReport('project')"
               />
               <B24PageCard
                 title="Открыть канбан проектов"
                 description="Перейти в управление проектами"
-                :onClick="() => router.push('/projects')"
+                :on-click="() => router.push('/projects')"
               />
               <B24PageCard
                 title="Карточка проекта"
                 description="Ставка, юрлицо и параметры"
-                :onClick="() => openProjectCard(selectedProject)"
+                :on-click="() => openProjectCard(selectedProject)"
               />
             </div>
           </div>
@@ -585,7 +585,7 @@ onMounted(async () => {
             :key="section.id"
             :title="section.title"
             :description="section.description"
-            :onClick="section.action"
+            :on-click="section.action"
           />
         </B24PageGrid>
       </B24Card>

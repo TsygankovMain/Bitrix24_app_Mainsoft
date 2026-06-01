@@ -214,7 +214,7 @@ onMounted(async () => {
           <B24Button label="Назад" color="link" @click="$router.push('/')" />
       </div>
 
-      <div class="flex flex-col gap-6" v-if="isInit">
+      <div v-if="isInit" class="flex flex-col gap-6">
          <!-- Filters Header -->
          <div class="ms-surface flex flex-col gap-4 p-5">
              <div class="flex flex-row justify-between items-center w-full">
@@ -224,26 +224,26 @@ onMounted(async () => {
                  </div>
                  <div class="flex gap-2">
                     <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-                    <B24Button label="Сформировать" @click="fetchReport" loading-auto />
+                    <B24Button label="Сформировать" loading-auto @click="fetchReport" />
                  </div>
              </div>
              
              <div class="ms-filter-wrap flex flex-wrap gap-4 items-end">
                  <DateRangeFilter 
-                     v-model:dateFrom="dateFrom" 
-                     v-model:dateTo="dateTo" 
+                     v-model:date-from="dateFrom" 
+                     v-model:date-to="dateTo" 
                  />
                  <MultiSelectFilter 
-                     label="Сотрудники" 
-                     :options="filterOptions.employees" 
                      v-model="selectedEmployees" 
-                     v-model:mode="employeeFilterMode"
+                     v-model:mode="employeeFilterMode" 
+                     label="Сотрудники" 
+                     :options="filterOptions.employees"
                  />
                  <MultiSelectFilter 
-                     label="Проекты" 
-                     :options="filterOptions.projects" 
                      v-model="selectedProjects" 
-                     v-model:mode="projectFilterMode"
+                     v-model:mode="projectFilterMode" 
+                     label="Проекты" 
+                     :options="filterOptions.projects"
                  />
              </div>
          </div>
@@ -252,7 +252,7 @@ onMounted(async () => {
              {{ syncWarning }}
          </div>
 
-         <div class="ms-surface p-4" v-if="!isLoading && hasRenderableReport">
+         <div v-if="!isLoading && hasRenderableReport" class="ms-surface p-4">
              <div class="ms-table-shell">
                  <table class="ms-table">
                      <thead>
@@ -316,7 +316,7 @@ onMounted(async () => {
                   <h3 class="text-lg font-bold text-slate-900">
                       {{ modalData.employeeName }} - {{ new Date(modalData.date).toLocaleDateString() }}
                   </h3>
-                  <button @click="closeModal" class="text-2xl text-slate-500 transition hover:text-slate-700">&times;</button>
+                  <button class="text-2xl text-slate-500 transition hover:text-slate-700" @click="closeModal">&times;</button>
               </div>
               <div class="ms-modal-body overflow-y-auto">
                   <table class="ms-table mb-4 min-w-full">
@@ -334,8 +334,8 @@ onMounted(async () => {
                               <td class="text-sm text-[#0075ff]">
                                 <span
                                     v-if="item.task_id"
-                                    @click="openTask(item.task_id)"
                                     class="cursor-pointer hover:text-blue-700 hover:underline"
+                                    @click="openTask(item.task_id)"
                                 >
                                     {{ item.task_title }}
                                 </span>

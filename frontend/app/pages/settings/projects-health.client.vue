@@ -53,7 +53,7 @@ onMounted(async () => {
       description="Проектам не хватает данных для ИНН — список и быстрый переход к исправлению"
     >
       <template #links>
-        <B24Button label="Обновить" @click="loadHealth" :loading="loadingHealth" />
+        <B24Button label="Обновить" :loading="loadingHealth" @click="loadHealth" />
         <B24Button label="Назад" color="link" @click="router.push('/settings')" />
       </template>
     </B24PageHeader>
@@ -72,7 +72,7 @@ onMounted(async () => {
               <th class="px-3 py-3">Наше юр.лицо</th>
               <th class="px-3 py-3">ИНН клиента</th>
               <th class="px-3 py-3">Наш ИНН</th>
-              <th class="px-3 py-3"></th>
+              <th class="px-3 py-3"/>
             </tr>
           </thead>
           <tbody class="divide-y divide-slate-100">

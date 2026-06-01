@@ -232,30 +232,30 @@ watch(
                 <p class="mt-1 text-xs text-slate-500">Группировка: Проект → Задача → Подзадача → Сотрудник → Метки времени</p>
               </div>
               <div class="flex gap-2">
-                <B24Button label="Скачать Excel" color="success" :disabled="!hasGenerated || reportData.length === 0" @click="handleExportExcel" loading-auto />
-                <B24Button label="Сформировать" @click="fetchReport" loading-auto />
+                <B24Button label="Скачать Excel" color="success" :disabled="!hasGenerated || reportData.length === 0" loading-auto @click="handleExportExcel" />
+                <B24Button label="Сформировать" loading-auto @click="fetchReport" />
               </div>
             </div>
 
             <!-- Filters -->
             <div class="ms-filter-wrap flex flex-wrap items-end gap-4">
               <DateRangeFilter
-                v-model:dateFrom="dateFrom"
-                v-model:dateTo="dateTo"
+                v-model:date-from="dateFrom"
+                v-model:date-to="dateTo"
               />
 
               <MultiSelectFilter
-                label="Сотрудники"
-                :options="filterOptions.employees"
                 v-model="selectedEmployees"
                 v-model:mode="employeeFilterMode"
+                label="Сотрудники"
+                :options="filterOptions.employees"
               />
 
               <MultiSelectFilter
-                label="Проекты"
-                :options="filterOptions.projects"
                 v-model="selectedProjects"
                 v-model:mode="projectFilterMode"
+                label="Проекты"
+                :options="filterOptions.projects"
               />
             </div>
           </div>

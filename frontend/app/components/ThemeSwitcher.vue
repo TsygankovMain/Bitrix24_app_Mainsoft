@@ -8,26 +8,26 @@
     </div>
     <div class="ms-tabbar mt-4">
       <button
-        @click="setTheme('light')"
         :class="['ms-tab-btn',
           theme === 'light' ? 'ms-tab-btn-active' : ''
         ]"
+        @click="setTheme('light')"
       >
         Светлая
       </button>
       <button
-        @click="setTheme('dark')"
         :class="['ms-tab-btn',
           theme === 'dark' ? 'ms-tab-btn-active' : ''
         ]"
+        @click="setTheme('dark')"
       >
         Темная
       </button>
       <button
-        @click="setTheme('system')"
         :class="['ms-tab-btn',
           theme === 'system' ? 'ms-tab-btn-active' : ''
         ]"
+        @click="setTheme('system')"
       >
         Системная
       </button>

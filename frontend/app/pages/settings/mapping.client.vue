@@ -528,7 +528,7 @@ onMounted(async () => {
     >
       <template #links>
         <B24Button label="Назад" color="link" @click="router.push('/settings')" />
-        <B24Button label="Сохранить" color="success" @click="handleSave" :loading="isSaving" />
+        <B24Button label="Сохранить" color="success" :loading="isSaving" @click="handleSave" />
       </template>
     </B24PageHeader>
 
@@ -562,11 +562,11 @@ onMounted(async () => {
                       <label for="hour-rate" class="rate-field__label">Стоимость часа (по умолчанию)</label>
                       <input 
                         id="hour-rate"
-                        type="number" 
                         v-model.number="config.hourly_rate" 
+                        type="number" 
                         class="rate-field__input" 
                         placeholder="Например: 1500"
-                      />
+                      >
                       <p class="mt-1 text-xs text-slate-500">Без ставки расчёт будет неточным. Применяется для новых записей.</p>
                   </div>
 
@@ -584,16 +584,16 @@ onMounted(async () => {
                                 label="Подгрузить поля" 
                                 color="primary" 
                                 size="sm"
-                                @click="() => { if (selectedSpId) loadSpFields(selectedSpId) }" 
-                                :disabled="!selectedSpId || isLoading"
+                                :disabled="!selectedSpId || isLoading" 
+                                @click="() => { if (selectedSpId) loadSpFields(selectedSpId) }"
                             />
                             <B24Button 
                                 label="Создать смарт-процесс" 
                                 color="primary" 
                                 size="sm"
-                                @click="handleCreateSmartProcess" 
-                                :loading="isCreatingSP"
+                                :loading="isCreatingSP" 
                                 :disabled="(!!selectedSpId && selectedSpId !== 0) || isCreatingSP"
+                                @click="handleCreateSmartProcess"
                             />
                         </div>
                         <p class="text-sm text-slate-600">
@@ -627,22 +627,22 @@ onMounted(async () => {
                         label="Подгрузить поля проекта"
                         color="primary"
                         size="sm"
-                        @click="() => { if (selectedProjectSpId) loadProjectSpFields(selectedProjectSpId) }"
                         :disabled="!selectedProjectSpId || isLoading"
+                        @click="() => { if (selectedProjectSpId) loadProjectSpFields(selectedProjectSpId) }"
                       />
                       <B24Button
                         label="Проверить Project SPA"
                         color="default"
                         size="sm"
-                        @click="validateProjectSpa"
                         :loading="isValidatingProjectSpa"
                         :disabled="!selectedProjectSpId || isValidatingProjectSpa"
+                        @click="validateProjectSpa"
                       />
                   </div>
               </div>
           </B24Card>
 
-          <B24Card title="Проверка связности Project SPA" v-if="selectedProjectSpId">
+          <B24Card v-if="selectedProjectSpId" title="Проверка связности Project SPA">
               <div v-if="projectSpaValidation" class="space-y-3 text-sm">
                   <div class="ms-note" :class="projectSpaValidation.is_valid ? 'ms-note-success' : 'ms-note-danger'">
                       {{ projectSpaValidation.is_valid ? 'Валидация пройдена: контур Project SPA готов.' : 'Есть проблемы конфигурации Project SPA.' }}
@@ -723,7 +723,7 @@ onMounted(async () => {
               <B24Empty v-else title="Нажмите «Проверить Project SPA», чтобы увидеть статус маппинга и связности." size="sm" />
           </B24Card>
 
-          <B24Card title="Доступные поля Project SPA" v-if="selectedProjectSpId">
+          <B24Card v-if="selectedProjectSpId" title="Доступные поля Project SPA">
              <div v-if="projectSpFields.length > 0" class="ms-table-shell max-h-60 overflow-y-auto">
                  <table class="ms-table">
                      <thead class="sticky top-0">
@@ -746,7 +746,7 @@ onMounted(async () => {
           </B24Card>
 
           <!-- Field List (Read-Only) -->
-          <B24Card title="Доступные поля сущности" v-if="selectedSpId">
+          <B24Card v-if="selectedSpId" title="Доступные поля сущности">
              <div v-if="spFields.length > 0" class="ms-table-shell max-h-60 overflow-y-auto">
                  <table class="ms-table">
                      <thead class="sticky top-0">
@@ -769,7 +769,7 @@ onMounted(async () => {
           </B24Card>
 
           <!-- Mapping Table -->
-          <B24Card title="Сопоставление полей" v-if="selectedSpId">
+          <B24Card v-if="selectedSpId" title="Сопоставление полей">
               <div class="ms-table-shell">
                   <table class="ms-table">
                       <thead>
@@ -808,7 +808,7 @@ onMounted(async () => {
               </div>
           </B24Card>
 
-          <B24Card title="Сопоставление полей проекта (Project SPA)" v-if="selectedProjectSpId">
+          <B24Card v-if="selectedProjectSpId" title="Сопоставление полей проекта (Project SPA)">
               <div class="ms-table-shell">
                   <table class="ms-table">
                       <thead>

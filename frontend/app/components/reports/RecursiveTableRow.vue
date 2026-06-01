@@ -73,7 +73,7 @@ const handleLabelClick = (itemIdElem: string | number) => {
       <!-- Node Row -->
       <tr :class="['cursor-pointer border-b transition-colors', rowClass]" @click="toggle">
         <td class="flex items-start py-3 pr-4 text-sm text-slate-900" :style="{ paddingLeft: paddingLeft }">
-            <div class="mr-2 mt-0.5 text-slate-500" v-if="hasChildren">
+            <div v-if="hasChildren" class="mr-2 mt-0.5 text-slate-500">
                  <!-- Chevron Icon -->
                 <svg v-if="isOpen" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -82,15 +82,15 @@ const handleLabelClick = (itemIdElem: string | number) => {
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                 </svg>
             </div>
-            <div class="mr-2 text-slate-400" v-else>
-               <span class="w-4 inline-block"></span>
+            <div v-else class="mr-2 text-slate-400">
+               <span class="w-4 inline-block"/>
             </div>
             
             <div class="flex flex-col">
                 <span 
                     v-if="node.type === 'task'" 
-                    @click.stop="openTask(node.id)"
                     class="whitespace-normal break-words text-[#0075ff] hover:text-blue-700 hover:underline"
+                    @click.stop="openTask(node.id)"
                 >
                     {{ node.name || node.id }}
                 </span>
@@ -133,8 +133,8 @@ const handleLabelClick = (itemIdElem: string | number) => {
                    <span class="mr-2 mt-0.5">📄</span>
                    <span 
                        v-if="clickableLabels && entityTypeId && item.id_elem"
-                       @click.stop="handleLabelClick(item.id_elem)"
                        class="cursor-pointer whitespace-normal break-words text-[#0075ff] hover:text-blue-700 hover:underline"
+                       @click.stop="handleLabelClick(item.id_elem)"
                    >{{ item.opisanie || 'Без описания' }}</span>
                    <span v-else class="whitespace-normal break-words">{{ item.opisanie || 'Без описания' }}</span>
                </td>

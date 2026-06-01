@@ -78,8 +78,8 @@ async function apply() {
           <input v-model="localClient" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="ИНН клиента">
         </div>
         <div class="rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm">
-          <label class="flex items-center gap-2 mb-1 text-slate-700"><input type="radio" :value="false" v-model="overwrite"> Только пустые поля</label>
-          <label class="flex items-center gap-2 text-rose-700"><input type="radio" :value="true" v-model="overwrite"> <b>Перезаписать всё</b> (смена юр.лица)</label>
+          <label class="flex items-center gap-2 mb-1 text-slate-700"><input v-model="overwrite" type="radio" :value="false"> Только пустые поля</label>
+          <label class="flex items-center gap-2 text-rose-700"><input v-model="overwrite" type="radio" :value="true"> <b>Перезаписать всё</b> (смена юр.лица)</label>
         </div>
         <div v-if="error" class="rounded bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{{ error }}</div>
       </div>

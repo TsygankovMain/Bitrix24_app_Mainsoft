@@ -377,10 +377,10 @@ const handleSaveMeeting = async () => {
                     <span class="material-symbols-outlined text-purple-600">topic</span>
                     Отчет по проекту
                 </h1>
-                <p class="text-xs text-slate-500 mt-1" v-if="currentGroupId">ID Проекта: {{ currentGroupId }}</p>
+                <p v-if="currentGroupId" class="text-xs text-slate-500 mt-1">ID Проекта: {{ currentGroupId }}</p>
             </div>
             <div class="flex gap-2">
-                 <button @click="fetchData" class="p-2 text-slate-500 hover:text-blue-600 transition-colors rounded-full hover:bg-blue-50">
+                 <button class="p-2 text-slate-500 hover:text-blue-600 transition-colors rounded-full hover:bg-blue-50" @click="fetchData">
                     <span class="material-symbols-outlined">refresh</span>
                 </button>
             </div>
@@ -389,7 +389,7 @@ const handleSaveMeeting = async () => {
         <!-- Content -->
         <main class="flex-1 overflow-auto p-6">
             <div v-if="isLoading" class="flex justify-center items-center h-64">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"/>
             </div>
             
             <div v-else-if="error" class="bg-red-50 text-red-600 p-4 rounded-lg flex items-center gap-3 border border-red-100 shadow-sm">
@@ -407,7 +407,7 @@ const handleSaveMeeting = async () => {
                             </div>
                         </div>
                     </div>
-                    <button @click="openModal" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium flex items-center gap-2 shadow-sm transition-all active:transform active:scale-95">
+                    <button class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 font-medium flex items-center gap-2 shadow-sm transition-all active:transform active:scale-95" @click="openModal">
                         <span class="material-symbols-outlined text-[20px]">add_circle</span>
                         Списать на встречи
                     </button>
@@ -469,7 +469,7 @@ const handleSaveMeeting = async () => {
             <div class="bg-white w-3/5 min-w-[600px] rounded-2xl shadow-xl overflow-hidden transform transition-all scale-100 border border-slate-100">
                  <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                     <h3 class="font-bold text-lg text-slate-800">Списание на встречи</h3>
-                    <button @click="closeModal" class="text-slate-400 hover:text-slate-600 transition-colors">
+                    <button class="text-slate-400 hover:text-slate-600 transition-colors" @click="closeModal">
                         <span class="material-symbols-outlined">close</span>
                     </button>
                 </div>
@@ -481,30 +481,30 @@ const handleSaveMeeting = async () => {
 
                     <div>
                         <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Дата</label>
-                        <input type="date" v-model="formData.date" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700">
+                        <input v-model="formData.date" type="date" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700">
                     </div>
 
                     <div>
                         <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Часы</label>
-                        <input type="number" step="0.5" v-model="formData.hours" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700" placeholder="0.0">
+                        <input v-model="formData.hours" type="number" step="0.5" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium text-slate-700" placeholder="0.0">
                     </div>
                     
                     <div>
                         <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Описание</label>
-                        <textarea v-model="formData.description" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-700 h-24 resize-none" placeholder="Детали встречи..."></textarea>
+                        <textarea v-model="formData.description" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-700 h-24 resize-none" placeholder="Детали встречи..."/>
                     </div>
 
                      <div class="flex items-center gap-2">
-                         <input type="checkbox" id="modalIsConsidered" v-model="formData.isConsidered" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
+                         <input id="modalIsConsidered" v-model="formData.isConsidered" type="checkbox" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500">
                          <label for="modalIsConsidered" class="text-sm text-slate-700 font-medium">Учитывать часы (Billable)</label>
                      </div>
                 </div>
 
                 <div class="p-6 border-t bg-slate-50 flex gap-3">
-                    <button @click="closeModal" class="flex-1 bg-white text-slate-700 border border-slate-300 font-medium py-2.5 rounded-lg hover:bg-slate-50 transition-colors">
+                    <button class="flex-1 bg-white text-slate-700 border border-slate-300 font-medium py-2.5 rounded-lg hover:bg-slate-50 transition-colors" @click="closeModal">
                         Отмена
                     </button>
-                    <button @click="handleSaveMeeting" :disabled="isSaving" class="flex-1 bg-blue-600 text-white font-medium py-2.5 rounded-lg shadow-sm hover:bg-blue-700 active:transform active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                    <button :disabled="isSaving" class="flex-1 bg-blue-600 text-white font-medium py-2.5 rounded-lg shadow-sm hover:bg-blue-700 active:transform active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed" @click="handleSaveMeeting">
                         {{ isSaving ? 'Сохранение...' : 'Сохранить' }}
                     </button>
                 </div>

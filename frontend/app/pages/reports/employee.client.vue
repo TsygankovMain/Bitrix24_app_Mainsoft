@@ -165,29 +165,29 @@ onMounted(async () => {
                     <ProseH2 class="!text-slate-900">Отчет по сотрудникам</ProseH2>
                     <div class="flex gap-2">
                         <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-                        <B24Button label="Сформировать" @click="fetchReport" loading-auto />
+                        <B24Button label="Сформировать" loading-auto @click="fetchReport" />
                     </div>
                 </div>
                 
                 <!-- Filters -->
                 <div class="ms-filter-wrap flex flex-wrap gap-4 items-end">
                     <DateRangeFilter 
-                        v-model:dateFrom="dateFrom" 
-                        v-model:dateTo="dateTo" 
+                        v-model:date-from="dateFrom" 
+                        v-model:date-to="dateTo" 
                     />
                     
                     <MultiSelectFilter 
-                        label="Сотрудники" 
-                        :options="filterOptions.employees" 
                         v-model="selectedEmployees" 
-                        v-model:mode="employeeFilterMode"
+                        v-model:mode="employeeFilterMode" 
+                        label="Сотрудники" 
+                        :options="filterOptions.employees"
                     />
                     
                     <MultiSelectFilter 
-                        label="Проекты" 
-                        :options="filterOptions.projects" 
                         v-model="selectedProjects" 
-                        v-model:mode="projectFilterMode"
+                        v-model:mode="projectFilterMode" 
+                        label="Проекты" 
+                        :options="filterOptions.projects"
                     />
                 </div>
             </div>

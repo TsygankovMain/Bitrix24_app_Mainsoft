@@ -138,29 +138,29 @@ onMounted(async () => {
                   <p class="mt-1 text-sm text-slate-500">Технический экран для сверки агрегатов и локальных данных.</p>
                 </div>
                 <div class="flex gap-2 items-center">
-                    <B24Button v-if="activeTab === 'raw-data'" label="Синхронизировать с Б24" @click="handleSync" :loading="isSyncing" color="success" class="mr-2" />
-                    <input type="date" v-model="dateFrom" class="px-2 py-1" @change="fetchReport" />
-                    <B24Button label="Refresh" @click="fetchReport" loading-auto />
+                    <B24Button v-if="activeTab === 'raw-data'" label="Синхронизировать с Б24" :loading="isSyncing" color="success" class="mr-2" @click="handleSync" />
+                    <input v-model="dateFrom" type="date" class="px-2 py-1" @change="fetchReport" >
+                    <B24Button label="Refresh" loading-auto @click="fetchReport" />
                 </div>
             </div>
           </template>
 
           <div class="ms-tabbar mb-4">
               <button 
-                @click="activeTab = 'employee-project'"
                 :class="['ms-tab-btn', activeTab === 'employee-project' ? 'ms-tab-btn-active' : '']"
+                @click="activeTab = 'employee-project'"
               >
                 Employee / Project
               </button>
               <button 
-                @click="activeTab = 'project-employee'"
                 :class="['ms-tab-btn', activeTab === 'project-employee' ? 'ms-tab-btn-active' : '']"
+                @click="activeTab = 'project-employee'"
               >
                 Project / Employee
               </button>
               <button 
-                @click="activeTab = 'raw-data'"
                 :class="['ms-tab-btn', activeTab === 'raw-data' ? 'ms-tab-btn-active' : '']"
+                @click="activeTab = 'raw-data'"
               >
                 Проверка данных
               </button>
@@ -217,19 +217,19 @@ onMounted(async () => {
                   </div>
                   
                   <!-- Pagination -->
-                  <div class="mt-4 flex justify-between items-center" v-if="itemsPages > 1">
+                  <div v-if="itemsPages > 1" class="mt-4 flex justify-between items-center">
                       <button 
-                        @click="changePage(itemsPage - 1)" 
-                        :disabled="itemsPage <= 1"
+                        :disabled="itemsPage <= 1" 
                         class="rounded-xl border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        @click="changePage(itemsPage - 1)"
                       >
                         Prev
                       </button>
                       <span class="text-sm text-slate-600">Page {{ itemsPage }} of {{ itemsPages }}</span>
                       <button 
-                        @click="changePage(itemsPage + 1)" 
-                        :disabled="itemsPage >= itemsPages"
+                        :disabled="itemsPage >= itemsPages" 
                         class="rounded-xl border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        @click="changePage(itemsPage + 1)"
                       >
                         Next
                       </button>

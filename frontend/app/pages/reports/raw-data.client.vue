@@ -264,7 +264,8 @@ onMounted(async () => {
         <!-- status message -->
         <div class="status-bar-message">
           <svg class="status-bar-spinner" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-linecap="round"
+            <circle
+cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-linecap="round"
               stroke-dasharray="31.4 31.4" />
           </svg>
           <span>{{ statusMessage }}</span>
@@ -279,8 +280,8 @@ onMounted(async () => {
     >
       <template #links>
         <template v-if="activeTab === 'export'">
-          <B24Button label="Синхронизировать с Б24" @click="handleSync" :loading="isSyncing" color="success" />
-          <B24Button label="Обновить" @click="() => fetchTimesheetList(itemsPage)" loading-auto />
+          <B24Button label="Синхронизировать с Б24" :loading="isSyncing" color="success" @click="handleSync" />
+          <B24Button label="Обновить" loading-auto @click="() => fetchTimesheetList(itemsPage)" />
         </template>
         <B24Button label="Назад в настройки" color="link" @click="$router.push('/settings')" />
       </template>
@@ -322,8 +323,8 @@ onMounted(async () => {
               <UiDatePickerInput v-model="filterCreatedTo" placeholder="Выберите дату" />
             </div>
             <div class="flex gap-2 items-end">
-              <B24Button label="Применить" @click="applyFilter" color="primary" size="sm" />
-              <B24Button label="Сбросить" @click="resetFilter" color="link" size="sm" />
+              <B24Button label="Применить" color="primary" size="sm" @click="applyFilter" />
+              <B24Button label="Сбросить" color="link" size="sm" @click="resetFilter" />
             </div>
           </div>
         </B24Card>
@@ -372,16 +373,16 @@ onMounted(async () => {
                 <span class="text-xs text-slate-500">Выбрано: {{ selectedFields.length }} из {{ spFields.length }}</span>
               </div>
               <div class="mb-3 space-x-4">
-                <button @click="toggleSelectAll(true)" class="cursor-pointer text-sm font-medium text-[#0075ff] hover:text-blue-700">Выбрать все</button>
-                <button @click="toggleSelectAll(false)" class="cursor-pointer text-sm font-medium text-slate-500 hover:text-slate-700">Снять все</button>
+                <button class="cursor-pointer text-sm font-medium text-[#0075ff] hover:text-blue-700" @click="toggleSelectAll(true)">Выбрать все</button>
+                <button class="cursor-pointer text-sm font-medium text-slate-500 hover:text-slate-700" @click="toggleSelectAll(false)">Снять все</button>
               </div>
 
               <div class="grid max-h-64 grid-cols-1 gap-x-6 gap-y-3 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-inner sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
                 <label v-for="f in spFields" :key="f.id" class="flex items-start gap-2 cursor-pointer group">
                   <input
+                    v-model="selectedFields"
                     type="checkbox"
                     :value="f.id"
-                    v-model="selectedFields"
                     class="mt-1 h-4 w-4 appearance-none rounded border border-slate-300 bg-white bg-center bg-no-repeat transition-colors checked:border-[#0075ff] checked:bg-[#0075ff] focus:ring-1 focus:ring-[#0075ff] checked:bg-[url('data:image/svg+xml;utf8,%3Csvg%20viewBox=%220%200%2016%2016%22%20fill=%22white%22%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cpath%20d=%22M12.207%204.793a1%201%200%20010%201.414l-5%205a1%201%200%2001-1.414%200l-2-2a1%201%200%20011.414-1.414L6.5%209.086l4.293-4.293a1%201%200%20011.414%200z%22/%3E%3C/svg%3E')]"
                   >
                   <div class="flex flex-col overflow-hidden">
@@ -395,7 +396,7 @@ onMounted(async () => {
             <template #footer>
               <div class="flex items-center justify-between w-full">
                 <span class="text-sm italic text-slate-500">Скачивание происходит напрямую из Bitrix24 (в обход локальной БД)</span>
-                <B24Button label="Скачать Excel" @click="handleExport" :loading="isExporting" color="primary" />
+                <B24Button label="Скачать Excel" :loading="isExporting" color="primary" @click="handleExport" />
               </div>
             </template>
           </B24Card>
@@ -445,19 +446,19 @@ onMounted(async () => {
           </div>
 
           <!-- Pagination -->
-          <div class="mt-4 flex justify-between items-center" v-if="itemsPages > 1">
+          <div v-if="itemsPages > 1" class="mt-4 flex justify-between items-center">
             <button
-              @click="changePage(itemsPage - 1)"
               :disabled="itemsPage <= 1"
               class="rounded-xl border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              @click="changePage(itemsPage - 1)"
             >
               Prev
             </button>
             <span class="text-sm text-slate-600">Page {{ itemsPage }} of {{ itemsPages }}</span>
             <button
-              @click="changePage(itemsPage + 1)"
               :disabled="itemsPage >= itemsPages"
               class="rounded-xl border border-slate-200 px-3 py-1 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              @click="changePage(itemsPage + 1)"
             >
               Next
             </button>

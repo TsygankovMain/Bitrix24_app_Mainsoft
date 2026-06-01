@@ -198,30 +198,30 @@ watch(
                     <ProseH2 class="!text-slate-900">Отчет по проектам</ProseH2>
                     <div class="flex gap-2">
                         <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-                        <B24Button label="Сформировать" @click="fetchReport" loading-auto />
+                        <B24Button label="Сформировать" loading-auto @click="fetchReport" />
                     </div>
                 </div>
                 
                  <!-- Filters -->
                  <div class="ms-filter-wrap flex flex-wrap items-end gap-4">
                     <DateRangeFilter 
-                        v-model:dateFrom="dateFrom" 
-                        v-model:dateTo="dateTo" 
+                        v-model:date-from="dateFrom" 
+                        v-model:date-to="dateTo" 
                     />
                     
                     <!-- For Project Report, it might make sense to filter by Projects first? Or both. User asked for both filters in both reports -->
                     <MultiSelectFilter 
-                        label="Сотрудники" 
-                        :options="filterOptions.employees" 
                         v-model="selectedEmployees" 
-                        v-model:mode="employeeFilterMode"
+                        v-model:mode="employeeFilterMode" 
+                        label="Сотрудники" 
+                        :options="filterOptions.employees"
                     />
                     
                     <MultiSelectFilter 
-                        label="Проекты" 
-                        :options="filterOptions.projects" 
                         v-model="selectedProjects" 
-                        v-model:mode="projectFilterMode"
+                        v-model:mode="projectFilterMode" 
+                        label="Проекты" 
+                        :options="filterOptions.projects"
                     />
                 </div>
             </div>
