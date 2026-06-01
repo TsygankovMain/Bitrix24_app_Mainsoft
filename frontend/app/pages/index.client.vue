@@ -2,8 +2,10 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref, watch } from 'vue'
 import { buildReportRouteLocation, type ReportRouteName, type ReportRoutePayload } from '~/utils/reportNavigation'
-import type { ProjectBoardCardRecord } from '~/utils/projectBoard'
+import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
 import { openProjectGroup } from '~/utils/openProjectGroup'
+import { openCrmItemCard } from '~/utils/openCrmItem'
+import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -24,12 +26,22 @@ const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
+const fieldConfigStore = useFieldConfigStore()
 
 const isInit = ref(false)
 const isPortfolioLoading = ref(false)
 const portfolioData = ref<any | null>(null)
 const projectSearch = ref('')
 const selectedProjectId = ref('')
+
+// --- Drawer state ---
+const isDrawerOpen = ref(false)
+const drawerCard = ref<ProjectBoardCardRecord | null>(null)
+const isSaving = ref(false)
+const isArchiving = ref(false)
+const employeeDirectory = ref<ProjectBoardDirectoryOption[]>([])
+const companyDirectory = ref<ProjectBoardDirectoryOption[]>([])
+const legalEntityDirectory = ref<ProjectBoardDirectoryOption[]>([])
 
 type AppSection = {
   id: string
@@ -90,6 +102,78 @@ const appSections = computed<AppSection[]>(() => [
     action: () => openReport('focus-analysis')
   },
 ])
+
+function mergeSelectOptions(...groups: Array<ProjectBoardDirectoryOption[]>) {
+  const seenIds = new Set<string>()
+  const result: ProjectBoardDirectoryOption[] = []
+  for (const group of groups) {
+    for (const option of group || []) {
+      const optionId = String(option.id || '').trim()
+      const optionName = String(option.name || '').trim()
+      if (!optionId || seenIds.has(optionId)) {
+        continue
+      }
+      seenIds.add(optionId)
+      result.push({
+        ...option,
+        id: optionId,
+        name: optionName || optionId,
+        inn: option.inn || null,
+        search_text: [optionName || optionId, option.inn || '', option.search_text || ''].join(' ').trim()
+      })
+    }
+  }
+  return result.sort((left, right) => String(left.name).localeCompare(String(right.name), 'ru'))
+}
+
+function buildOptionsFromPortfolioCards(
+  idGetter: (card: ProjectBoardCardRecord) => string | null | undefined,
+  nameGetter: (card: ProjectBoardCardRecord) => string | null | undefined
+) {
+  const seenIds = new Set<string>()
+  const result: ProjectBoardDirectoryOption[] = []
+  const cards = (portfolioData.value?.cards || []) as ProjectBoardCardRecord[]
+  for (const card of cards) {
+    const optionId = String(idGetter(card) || '').trim()
+    const optionName = String(nameGetter(card) || '').trim()
+    if (!optionId || seenIds.has(optionId)) {
+      continue
+    }
+    seenIds.add(optionId)
+    result.push({ id: optionId, name: optionName || optionId, search_text: optionName || optionId })
+  }
+  return result
+}
+
+const drawerEmployeeOptions = computed(() =>
+  mergeSelectOptions(
+    employeeDirectory.value,
+    buildOptionsFromPortfolioCards(
+      card => card.curator_user_id,
+      card => card.curator_name
+    )
+  )
+)
+
+const drawerCompanyOptions = computed(() =>
+  mergeSelectOptions(
+    companyDirectory.value,
+    buildOptionsFromPortfolioCards(
+      card => card.company_id,
+      card => card.company_name
+    )
+  )
+)
+
+const drawerLegalEntityOptions = computed(() =>
+  mergeSelectOptions(
+    legalEntityDirectory.value,
+    buildOptionsFromPortfolioCards(
+      card => card.our_legal_entity_id,
+      card => card.our_legal_entity_name
+    )
+  )
+)
 
 const activePortfolioCards = computed<ProjectBoardCardRecord[]>(() => {
   const cards = (portfolioData.value?.cards || []) as ProjectBoardCardRecord[]
@@ -198,6 +282,76 @@ function openProject(card?: ProjectBoardCardRecord | null) {
   openProjectGroup(targetCard.project_id)
 }
 
+async function loadMeta() {
+  // Best-effort: справочники для карточки проекта не должны рушить главный экран
+  try {
+    const meta = await apiStore.getProjectBoardMeta()
+    const directories = (meta as any).directories || {}
+    employeeDirectory.value = directories.employees || (meta as any).employees || []
+    companyDirectory.value = directories.companies || (meta as any).companies || []
+    legalEntityDirectory.value = directories.legal_entities || (meta as any).legal_entities || []
+  } catch (error) {
+    console.warn('[IndexPage] Failed to load project board meta (drawer directories)', error)
+  }
+}
+
+async function openProjectCard(project: ProjectBoardCardRecord | null | undefined) {
+  if (!project) {
+    return
+  }
+  drawerCard.value = project
+  isDrawerOpen.value = true
+  try {
+    const detailed = await apiStore.getProjectBoardCard(project.project_id)
+    if (detailed) {
+      drawerCard.value = detailed
+    }
+  } catch (error) {
+    console.warn('[IndexPage] Failed to load detailed card', error)
+  }
+}
+
+async function handleSaveProjectCard(payload: Record<string, any>) {
+  isSaving.value = true
+  try {
+    await apiStore.updateProjectCard(payload)
+    isDrawerOpen.value = false
+    await loadPortfolio(true)
+  } catch (error) {
+    processErrorGlobal(error)
+  } finally {
+    isSaving.value = false
+  }
+}
+
+async function handleArchiveProjectCard(nextArchivedState: boolean) {
+  if (!drawerCard.value) {
+    return
+  }
+  isArchiving.value = true
+  try {
+    await apiStore.archiveProject(drawerCard.value.project_id, nextArchivedState)
+    isDrawerOpen.value = false
+    await loadPortfolio(true)
+  } catch (error) {
+    processErrorGlobal(error)
+  } finally {
+    isArchiving.value = false
+  }
+}
+
+function openSpa(card?: ProjectBoardCardRecord | null) {
+  const targetCard = card || drawerCard.value
+  if (!targetCard) {
+    return
+  }
+  const spEntityTypeId = fieldConfigStore.entityTypeId
+  const projectItemId = targetCard.project_item_id
+  if (spEntityTypeId && projectItemId) {
+    openCrmItemCard(spEntityTypeId, projectItemId)
+  }
+}
+
 
 function openSelectedProjectReport(report: ReportRouteName = 'project') {
   const card = selectedProject.value
@@ -246,7 +400,10 @@ onMounted(async () => {
     }
 
     isInit.value = true
-    await loadPortfolio()
+    await Promise.all([
+      loadPortfolio(),
+      loadMeta(),
+    ])
   } catch (error) {
     processErrorGlobal(error)
   }
@@ -414,6 +571,10 @@ onMounted(async () => {
                 Открыть канбан проектов
                 <div class="mt-1 text-xs font-normal text-slate-500">Перейти в управление проектами</div>
               </button>
+              <button type="button" class="ms-action-card text-left" @click="openProjectCard(selectedProject)">
+                Карточка проекта
+                <div class="mt-1 text-xs font-normal text-slate-500">Ставка, юрлицо и параметры</div>
+              </button>
             </div>
           </div>
 
@@ -448,5 +609,19 @@ onMounted(async () => {
         </div>
       </section>
     </div>
+
+    <ProjectBoardDrawer
+      v-model="isDrawerOpen"
+      :card="drawerCard"
+      :employees="drawerEmployeeOptions"
+      :companies="drawerCompanyOptions"
+      :legal-entities="drawerLegalEntityOptions"
+      :is-saving="isSaving"
+      :is-archiving="isArchiving"
+      @save="handleSaveProjectCard"
+      @archive="handleArchiveProjectCard"
+      @open-project="openProject"
+      @open-spa="openSpa"
+    />
   </div>
 </template>

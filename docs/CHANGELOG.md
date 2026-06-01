@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### Карточка проекта на главном экране — 2026-06-01
+
+#### Added
+- В панель выбранного проекта на главной (`pages/index.client.vue`) добавлена кнопка «**Карточка проекта**» (ставка, юрлицо и параметры) — открывает внутренний `ProjectBoardDrawer` (как в канбане): загрузка детальной карточки (`getProjectBoardCard`), справочники из `getProjectBoardMeta` (best-effort, не рушит экран), сохранение через `updateProjectCard` + обновление портфеля, архивирование (`archiveProject`), `open-project`/`open-spa`. Существующая кнопка «Открыть проект» (группа в Bitrix) сохранена.
+
+#### Verification
+- `nuxt prepare` чист; `progress.test` PASS.
+
 ### Оптимизация Bitrix-вызовов, Фаза 2 (партия 1): rest.batch — 2026-06-01
 
 #### Changed
