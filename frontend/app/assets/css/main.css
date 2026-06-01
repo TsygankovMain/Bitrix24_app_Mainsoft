@@ -20,7 +20,6 @@
   --ms-border: #dfe0e3;        /* --ui-color-base-6 */
   --ms-border-strong: #c9ccd0; /* --ui-color-base-5 */
   --ms-surface: #ffffff;       /* --ui-color-bg-content-primary */
-  --ms-surface-muted: #fbfbfb; /* --ui-color-bg-content-secondary */
   --ms-text: #333333;          /* --ui-color-base-1 */
   --ms-text-muted: #525c69;    /* --ui-color-base-2 */
   --ms-accent: #0075ff;        /* --ui-color-accent-main-primary */
@@ -52,12 +51,6 @@
     @apply rounded-[20px] border shadow-sm;
     border-color: var(--ms-border);
     background: var(--ms-surface);
-  }
-
-  .ms-surface-muted {
-    @apply rounded-2xl border shadow-sm;
-    border-color: var(--ms-border);
-    background: var(--ms-surface-muted);
   }
 
   .ms-surface-hero {
@@ -137,11 +130,6 @@
     @apply bg-slate-900 text-white shadow-sm;
   }
 
-  .ms-segmented-btn-active-lime {
-    @apply text-white shadow-sm;
-    background: var(--ms-accent);
-  }
-
   .ms-stat-card {
     @apply rounded-2xl border border-white/80 bg-white/90 px-4 py-4 shadow-sm;
   }
@@ -208,10 +196,6 @@
     @apply grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3;
   }
 
-  .ms-card-grid {
-    @apply grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3;
-  }
-
   .ms-modal-overlay {
     @apply fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm;
   }
@@ -252,9 +236,5 @@
 
   .ms-code-block {
     @apply overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700 shadow-sm;
-  }
-
-  .ms-helper-text {
-    @apply text-sm leading-6 text-slate-500;
   }
 }
