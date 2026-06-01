@@ -46,7 +46,7 @@
 ### Миграция на B24 UI Kit — S0/S1 — 2026-06-01
 
 #### Docs
-- Оценка: `docs/architecture/ui-kit-migration-assessment.md`. План спринтов: `docs/superpowers/plans/2026-06-01-b24-ui-kit-migration.md`. Смоук-чек-лист: `docs/superpowers/plans/ui-migration-smoke-checklist.md`.
+- Оценка: `docs/archive/ui-kit-migration-assessment.md`. План спринтов: `docs/archive/plans/2026-06-01-b24-ui-kit-migration.md`. Смоук-чек-лист: `docs/archive/plans/ui-migration-smoke-checklist.md`. *(перенесены в архив после завершения миграции)*
 
 #### S0 — защитная сетка
 - Зафиксирован зелёный базлайн (nuxt prepare/lint/progress.test). Пин версии kit обеспечен `pnpm-lock` (2.5.3) + правилом «не запускать `pnpm update`» (package.json не трогаем — избегаем рассинхронизации lock). Без изменений кода.

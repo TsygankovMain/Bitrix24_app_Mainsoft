@@ -23,13 +23,11 @@
 | [../DEPLOY_README.md](../DEPLOY_README.md) | Деплой |
 | [../CLAUDE.md](../CLAUDE.md) | Навигация по проекту, команды, скиллы |
 
-## 🧪 Решения, аналитика, спеки
-| Документ | О чём |
+## 🧪 Спеки и архив
+| Раздел | О чём |
 |---|---|
-| [code-review-2026-05.md](./code-review-2026-05.md) | Результаты code-review |
-| [deploy-decision-2026-05-03.md](./deploy-decision-2026-05-03.md) | Решение по деплою |
-| [perf-baseline-2026-05.md](./perf-baseline-2026-05.md) | Базовые замеры производительности |
-| [superpowers/specs/](./superpowers/specs/) | Дизайн-спеки фич (brainstorming → план) |
+| `superpowers/specs/` | Активные/будущие дизайн-спеки фич (brainstorming → план); создаются при проработке новой фичи |
+| [archive/](./archive/) | Архив завершённого: исторические решения/аналитика (code-review, deploy-decision, perf-baseline, оценка UI Kit), выполненные планы спринтов, реализованные спеки |
 
 ## 🗂 Внутреннее
 | Папка | О чём |

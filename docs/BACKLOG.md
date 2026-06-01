@@ -29,7 +29,7 @@
 ## Технологии / Дизайн-система
 
 ### ✅ Переход на Bitrix24 UI Kit (`@bitrix24/b24ui-nuxt`) — РЕАЛИЗОВАНО (2026-06-01)
-- Аудит + оценка: `docs/architecture/ui-kit-migration-assessment.md`. План: `docs/superpowers/plans/2026-06-01-b24-ui-kit-migration.md`.
+- Аудит + оценка: `docs/archive/ui-kit-migration-assessment.md`. План: `docs/archive/plans/2026-06-01-b24-ui-kit-migration.md`.
 - Миграция S0–S5 завершена на светлой теме: нативный вид Bitrix, доступность/UX, меньше CSS; бренд-лайм вытеснен синим. Стратегия — **гибрид**: рекурсивные таблицы-УТП оставлены (ре-скин, без замены на `B24Table`, Excel-контракт цел). Подробности — в [CHANGELOG.md](./CHANGELOG.md).
 
 ### Тёмная тема (отложено в отдельный спринт)
