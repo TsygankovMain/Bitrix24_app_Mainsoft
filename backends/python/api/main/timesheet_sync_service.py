@@ -76,23 +76,29 @@ class TimesheetSyncService:
             logger.error("No SP Entity Type ID configured cannot sync.")
             return 0
 
-        start = 0
-        limit = 50
+        # Быстрая выборка больших объёмов (apidocs Bitrix, performance/huge-data):
+        #  - start=-1 отключает медленный подсчёт total на каждой странице;
+        #  - keyset-пагинация: order id ASC + filter {">id": last_id} вместо offset,
+        #    что убирает и медленный offset-скан на больших наборах.
+        # Полный обход сохраняется -> сверка осиротевших записей ниже продолжает работать,
+        # данные остаются всегда свежими (полный синк), но в разы быстрее.
+        last_id = 0
+        page_size = 50
         total_fetched = 0
         all_bitrix_ids = set()
         all_new_cards: List[Dict[str, Any]] = []
 
         while True:
             try:
-                logger.info("Fetching batch start=%s for SPA %s", start, self.entity_type_id)
+                logger.info("Fetching batch id>%s for SPA %s", last_id, self.entity_type_id)
                 response = self._call_with_retry(
                     "crm.item.list",
                     {
                         "entityTypeId": self.entity_type_id,
                         "select": ["*", "UF_*"],
-                        "order": {"id": "DESC"},
-                        "start": start,
-                        "limit": limit,
+                        "order": {"id": "ASC"},
+                        "filter": {">id": last_id},
+                        "start": -1,
                     },
                 )
 
@@ -100,6 +106,16 @@ class TimesheetSyncService:
                 if not items:
                     logger.info("No more items to fetch.")
                     break
+
+                # Сдвигаем курсор на максимальный id пачки (keyset-пагинация)
+                batch_max_id = last_id
+                for raw in items:
+                    try:
+                        rid = int(raw.get("id"))
+                    except (TypeError, ValueError):
+                        continue
+                    if rid > batch_max_id:
+                        batch_max_id = rid
 
                 normalized_items = self.processing_service.normalize_items(items)
                 for item in normalized_items:
@@ -113,15 +129,24 @@ class TimesheetSyncService:
 
                 count = len(items)
                 total_fetched += count
-                start += count
                 logger.info("Processed %s items. Total: %s", count, total_fetched)
 
-                if count < limit:
+                # Защита от зацикливания, если курсор не продвинулся
+                if batch_max_id <= last_id:
+                    logger.warning(
+                        "Cursor did not advance (last_id=%s, batch=%s items); stopping.",
+                        last_id,
+                        count,
+                    )
+                    break
+                last_id = batch_max_id
+
+                if count < page_size:
                     break
 
                 time.sleep(self.THROTTLE_DELAY)
             except Exception as exc:
-                logger.error("Sync error at start=%s: %s", start, exc)
+                logger.error("Sync error at id>%s: %s", last_id, exc)
                 raise
 
         if all_bitrix_ids:
