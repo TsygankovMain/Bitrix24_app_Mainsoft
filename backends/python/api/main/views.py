@@ -8,7 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.clickjacking import xframe_options_exempt
 
-from .utils.decorators import admin_required, auth_required, log_errors
+from .utils.decorators import admin_required, auth_required, log_errors, rate_limit
 from .utils import AuthorizedRequest
 from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard
 
@@ -596,6 +596,7 @@ def _install_post_logic(request: AuthorizedRequest):
 @csrf_exempt
 @require_POST
 @log_errors("get_token")
+@rate_limit("get_token", 10, 60, key="ip_domain")
 @auth_required
 def get_token(request: AuthorizedRequest):
     _refresh_admin_flag(request.bitrix24_account)
@@ -716,6 +717,7 @@ def get_homepage_portfolio(request: AuthorizedRequest):
 @log_errors("sync_project_board")
 @auth_required
 @admin_required
+@rate_limit("sync", 6, 60, key="account")
 def sync_project_board(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     incremental_raw = request.GET.get("incremental_since_minutes")
@@ -950,6 +952,7 @@ def report_project_task_employee(request: AuthorizedRequest):
 @log_errors("report_project_task_employee_export")
 @auth_required
 @admin_required
+@rate_limit("export", 12, 60, key="account")
 def report_project_task_employee_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Учет по проектам/задачам» с сохранением иерархии."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -984,6 +987,7 @@ def report_project_task_employee_export(request: AuthorizedRequest):
 @log_errors("report_employee_project_export")
 @auth_required
 @admin_required
+@rate_limit("export", 12, 60, key="account")
 def report_employee_project_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «По сотрудникам/проектам» с сохранением иерархии."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -1016,6 +1020,7 @@ def report_employee_project_export(request: AuthorizedRequest):
 @log_errors("report_project_employee_export")
 @auth_required
 @admin_required
+@rate_limit("export", 12, 60, key="account")
 def report_project_employee_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «По проектам/сотрудникам» с сохранением иерархии."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -1047,6 +1052,7 @@ def report_project_employee_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_daily_workload_export")
 @auth_required
+@rate_limit("export", 12, 60, key="account")
 def report_daily_workload_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Ежедневная нагрузка» в виде матрицы сотрудник×день."""
     from datetime import date
@@ -1119,6 +1125,7 @@ def report_daily_workload_export(request: AuthorizedRequest):
 @log_errors("report_revenue_leakage_export")
 @auth_required
 @admin_required
+@rate_limit("export", 12, 60, key="account")
 def report_revenue_leakage_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Потери выручки» в виде таблицы."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -1172,6 +1179,7 @@ def report_revenue_leakage_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_time_entry_discipline_export")
 @auth_required
+@rate_limit("export", 12, 60, key="account")
 def report_time_entry_discipline_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Дисциплина внесения времени» в виде таблицы."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -1223,6 +1231,7 @@ def report_time_entry_discipline_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_focus_analysis_export")
 @auth_required
+@rate_limit("export", 12, 60, key="account")
 def report_focus_analysis_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Фокус и распыление» в виде таблицы."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -1402,6 +1411,7 @@ def report_focus_analysis(request: AuthorizedRequest):
 @require_POST
 @log_errors("timesheet_sync")
 @auth_required
+@rate_limit("sync", 6, 60, key="account")
 def timesheet_sync(request: AuthorizedRequest):
     profiler = ReportProfiler("timesheet_sync", account_id=request.bitrix24_account.pk)
     with profiler.stage("config"):
@@ -1955,6 +1965,7 @@ def projects_health(request: AuthorizedRequest):
 @log_errors("export_raw_data")
 @auth_required
 @admin_required
+@rate_limit("export", 12, 60, key="account")
 def export_raw_data(request: AuthorizedRequest):
     """
     Export raw CRM items from Bitrix24 Smart Process to Excel.
