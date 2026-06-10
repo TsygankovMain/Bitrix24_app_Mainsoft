@@ -34,6 +34,10 @@ class Bitrix24Account(models.Model, AbstractBitrixToken):
     expires = models.IntegerField(null=True)
     expires_in = models.IntegerField(null=True)
     current_scope = models.JSONField(null=True)
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="accounts", db_index=True,
+    )
 
     class Meta:
         managed = True
@@ -131,6 +135,32 @@ class Bitrix24Account(models.Model, AbstractBitrixToken):
         return bitrix24_account, is_created
 
 
+class Portal(models.Model):
+    """Tenant-сущность «компания» (этап 0 перестройки мультитенантности, спринт 4).
+
+    Один Portal на каждый member_id Битрикс24. Общие данные компании: домен,
+    статус. Данные (TimesheetItem/ProjectCard) на этапе 4 скоупятся по этому
+    Portal, а не по Bitrix24Account (per-user). Пока (этапы 0-3) FK portal на
+    данных nullable и переключение чтения за флагом USE_PORTAL_SCOPING.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member_id = models.CharField(max_length=255, unique=True)
+    domain_url = models.CharField(max_length=255, null=True, blank=True)
+    status = models.CharField(max_length=50, default="active")
+    created_at_utc = models.DateTimeField(auto_now_add=True)
+    updated_at_utc = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal"
+        indexes = [
+            models.Index(fields=["member_id"], name="portal_member_id_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Portal<{self.member_id}>"
+
+
 class ApplicationInstallation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     status = models.CharField(max_length=50)
@@ -156,6 +186,10 @@ class ApplicationInstallation(models.Model):
 class TimesheetItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     bitrix24_account = models.ForeignKey(Bitrix24Account, on_delete=models.CASCADE, related_name="timesheets")
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="timesheets", db_index=True,
+    )
     bitrix_id = models.IntegerField(db_index=True)
     task_id = models.CharField(max_length=50)
     employee_id = models.CharField(max_length=50)
@@ -190,6 +224,10 @@ class TimesheetItem(models.Model):
 class ProjectCard(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     bitrix24_account = models.ForeignKey(Bitrix24Account, on_delete=models.CASCADE, related_name="project_cards")
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="project_cards", db_index=True,
+    )
     project_item_id = models.CharField(max_length=50, null=True, blank=True, db_index=True)
     project_id = models.CharField(max_length=50, db_index=True)
     project_name = models.CharField(max_length=255)
