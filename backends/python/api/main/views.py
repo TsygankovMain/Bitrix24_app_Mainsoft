@@ -44,6 +44,7 @@ from .report_excel import (
     build_hierarchy_workbook,
     build_matrix_workbook,
     build_table_workbook,
+    _safe_cell_text,
 )
 from .inn_backfill_service import InnBackfillService
 
@@ -2240,7 +2241,7 @@ def export_raw_data(request: AuthorizedRequest):
     # Write headers
     headers = [field_labels.get(fid, fid) for fid in selected_fields]
     for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=str(header))
+        cell = ws.cell(row=1, column=col_idx, value=_safe_cell_text(str(header)))
         cell.font = header_font
         cell.alignment = header_alignment
 
@@ -2259,7 +2260,7 @@ def export_raw_data(request: AuthorizedRequest):
             else:
                 str_value = str(raw_value)
 
-            cell = ws.cell(row=row_idx, column=col_idx, value=str_value)
+            cell = ws.cell(row=row_idx, column=col_idx, value=_safe_cell_text(str_value))
             # Force Excel to treat the cell as text (prevents large numbers → scientific notation)
             cell.number_format = '@'
 

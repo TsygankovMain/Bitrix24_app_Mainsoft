@@ -21,6 +21,7 @@ from main.report_excel import (  # noqa: E402
     build_matrix_workbook,
     build_table_workbook,
     build_project_task_workbook,
+    _safe_cell_text,
 )
 
 
@@ -146,6 +147,30 @@ class TestExcelInjectionTable(TestCase):
         out = build_table_workbook(cols, rows, title="Тест")
         cell = self._get_first_data_cell(out)
         self.assertEqual(cell.value, _SAFE_VALUE)
+
+
+# ---------------------------------------------------------------------------
+# А) Excel-инъекция: контракт _safe_cell_text (используется в export_raw_data,
+#    где Excel собирается инлайн, в обход build_*-функций — views.py:2243/2262)
+# ---------------------------------------------------------------------------
+class TestSafeCellTextContract(TestCase):
+    def test_injection_prefixed(self):
+        for payload in _INJECTION_VALUES:
+            with self.subTest(payload=payload):
+                self.assertTrue(
+                    _safe_cell_text(payload).startswith("'"),
+                    msg=f"Payload «{payload}» не нейтрализован",
+                )
+
+    def test_tab_and_carriage_return_prefixed(self):
+        for payload in ("\tСумма", "\rЗначение"):
+            with self.subTest(payload=payload):
+                self.assertTrue(_safe_cell_text(payload).startswith("'"))
+
+    def test_safe_text_unchanged(self):
+        for value in (_SAFE_VALUE, "ИНН 7701234567", "user@example.com", ""):
+            with self.subTest(value=value):
+                self.assertEqual(_safe_cell_text(value), value)
 
 
 # ---------------------------------------------------------------------------
