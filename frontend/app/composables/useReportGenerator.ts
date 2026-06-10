@@ -32,8 +32,22 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
 
   const hasGenerated = ref(false)
   const syncWarning = ref('')
+  const isGenerating = ref(false)
+  let currentController: AbortController | null = null
 
   async function generateReport<T>(config: GenerateReportOptions<T>) {
+    // Guard от двойного клика: если предыдущая генерация ещё идёт — не запускаем вторую
+    // (иначе второй полный цикл синк+отчёт).
+    if (isGenerating.value) {
+      return null
+    }
+    // Отменяем устаревший запрос, если он ещё жив (страховка).
+    if (currentController) {
+      currentController.abort()
+    }
+    currentController = new AbortController()
+    isGenerating.value = true
+
     options.setLoading?.(true)
     syncWarning.value = ''
 
@@ -92,6 +106,8 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
           total_ms: Math.round(totalMs),
         })
       }
+      isGenerating.value = false
+      currentController = null
       options.setLoading?.(false)
       progress.end()
     }
@@ -104,6 +120,7 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
 
   return {
     hasGenerated,
+    isGenerating,
     syncWarning,
     generateReport,
     resetGenerated
