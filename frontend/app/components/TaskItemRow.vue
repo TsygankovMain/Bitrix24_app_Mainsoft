@@ -33,7 +33,7 @@ const hours = computed(() => parseFloat(props.item.hours).toFixed(2))
             <div class="w-16 text-right text-sm font-bold" :class="isConsidered ? 'text-teal-700' : 'text-slate-400'">
                 {{ hours }} ч
             </div>
-            <button class="rounded-xl p-1.5 text-slate-400 opacity-0 transition-all hover:bg-blue-100 hover:text-[#0075ff] group-hover:opacity-100" @click="$emit('edit', item)">
+            <button class="rounded-xl p-1.5 text-slate-400 opacity-0 transition-all hover:bg-blue-100 hover:text-[#0075ff] group-hover:opacity-100 focus-visible:opacity-100" @click="$emit('edit', item)">
                 <span class="material-symbols-outlined text-lg">edit</span>
             </button>
         </div>
