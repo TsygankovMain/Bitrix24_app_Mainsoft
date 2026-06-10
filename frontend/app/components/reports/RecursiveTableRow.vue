@@ -22,7 +22,7 @@ const props = defineProps({
   }
 })
 
-const isOpen = ref(false) // Default closed
+const isOpen = ref(props.level === 0) // Open first level by default
 
 const hasChildren = computed(() => (props.node.children && props.node.children.length > 0) || (props.node.items && props.node.items.length > 0))
 
@@ -71,7 +71,15 @@ const handleLabelClick = (itemIdElem: string | number) => {
 <template>
   <template v-if="node">
       <!-- Node Row -->
-      <tr :class="['cursor-pointer border-b transition-colors', rowClass]" @click="toggle">
+      <tr
+        :class="['cursor-pointer border-b transition-colors focus:outline-none focus-visible:bg-slate-100', rowClass]"
+        :tabindex="hasChildren ? 0 : undefined"
+        :role="hasChildren ? 'button' : undefined"
+        :aria-expanded="hasChildren ? isOpen : undefined"
+        @click="toggle"
+        @keydown.enter.prevent="toggle"
+        @keydown.space.prevent="toggle"
+      >
         <td class="flex items-start py-3 pr-4 text-sm text-slate-900" :style="{ paddingLeft: paddingLeft }">
             <div v-if="hasChildren" class="mr-2 mt-0.5 text-slate-500">
                  <!-- Chevron Icon -->
