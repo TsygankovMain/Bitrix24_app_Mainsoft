@@ -1,9 +1,15 @@
+import uuid
+
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase, Client
 
 from .models import Bitrix24Account
 from .utils.decorators.sync_lock import account_sync_lock, SyncLockBusy, _advisory_key
+
+# pg_try_advisory_lock(key bigint) — диапазон signed int64.
+BIGINT_MIN = -(2 ** 63)
+BIGINT_MAX = 2 ** 63 - 1
 
 
 class AdvisoryKeyTest(TestCase):
@@ -16,6 +22,45 @@ class AdvisoryKeyTest(TestCase):
         self.assertNotEqual(
             _advisory_key(account_pk=10, scope="timesheet"),
             _advisory_key(account_pk=11, scope="timesheet"),
+        )
+
+
+class AdvisoryKeyBigintRangeTest(TestCase):
+    """PK аккаунта — UUID (128 бит). Наивный int(pk) << 4 переполняет bigint:
+    PostgreSQL отвергает вызов pg_try_advisory_lock => 500 на каждом синке
+    (инцидент прод-деплоя спринта 2 от 2026-06-10). Ключ обязан помещаться
+    в signed int64 для ЛЮБОГО UUID."""
+
+    def test_key_from_uuid_pk_fits_signed_bigint(self):
+        for scope in ("timesheet", "project"):
+            for _ in range(50):
+                key = _advisory_key(account_pk=uuid.uuid4(), scope=scope)
+                self.assertGreaterEqual(key, BIGINT_MIN)
+                self.assertLessEqual(key, BIGINT_MAX)
+
+    def test_key_from_int_pk_fits_signed_bigint(self):
+        key = _advisory_key(account_pk=10, scope="timesheet")
+        self.assertGreaterEqual(key, BIGINT_MIN)
+        self.assertLessEqual(key, BIGINT_MAX)
+
+    def test_key_is_deterministic_across_calls(self):
+        # Два gunicorn-воркера и cron-команда должны получать одинаковый ключ
+        # для одного аккаунта (иначе advisory-замок не замок).
+        pk = uuid.UUID("12345678-1234-5678-1234-567812345678")
+        self.assertEqual(
+            _advisory_key(account_pk=pk, scope="timesheet"),
+            _advisory_key(account_pk=pk, scope="timesheet"),
+        )
+
+    def test_uuid_scopes_and_accounts_produce_distinct_keys(self):
+        pk1, pk2 = uuid.uuid4(), uuid.uuid4()
+        self.assertNotEqual(
+            _advisory_key(account_pk=pk1, scope="timesheet"),
+            _advisory_key(account_pk=pk1, scope="project"),
+        )
+        self.assertNotEqual(
+            _advisory_key(account_pk=pk1, scope="timesheet"),
+            _advisory_key(account_pk=pk2, scope="timesheet"),
         )
 
 
