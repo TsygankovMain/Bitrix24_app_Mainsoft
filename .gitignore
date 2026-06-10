@@ -29,7 +29,7 @@ venv/
 /@tmp
 
 # Local env files
-#.env
+.env
 .env.*
 !.env.example
 !.env.dev.example
@@ -48,3 +48,6 @@ docs/internal/
 
 # Claude Code worktrees (служебное)
 .claude/worktrees/
+
+# Test artifacts
+test.sqlite3

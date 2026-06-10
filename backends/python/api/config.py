@@ -42,6 +42,9 @@ class Config:
     # Support line
     support_openline_code: str
 
+    # Security
+    django_admin_enabled: bool
+
 
 def load_config() -> Config:
     build_target = env.str("BUILD_TARGET", "dev")  # dev or production
@@ -65,6 +68,7 @@ def load_config() -> Config:
         allowed_hosts=parse_csv_env(env.str("DJANGO_ALLOWED_HOSTS", "")),
         cors_allowed_origins=parse_csv_env(env.str("CORS_ALLOWED_ORIGINS", "")),
         support_openline_code=env.str("SUPPORT_OPENLINE_CODE", "2106d29de50818f3e0e36bd949f54f37"),
+        django_admin_enabled=env.bool("DJANGO_ADMIN_ENABLED", False),
     )
 
 

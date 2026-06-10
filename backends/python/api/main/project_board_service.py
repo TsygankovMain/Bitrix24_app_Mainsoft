@@ -1236,6 +1236,7 @@ class ProjectCardService:
                 module=marker,
                 message="; ".join(message_parts),
                 traceback=traceback.format_exc(),
+                bitrix24_account=self.account,
             )
         except Exception:
             logger.warning("Failed to persist %s marker to SystemLog", marker)

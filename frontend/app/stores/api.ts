@@ -115,10 +115,23 @@ export const useApiStore = defineStore(
 
     const tokenJWT = ref('')
 
+    // Сообщение для серверного отказа по правам (admin-only эндпоинты).
+    const FORBIDDEN_MESSAGE = 'Недостаточно прав'
+
     const $api = $fetch.create({
       baseURL: apiUrl,
       headers: {
         'Content-Type': 'application/json'
+      },
+      onResponseError(ctx) {
+        // Бэкенд закрывает админские операции и денежные отчёты декоратором
+        // @admin_required и отвечает 403 {"error": "Недостаточно прав"}.
+        // Приводим ошибку к понятному сообщению, чтобы общий обработчик
+        // (useAppInit.processErrorGlobal) показал его пользователю как обычную ошибку.
+        if (ctx.response?.status === 403) {
+          const data = ctx.response._data as { error?: string } | undefined
+          ctx.error = new Error(data?.error || FORBIDDEN_MESSAGE)
+        }
       }
     })
 

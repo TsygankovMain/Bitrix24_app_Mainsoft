@@ -278,6 +278,7 @@ class ProjectBudgetNotifier:
                 module="project_budget_notifier",
                 message=message,
                 traceback=json.dumps(payload, ensure_ascii=False, default=str)[:15000],
+                bitrix24_account=self.account,
             )
         except Exception as exc:  # pragma: no cover - best effort logging
             logger.warning("Failed to write SystemLog event for notifier: %s", exc)

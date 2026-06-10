@@ -8,7 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.clickjacking import xframe_options_exempt
 
-from .utils.decorators import auth_required, log_errors
+from .utils.decorators import admin_required, auth_required, log_errors, rate_limit
 from .utils import AuthorizedRequest
 from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard
 
@@ -44,6 +44,7 @@ from .report_excel import (
     build_hierarchy_workbook,
     build_matrix_workbook,
     build_table_workbook,
+    _safe_cell_text,
 )
 from .inn_backfill_service import InnBackfillService
 
@@ -512,6 +513,24 @@ def get_list(request: AuthorizedRequest):
     return JsonResponse(elements, safe=False)
 
 
+def _refresh_admin_flag(account) -> None:
+    """Refresh ``account.is_b24_user_admin`` from the Bitrix ``user.admin`` method.
+
+    Called from the auth/install flow once the account token is available. A
+    failed Bitrix call must NOT break authentication — the previous value is kept
+    and only a warning is logged.
+    """
+    try:
+        response = account.client._bitrix_token.call_method("user.admin", {})
+        is_admin = bool(response.get("result") if isinstance(response, dict) else response)
+
+        if account.is_b24_user_admin != is_admin:
+            account.is_b24_user_admin = is_admin
+            account.save(update_fields=["is_b24_user_admin"])
+    except Exception:
+        logger.warning("Could not refresh is_b24_user_admin via user.admin for account %s", account.pk, exc_info=True)
+
+
 @xframe_options_exempt
 @csrf_exempt
 @log_errors("install")
@@ -551,6 +570,8 @@ def install(request):
 def _install_post_logic(request: AuthorizedRequest):
     bitrix24_account = request.bitrix24_account
 
+    _refresh_admin_flag(bitrix24_account)
+
     ApplicationInstallation.objects.update_or_create(
         bitrix_24_account=bitrix24_account,
         defaults={
@@ -567,17 +588,19 @@ def _install_post_logic(request: AuthorizedRequest):
         return JsonResponse({"message": "Installation successful", "config": config, "support": support})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=500)
-    except Exception as e:
-        import traceback
-        return JsonResponse({"error": f"Unexpected error: {str(e)}", "trace": traceback.format_exc()}, status=500)
+    except Exception:
+        logger.exception("Unexpected error during installation")
+        return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)
 
 
 @xframe_options_exempt
 @csrf_exempt
 @require_POST
 @log_errors("get_token")
+@rate_limit("get_token", 10, 60, key="ip_domain")
 @auth_required
 def get_token(request: AuthorizedRequest):
+    _refresh_admin_flag(request.bitrix24_account)
     return JsonResponse({"token": request.bitrix24_account.create_jwt_token()})
 
 
@@ -694,6 +717,8 @@ def get_homepage_portfolio(request: AuthorizedRequest):
 @require_POST
 @log_errors("sync_project_board")
 @auth_required
+@admin_required
+@rate_limit("sync", 6, 60, key="account")
 def sync_project_board(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     incremental_raw = request.GET.get("incremental_since_minutes")
@@ -730,6 +755,7 @@ def sync_project_board(request: AuthorizedRequest):
 @require_POST
 @log_errors("run_project_spa_backfill")
 @auth_required
+@admin_required
 def run_project_spa_backfill(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     return JsonResponse(service.backfill_timesheet_project_items())
@@ -740,6 +766,7 @@ def run_project_spa_backfill(request: AuthorizedRequest):
 @require_POST
 @log_errors("update_project_board")
 @auth_required
+@admin_required
 def update_project_board(request: AuthorizedRequest):
     payload = _load_request_json(request)
     project_id = payload.get("project_id")
@@ -762,6 +789,7 @@ def update_project_board(request: AuthorizedRequest):
 @require_POST
 @log_errors("update_project_board_stage")
 @auth_required
+@admin_required
 def update_project_board_stage(request: AuthorizedRequest):
     payload = _load_request_json(request)
     project_id = payload.get("project_id")
@@ -786,6 +814,7 @@ def update_project_board_stage(request: AuthorizedRequest):
 @require_POST
 @log_errors("archive_project_board")
 @auth_required
+@admin_required
 def archive_project_board(request: AuthorizedRequest):
     payload = _load_request_json(request)
     project_id = payload.get("project_id")
@@ -810,6 +839,7 @@ def archive_project_board(request: AuthorizedRequest):
 @require_POST
 @log_errors("run_project_board_daily_check")
 @auth_required
+@admin_required
 def run_project_board_daily_check(request: AuthorizedRequest):
     service = ProjectStageAutomationService(request.bitrix24_account)
     return JsonResponse(service.run_daily_check())
@@ -819,6 +849,7 @@ def run_project_board_daily_check(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_employee_project")
 @auth_required
+@admin_required
 def report_employee_project(request: AuthorizedRequest):
     profiler = ReportProfiler("report_employee_project", account_id=request.bitrix24_account.pk)
     with profiler.stage("queryset_build"):
@@ -852,6 +883,7 @@ def report_employee_project(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_project_employee")
 @auth_required
+@admin_required
 def report_project_employee(request: AuthorizedRequest):
     profiler = ReportProfiler("report_project_employee", account_id=request.bitrix24_account.pk)
     with profiler.stage("queryset_build"):
@@ -884,6 +916,7 @@ def report_project_employee(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_project_task_employee")
 @auth_required
+@admin_required
 def report_project_task_employee(request: AuthorizedRequest):
     """Report: Project -> Task Hierarchy -> Employee -> Items"""
     profiler = ReportProfiler("report_project_task_employee", account_id=request.bitrix24_account.pk)
@@ -919,6 +952,8 @@ def report_project_task_employee(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_project_task_employee_export")
 @auth_required
+@admin_required
+@rate_limit("export", 12, 60, key="account")
 def report_project_task_employee_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Учет по проектам/задачам» с сохранением иерархии."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -952,6 +987,8 @@ def report_project_task_employee_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_employee_project_export")
 @auth_required
+@admin_required
+@rate_limit("export", 12, 60, key="account")
 def report_employee_project_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «По сотрудникам/проектам» с сохранением иерархии."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -983,6 +1020,8 @@ def report_employee_project_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_project_employee_export")
 @auth_required
+@admin_required
+@rate_limit("export", 12, 60, key="account")
 def report_project_employee_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «По проектам/сотрудникам» с сохранением иерархии."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -1014,6 +1053,7 @@ def report_project_employee_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_daily_workload_export")
 @auth_required
+@rate_limit("export", 12, 60, key="account")
 def report_daily_workload_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Ежедневная нагрузка» в виде матрицы сотрудник×день."""
     from datetime import date
@@ -1085,6 +1125,8 @@ def report_daily_workload_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_revenue_leakage_export")
 @auth_required
+@admin_required
+@rate_limit("export", 12, 60, key="account")
 def report_revenue_leakage_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Потери выручки» в виде таблицы."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -1138,6 +1180,7 @@ def report_revenue_leakage_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_time_entry_discipline_export")
 @auth_required
+@rate_limit("export", 12, 60, key="account")
 def report_time_entry_discipline_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Дисциплина внесения времени» в виде таблицы."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -1189,6 +1232,7 @@ def report_time_entry_discipline_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_focus_analysis_export")
 @auth_required
+@rate_limit("export", 12, 60, key="account")
 def report_focus_analysis_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Фокус и распыление» в виде таблицы."""
     queryset = _get_filtered_timesheet_queryset(request)
@@ -1242,6 +1286,7 @@ def report_focus_analysis_export(request: AuthorizedRequest):
 @require_GET
 @log_errors("report_revenue_leakage")
 @auth_required
+@admin_required
 def report_revenue_leakage(request: AuthorizedRequest):
     profiler = ReportProfiler("report_revenue_leakage", account_id=request.bitrix24_account.pk)
     with profiler.stage("queryset_build"):
@@ -1367,6 +1412,7 @@ def report_focus_analysis(request: AuthorizedRequest):
 @require_POST
 @log_errors("timesheet_sync")
 @auth_required
+@rate_limit("sync", 6, 60, key="account")
 def timesheet_sync(request: AuthorizedRequest):
     profiler = ReportProfiler("timesheet_sync", account_id=request.bitrix24_account.pk)
     with profiler.stage("config"):
@@ -1418,6 +1464,7 @@ def timesheet_sync(request: AuthorizedRequest):
 @require_GET
 @log_errors("timesheet_list")
 @auth_required
+@admin_required
 def timesheet_list(request: AuthorizedRequest):
     queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-created_at', '-bitrix_id')
 
@@ -1471,6 +1518,7 @@ def get_configuration(request: AuthorizedRequest):
 @require_POST
 @log_errors("save_configuration")
 @auth_required
+@admin_required
 def save_configuration(request: AuthorizedRequest):
     service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     try:
@@ -1624,6 +1672,7 @@ def get_project_spa_stages(request: AuthorizedRequest):
 @require_POST
 @log_errors("create_smart_process")
 @auth_required
+@admin_required
 def create_smart_process(request: AuthorizedRequest):
     """Create a new Smart Process from settings page."""
     try:
@@ -1632,8 +1681,9 @@ def create_smart_process(request: AuthorizedRequest):
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+    except Exception:
+        logger.exception("create operation failed")
+        return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)
 
 
 @xframe_options_exempt
@@ -1641,6 +1691,7 @@ def create_smart_process(request: AuthorizedRequest):
 @require_POST
 @log_errors("create_fields")
 @auth_required
+@admin_required
 def create_fields(request: AuthorizedRequest):
     """Create all required fields in the selected Smart Process."""
     import json as json_module
@@ -1655,8 +1706,9 @@ def create_fields(request: AuthorizedRequest):
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+    except Exception:
+        logger.exception("create operation failed")
+        return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)
 
 
 @xframe_options_exempt
@@ -1664,6 +1716,7 @@ def create_fields(request: AuthorizedRequest):
 @require_POST
 @log_errors("create_mapped_field")
 @auth_required
+@admin_required
 def create_mapped_field(request: AuthorizedRequest):
     import json as json_module
     try:
@@ -1682,8 +1735,9 @@ def create_mapped_field(request: AuthorizedRequest):
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+    except Exception:
+        logger.exception("create operation failed")
+        return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)
 
 
 @xframe_options_exempt
@@ -1766,11 +1820,12 @@ def report_daily_workload(request: AuthorizedRequest):
 @require_GET
 @log_errors("get_request_logs")
 @auth_required
+@admin_required
 def get_request_logs(request: AuthorizedRequest):
     page_number = request.GET.get('page', 1)
     page_size = request.GET.get('limit', 50)
     
-    queryset = RequestLog.objects.all().order_by('-timestamp')
+    queryset = RequestLog.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-timestamp')
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
     
@@ -1799,11 +1854,12 @@ def get_request_logs(request: AuthorizedRequest):
 @require_GET
 @log_errors("get_system_logs")
 @auth_required
+@admin_required
 def get_system_logs(request: AuthorizedRequest):
     page_number = request.GET.get('page', 1)
     page_size = request.GET.get('limit', 50)
     
-    queryset = SystemLog.objects.all().order_by('-timestamp')
+    queryset = SystemLog.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-timestamp')
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
     
@@ -1830,6 +1886,7 @@ def get_system_logs(request: AuthorizedRequest):
 @require_GET
 @log_errors("inn_backfill_scan")
 @auth_required
+@admin_required
 def inn_backfill_scan(request: AuthorizedRequest):
     """Поиск карточек списания без ИНН за период + предлагаемые значения из проекта."""
     config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
@@ -1850,6 +1907,7 @@ def inn_backfill_scan(request: AuthorizedRequest):
 @require_POST
 @log_errors("inn_backfill_apply")
 @auth_required
+@admin_required
 def inn_backfill_apply(request: AuthorizedRequest):
     """Запись ИНН в поля OUR_INN/CLIENT_INN выбранных карточек списания (crm.item.update)."""
     try:
@@ -1874,6 +1932,7 @@ def inn_backfill_apply(request: AuthorizedRequest):
 @require_POST
 @log_errors("inn_backfill_project_items")
 @auth_required
+@admin_required
 def inn_backfill_project_items(request: AuthorizedRequest):
     """Резолв карточек проекта для простановки/замены ИНН (запись делает фронт чанками)."""
     try:
@@ -1896,6 +1955,7 @@ def inn_backfill_project_items(request: AuthorizedRequest):
 @require_GET
 @log_errors("projects_health")
 @auth_required
+@admin_required
 def projects_health(request: AuthorizedRequest):
     """Список незаполненных проектов (нет данных для ИНН)."""
     config = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account).get_configuration_sync()
@@ -1908,6 +1968,8 @@ def projects_health(request: AuthorizedRequest):
 @require_POST
 @log_errors("export_raw_data")
 @auth_required
+@admin_required
+@rate_limit("export", 12, 60, key="account")
 def export_raw_data(request: AuthorizedRequest):
     """
     Export raw CRM items from Bitrix24 Smart Process to Excel.
@@ -1937,11 +1999,10 @@ def export_raw_data(request: AuthorizedRequest):
     # Wrapped in try/except: if crm.item.fields fails it should not kill the whole export
     try:
         fields_meta = config_service.get_sp_fields_sync(int(entity_type_id))
-    except Exception as e:
-        import traceback
+    except Exception:
+        logger.exception("export_raw_data: failed to fetch smart-process fields")
         return JsonResponse(
-            {"error": f"Ошибка при получении полей смарт-процесса: {str(e)}",
-             "trace": traceback.format_exc()},
+            {"error": "Внутренняя ошибка сервера"},
             status=500
         )
 
@@ -2112,12 +2173,11 @@ def export_raw_data(request: AuthorizedRequest):
         )
         try:
             all_items = _raw_data_offset_fallback(bx_token, _eid, crm_filter, _select)
-        except Exception as e2:
-            import traceback
+        except Exception:
+            logger.exception("export_raw_data: failed to fetch items from Bitrix24")
             return JsonResponse(
                 {
-                    "error": f"Ошибка при получении данных из Bitrix24: {str(e2)}",
-                    "trace": traceback.format_exc(),
+                    "error": "Внутренняя ошибка сервера",
                 },
                 status=500,
             )
@@ -2184,7 +2244,7 @@ def export_raw_data(request: AuthorizedRequest):
     # Write headers
     headers = [field_labels.get(fid, fid) for fid in selected_fields]
     for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=str(header))
+        cell = ws.cell(row=1, column=col_idx, value=_safe_cell_text(str(header)))
         cell.font = header_font
         cell.alignment = header_alignment
 
@@ -2203,7 +2263,7 @@ def export_raw_data(request: AuthorizedRequest):
             else:
                 str_value = str(raw_value)
 
-            cell = ws.cell(row=row_idx, column=col_idx, value=str_value)
+            cell = ws.cell(row=row_idx, column=col_idx, value=_safe_cell_text(str_value))
             # Force Excel to treat the cell as text (prevents large numbers → scientific notation)
             cell.number_format = '@'
 
