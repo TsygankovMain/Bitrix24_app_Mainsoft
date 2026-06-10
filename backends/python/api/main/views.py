@@ -732,7 +732,7 @@ def sync_project_board(request: AuthorizedRequest):
             return JsonResponse({"error": "incremental_since_minutes must be integer"}, status=400)
     try:
         return JsonResponse(service.sync(incremental_since_minutes=incremental_since_minutes))
-    except Exception as exc:
+    except Exception:
         logger.exception("Project board sync failed for account %s", request.bitrix24_account.pk)
         return JsonResponse(
             {
@@ -747,7 +747,6 @@ def sync_project_board(request: AuthorizedRequest):
                     "Синхронизацию проектов выполнить не удалось. "
                     "Показаны последние сохраненные данные."
                 ),
-                "error": str(exc),
             }
         )
 
@@ -1583,7 +1582,7 @@ def save_configuration(request: AuthorizedRequest):
                 )
                 response_payload["project_sync"] = {
                     "status": "warning",
-                    "warning": str(sync_exc),
+                    "warning": "Автосинхронизация проектов завершилась ошибкой.",
                 }
 
             try:
@@ -1596,7 +1595,7 @@ def save_configuration(request: AuthorizedRequest):
                 )
                 response_payload["timesheet_backfill"] = {
                     "status": "warning",
-                    "warning": str(backfill_exc),
+                    "warning": "Backfill связей меток времени завершился ошибкой.",
                 }
 
         if warnings:
@@ -1605,9 +1604,9 @@ def save_configuration(request: AuthorizedRequest):
         return JsonResponse(response_payload)
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
-    except Exception as e:
-        logger.exception("Configuration save failed: %s", e)
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Configuration save failed")
+        return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)
 
 
 @xframe_options_exempt

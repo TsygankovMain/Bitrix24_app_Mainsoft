@@ -29,3 +29,18 @@ class SyncHonestErrorTest(TestCase):
         body = response.content.decode("utf-8")
         self.assertNotIn("secret trace 12345", body)
         self.assertNotIn("error", payload)  # ключ error удалён из ответа
+
+    @patch("main.views.ProjectSyncService.sync", side_effect=RuntimeError("pg dsn db:5432 secret"))
+    def test_project_board_sync_failure_hides_trace(self, _sync):
+        token = self.account.create_jwt_token()
+        response = Client().post(
+            "/api/project-board/sync",
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get("status"), "warning")
+        body = response.content.decode("utf-8")
+        self.assertNotIn("pg dsn db:5432 secret", body)  # текст исключения не утекает
+        self.assertNotIn("error", payload)  # ключ error удалён
