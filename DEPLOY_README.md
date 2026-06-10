@@ -123,6 +123,21 @@ Handler у обоих placement’ов должен вести на production r
 - загрузку `/api/homepage/portfolio`;
 - загрузку `/api/project-board/meta`.
 
+### Синхронизация (обязательно, по Network-вкладке)
+
+Открыть любой отчёт и убедиться в `Network`:
+
+- `POST /api/sync-timesheets` → `200 {"status": "success", ...}`;
+- на доске проектов `POST /api/project-board/sync` → `200`;
+- в консоли нет 5xx.
+
+Важно: 500 на синке **не ломает страницы визуально** (отчёты работают на
+сохранённых данных) — без Network-проверки дефект незаметен. Прецедент:
+[инцидент 2026-06-10](docs/incidents/2026-06-10-sync-advisory-lock-bigint.md) —
+advisory-lock падал на PostgreSQL, все синки отдавали 500, смоук «по страницам»
+прошёл зелёным. Там же правило: PG-only код (no-op на sqlite) перед релизом
+прогонять на реальном PostgreSQL.
+
 ### Bitrix placements
 
 Проверить внутри Bitrix24:

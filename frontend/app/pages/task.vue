@@ -3,7 +3,7 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { resolveTaskPlacementId, useIframeResizeOnToggle } from '@/composables/useTaskPlacement'
 import { useTaskTreeLoader } from '@/composables/useTaskTreeLoader'
-import type { TaskWorkspaceItem, TaskWorkspaceNode } from '~/types/task-workspace'
+import type { TaskWorkspaceItem, TaskWorkspaceNode, TaskWorkspaceUser } from '~/types/task-workspace'
 
 // --- ICONS ---
 // Using Material Symbols directly via class "material-symbols-outlined" 
@@ -49,6 +49,13 @@ const isReporting = ref(false)
 
 useIframeResizeOnToggle(isReportModalOpen)
 useIframeResizeOnToggle(computed(() => Boolean(editingItem.value)))
+
+const employeeSelectItems = computed(() =>
+    Object.values(usersMap.value as Record<string, TaskWorkspaceUser>).map((u: TaskWorkspaceUser) => ({
+        label: `${u.NAME ?? ''} ${u.LAST_NAME ?? ''}`.trim() || String(u.ID),
+        value: u.ID,
+    }))
+)
 
 // --- INIT LOGIC ---
 
@@ -247,14 +254,8 @@ async function handleTransferToReport() {
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                    <button class="task-secondary-btn" @click="handleExportExcel">
-                        <span class="material-symbols-outlined text-lg">download</span>
-                        <span>Excel (CSV)</span>
-                    </button>
-                    <button class="task-primary-btn" @click="isReportModalOpen = true">
-                        <span class="material-symbols-outlined text-lg">send</span>
-                        <span>В отчет Bitrix24</span>
-                    </button>
+                    <B24Button label="Excel (CSV)" color="default" @click="handleExportExcel" />
+                    <B24Button label="В отчет Bitrix24" color="success" @click="isReportModalOpen = true" />
                 </div>
             </div>
         </section>
@@ -295,154 +296,69 @@ async function handleTransferToReport() {
         </section>
     </div>
 
-    <Teleport to="body">
-    <div v-if="editingItem" class="ms-modal-overlay" @click.self="editingItem = null">
-        <div class="ms-modal-panel flex w-full max-w-2xl flex-col">
-            <div class="ms-modal-header">
-                <div>
-                    <div class="text-sm font-semibold text-slate-900">Редактирование записи</div>
-                    <div class="mt-1 text-xs text-slate-500">Измените сотрудника, часы, дату и описание.</div>
-                </div>
-                <button class="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" @click="editingItem = null">
-                    <span class="material-symbols-outlined">close</span>
-                </button>
+    <B24Modal :open="!!editingItem" @update:open="(v) => { if (!v) editingItem = null }">
+        <template #header>
+            <div>
+                <div class="text-sm font-semibold text-slate-900">Редактирование записи</div>
+                <div class="mt-1 text-xs text-slate-500">Измените сотрудника, часы, дату и описание.</div>
             </div>
-
-            <div class="ms-modal-body space-y-4 overflow-y-auto">
-                 <div>
-                    <label class="task-field-label">Сотрудник</label>
-                    <select v-model="editingItem.employeeId" class="task-field-input w-full">
-                        <option v-for="u in usersMap" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
-                    </select>
-                </div>
+        </template>
+        <template #body>
+            <div v-if="editingItem" class="space-y-4">
+                <B24FormField label="Сотрудник">
+                    <B24Select v-model="editingItem.employeeId" :items="employeeSelectItems" class="w-full" />
+                </B24FormField>
                 <div class="grid gap-4 md:grid-cols-2">
-                     <div>
-                        <label class="task-field-label">Часы</label>
-                        <input v-model="editingItem.hours" type="number" class="task-field-input w-full" step="0.5">
-                    </div>
-                    <label class="task-toggle">
-                        <span class="text-sm font-medium text-slate-700">Учитывать в аналитике</span>
-                        <input v-model="editingItem.isConsidered" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-[#0075ff]">
-                    </label>
+                    <B24FormField label="Часы">
+                        <B24InputNumber v-model="editingItem.hours" :step="0.5" class="w-full" />
+                    </B24FormField>
+                    <B24FormField label="Учитывать в аналитике">
+                        <B24Switch v-model="editingItem.isConsidered" />
+                    </B24FormField>
                 </div>
-                 <div>
-                    <label class="task-field-label">Дата</label>
-                    <input v-model="editingItem.date" type="date" class="task-field-input w-full">
-                </div>
-                 <div>
-                    <label class="task-field-label">Описание</label>
-                    <textarea v-model="editingItem.description" class="task-field-input min-h-28 w-full"/>
-                </div>
+                <B24FormField label="Дата">
+                    <UiDatePickerInput v-model="editingItem.date" placeholder="Выберите дату" />
+                </B24FormField>
+                <B24FormField label="Описание">
+                    <B24Textarea v-model="editingItem.description" :rows="4" class="w-full" />
+                </B24FormField>
             </div>
+        </template>
+        <template #footer>
+            <B24Button label="Отмена" color="link" @click="editingItem = null" />
+            <B24Button label="Сохранить" color="success" @click="editingItem && handleSaveItem(editingItem)" />
+        </template>
+    </B24Modal>
 
-            <div class="ms-modal-footer flex flex-wrap justify-end gap-2">
-                <button class="task-secondary-btn" @click="editingItem = null">Отмена</button>
-                <button class="task-primary-btn" @click="handleSaveItem(editingItem)">Сохранить</button>
+    <B24Modal :open="isReportModalOpen" @update:open="(v) => { if (!v) isReportModalOpen = false }">
+        <template #header>
+            <div>
+                <div class="text-base font-semibold text-slate-900">Отправить часы в отчет Bitrix24?</div>
+                <div class="mt-1 text-xs text-slate-500">Все учтенные часы будут добавлены в задачи Bitrix24 как отработанное время.</div>
             </div>
-        </div>
-    </div>
-    </Teleport>
-
-    <Teleport to="body">
-        <div v-if="isReportModalOpen" class="ms-modal-overlay" @click.self="isReportModalOpen = false">
-            <div class="ms-modal-panel flex w-full max-w-lg flex-col text-center">
-                <div class="ms-modal-body px-6 py-8">
-                    <div class="mx-auto mb-4 inline-flex rounded-2xl bg-blue-100 p-3 text-[#0075ff]">
-                        <span class="material-symbols-outlined text-3xl">cloud_upload</span>
-                    </div>
-                    <h3 class="text-xl font-semibold text-slate-900">Отправить часы в отчет Bitrix24?</h3>
-                    <p class="mt-3 text-sm leading-6 text-slate-500">
-                        Все учтенные часы будут добавлены в задачи Bitrix24 как отработанное время.
-                    </p>
+        </template>
+        <template #body>
+            <div class="flex flex-col items-center gap-3 py-4 text-center">
+                <div class="inline-flex rounded-2xl bg-blue-100 p-3 text-[#0075ff]">
+                    <span class="material-symbols-outlined text-3xl">cloud_upload</span>
                 </div>
-                <div class="ms-modal-footer flex flex-wrap justify-center gap-2">
-                     <button class="task-secondary-btn" @click="isReportModalOpen = false">Отмена</button>
-                     <button :disabled="isReporting" class="task-primary-btn" @click="handleTransferToReport">
-                        <span v-if="isReporting" class="material-symbols-outlined animate-spin text-sm">progress_activity</span>
-                        <span>{{ isReporting ? 'Отправка...' : 'Подтвердить' }}</span>
-                     </button>
-                </div>
+                <p class="text-sm leading-6 text-slate-500">
+                    Записи с флагом «Учитывать в аналитике» будут добавлены как отработанное время в задачи Bitrix24.
+                </p>
             </div>
-        </div>
-    </Teleport>
+        </template>
+        <template #footer>
+            <B24Button label="Отмена" color="link" @click="isReportModalOpen = false" />
+            <B24Button
+                :label="isReporting ? 'Отправка...' : 'Подтвердить'"
+                color="success"
+                :loading="isReporting"
+                :disabled="isReporting"
+                @click="handleTransferToReport"
+            />
+        </template>
+    </B24Modal>
 
 </div>
 </template>
 
-<style scoped>
-.task-primary-btn,
-.task-secondary-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border-radius: 14px;
-  padding: 10px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  transition: 180ms ease;
-}
-
-.task-primary-btn {
-  background: #0075ff;
-  color: #0f172a;
-  box-shadow: 0 8px 20px rgba(183, 234, 44, 0.28);
-}
-
-.task-primary-btn:hover:not(:disabled) {
-  background: #c7f04f;
-}
-
-.task-primary-btn:disabled {
-  opacity: 0.65;
-  cursor: not-allowed;
-}
-
-.task-secondary-btn {
-  border: 1px solid rgba(203, 213, 225, 0.9);
-  background: rgba(255, 255, 255, 0.96);
-  color: #334155;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
-}
-
-.task-secondary-btn:hover {
-  border-color: rgba(148, 163, 184, 0.95);
-  color: #0f172a;
-}
-
-.task-field-label {
-  display: block;
-  margin-bottom: 6px;
-  color: #334155;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.task-field-input {
-  border: 1px solid rgba(203, 213, 225, 0.95);
-  border-radius: 14px;
-  background: #fff;
-  padding: 10px 12px;
-  font-size: 14px;
-  color: #0f172a;
-  outline: none;
-  transition: 180ms ease;
-}
-
-.task-field-input:focus {
-  border-color: #84cc16;
-  box-shadow: 0 0 0 4px rgba(190, 242, 100, 0.25);
-}
-
-.task-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  align-self: end;
-  border: 1px solid rgba(203, 213, 225, 0.95);
-  border-radius: 16px;
-  background: #f8fafc;
-  padding: 12px 14px;
-}
-</style>

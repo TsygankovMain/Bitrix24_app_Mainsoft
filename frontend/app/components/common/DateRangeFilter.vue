@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { getMonthRange, getWeekRange } from '~/utils/reportDateRange'
+import UiDatePickerInput from '~/components/ui/DatePickerInput.vue'
 
 const props = defineProps<{
     dateFrom: string,
@@ -14,6 +15,10 @@ const localTo = ref(props.dateTo)
 
 watch(() => props.dateFrom, (val) => localFrom.value = val)
 watch(() => props.dateTo, (val) => localTo.value = val)
+
+function handleDateChange() {
+    update()
+}
 
 function update() {
     emit('update:dateFrom', localFrom.value)
@@ -38,10 +43,10 @@ function setPreset(preset: 'prev_month' | 'prev_week' | 'cur_month' | 'cur_week'
 <template>
     <div class="flex flex-col gap-2">
         <label class="block text-sm font-medium text-slate-700">Период</label>
-        <div class="flex items-center gap-2">
-            <input v-model="localFrom" type="date" class="min-w-[174px]" @change="update" >
-            <span class="self-center text-slate-400">-</span>
-            <input v-model="localTo" type="date" class="min-w-[174px]" @change="update" >
+        <div class="flex flex-wrap items-center gap-2">
+            <UiDatePickerInput v-model="localFrom" placeholder="Начало периода" @update:modelValue="handleDateChange" />
+            <span class="self-center text-slate-400">—</span>
+            <UiDatePickerInput v-model="localTo" placeholder="Конец периода" @update:modelValue="handleDateChange" />
         </div>
         <div class="flex flex-wrap gap-1.5">
             <button type="button" class="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900" @click="setPreset('cur_week')">Эта неделя</button>

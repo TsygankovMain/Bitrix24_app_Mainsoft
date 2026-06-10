@@ -59,9 +59,9 @@ const {
     loadFilterOptions,
     initCurrentMonthRange,
     applyRouteProjectPreset
-} = useReportFilters()
+} = useReportFilters('project')
 
-const { hasGenerated, generateReport, resetGenerated } = useReportGenerator({
+const { hasGenerated, syncWarning, generateReport, resetGenerated } = useReportGenerator({
     setLoading: (value) => {
         isLoading.value = value
     },
@@ -95,7 +95,8 @@ async function fetchReport() {
             dateTo.value,
             employeeFilter.value,
             projectFilter.value
-        )
+        ),
+        allowSyncFallback: true
     })
 
     if (payload) {
@@ -226,6 +227,10 @@ watch(
                 </div>
             </div>
           </template>
+
+          <div v-if="syncWarning" class="ms-panel-warning">
+              {{ syncWarning }}
+          </div>
 
           <div v-if="isLoading" class="flex justify-center py-8">
               <span class="text-slate-500">Загрузка...</span>

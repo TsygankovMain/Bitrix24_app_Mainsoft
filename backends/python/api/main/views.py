@@ -45,6 +45,7 @@ from .report_excel import (
     build_hierarchy_workbook,
     build_matrix_workbook,
     build_table_workbook,
+    ExportTooLargeError,
     _safe_cell_text,
 )
 from .inn_backfill_service import InnBackfillService
@@ -972,7 +973,10 @@ def report_project_task_employee_export(request: AuthorizedRequest):
 
     date_from = request.GET.get("date_from") or ""
     date_to = request.GET.get("date_to") or ""
-    output = build_project_task_workbook(report, date_from=date_from, date_to=date_to)
+    try:
+        output = build_project_task_workbook(report, date_from=date_from, date_to=date_to)
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     suffix = f"_{date_from}_{date_to}".strip("_")
     filename = f"report_project_task{('_' + suffix) if suffix else ''}.xlsx".replace("__", "_")
@@ -1006,8 +1010,11 @@ def report_employee_project_export(request: AuthorizedRequest):
 
     date_from = request.GET.get("date_from") or ""
     date_to = request.GET.get("date_to") or ""
-    output = build_hierarchy_workbook(roots, title="Отчет по сотрудникам",
-                                      date_from=date_from, date_to=date_to)
+    try:
+        output = build_hierarchy_workbook(roots, title="Отчет по сотрудникам",
+                                          date_from=date_from, date_to=date_to)
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     response = HttpResponse(
         output.read(),
@@ -1039,8 +1046,11 @@ def report_project_employee_export(request: AuthorizedRequest):
 
     date_from = request.GET.get("date_from") or ""
     date_to = request.GET.get("date_to") or ""
-    output = build_hierarchy_workbook(roots, title="Отчет по проектам",
-                                      date_from=date_from, date_to=date_to)
+    try:
+        output = build_hierarchy_workbook(roots, title="Отчет по проектам",
+                                          date_from=date_from, date_to=date_to)
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     response = HttpResponse(
         output.read(),
@@ -1110,9 +1120,12 @@ def report_daily_workload_export(request: AuthorizedRequest):
     ]
 
     report = ReportService().generate_daily_workload(items, user_map, date_from, date_to)
-    output = build_matrix_workbook(report["header_days"], report["rows"],
-                                   title="Ежедневная нагрузка",
-                                   date_from=date_from, date_to=date_to)
+    try:
+        output = build_matrix_workbook(report["header_days"], report["rows"],
+                                       title="Ежедневная нагрузка",
+                                       date_from=date_from, date_to=date_to)
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     response = HttpResponse(
         output.read(),
@@ -1166,8 +1179,11 @@ def report_revenue_leakage_export(request: AuthorizedRequest):
 
     date_from = request.GET.get("date_from") or ""
     date_to = request.GET.get("date_to") or ""
-    output = build_table_workbook(columns, table_rows, title="Потери выручки",
-                                  date_from=date_from, date_to=date_to)
+    try:
+        output = build_table_workbook(columns, table_rows, title="Потери выручки",
+                                      date_from=date_from, date_to=date_to)
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     response = HttpResponse(
         output.read(),
@@ -1218,8 +1234,11 @@ def report_time_entry_discipline_export(request: AuthorizedRequest):
 
     date_from = request.GET.get("date_from") or ""
     date_to = request.GET.get("date_to") or ""
-    output = build_table_workbook(columns, table_rows, title="Дисциплина внесения времени",
-                                  date_from=date_from, date_to=date_to)
+    try:
+        output = build_table_workbook(columns, table_rows, title="Дисциплина внесения времени",
+                                      date_from=date_from, date_to=date_to)
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     response = HttpResponse(
         output.read(),
@@ -1272,8 +1291,11 @@ def report_focus_analysis_export(request: AuthorizedRequest):
 
     date_from = request.GET.get("date_from") or ""
     date_to = request.GET.get("date_to") or ""
-    output = build_table_workbook(columns, table_rows, title="Фокус и распыление",
-                                  date_from=date_from, date_to=date_to)
+    try:
+        output = build_table_workbook(columns, table_rows, title="Фокус и распыление",
+                                      date_from=date_from, date_to=date_to)
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
     response = HttpResponse(
         output.read(),

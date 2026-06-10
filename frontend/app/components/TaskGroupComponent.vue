@@ -74,10 +74,12 @@ function deleteItem(item: TaskWorkspaceItem) {
                     </p>
                 </div>
                 <div class="flex flex-col items-center gap-1">
-                    <button title="Отразить время" class="task-group-create-btn" @click.stop="createForTask">
-                        <span class="material-symbols-outlined text-sm">add_circle</span>
-                        Отразить
-                    </button>
+                    <B24Button
+                        label="Отразить"
+                        color="success"
+                        size="sm"
+                        @click.stop="createForTask"
+                    />
                     <button title="Развернуть/Свернуть" class="rounded-full p-1 transition hover:bg-slate-200" @click.stop="toggleTask">
                         <span class="material-symbols-outlined text-slate-500 transition-transform" :class="{ 'rotate-180': isExpanded }">expand_more</span>
                     </button>
@@ -190,24 +192,7 @@ function deleteItem(item: TaskWorkspaceItem) {
 }
 
 .task-group-header:hover {
-    background: linear-gradient(180deg, rgba(246, 255, 223, 0.96), rgba(241, 245, 249, 0.88));
-}
-
-.task-group-create-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    border-radius: 12px;
-    background: #0075ff;
-    color: #0f172a;
-    padding: 8px 10px;
-    font-size: 12px;
-    font-weight: 700;
-    transition: 180ms ease;
-}
-
-.task-group-create-btn:hover {
-    background: #c7f04f;
+    background: linear-gradient(180deg, rgba(239, 246, 255, 0.96), rgba(241, 245, 249, 0.88));
 }
 
 .task-group-row {
@@ -222,12 +207,12 @@ function deleteItem(item: TaskWorkspaceItem) {
 }
 
 .task-group-row:hover {
-    background: rgba(236, 252, 203, 0.35);
+    background: rgba(239, 246, 255, 0.55);
 }
 
 .task-group-row-active {
-    background: rgba(236, 252, 203, 0.55);
-    box-shadow: inset 3px 0 0 #84cc16;
+    background: rgba(219, 234, 254, 0.55);
+    box-shadow: inset 3px 0 0 #0075ff;
 }
 
 .task-group-action-btn {
@@ -243,9 +228,13 @@ function deleteItem(item: TaskWorkspaceItem) {
     opacity: 1;
 }
 
+.task-group-action-btn:focus-visible {
+    opacity: 1;
+}
+
 .task-group-action-btn:hover {
-    color: #65a30d;
-    background: rgba(217, 249, 157, 0.55);
+    color: #0075ff;
+    background: rgba(219, 234, 254, 0.55);
 }
 
 .task-group-delete-btn {
@@ -258,6 +247,10 @@ function deleteItem(item: TaskWorkspaceItem) {
 }
 
 .task-group-row:hover .task-group-delete-btn {
+    opacity: 1;
+}
+
+.task-group-delete-btn:focus-visible {
     opacity: 1;
 }
 

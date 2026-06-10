@@ -19,6 +19,14 @@ python manage.py collectstatic --noinput || echo "ERROR: collectstatic failed. C
 # запроса (CONN_MAX_AGE=0), утечки нет. Воркеры/потоки ограничены, чтобы суммарно
 # держать заметно меньше доступного лимита соединений. timeout 300 — на долгие синки.
 echo -e "${GREEN}Starting Gunicorn (WSGI) server...${NC}"
+
+# Встроенный планировщик (App Platform не имеет внешнего cron):
+# синхронизация ПРОЕКТОВ раз в 3 часа. Трудозатраты синкаются по запросу при открытии отчёта.
+# Цикл — отдельный дочерний процесс; переживает exec gunicorn. Сначала спим, чтобы не
+# конкурировать со стартом/миграциями; advisory-lock (scope=project) защищает от дублей
+# при нескольких инстансах App Platform.
+( while true; do sleep 10800; python manage.py sync_all_portals --scope project || true; done ) &
+
 exec gunicorn wsgi:application \
     --bind 0.0.0.0:8000 \
     --worker-class gthread \
