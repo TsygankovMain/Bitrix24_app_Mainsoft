@@ -18,6 +18,7 @@ class TimesheetSyncService:
     BASE_RETRY_DELAY = 2.0
     THROTTLE_DELAY = 0.5
     BULK_BATCH_SIZE = 200
+    DELETE_SAFETY_RATIO = 0.5
     SCOPED_SAVE_CHUNK = 500
     UPSERT_FIELDS = [
         "task_id",
@@ -112,6 +113,7 @@ class TimesheetSyncService:
         total_fetched = 0
         all_bitrix_ids = set()
         all_new_cards: List[Dict[str, Any]] = []
+        traversal_complete = False
 
         while True:
             try:
@@ -167,6 +169,7 @@ class TimesheetSyncService:
                 last_id = batch_max_id
 
                 if count < page_size:
+                    traversal_complete = True
                     break
 
                 time.sleep(self.THROTTLE_DELAY)
@@ -175,13 +178,32 @@ class TimesheetSyncService:
                 raise
 
         if all_bitrix_ids:
-            deleted_count, _ = (
-                TimesheetItem.objects.filter(bitrix24_account=self.account)
-                .exclude(bitrix_id__in=all_bitrix_ids)
-                .delete()
+            current_count = TimesheetItem.objects.filter(
+                bitrix24_account=self.account
+            ).count()
+            collected = len(all_bitrix_ids)
+            safe_to_delete = (
+                traversal_complete
+                or current_count == 0
+                or collected >= self.DELETE_SAFETY_RATIO * current_count
             )
-            if deleted_count > 0:
-                logger.info("Deleted %s orphaned records", deleted_count)
+            if safe_to_delete:
+                deleted_count, _ = (
+                    TimesheetItem.objects.filter(bitrix24_account=self.account)
+                    .exclude(bitrix_id__in=all_bitrix_ids)
+                    .delete()
+                )
+                if deleted_count > 0:
+                    logger.info("Deleted %s orphaned records", deleted_count)
+            else:
+                logger.warning(
+                    "Full sync: traversal looks incomplete "
+                    "(collected=%s, db_count=%s, complete=%s); "
+                    "SKIP orphan deletion (safety).",
+                    collected,
+                    current_count,
+                    traversal_complete,
+                )
 
         self._autofill_inn(all_new_cards)
 
