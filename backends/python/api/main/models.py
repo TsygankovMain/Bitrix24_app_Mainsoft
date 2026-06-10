@@ -278,3 +278,25 @@ class SystemLog(models.Model):
         indexes = [
             models.Index(fields=["timestamp"], name="system_log_ts_idx"),
         ]
+
+
+class SyncRun(models.Model):
+    """Журнал запусков фоновой синхронизации по расписанию (задача 3.6)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    scope = models.CharField(max_length=20, default="timesheet")  # timesheet | project | all
+    status = models.CharField(max_length=20, default="running")   # running|success|partial|error
+    portals_total = models.IntegerField(default=0)
+    portals_synced = models.IntegerField(default=0)
+    items_synced = models.IntegerField(default=0)
+    window_days = models.IntegerField(default=7)
+    error_summary = models.TextField(null=True, blank=True)
+
+    class Meta:
+        managed = True
+        db_table = "sync_run"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["started_at"], name="sync_run_started_idx"),
+        ]
