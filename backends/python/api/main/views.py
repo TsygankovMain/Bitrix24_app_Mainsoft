@@ -9,6 +9,7 @@ from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.clickjacking import xframe_options_exempt
 
 from .utils.decorators import admin_required, auth_required, log_errors, rate_limit
+from .utils.decorators.sync_lock import sync_lock, account_sync_lock, SyncLockBusy
 from .utils import AuthorizedRequest
 from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard
 
@@ -719,6 +720,7 @@ def get_homepage_portfolio(request: AuthorizedRequest):
 @auth_required
 @admin_required
 @rate_limit("sync", 6, 60, key="account")
+@sync_lock("project")
 def sync_project_board(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     incremental_raw = request.GET.get("incremental_since_minutes")
@@ -730,7 +732,7 @@ def sync_project_board(request: AuthorizedRequest):
             return JsonResponse({"error": "incremental_since_minutes must be integer"}, status=400)
     try:
         return JsonResponse(service.sync(incremental_since_minutes=incremental_since_minutes))
-    except Exception as exc:
+    except Exception:
         logger.exception("Project board sync failed for account %s", request.bitrix24_account.pk)
         return JsonResponse(
             {
@@ -745,7 +747,6 @@ def sync_project_board(request: AuthorizedRequest):
                     "Синхронизацию проектов выполнить не удалось. "
                     "Показаны последние сохраненные данные."
                 ),
-                "error": str(exc),
             }
         )
 
@@ -1413,6 +1414,7 @@ def report_focus_analysis(request: AuthorizedRequest):
 @log_errors("timesheet_sync")
 @auth_required
 @rate_limit("sync", 6, 60, key="account")
+@sync_lock("timesheet")
 def timesheet_sync(request: AuthorizedRequest):
     profiler = ReportProfiler("timesheet_sync", account_id=request.bitrix24_account.pk)
     with profiler.stage("config"):
@@ -1438,7 +1440,7 @@ def timesheet_sync(request: AuthorizedRequest):
             with profiler.stage("refresh_writeoff_stats"):
                 project_card_service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
                 project_card_service.refresh_writeoff_stats()
-    except Exception as exc:
+    except Exception:
         logger.exception("Timesheet sync failed for account %s", request.bitrix24_account.pk)
         profiler.set_metric("status", "error")
         profiler.log()
@@ -1447,7 +1449,6 @@ def timesheet_sync(request: AuthorizedRequest):
                 "status": "warning",
                 "count": 0,
                 "warning": "Не удалось обновить данные из Битрикс24. Используются последние сохраненные данные.",
-                "error": str(exc),
             }
         )
 
@@ -1563,8 +1564,17 @@ def save_configuration(request: AuthorizedRequest):
         if should_validate_project_spa:
             project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
             try:
-                sync_result = project_sync_service.sync()
+                with account_sync_lock(request.bitrix24_account, scope="project"):
+                    sync_result = project_sync_service.sync()
                 response_payload["project_sync"] = sync_result
+            except SyncLockBusy:
+                warnings.append(
+                    "Синхронизация проектов уже выполняется, повторите позже."
+                )
+                response_payload["project_sync"] = {
+                    "status": "warning",
+                    "warning": "Синхронизация проектов уже выполняется, повторите позже.",
+                }
             except Exception as sync_exc:
                 logger.exception("Configuration save project sync failed: %s", sync_exc)
                 warnings.append(
@@ -1572,7 +1582,7 @@ def save_configuration(request: AuthorizedRequest):
                 )
                 response_payload["project_sync"] = {
                     "status": "warning",
-                    "warning": str(sync_exc),
+                    "warning": "Автосинхронизация проектов завершилась ошибкой.",
                 }
 
             try:
@@ -1585,7 +1595,7 @@ def save_configuration(request: AuthorizedRequest):
                 )
                 response_payload["timesheet_backfill"] = {
                     "status": "warning",
-                    "warning": str(backfill_exc),
+                    "warning": "Backfill связей меток времени завершился ошибкой.",
                 }
 
         if warnings:
@@ -1594,9 +1604,9 @@ def save_configuration(request: AuthorizedRequest):
         return JsonResponse(response_payload)
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
-    except Exception as e:
-        logger.exception("Configuration save failed: %s", e)
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Configuration save failed")
+        return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)
 
 
 @xframe_options_exempt

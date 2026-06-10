@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -10,6 +11,7 @@ from .models import Bitrix24Account
 from .project_board_shared import (
     BITRIX_REFERENCE_CACHE_TTL,
     FILTER_EMPLOYEES_CACHE_SUFFIX,
+    USER_NAMES_CACHE_PREFIX,
     build_account_cache_key,
 )
 
@@ -64,6 +66,17 @@ class BitrixDataService:
         if not numeric_to_aliases:
             return {}
 
+        cache_key = None
+        if self.account:
+            numeric_ids_sorted = sorted(numeric_to_aliases.keys(), key=lambda x: int(x))
+            digest = hashlib.sha1(",".join(numeric_ids_sorted).encode("utf-8")).hexdigest()[:16]
+            cache_key = build_account_cache_key(self.account, f"{USER_NAMES_CACHE_PREFIX}:{digest}")
+            cached = cache.get(cache_key)
+            if cached:
+                return cached
+            if cached == {}:
+                cache.delete(cache_key)
+
         try:
             response = self.client._bitrix_token.call_method(
                 "user.get",
@@ -79,6 +92,12 @@ class BitrixDataService:
                 name = self._build_user_name(user, numeric_id)
                 for alias in numeric_to_aliases.get(numeric_id, {numeric_id}):
                     user_map[alias] = name
+
+            if cache_key is not None:
+                if user_map:
+                    cache.set(cache_key, user_map, BITRIX_REFERENCE_CACHE_TTL)
+                else:
+                    cache.delete(cache_key)
             return user_map
         except Exception as exc:
             logger.error("Error fetching users: %s", exc)

@@ -32,8 +32,22 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
 
   const hasGenerated = ref(false)
   const syncWarning = ref('')
+  const isGenerating = ref(false)
+  let currentController: AbortController | null = null
 
   async function generateReport<T>(config: GenerateReportOptions<T>) {
+    // Guard от двойного клика: если предыдущая генерация ещё идёт — не запускаем вторую
+    // (иначе второй полный цикл синк+отчёт).
+    if (isGenerating.value) {
+      return null
+    }
+    // Отменяем устаревший запрос, если он ещё жив (страховка).
+    if (currentController) {
+      currentController.abort()
+    }
+    currentController = new AbortController()
+    isGenerating.value = true
+
     options.setLoading?.(true)
     syncWarning.value = ''
 
@@ -55,13 +69,17 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
       if (willSync) {
         const syncStart = perfEnabled ? performance.now() : 0
         try {
-          await apiStore.syncTimesheets(config.syncDateFrom, config.syncDateTo)
+          const syncResult = await apiStore.syncTimesheets(config.syncDateFrom, config.syncDateTo)
+          if (syncResult?.status === 'warning') {
+            syncWarning.value = config.syncWarningMessage
+              || 'Не удалось обновить данные из Битрикс24. Показаны последние сохраненные данные.'
+          }
         } catch (error) {
           if (!config.allowSyncFallback) {
             throw error
           }
-
-          syncWarning.value = config.syncWarningMessage || 'Не удалось обновить данные из Битрикс24. Показаны последние сохраненные данные.'
+          syncWarning.value = config.syncWarningMessage
+            || 'Не удалось обновить данные из Битрикс24. Показаны последние сохраненные данные.'
         } finally {
           if (perfEnabled) {
             syncMs = performance.now() - syncStart
@@ -92,6 +110,8 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
           total_ms: Math.round(totalMs),
         })
       }
+      isGenerating.value = false
+      currentController = null
       options.setLoading?.(false)
       progress.end()
     }
@@ -104,6 +124,7 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
 
   return {
     hasGenerated,
+    isGenerating,
     syncWarning,
     generateReport,
     resetGenerated

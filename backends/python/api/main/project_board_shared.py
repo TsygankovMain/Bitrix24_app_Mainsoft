@@ -48,6 +48,7 @@ BITRIX_REFERENCE_CACHE_TTL = 60 * 30
 PROJECT_BOARD_CACHE_TTL = 60 * 2
 HOMEPAGE_CACHE_TTL = 60 * 2
 FILTER_EMPLOYEES_CACHE_SUFFIX = "filter-employees-v3"
+USER_NAMES_CACHE_PREFIX = "user-names-v1"
 
 
 def build_account_cache_key(account: Bitrix24Account, suffix: str) -> str:
