@@ -29,6 +29,7 @@ from .project_board_shared import (
     get_project_card_queryset,
     invalidate_project_runtime_caches,
 )
+from .tenant_scoping import scope_to_tenant
 
 
 logger = logging.getLogger(__name__)
@@ -518,7 +519,7 @@ class ProjectCardService:
 
         try:
             item_rows = (
-                TimesheetItem.objects.filter(bitrix24_account=self.account)
+                TimesheetItem.objects.filter(**scope_to_tenant(self.account))
                 .exclude(project_item_id__isnull=True)
                 .exclude(project_item_id="")
                 .values("project_item_id")
@@ -536,7 +537,7 @@ class ProjectCardService:
             )
 
         id_rows = (
-            TimesheetItem.objects.filter(bitrix24_account=self.account)
+            TimesheetItem.objects.filter(**scope_to_tenant(self.account))
             .exclude(project_id__isnull=True)
             .exclude(project_id="")
             .values("project_id")
@@ -548,7 +549,7 @@ class ProjectCardService:
                 by_project_id[project_id] = row["last_writeoff_at"]
 
         title_rows = (
-            TimesheetItem.objects.filter(bitrix24_account=self.account)
+            TimesheetItem.objects.filter(**scope_to_tenant(self.account))
             .exclude(project_title__isnull=True)
             .exclude(project_title="")
             .values("project_title")
@@ -1044,7 +1045,7 @@ class ProjectCardService:
 
     def _get_revenue_leakage_rows(self, limit: int = 5) -> List[Dict[str, Any]]:
         recent_from = timezone.localdate() - timedelta(days=90)
-        queryset = TimesheetItem.objects.filter(bitrix24_account=self.account, date_reflection__gte=datetime.combine(recent_from, datetime.min.time(), tzinfo=timezone.get_current_timezone()))
+        queryset = TimesheetItem.objects.filter(**scope_to_tenant(self.account), date_reflection__gte=datetime.combine(recent_from, datetime.min.time(), tzinfo=timezone.get_current_timezone()))
 
         archived_cards = get_project_card_queryset(self.account).filter(is_archived=True)
         archived_project_item_ids = archived_cards.exclude(project_item_id__isnull=True).exclude(project_item_id="").values("project_item_id")
@@ -1242,7 +1243,7 @@ class ProjectCardService:
             logger.warning("Failed to persist %s marker to SystemLog", marker)
 
     def _get_card(self, project_id: str) -> ProjectCard:
-        return ProjectCard.objects.get(bitrix24_account=self.account, project_id=str(project_id))
+        return ProjectCard.objects.get(**scope_to_tenant(self.account), project_id=str(project_id))
 
     def _fetch_paginated(self, method: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Загружает все страницы списочного метода Bitrix24.

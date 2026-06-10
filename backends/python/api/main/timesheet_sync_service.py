@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from .models import Bitrix24Account, TimesheetItem
 from .report_services import DataProcessingService
+from .tenant_scoping import scope_to_tenant
 
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,7 @@ class TimesheetSyncService:
 
         if all_bitrix_ids:
             current_count = TimesheetItem.objects.filter(
-                bitrix24_account=self.account
+                **scope_to_tenant(self.account)
             ).count()
             collected = len(all_bitrix_ids)
             safe_to_delete = (
@@ -189,7 +190,7 @@ class TimesheetSyncService:
             )
             if safe_to_delete:
                 deleted_count, _ = (
-                    TimesheetItem.objects.filter(bitrix24_account=self.account)
+                    TimesheetItem.objects.filter(**scope_to_tenant(self.account))
                     .exclude(bitrix_id__in=all_bitrix_ids)
                     .delete()
                 )
@@ -378,7 +379,7 @@ class TimesheetSyncService:
         try:
             deleted_count, _ = (
                 TimesheetItem.objects.filter(
-                    bitrix24_account=self.account,
+                    **scope_to_tenant(self.account),
                     date_reflection__date__gte=date_from,
                     date_reflection__date__lte=date_to,
                 )
@@ -450,7 +451,7 @@ class TimesheetSyncService:
         existing_items = {
             item.bitrix_id: item
             for item in TimesheetItem.objects.filter(
-                bitrix24_account=self.account,
+                **scope_to_tenant(self.account),
                 bitrix_id__in=bitrix_ids,
             )
         }
@@ -462,7 +463,7 @@ class TimesheetSyncService:
             if existing_item is None:
                 to_create.append(
                     TimesheetItem(
-                        bitrix24_account=self.account,
+                        **scope_to_tenant(self.account, write=True),
                         bitrix_id=bitrix_id,
                         created_at=now,
                         updated_at=now,

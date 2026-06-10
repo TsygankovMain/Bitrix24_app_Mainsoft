@@ -19,6 +19,7 @@ from .project_board_shared import (
     invalidate_project_runtime_caches,
 )
 from .stage_automation_service import ProjectStageAutomationService
+from .tenant_scoping import scope_to_tenant
 
 
 logger = logging.getLogger(__name__)
@@ -163,7 +164,7 @@ class ProjectSyncService:
             existing = existing_cards.get(project_id)
             if existing is None:
                 ProjectCard.objects.create(
-                    bitrix24_account=self.account,
+                    **scope_to_tenant(self.account, write=True),
                     project_id=project_id,
                     project_name=normalized["project_name"],
                     stage=normalized["initial_stage"],
@@ -278,7 +279,7 @@ class ProjectSyncService:
 
             if existing is None:
                 card = ProjectCard.objects.create(
-                    bitrix24_account=self.account,
+                    **scope_to_tenant(self.account, write=True),
                     project_item_id=project_item_id,
                     project_id=bitrix_group_id,
                     project_name=normalized["project_name"],
@@ -567,7 +568,7 @@ class ProjectSyncService:
             if self._clean_str(card.get("project_name")) and self._clean_str(card.get("project_item_id"))
         }
 
-        queryset = TimesheetItem.objects.filter(bitrix24_account=self.account).filter(
+        queryset = TimesheetItem.objects.filter(**scope_to_tenant(self.account)).filter(
             Q(project_item_id__isnull=True) | Q(project_item_id="")
         )
         scanned = 0

@@ -5,6 +5,7 @@ from django.core.cache import cache
 from django.db import connection
 
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
+from .tenant_scoping import scope_to_tenant
 
 
 logger = logging.getLogger(__name__)
@@ -158,12 +159,12 @@ def _ensure_linkage_columns() -> None:
 def get_project_card_queryset(account: Bitrix24Account):
     if not ensure_project_card_schema():
         return ProjectCard.objects.none()
-    return ProjectCard.objects.filter(bitrix24_account=account)
+    return ProjectCard.objects.filter(**scope_to_tenant(account))
 
 
 def build_local_project_groups(account: Bitrix24Account) -> List[Dict[str, Any]]:
     rows = (
-        TimesheetItem.objects.filter(bitrix24_account=account)
+        TimesheetItem.objects.filter(**scope_to_tenant(account))
         .exclude(project_id__isnull=True)
         .exclude(project_id="")
         .values("project_id", "project_title")
