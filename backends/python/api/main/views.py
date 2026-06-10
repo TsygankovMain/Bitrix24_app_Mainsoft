@@ -9,6 +9,7 @@ from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.clickjacking import xframe_options_exempt
 
 from .utils.decorators import admin_required, auth_required, log_errors, rate_limit
+from .utils.decorators.sync_lock import sync_lock, account_sync_lock, SyncLockBusy
 from .utils import AuthorizedRequest
 from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard
 
@@ -719,6 +720,7 @@ def get_homepage_portfolio(request: AuthorizedRequest):
 @auth_required
 @admin_required
 @rate_limit("sync", 6, 60, key="account")
+@sync_lock("project")
 def sync_project_board(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     incremental_raw = request.GET.get("incremental_since_minutes")
@@ -1413,6 +1415,7 @@ def report_focus_analysis(request: AuthorizedRequest):
 @log_errors("timesheet_sync")
 @auth_required
 @rate_limit("sync", 6, 60, key="account")
+@sync_lock("timesheet")
 def timesheet_sync(request: AuthorizedRequest):
     profiler = ReportProfiler("timesheet_sync", account_id=request.bitrix24_account.pk)
     with profiler.stage("config"):
@@ -1563,8 +1566,17 @@ def save_configuration(request: AuthorizedRequest):
         if should_validate_project_spa:
             project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
             try:
-                sync_result = project_sync_service.sync()
+                with account_sync_lock(request.bitrix24_account, scope="project"):
+                    sync_result = project_sync_service.sync()
                 response_payload["project_sync"] = sync_result
+            except SyncLockBusy:
+                warnings.append(
+                    "Синхронизация проектов уже выполняется, повторите позже."
+                )
+                response_payload["project_sync"] = {
+                    "status": "warning",
+                    "warning": "Синхронизация проектов уже выполняется, повторите позже.",
+                }
             except Exception as sync_exc:
                 logger.exception("Configuration save project sync failed: %s", sync_exc)
                 warnings.append(
