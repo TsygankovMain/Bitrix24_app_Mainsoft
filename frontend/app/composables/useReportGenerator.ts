@@ -69,13 +69,17 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
       if (willSync) {
         const syncStart = perfEnabled ? performance.now() : 0
         try {
-          await apiStore.syncTimesheets(config.syncDateFrom, config.syncDateTo)
+          const syncResult = await apiStore.syncTimesheets(config.syncDateFrom, config.syncDateTo)
+          if (syncResult?.status === 'warning') {
+            syncWarning.value = config.syncWarningMessage
+              || 'Не удалось обновить данные из Битрикс24. Показаны последние сохраненные данные.'
+          }
         } catch (error) {
           if (!config.allowSyncFallback) {
             throw error
           }
-
-          syncWarning.value = config.syncWarningMessage || 'Не удалось обновить данные из Битрикс24. Показаны последние сохраненные данные.'
+          syncWarning.value = config.syncWarningMessage
+            || 'Не удалось обновить данные из Битрикс24. Показаны последние сохраненные данные.'
         } finally {
           if (perfEnabled) {
             syncMs = performance.now() - syncStart

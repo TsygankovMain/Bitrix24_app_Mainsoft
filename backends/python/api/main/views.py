@@ -1441,7 +1441,7 @@ def timesheet_sync(request: AuthorizedRequest):
             with profiler.stage("refresh_writeoff_stats"):
                 project_card_service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
                 project_card_service.refresh_writeoff_stats()
-    except Exception as exc:
+    except Exception:
         logger.exception("Timesheet sync failed for account %s", request.bitrix24_account.pk)
         profiler.set_metric("status", "error")
         profiler.log()
@@ -1450,7 +1450,6 @@ def timesheet_sync(request: AuthorizedRequest):
                 "status": "warning",
                 "count": 0,
                 "warning": "Не удалось обновить данные из Битрикс24. Используются последние сохраненные данные.",
-                "error": str(exc),
             }
         )
 
