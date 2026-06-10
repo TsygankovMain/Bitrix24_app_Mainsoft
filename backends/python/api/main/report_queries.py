@@ -36,11 +36,21 @@ def build_filtered_timesheet_queryset(account: Bitrix24Account, params: Mapping[
         queryset = queryset.filter(date_reflection__lt=_next_day_start(date_to))
 
     archived_cards = get_project_card_queryset(account).filter(is_archived=True)
-    archived_item_ids = archived_cards.exclude(project_item_id__isnull=True).exclude(project_item_id="").values("project_item_id")
-    archived_ids = archived_cards.exclude(project_id__isnull=True).exclude(project_id="").values("project_id")
-    archived_names = archived_cards.exclude(project_name__isnull=True).exclude(project_name="").values("project_name")
+    archived_rows = archived_cards.values_list("project_item_id", "project_id", "project_name")
+    archived_item_ids = set()
+    archived_ids = set()
+    archived_names = set()
+    for item_id, group_id, name in archived_rows:
+        if item_id:
+            archived_item_ids.add(item_id)
+        if group_id:
+            archived_ids.add(group_id)
+        if name:
+            archived_names.add(name)
     queryset = queryset.exclude(
-        Q(project_item_id__in=archived_item_ids) | Q(project_id__in=archived_ids) | Q(project_title__in=archived_names)
+        Q(project_item_id__in=archived_item_ids)
+        | Q(project_id__in=archived_ids)
+        | Q(project_title__in=archived_names)
     )
 
     employee_ids = _normalize_multi_value(params.get("employee_ids") or params.get("employee_ids[]"))
@@ -69,17 +79,19 @@ def materialize_rows(queryset, fields: Sequence[str]) -> List[Dict[str, Any]]:
 
 
 def build_project_title_lookups(account: Bitrix24Account) -> tuple[Dict[str, str], Dict[str, str]]:
-    cards = get_project_card_queryset(account).exclude(project_name__isnull=True).exclude(project_name="")
-    by_item = {
-        str(card.project_item_id).strip(): card.project_name
-        for card in cards
-        if card.project_item_id
-    }
-    by_group = {
-        str(card.project_id).strip(): card.project_name
-        for card in cards
-        if card.project_id
-    }
+    rows = (
+        get_project_card_queryset(account)
+        .exclude(project_name__isnull=True)
+        .exclude(project_name="")
+        .values_list("project_item_id", "project_id", "project_name")
+    )
+    by_item: Dict[str, str] = {}
+    by_group: Dict[str, str] = {}
+    for project_item_id, project_id, project_name in rows:
+        if project_item_id:
+            by_item[str(project_item_id).strip()] = project_name
+        if project_id:
+            by_group[str(project_id).strip()] = project_name
     return by_item, by_group
 
 
