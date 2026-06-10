@@ -88,21 +88,10 @@ const selectedFields = ref<string[]>([])
 const isExporting = ref(false)
 const isLoadingFields = ref(false)
 
-// Status bar: tracks all loading states with descriptive messages
-const isAnyLoading = computed(() =>
-  isLoading.value || isSyncing.value || isExporting.value || isLoadingFields.value
-)
-
-const statusMessage = computed(() => {
-  if (isSyncing.value)      return 'Синхронизация с Битрикс24... Это может занять некоторое время'
-  if (isExporting.value)    return 'Формируется Excel: получение данных и имён сотрудников из Битрикс24...'
-  if (isLoadingFields.value) return 'Загрузка полей смарт-процесса...'
-  if (isLoading.value)      return 'Загрузка данных...'
-  return ''
-})
 
 const loadSpFields = async () => {
     isLoadingFields.value = true
+    progress.begin('Загрузка полей смарт-процесса', 0, 'Получаем список полей из Bitrix24')
     try {
         console.log('[RawData] loadSpFields: calling getConfiguration()')
         const configResp = await apiStore.getConfiguration()
@@ -142,6 +131,7 @@ const loadSpFields = async () => {
          console.warn("Could not load SP fields for export", e)
     } finally {
         isLoadingFields.value = false
+        progress.end()
     }
 }
 
@@ -192,12 +182,14 @@ const handleExport = async () => {
 
 async function applyFilter() {
     isLoading.value = true
+    progress.begin('Загрузка данных', 0, 'Запрашиваем список списаний...')
     try {
         await fetchTimesheetList(1)
     } catch(e) {
         processErrorGlobal(e)
     } finally {
         isLoading.value = false
+        progress.end()
     }
 }
 
@@ -205,12 +197,14 @@ async function resetFilter() {
     filterCreatedFrom.value = ''
     filterCreatedTo.value = ''
     isLoading.value = true
+    progress.begin('Загрузка данных', 0, 'Сбрасываем фильтр и загружаем список...')
     try {
         await fetchTimesheetList(1)
     } catch(e) {
         processErrorGlobal(e)
     } finally {
         isLoading.value = false
+        progress.end()
     }
 }
 
@@ -233,19 +227,22 @@ async function handleSync() {
 async function changePage(newPage: number) {
     if (newPage < 1 || newPage > itemsPages.value) return
     isLoading.value = true
+    progress.begin('Загрузка данных', 0, `Загружаем страницу ${newPage}...`)
     try {
         await fetchTimesheetList(newPage)
     } catch(e) {
         processErrorGlobal(e)
     } finally {
         isLoading.value = false
+        progress.end()
     }
 }
 
 // region Lifecycle Hooks ////
 onMounted(async () => {
+  progress.begin('Загрузка данных', 0, 'Инициализация страницы...')
+  isLoading.value = true
   try {
-    isLoading.value = true
     $b24 = await $initializeB24Frame()
     await initApp($b24, localesI18n, setLocale)
     await $b24.parent.setTitle('Проверка данных')
@@ -258,39 +255,21 @@ onMounted(async () => {
     const today = new Date()
     dateFrom.value = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0] || ''
     dateTo.value = today.toISOString().split('T')[0] || ''
-
-    // Load fields for export options
-    await loadSpFields()
   } catch (error) {
     processErrorGlobal(error)
   } finally {
     isLoading.value = false
+    progress.end()
   }
+
+  // Load fields for export options (separate operation — own progress.begin/end inside loadSpFields)
+  await loadSpFields()
 })
 // endregion ////
 </script>
 
 <template>
   <B24Container>
-
-    <!-- ===== GLOBAL STATUS BAR ===== -->
-    <Transition name="status-slide">
-      <div v-if="isAnyLoading" class="status-bar mb-4">
-        <!-- animated progress fill -->
-        <div class="status-bar-track">
-          <div class="status-bar-fill" />
-        </div>
-        <!-- status message -->
-        <div class="status-bar-message">
-          <svg class="status-bar-spinner" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <circle
-cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-linecap="round"
-              stroke-dasharray="31.4 31.4" />
-          </svg>
-          <span>{{ statusMessage }}</span>
-        </div>
-      </div>
-    </Transition>
 
     <!-- ms-page-header: заголовок страницы + кнопки действий -->
     <B24PageHeader
@@ -495,74 +474,6 @@ cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-linecap="ro
 </template>
 
 <style scoped>
-/* ===== STATUS BAR ===== */
-.status-bar {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid #e5e7eb;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-}
-
-.status-bar-track {
-  height: 3px;
-  background: #e5e7eb;
-  overflow: hidden;
-}
-
-.status-bar-fill {
-  height: 100%;
-  width: 40%;
-  background: linear-gradient(90deg, #3b82f6, #6366f1, #3b82f6);
-  background-size: 200% 100%;
-  animation: status-slide-progress 1.5s ease-in-out infinite;
-  border-radius: 0 2px 2px 0;
-}
-
-@keyframes status-slide-progress {
-  0%   { transform: translateX(-100%); background-position: 0% 0; }
-  50%  { background-position: 100% 0; }
-  100% { transform: translateX(350%); background-position: 0% 0; }
-}
-
-.status-bar-message {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
-  font-size: 13px;
-  color: #4b5563;
-  font-weight: 500;
-}
-
-.status-bar-spinner {
-  width: 16px;
-  height: 16px;
-  color: #3b82f6;
-  animation: spin 1s linear infinite;
-  flex-shrink: 0;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-
-/* Transition: slide down on appear, slide up on leave */
-.status-slide-enter-active,
-.status-slide-leave-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
-}
-.status-slide-enter-from,
-.status-slide-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-
 /* ===== INLINE TABLE LOADER ===== */
 .table-loading-overlay {
   display: flex;
@@ -586,5 +497,10 @@ cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" stroke-linecap="ro
 
 .table-loading-text {
   font-weight: 500;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 </style>
