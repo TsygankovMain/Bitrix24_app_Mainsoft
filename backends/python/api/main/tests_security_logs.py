@@ -18,14 +18,19 @@ from .models import Bitrix24Account, RequestLog, SystemLog
 # ---------------------------------------------------------------------------
 
 def _make_account(domain_url: str, b24_user_id: int = 1) -> Bitrix24Account:
-    """Create a minimal Bitrix24Account for testing."""
+    """Create a minimal Bitrix24Account for testing.
+
+    The log-viewing endpoints (/api/logs/*) are admin-only since Task 1.4, so the
+    isolation tests below use admin accounts — they verify per-portal *scoping*,
+    not role gating (role gating is covered by tests_security_roles).
+    """
     return Bitrix24Account.objects.create(
         b24_user_id=b24_user_id,
         member_id=f"member_{b24_user_id}_{domain_url}",
         domain_url=domain_url,
         status="active",
         application_version=1,
-        is_b24_user_admin=False,
+        is_b24_user_admin=True,
         is_master_account=False,
     )
 

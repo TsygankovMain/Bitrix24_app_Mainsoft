@@ -1,3 +1,4 @@
+import logging
 from functools import wraps
 from http import HTTPStatus
 from typing import cast
@@ -12,6 +13,8 @@ from b24pysdk.utils.types import JSONDict
 
 from ...models import Bitrix24Account
 from .collect_request_data import collect_request_data
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_oauth_placement_payload(raw_payload: JSONDict) -> JSONDict:
@@ -103,9 +106,9 @@ def auth_required(view_func):
 
             except BitrixValidationError as error:
                 return JsonResponse({"error": str(error)}, status=HTTPStatus.BAD_REQUEST)
-            except Exception as e:
-                import traceback
-                return JsonResponse({"error": f"Internal Auth Error: {str(e)}", "traceback": traceback.format_exc()}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            except Exception:
+                logger.exception("Unexpected error during OAuth authentication")
+                return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
 
         return view_func(request, *args, **kwargs)
 
