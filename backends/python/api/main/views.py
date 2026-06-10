@@ -1770,7 +1770,7 @@ def get_request_logs(request: AuthorizedRequest):
     page_number = request.GET.get('page', 1)
     page_size = request.GET.get('limit', 50)
     
-    queryset = RequestLog.objects.all().order_by('-timestamp')
+    queryset = RequestLog.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-timestamp')
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
     
@@ -1803,7 +1803,7 @@ def get_system_logs(request: AuthorizedRequest):
     page_number = request.GET.get('page', 1)
     page_size = request.GET.get('limit', 50)
     
-    queryset = SystemLog.objects.all().order_by('-timestamp')
+    queryset = SystemLog.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-timestamp')
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
     

@@ -237,7 +237,15 @@ class RequestLog(models.Model):
     request_body = models.TextField(null=True)
     response_body = models.TextField(null=True)
     error_message = models.TextField(null=True)
-    
+    bitrix24_account = models.ForeignKey(
+        "Bitrix24Account",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        db_index=True,
+        related_name="+",
+    )
+
     class Meta:
         managed = True
         db_table = "request_log"
@@ -254,7 +262,15 @@ class SystemLog(models.Model):
     module = models.CharField(max_length=100)
     message = models.TextField()
     traceback = models.TextField(null=True)
-    
+    bitrix24_account = models.ForeignKey(
+        "Bitrix24Account",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        db_index=True,
+        related_name="+",
+    )
+
     class Meta:
         managed = True
         db_table = "system_log"
