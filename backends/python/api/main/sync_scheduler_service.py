@@ -1,12 +1,20 @@
 """Фоновая синхронизация по расписанию (задача 3.6).
 
-Запускается management-командой sync_all_portals из внешнего планировщика
-платформы (cron Timeweb). Для каждого портала (group by member_id) берёт
-один представительный аккаунт (мастер, иначе первый активный), читает его
-конфиг (app.option), и если автосинк включён — делает инкрементальный синк
-трудозатрат за окно последних N дней. Падение одного портала не прерывает
-остальные. Совместимо с advisory-lock из 2.2 (на Postgres лок берётся честно,
-на sqlite no-op).
+Запускается management-командой sync_all_portals из встроенного планировщика
+(фоновый цикл в start.sh) или вручную. Для каждого портала (group by member_id)
+берёт один представительный аккаунт (мастер, иначе первый активный), читает
+его конфиг (app.option), и если автосинк включён — выполняет синк согласно
+параметру scope:
+
+- scope="project"  : полный синк проектов (ProjectSyncService.sync()), раз в 3 часа.
+- scope="timesheet": инкрементальный синк трудозатрат (TimesheetSyncService.sync_all()),
+                     используется для ручного запуска или on-demand дозагрузки.
+
+Трудозатраты по расписанию НЕ синкаются — дозагрузка происходит при открытии
+отчёта через endpoint timesheet_sync. Планировщик запускает только scope=project.
+
+Падение одного портала не прерывает остальные. Совместимо с advisory-lock из 2.2
+(на Postgres лок берётся честно, на sqlite no-op).
 """
 
 import logging
@@ -17,6 +25,7 @@ from django.utils import timezone
 
 from .models import Bitrix24Account, SyncRun
 from .configuration_service import ConfigurationService
+from .project_sync_service import ProjectSyncService
 from .timesheet_sync_service import TimesheetSyncService
 from .utils.decorators.sync_lock import account_sync_lock, SyncLockBusy
 
@@ -61,23 +70,42 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                 logger.info("Auto-sync disabled for portal %s (account %s); skip.",
                             account.member_id, account.pk)
                 continue
-            if not config.get("sp_entity_type_id"):
-                logger.info("Portal %s not configured (no sp_entity_type_id); skip.",
-                            account.member_id)
-                continue
 
-            try:
-                with account_sync_lock(account, scope="timesheet"):
-                    service = TimesheetSyncService(account.client, account, config)
-                    count = service.sync_all(date_from=date_from, date_to=date_to)
-            except SyncLockBusy:
-                logger.info("Portal %s sync skipped: lock busy (manual sync running).",
-                            account.member_id)
-                continue
+            if scope == "project":
+                try:
+                    with account_sync_lock(account, scope="project"):
+                        service = ProjectSyncService(account.client, account)
+                        result = service.sync()
+                except SyncLockBusy:
+                    logger.info("Portal %s project-sync skipped: lock busy.",
+                                account.member_id)
+                    continue
 
-            synced += 1
-            items_total += int(count or 0)
-            logger.info("Scheduled sync portal %s: %s items.", account.member_id, count)
+                # ProjectSyncService.sync() возвращает dict с ключами synced/created/updated
+                count = result.get("synced", 0) if isinstance(result, dict) else 0
+                synced += 1
+                items_total += int(count or 0)
+                logger.info("Scheduled project-sync portal %s: %s items.", account.member_id, count)
+
+            else:  # scope == "timesheet"
+                if not config.get("sp_entity_type_id"):
+                    logger.info("Portal %s not configured (no sp_entity_type_id); skip.",
+                                account.member_id)
+                    continue
+
+                try:
+                    with account_sync_lock(account, scope="timesheet"):
+                        service = TimesheetSyncService(account.client, account, config)
+                        count = service.sync_all(date_from=date_from, date_to=date_to)
+                except SyncLockBusy:
+                    logger.info("Portal %s sync skipped: lock busy (manual sync running).",
+                                account.member_id)
+                    continue
+
+                synced += 1
+                items_total += int(count or 0)
+                logger.info("Scheduled sync portal %s: %s items.", account.member_id, count)
+
         except Exception as exc:  # noqa: BLE001
             logger.exception("Scheduled sync failed for portal %s (account %s)",
                              account.member_id, account.pk)
