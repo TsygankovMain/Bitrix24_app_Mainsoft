@@ -18,6 +18,7 @@ import io
 from typing import Any, Dict, List, Optional, Sequence
 
 import openpyxl
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -40,6 +41,43 @@ _FILL_TOTAL = PatternFill("solid", fgColor="CBD5E1")
 
 _COLOR_BILL = "047857"
 _COLOR_NONBILL = "BE123C"
+
+# ---------------------------------------------------------------------------
+# Лимит строк (мягкий предохранитель объёма выгрузки)
+# ---------------------------------------------------------------------------
+
+MAX_EXPORT_ROWS = 50000
+
+
+class ExportTooLargeError(Exception):
+    """Выгрузка превышает мягкий лимит строк. View ловит и отдаёт HTTP 400."""
+
+    def __init__(self, rows: int, limit: int = MAX_EXPORT_ROWS):
+        self.rows = rows
+        self.limit = limit
+        super().__init__(
+            f"Слишком большой период или выборка для выгрузки "
+            f"(строк: {rows} > {limit}). Сузьте период или фильтры."
+        )
+
+
+def _count_hierarchy_rows(roots) -> int:
+    """Считает строки данных иерархии (узлы + листовые items + employees+их items)."""
+    total = 0
+
+    def walk(node):
+        nonlocal total
+        total += 1
+        for ch in node.get("children") or []:
+            walk(ch)
+        for emp in node.get("employees") or []:
+            total += 1
+            total += len(emp.get("items") or [])
+        total += len(node.get("items") or [])
+
+    for r in roots:
+        walk(r)
+    return total
 
 
 def _num(value: Any) -> float:
@@ -193,7 +231,14 @@ def build_project_task_workbook(
     date_to: str = "",
     filters_label: str = "",
 ) -> io.BytesIO:
-    """Строит xlsx-файл отчёта и возвращает BytesIO (указатель в начале)."""
+    """Строит xlsx-файл отчёта и возвращает BytesIO (указатель в начале).
+
+    Остаётся в обычном режиме (write_only несовместим с outline-группировкой строк
+    через ws.row_dimensions[row].outline_level). Только guard на объём.
+    """
+    n_rows = _count_hierarchy_rows(list(nodes))
+    if n_rows > MAX_EXPORT_ROWS:
+        raise ExportTooLargeError(n_rows)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Проект-Задача"
@@ -271,6 +316,11 @@ def build_hierarchy_workbook(roots, *, title, date_from="", date_to="",
                              value_columns=(("Всего, ч", "total_hours"),
                                             ("Учтено, ч", "billable_hours"),
                                             ("Не учтено, ч", "non_billable_hours"))):
+    """Иерархия с outline-группировкой строк. Остаётся в обычном режиме (write_only
+    несовместим с ws.row_dimensions[row].outline_level). Только guard на объём."""
+    n_rows = _count_hierarchy_rows(roots)
+    if n_rows > MAX_EXPORT_ROWS:
+        raise ExportTooLargeError(n_rows)
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Отчёт"
     ws.sheet_properties.outlinePr.summaryBelow = False
     ncols = 1 + len(value_columns)
@@ -329,47 +379,77 @@ def build_hierarchy_workbook(roots, *, title, date_from="", date_to="",
 
 
 def build_matrix_workbook(header_days, rows, *, title, date_from="", date_to=""):
-    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Нагрузка"
+    """Матрица сотрудник×день. write_only режим (линейный расход памяти)."""
+    if len(rows) > MAX_EXPORT_ROWS:
+        raise ExportTooLargeError(len(rows))
+
+    wb = openpyxl.Workbook(write_only=True)
+    ws = wb.create_sheet("Нагрузка")
     days = [(d.get("date") if isinstance(d, dict) else d) for d in header_days]
     ncols = 1 + len(days) + 1
-    last_col = get_column_letter(ncols)
-    period = f"{date_from} — {date_to}".strip(" —")
-    full_title = f"{title} · период {period}" if period else title
-    ws.merge_cells(f"A1:{last_col}1")
-    c = ws.cell(1, 1, full_title); c.font = Font(bold=True, color="FFFFFF", size=12)
-    c.fill = _FILL_TITLE; c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-    hh = ws.cell(2, 1, "Сотрудник"); hh.font = Font(bold=True); hh.fill = _FILL_HEAD; hh.border = _BORDER
-    hh.alignment = Alignment(horizontal="left", vertical="center")
-    for i, day in enumerate(days):
-        cell = ws.cell(2, 2 + i, _format_iso_date(day) or str(day))
-        cell.font = Font(bold=True); cell.fill = _FILL_HEAD; cell.border = _BORDER
-        cell.alignment = Alignment(horizontal="right", vertical="center")
-    th = ws.cell(2, ncols, "Итого"); th.font = Font(bold=True); th.fill = _FILL_HEAD; th.border = _BORDER
-    th.alignment = Alignment(horizontal="right", vertical="center")
-    col_tot = [0.0] * len(days); grand = 0.0; row = 3
-    for r in rows:
-        ws.cell(row, 1, _safe_cell_text((r.get("employee") or {}).get("name") or "—")).border = _BORDER
-        rowsum = 0.0; cells = r.get("days") or {}
-        for i, day in enumerate(days):
-            cd = cells.get(day) or {}
-            v = _num(cd.get("total")) if isinstance(cd, dict) else _num(cd)
-            cell = ws.cell(row, 2 + i, round(v, 2) if v else None)
-            cell.number_format = _HOURS_FORMAT; cell.alignment = Alignment(horizontal="right", vertical="center"); cell.border = _BORDER
-            rowsum += v; col_tot[i] += v
-        rc = ws.cell(row, ncols, round(rowsum, 2)); rc.number_format = _HOURS_FORMAT
-        rc.font = Font(bold=True); rc.fill = _FILL_TOTAL; rc.alignment = Alignment(horizontal="right", vertical="center"); rc.border = _BORDER
-        grand += rowsum; row += 1
-    tcell = ws.cell(row, 1, "ИТОГО"); tcell.font = Font(bold=True); tcell.fill = _FILL_TOTAL; tcell.border = _BORDER
-    for i, ct in enumerate(col_tot):
-        cell = ws.cell(row, 2 + i, round(ct, 2)); cell.number_format = _HOURS_FORMAT
-        cell.font = Font(bold=True); cell.fill = _FILL_TOTAL; cell.alignment = Alignment(horizontal="right", vertical="center"); cell.border = _BORDER
-    gc = ws.cell(row, ncols, round(grand, 2)); gc.number_format = _HOURS_FORMAT
-    gc.font = Font(bold=True); gc.fill = _FILL_TOTAL; gc.alignment = Alignment(horizontal="right", vertical="center"); gc.border = _BORDER
+    # freeze и ширины ставим ДО append (требование write_only)
+    ws.freeze_panes = "B3"
     ws.column_dimensions["A"].width = 24
     for idx in range(2, ncols + 1):
         ws.column_dimensions[get_column_letter(idx)].width = 10
-    ws.freeze_panes = "B3"
-    output = io.BytesIO(); wb.save(output); output.seek(0)
+
+    period = f"{date_from} — {date_to}".strip(" —")
+    full_title = f"{title} · период {period}" if period else title
+
+    def _styled(value, *, number=False, bold=False, fill=None, align="right"):
+        cell = WriteOnlyCell(ws, value=value)
+        if bold:
+            cell.font = Font(bold=True)
+        if fill:
+            cell.fill = fill
+        if number:
+            cell.number_format = _HOURS_FORMAT
+        cell.alignment = Alignment(horizontal=align, vertical="center")
+        cell.border = _BORDER
+        return cell
+
+    # Строка 1: заголовок (без merge — write_only merge ненадёжен; пишем в A1)
+    title_cell = WriteOnlyCell(ws, value=_safe_cell_text(full_title))
+    title_cell.font = Font(bold=True, color="FFFFFF", size=12)
+    title_cell.fill = _FILL_TITLE
+    title_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.append([title_cell])
+
+    # Строка 2: шапка
+    head = [_styled("Сотрудник", bold=True, fill=_FILL_HEAD, align="left")]
+    for day in days:
+        head.append(_styled(_format_iso_date(day) or str(day), bold=True, fill=_FILL_HEAD))
+    head.append(_styled("Итого", bold=True, fill=_FILL_HEAD))
+    ws.append(head)
+
+    # Данные
+    col_tot = [0.0] * len(days)
+    grand = 0.0
+    for r in rows:
+        name = (r.get("employee") or {}).get("name") or "—"
+        row_cells = [_styled(_safe_cell_text(name), align="left")]
+        rowsum = 0.0
+        cells = r.get("days") or {}
+        for i, day in enumerate(days):
+            cd = cells.get(day) or {}
+            v = _num(cd.get("total")) if isinstance(cd, dict) else _num(cd)
+            row_cells.append(_styled(round(v, 2) if v else None, number=True))
+            rowsum += v
+            col_tot[i] += v
+        row_cells.append(_styled(round(rowsum, 2), number=True, bold=True, fill=_FILL_TOTAL))
+        grand += rowsum
+        ws.append(row_cells)
+
+    # ИТОГО
+    total_cells = [_styled("ИТОГО", bold=True, fill=_FILL_TOTAL, align="left")]
+    for ct in col_tot:
+        total_cells.append(_styled(round(ct, 2), number=True, bold=True, fill=_FILL_TOTAL))
+    total_cells.append(_styled(round(grand, 2), number=True, bold=True, fill=_FILL_TOTAL))
+    ws.append(total_cells)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
     return output
 
 
@@ -377,40 +457,70 @@ _TABLE_FMT = {"text": "@", "hours": "0.0", "money": "#,##0", "percent": "0.0%", 
 
 
 def build_table_workbook(columns, rows, *, title, date_from="", date_to="", total_row=None):
-    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Отчёт"
-    ncols = len(columns); last_col = get_column_letter(max(ncols, 1))
-    period = f"{date_from} — {date_to}".strip(" —")
-    full_title = f"{title} · период {period}" if period else title
-    ws.merge_cells(f"A1:{last_col}1")
-    c = ws.cell(1, 1, full_title); c.font = Font(bold=True, color="FFFFFF", size=12)
-    c.fill = _FILL_TITLE; c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-    for i, col in enumerate(columns):
-        cell = ws.cell(2, 1 + i, col["label"]); cell.font = Font(bold=True, color="111827")
-        cell.fill = _FILL_HEAD; cell.border = _BORDER
-        cell.alignment = Alignment(horizontal="left" if col.get("fmt", "text") == "text" else "right", vertical="center")
-    row = 3
+    """Плоская таблица. write_only режим (линейный расход памяти)."""
+    if len(rows) > MAX_EXPORT_ROWS:
+        raise ExportTooLargeError(len(rows))
 
-    def _put(r, rownum, bold=False, fill=None):
-        for i, col in enumerate(columns):
-            fmt = col.get("fmt", "text"); val = r.get(col["key"])
-            if fmt == "text" or val is None:
-                cell = ws.cell(rownum, 1 + i, "" if val is None else _safe_cell_text(str(val)))
-                cell.alignment = Alignment(horizontal="left", vertical="center")
-            else:
-                cell = ws.cell(rownum, 1 + i, _num(val)); cell.number_format = _TABLE_FMT[fmt]
-                cell.alignment = Alignment(horizontal="right", vertical="center")
-            cell.border = _BORDER
-            if bold:
-                cell.font = Font(bold=True)
-            if fill:
-                cell.fill = fill
-
-    for r in rows:
-        _put(r, row); row += 1
-    if total_row:
-        _put(total_row, row, bold=True, fill=_FILL_TOTAL)
+    wb = openpyxl.Workbook(write_only=True)
+    ws = wb.create_sheet("Отчёт")
+    ncols = len(columns)
+    # freeze и ширины ставим ДО append (требование write_only)
+    ws.freeze_panes = "A3"
     for i, col in enumerate(columns):
         ws.column_dimensions[get_column_letter(1 + i)].width = col.get("width", 18)
-    ws.freeze_panes = "A3"
-    output = io.BytesIO(); wb.save(output); output.seek(0)
+
+    period = f"{date_from} — {date_to}".strip(" —")
+    full_title = f"{title} · период {period}" if period else title
+
+    def _cell(value, *, number_fmt=None, bold=False, fill=None, align="left"):
+        cell = WriteOnlyCell(ws, value=value)
+        if bold:
+            cell.font = Font(bold=True)
+        if fill:
+            cell.fill = fill
+        if number_fmt:
+            cell.number_format = number_fmt
+        cell.alignment = Alignment(horizontal=align, vertical="center")
+        cell.border = _BORDER
+        return cell
+
+    # Строка 1: заголовок (без merge — write_only merge ненадёжен; пишем в A1)
+    title_cell = WriteOnlyCell(ws, value=_safe_cell_text(full_title))
+    title_cell.font = Font(bold=True, color="FFFFFF", size=12)
+    title_cell.fill = _FILL_TITLE
+    title_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.append([title_cell])
+
+    # Строка 2: шапка
+    header = []
+    for col in columns:
+        align = "left" if col.get("fmt", "text") == "text" else "right"
+        header.append(_cell(col["label"], bold=True, fill=_FILL_HEAD, align=align))
+    ws.append(header)
+
+    def _row_cells(r, *, bold=False, fill=None):
+        out_cells = []
+        for col in columns:
+            fmt = col.get("fmt", "text")
+            val = r.get(col["key"])
+            if fmt == "text" or val is None:
+                out_cells.append(_cell(
+                    "" if val is None else _safe_cell_text(str(val)),
+                    bold=bold, fill=fill, align="left",
+                ))
+            else:
+                out_cells.append(_cell(
+                    _num(val), number_fmt=_TABLE_FMT[fmt],
+                    bold=bold, fill=fill, align="right",
+                ))
+        return out_cells
+
+    for r in rows:
+        ws.append(_row_cells(r))
+    if total_row:
+        ws.append(_row_cells(total_row, bold=True, fill=_FILL_TOTAL))
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
     return output
