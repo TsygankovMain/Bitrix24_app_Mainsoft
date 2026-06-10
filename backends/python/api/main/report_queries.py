@@ -7,6 +7,7 @@ from django.utils import timezone
 from .employee_ids import build_employee_id_aliases
 from .models import Bitrix24Account, TimesheetItem
 from .project_board_shared import get_project_card_queryset
+from .tenant_scoping import scope_to_tenant
 
 
 TREE_REPORT_FIELDS = (
@@ -26,7 +27,7 @@ TREE_REPORT_FIELDS = (
 
 
 def build_filtered_timesheet_queryset(account: Bitrix24Account, params: Mapping[str, Any]):
-    queryset = TimesheetItem.objects.filter(bitrix24_account=account)
+    queryset = TimesheetItem.objects.filter(**scope_to_tenant(account))
 
     date_from = _parse_date_value(params.get("date_from"))
     date_to = _parse_date_value(params.get("date_to"))

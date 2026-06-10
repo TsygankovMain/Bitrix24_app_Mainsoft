@@ -131,6 +131,11 @@ CORS_ALLOWED_ORIGIN_REGEXES = [] if DEBUG else [BITRIX24_ORIGIN_REGEX]
 X_FRAME_OPTIONS = 'ALLOWALL'
 XS_SHARING_ALLOWED_METHODS = ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE']
 
+# Флаг перевода скоупинга данных на portal (этап 3 перестройки мультитенантности).
+# По умолчанию False — поведение БИТ-в-БИТ как до спринта 4 (account-скоупинг).
+# Включать на проде ТОЛЬКО после backfill + dedupe (см. план sprint-4, Часть B).
+USE_PORTAL_SCOPING = config.use_portal_scoping
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

@@ -37,6 +37,11 @@ django_cache_mod.cache = cache_mock
 django_db = _make_stub_module("django.db")
 django_db.ProgrammingError = Exception
 
+# django.conf.settings нужен реальному tenant_scoping (этап 3 мультитенантности),
+# который импортирует project_board_service. Флаг OFF → account-скоупинг.
+django_conf = _make_stub_module("django.conf")
+django_conf.settings = types.SimpleNamespace(USE_PORTAL_SCOPING=False)
+
 django_db_models = _make_stub_module("django.db.models")
 for _attr in ("Case", "F", "FloatField", "Max", "Sum", "Value", "When"):
     setattr(django_db_models, _attr, MagicMock())

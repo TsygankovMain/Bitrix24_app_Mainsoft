@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 
 from .finance_operation_service import FinanceOperationService
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
+from .tenant_scoping import scope_to_tenant
 
 
 class ProjectBudgetService:
@@ -47,7 +48,7 @@ class ProjectBudgetService:
         by_title: Dict[str, Dict[str, float]] = {}
 
         rows = (
-            TimesheetItem.objects.filter(bitrix24_account=self.account)
+            TimesheetItem.objects.filter(**scope_to_tenant(self.account))
             .values(
                 "project_item_id",
                 "project_id",

@@ -31,6 +31,7 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
+from .tenant_scoping import scope_to_tenant
 from .perf import ReportProfiler
 from .report_queries import (
     TREE_REPORT_FIELDS,
@@ -150,7 +151,7 @@ def _build_employee_filter_options(request: AuthorizedRequest):
 
 
 def _build_project_filter_options(request: AuthorizedRequest):
-    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account)
+    queryset = TimesheetItem.objects.filter(**scope_to_tenant(request.bitrix24_account))
     active_project_rows = list(
         get_project_card_queryset(request.bitrix24_account)
         .filter(is_archived=False)
@@ -1489,7 +1490,7 @@ def timesheet_sync(request: AuthorizedRequest):
 @auth_required
 @admin_required
 def timesheet_list(request: AuthorizedRequest):
-    queryset = TimesheetItem.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-created_at', '-bitrix_id')
+    queryset = TimesheetItem.objects.filter(**scope_to_tenant(request.bitrix24_account)).order_by('-created_at', '-bitrix_id')
 
     # Filter by record creation date (created_at)
     created_from = request.GET.get('created_from')

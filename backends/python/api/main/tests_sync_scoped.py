@@ -85,6 +85,7 @@ def _load_service():
     # Заменяем relative imports на прямые ссылки на моки
     source = source.replace("from .models import Bitrix24Account, TimesheetItem", "")
     source = source.replace("from .report_services import DataProcessingService", "")
+    source = source.replace("from .tenant_scoping import scope_to_tenant", "")
 
     mod = types.ModuleType("timesheet_sync_service_test")
     mod.__dict__["Bitrix24Account"] = models_mod.Bitrix24Account
@@ -94,6 +95,9 @@ def _load_service():
     mod.__dict__["transaction"] = transaction_mod
     mod.__dict__["timezone"] = django_utils.timezone
     mod.__dict__["Client"] = object
+    # Стаб scope_to_tenant (этап 3 мультитенантности): автономный тест без Django
+    # settings → флаг OFF → account-скоупинг, как предполагают эти тесты.
+    mod.__dict__["scope_to_tenant"] = lambda account, *, write=False: {"bitrix24_account": account}
     exec(compile(source, _SERVICE_PATH, "exec"), mod.__dict__)
     return mod
 

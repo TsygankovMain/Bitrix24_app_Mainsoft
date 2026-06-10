@@ -27,6 +27,8 @@ from .models import Bitrix24Account, SyncRun
 from .configuration_service import ConfigurationService
 from .project_sync_service import ProjectSyncService
 from .timesheet_sync_service import TimesheetSyncService
+# Под USE_PORTAL_SCOPING account_sync_lock ключуется по portal.pk (замок «по
+# компании»), выбор субъекта — внутри замка по флагу; вызовы ниже не меняются.
 from .utils.decorators.sync_lock import account_sync_lock, SyncLockBusy
 
 logger = logging.getLogger(__name__)

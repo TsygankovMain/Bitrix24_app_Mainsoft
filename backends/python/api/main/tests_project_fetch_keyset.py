@@ -45,6 +45,10 @@ _tz.now = lambda: datetime(2024, 1, 1, tzinfo=dt_timezone.utc)
 _tz.localdate = lambda: datetime(2024, 1, 1).date()
 _utils.timezone = _tz
 
+_conf = _stub("django.conf")
+_settings_stub = types.SimpleNamespace(USE_PORTAL_SCOPING=False)
+_conf.settings = _settings_stub
+
 # Local sub-modules (заглушки, чтобы не тянуть реальные пакеты)
 _stub("api")
 _stub("api.main")
@@ -72,6 +76,13 @@ _shared.get_project_card_queryset = MagicMock(return_value=[])
 _shared.invalidate_project_runtime_caches = MagicMock()
 
 sys.modules["api.main.stage_automation_service"].ProjectStageAutomationService = MagicMock()
+
+# Загружаем tenant_scoping через importlib (нужен project_sync_service после правок 4.3)
+_TENANT_SCOPING_FILE = Path(__file__).with_name("tenant_scoping.py")
+_ts_spec = importlib.util.spec_from_file_location("api.main.tenant_scoping", _TENANT_SCOPING_FILE)
+_ts_module = importlib.util.module_from_spec(_ts_spec)
+sys.modules["api.main.tenant_scoping"] = _ts_module
+_ts_spec.loader.exec_module(_ts_module)
 
 # ---------------------------------------------------------------------------
 # Шаг 2. Загружаем project_sync_service напрямую через importlib

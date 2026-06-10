@@ -20,6 +20,7 @@ import logging
 from contextlib import contextmanager
 from functools import wraps
 
+from django.conf import settings
 from django.db import connection
 from django.http import JsonResponse
 
@@ -50,6 +51,20 @@ def _advisory_key(account_pk, scope: str) -> int:
     return (base & ~0xF) | SCOPE_BITS[scope]
 
 
+def _lock_subject_pk(account):
+    """Субъект advisory-замка: portal.pk при включённом portal-скоупинге и
+    наличии portal, иначе account.pk (текущее поведение, БИТ-в-БИТ).
+
+    Под portal-скоупингом синк логически идёт по компании (один представитель
+    синкает данные всей компании в общие portal-таблицы), поэтому замок должен
+    быть «по компании», а не по учётке."""
+    if bool(getattr(settings, "USE_PORTAL_SCOPING", False)):
+        portal = getattr(account, "portal", None)
+        if portal is not None:
+            return portal.pk
+    return account.pk
+
+
 @contextmanager
 def account_sync_lock(account, scope: str):
     """Контекст-менеджер advisory-замка. На не-postgresql — no-op.
@@ -61,7 +76,7 @@ def account_sync_lock(account, scope: str):
         yield
         return
 
-    key = _advisory_key(account.pk, scope)
+    key = _advisory_key(_lock_subject_pk(account), scope)
     acquired = False
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_try_advisory_lock(%s)", [key])
