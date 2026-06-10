@@ -7,6 +7,16 @@
 
 ## [Unreleased]
 
+### Hotfix: 500 на всех синхронизациях на проде (advisory-lock × UUID) — 2026-06-10
+
+#### Fixed
+- **`_advisory_key` переполнял bigint**: `int(uuid_pk) << 4` = до 132 бит, `pg_try_advisory_lock(bigint)` принимает 64 → PostgreSQL отвергал вызов → `@log_errors` отдавал **500 на каждый `POST /api/sync-timesheets` и `/api/project-board/sync`** с момента деплоя спринта 2 (~15:54 МСК) до hotfix (~18:57 МСК). Ключ теперь — blake2b(str(pk), 8 байт) signed со scope в младших 4 битах; детерминирован между воркерами/cron; проверен на реальном PG16. Потерь данных нет (отчёты работали на сохранённых данных). Hotfix `83f510e` в `prod_2026` (cherry-pick `6dfcced` из sprint-3).
+- Почему пропустили: sqlite-тесты no-op'или замок, PG-тест мокал курсор, юнит-тесты ключа брали int-pk, смоук не проверял Network. Подробный разбор и правила: [docs/incidents/2026-06-10-sync-advisory-lock-bigint.md](./incidents/2026-06-10-sync-advisory-lock-bigint.md).
+
+#### Added
+- 4 регрессионных теста контракта «advisory-ключ от любого UUID помещается в signed int64» (`tests_sync_lock.py`).
+- Смоук-чеклисты деплоя ([DEPLOY_README](../DEPLOY_README.md) §8, [PRODUCTION_ROLLOUT_GUIDE](./PRODUCTION_ROLLOUT_GUIDE.md) §6) дополнены обязательной Network-проверкой успешного синка.
+
 ### Техдолг: ESLint — 0 ошибок по всему проекту — 2026-06-01
 
 #### Changed
