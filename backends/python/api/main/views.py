@@ -1681,8 +1681,9 @@ def create_smart_process(request: AuthorizedRequest):
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+    except Exception:
+        logger.exception("create operation failed")
+        return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)
 
 
 @xframe_options_exempt
@@ -1705,8 +1706,9 @@ def create_fields(request: AuthorizedRequest):
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+    except Exception:
+        logger.exception("create operation failed")
+        return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)
 
 
 @xframe_options_exempt
@@ -1733,8 +1735,9 @@ def create_mapped_field(request: AuthorizedRequest):
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
         return JsonResponse({"error": str(e)}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+    except Exception:
+        logger.exception("create operation failed")
+        return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)
 
 
 @xframe_options_exempt
