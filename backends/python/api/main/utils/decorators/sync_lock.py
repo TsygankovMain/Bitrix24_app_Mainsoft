@@ -15,6 +15,7 @@ Session-lock держится поверх этих транзакций; при
 разные таблицы и могут идти параллельно друг другу, но не сами с собой.
 """
 
+import hashlib
 import logging
 from contextlib import contextmanager
 from functools import wraps
@@ -32,10 +33,21 @@ class SyncLockBusy(Exception):
     """Бросается, когда advisory-лок по аккаунту/скоупу уже занят."""
 
 
-def _advisory_key(account_pk: int, scope: str) -> int:
+def _advisory_key(account_pk, scope: str) -> int:
+    """Стабильный signed int64-ключ для pg_try_advisory_lock(bigint).
+
+    PK аккаунта — UUID (128 бит), поэтому int(pk) << 4 переполняет bigint и
+    PostgreSQL отвергает вызов (инцидент 2026-06-10: 500 на каждом синке).
+    Хэшируем str(pk) в 8 байт blake2b — детерминированно между процессами
+    (воркеры gunicorn, cron-команда), в отличие от солёного hash().
+    Младшие 4 бита зарезервированы под scope, как и в исходной схеме.
+    """
     if scope not in SCOPE_BITS:
         raise ValueError(f"sync_lock: unknown scope {scope!r}")
-    return (int(account_pk) << 4) | SCOPE_BITS[scope]
+    digest = hashlib.blake2b(str(account_pk).encode("utf-8"), digest_size=8).digest()
+    base = int.from_bytes(digest, "big", signed=True)
+    # base & ~0xF чистит младшие 4 бита, не выводя из диапазона int64.
+    return (base & ~0xF) | SCOPE_BITS[scope]
 
 
 @contextmanager
