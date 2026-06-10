@@ -118,9 +118,16 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = [] if DEBUG else sorted(set([*CSRF_TRUSTED_ORIGINS, *config.cors_allowed_origins]))
-CORS_ALLOWED_ORIGIN_REGEXES = [] if DEBUG else [
-    r"^https://.*\.bitrix24\.[A-Za-z.]+$",
-]
+
+# Безопасный regex для разрешённых доменов Bitrix24.
+# Перечислены только реально выданные Bitrix24 TLD/домены второго уровня.
+# Точечный список исключает атаки вида «attacker.bitrix24.com.evil.io».
+BITRIX24_ORIGIN_REGEX = (
+    r"^https://[a-z0-9][a-z0-9-]*\.bitrix24\."
+    r"(ru|by|kz|com|de|es|fr|pl|it|in|eu|ua|mx|id|vn|com\.br|com\.tr|co\.uk)$"
+)
+
+CORS_ALLOWED_ORIGIN_REGEXES = [] if DEBUG else [BITRIX24_ORIGIN_REGEX]
 X_FRAME_OPTIONS = 'ALLOWALL'
 XS_SHARING_ALLOWED_METHODS = ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE']
 

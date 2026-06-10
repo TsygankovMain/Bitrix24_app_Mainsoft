@@ -49,6 +49,19 @@ def _num(value: Any) -> float:
         return 0.0
 
 
+# Символы, с которых начинаются Excel-формулы/инъекции
+_FORMULA_STARTERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell_text(value: Any) -> Any:
+    """Нейтрализует Excel-инъекцию формул: строки, начинающиеся с опасных символов,
+    получают префикс апостроф ('), который Excel воспринимает как «текст, не формула».
+    Нечисловые значения и None возвращаются без изменений."""
+    if isinstance(value, str) and value.startswith(_FORMULA_STARTERS):
+        return "'" + value
+    return value
+
+
 def _write_row(
     ws: Worksheet,
     row: int,
@@ -65,7 +78,7 @@ def _write_row(
     outline_level: int = 0,
 ) -> None:
     """Записывает одну строку из 4 колонок с форматированием и уровнем группировки."""
-    name_cell = ws.cell(row=row, column=1, value=name)
+    name_cell = ws.cell(row=row, column=1, value=_safe_cell_text(name))
     name_cell.alignment = Alignment(horizontal="left", vertical="center", indent=depth)
     name_cell.font = Font(bold=bold, italic=italic, color=name_color or "0F172A")
     name_cell.fill = fill
@@ -196,7 +209,7 @@ def build_project_task_workbook(
         title = f"{title} · период {period}"
 
     ws.merge_cells("A1:D1")
-    c = ws.cell(row=1, column=1, value=title)
+    c = ws.cell(row=1, column=1, value=_safe_cell_text(title))
     c.font = Font(bold=True, color="FFFFFF", size=12)
     c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
     c.fill = _FILL_TITLE
@@ -204,7 +217,7 @@ def build_project_task_workbook(
 
     ws.merge_cells("A2:D2")
     subtitle = filters_label or "Сотрудники: все · Проекты: все"
-    c2 = ws.cell(row=2, column=1, value=subtitle)
+    c2 = ws.cell(row=2, column=1, value=_safe_cell_text(subtitle))
     c2.font = Font(color="CBD5E1", size=10)
     c2.alignment = Alignment(horizontal="left", vertical="center", indent=1)
     c2.fill = _FILL_SUBTITLE
@@ -279,7 +292,7 @@ def build_hierarchy_workbook(roots, *, title, date_from="", date_to="",
         nonlocal row
         fill = _FILL_PROJECT if depth == 0 else (_FILL_TASK if depth == 1 else _FILL_SUBTASK)
         bold = depth <= 1
-        nc = ws.cell(row, 1, node.get("name") or "—")
+        nc = ws.cell(row, 1, _safe_cell_text(node.get("name") or "—"))
         nc.alignment = Alignment(horizontal="left", vertical="center", indent=depth)
         nc.font = Font(bold=bold); nc.fill = fill; nc.border = _BORDER
         for i, (_, key) in enumerate(value_columns):
@@ -335,7 +348,7 @@ def build_matrix_workbook(header_days, rows, *, title, date_from="", date_to="")
     th.alignment = Alignment(horizontal="right", vertical="center")
     col_tot = [0.0] * len(days); grand = 0.0; row = 3
     for r in rows:
-        ws.cell(row, 1, (r.get("employee") or {}).get("name") or "—").border = _BORDER
+        ws.cell(row, 1, _safe_cell_text((r.get("employee") or {}).get("name") or "—")).border = _BORDER
         rowsum = 0.0; cells = r.get("days") or {}
         for i, day in enumerate(days):
             cd = cells.get(day) or {}
@@ -381,7 +394,7 @@ def build_table_workbook(columns, rows, *, title, date_from="", date_to="", tota
         for i, col in enumerate(columns):
             fmt = col.get("fmt", "text"); val = r.get(col["key"])
             if fmt == "text" or val is None:
-                cell = ws.cell(rownum, 1 + i, "" if val is None else str(val))
+                cell = ws.cell(rownum, 1 + i, "" if val is None else _safe_cell_text(str(val)))
                 cell.alignment = Alignment(horizontal="left", vertical="center")
             else:
                 cell = ws.cell(rownum, 1 + i, _num(val)); cell.number_format = _TABLE_FMT[fmt]
