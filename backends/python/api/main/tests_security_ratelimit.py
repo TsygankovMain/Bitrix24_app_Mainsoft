@@ -427,58 +427,9 @@ class RateLimitSingleRequestTest(TestCase):
         )
 
 
-# ---------------------------------------------------------------------------
-# (д) Роли: @admin_required возвращает 403 ДО применения rate limit
-# ---------------------------------------------------------------------------
-
-@override_settings(CACHES=RATELIMIT_CACHE)
-class RateLimitDoesNotBreakRoleGatingTest(TestCase):
-    """Non-admin получает 403 (не 429) даже при многократных вызовах admin-only endpoint.
-
-    Это гарантирует, что @rate_limit(key="account") применяется ПОСЛЕ @admin_required,
-    и не подменяет 403 на 429 в тестах ролей.
-    """
-
-    def setUp(self):
-        cache.clear()
-        self.client = Client()
-        self.account = _make_account(is_admin=False, b24_user_id=70, domain_url="portal-roles-rl.bitrix24.ru")
-
-    def test_non_admin_gets_403_not_429_on_sync(self):
-        """Non-admin вызывает sync_project_board больше N раз — всегда 403.
-
-        sync_project_board имеет @admin_required. Rate limit применяется ПОСЛЕ
-        @admin_required, поэтому non-admin не проходит к счётчику.
-        """
-        bitrix_client = _bitrix_mock()
-        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
-            for _ in range(8):
-                resp = self.client.post(
-                    "/api/project-board/sync",
-                    data=json.dumps({}),
-                    content_type="application/json",
-                    HTTP_AUTHORIZATION=_auth_header(self.account),
-                )
-                self.assertEqual(
-                    resp.status_code,
-                    HTTPStatus.FORBIDDEN,
-                    f"Non-admin must get 403, not {resp.status_code}",
-                )
-
-    def test_non_admin_gets_403_not_429_on_export(self):
-        """Non-admin вызывает export больше N раз — всегда 403."""
-        bitrix_client = _bitrix_mock()
-        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
-            for _ in range(15):
-                resp = self.client.get(
-                    "/api/report-employee-project-export",
-                    HTTP_AUTHORIZATION=_auth_header(self.account),
-                )
-                self.assertEqual(
-                    resp.status_code,
-                    HTTPStatus.FORBIDDEN,
-                    f"Non-admin must get 403, not {resp.status_code}",
-                )
+# (д) Removed 2026-06-11: there is no @admin_required gate any more, so the
+#     "role gate fires before the rate limit" scenario no longer exists. Role
+#     behaviour is covered by tests_security_roles.NoServerRoleGateTest.
 
 
 # ---------------------------------------------------------------------------

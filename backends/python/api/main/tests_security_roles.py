@@ -1,14 +1,15 @@
 """
-Security tests for server-side admin role enforcement.
-Task 1.4 — Sprint Security.
+Server-side role behaviour tests.
 
-The vulnerability: no view checked Bitrix24Account.is_b24_user_admin, so a regular
-employee could call admin operations and financial reports directly (admin gating
-existed only in the UI).
+History: Sprint 1 (security) added @admin_required to the financial reports and admin
+operations. On 2026-06-11 the product owner reverted that decision — there is NO
+server-side role gating any more; any authenticated user may call any endpoint (a
+valid JWT is still required). The Bitrix `is_b24_user_admin` flag is still synced
+(the UI uses it to show/hide the Settings screen), but it no longer blocks requests.
 
-These tests must FAIL against the pre-fix code and PASS after:
-  * @admin_required gates the admin-only endpoints (403 for non-admin).
-  * get_token refreshes is_b24_user_admin from the Bitrix user.admin method.
+These tests verify:
+  * No endpoint returns 403 "Недостаточно прав" for a non-admin (gate removed).
+  * get_token still refreshes is_b24_user_admin from the Bitrix user.admin method.
   * Error responses never leak a Python traceback to the client.
 """
 import json
@@ -41,7 +42,9 @@ def _auth_header(account: Bitrix24Account) -> str:
 
 
 # (name, http_method, path) — must mirror main/urls.py.
-ADMIN_ONLY_ENDPOINTS = [
+# These were admin-only in Sprint 1; the gate was removed 2026-06-11, so they must
+# now be reachable by ANY authenticated user. This list is the regression guard.
+FORMERLY_GATED_ENDPOINTS = [
     # Admin operations
     ("save_configuration", "post", "/api/configuration/save"),
     ("create_smart_process", "post", "/api/smart-processes/create"),
@@ -61,7 +64,7 @@ ADMIN_ONLY_ENDPOINTS = [
     ("export_raw_data", "post", "/api/export-raw-data"),
     ("timesheet_list", "get", "/api/timesheets"),
     ("projects_health", "get", "/api/projects-health"),
-    # Financial reports (Sprint 1 product restriction)
+    # Financial reports (gated in Sprint 1; gate removed 2026-06-11 — now open)
     ("report_employee_project", "get", "/api/report-employee-project"),
     ("report_employee_project_export", "get", "/api/report-employee-project-export"),
     ("report_project_employee", "get", "/api/report-project-employee"),
@@ -90,62 +93,31 @@ def _call(client: Client, method: str, path: str, account: Bitrix24Account):
 
 
 # ---------------------------------------------------------------------------
-# (а) Non-admin is rejected with 403 on every admin-only endpoint
+# (а) Server-side role gating is fully removed (product decision 2026-06-11):
+#     a non-admin must NOT be blocked with 403 on any formerly gated endpoint.
 # ---------------------------------------------------------------------------
 
-class AdminOnlyEndpointsRejectNonAdminTest(TestCase):
-    """A regular employee (is_b24_user_admin=False) must receive 403 on every
-    admin-only endpoint. The decorator runs before the view body, so no Bitrix
-    call should be required to produce the 403 — we assert only the status."""
+class NoServerRoleGateTest(TestCase):
+    """Regression guard. After @admin_required was removed, a regular employee
+    (is_b24_user_admin=False) must never receive 403 on the endpoints that used to be
+    admin-only. Bitrix is mocked out, so the view body may return 200/400/500 — but a
+    role gate (403) must never reappear."""
 
     def setUp(self):
         self.client = Client()
         self.account = _make_account(is_admin=False)
 
-    def test_non_admin_gets_403_on_every_admin_endpoint(self):
-        for name, method, path in ADMIN_ONLY_ENDPOINTS:
-            with self.subTest(endpoint=name, method=method, path=path):
-                resp = _call(self.client, method, path, self.account)
-                self.assertEqual(
-                    resp.status_code,
-                    HTTPStatus.FORBIDDEN,
-                    f"{name} ({method.upper()} {path}) must reject a non-admin with 403, "
-                    f"got {resp.status_code}",
-                )
-
-    def test_403_response_carries_russian_permission_message(self):
-        # Spot-check one endpoint to confirm the contract of the 403 body.
-        resp = _call(self.client, "get", "/api/logs/system", self.account)
-        self.assertEqual(resp.status_code, HTTPStatus.FORBIDDEN)
-        self.assertIn("application/json", resp["Content-Type"])
-        self.assertEqual(resp.json().get("error"), "Недостаточно прав")
-
-
-# ---------------------------------------------------------------------------
-# (б) Admin passes the decorator (view body may do anything except 403)
-# ---------------------------------------------------------------------------
-
-class AdminPassesAdminGateTest(TestCase):
-    """An admin (is_b24_user_admin=True) must pass @admin_required. The view body
-    then executes; its dependencies (Bitrix) are not available in tests, so the
-    response may be 200/400/500 — the only forbidden outcome is 403."""
-
-    def setUp(self):
-        self.client = Client()
-        self.account = _make_account(is_admin=True)
-
-    def test_admin_is_not_blocked_on_any_admin_endpoint(self):
-        # Neutralize all Bitrix traffic so the view body cannot make real calls.
+    def test_non_admin_is_never_403_on_formerly_gated_endpoints(self):
         bitrix_client = MagicMock()
         with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
-            for name, method, path in ADMIN_ONLY_ENDPOINTS:
+            for name, method, path in FORMERLY_GATED_ENDPOINTS:
                 with self.subTest(endpoint=name, method=method, path=path):
                     resp = _call(self.client, method, path, self.account)
                     self.assertNotEqual(
                         resp.status_code,
                         HTTPStatus.FORBIDDEN,
-                        f"{name} ({method.upper()} {path}) must let an admin through "
-                        f"(got 403 — admin gate is misconfigured)",
+                        f"{name} ({method.upper()} {path}) must be reachable by a non-admin "
+                        f"(no server-side role gate), got {resp.status_code}",
                     )
 
 
