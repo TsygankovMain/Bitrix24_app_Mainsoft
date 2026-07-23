@@ -6,11 +6,16 @@ WORKDIR /app/frontend
 ARG PNPM_VERSION=9.15.9
 RUN npm install -g pnpm@${PNPM_VERSION}
 
-# Copy manifest files
-COPY frontend/package.json frontend/.npmrc ./
+# Copy manifest files. pnpm-lock.yaml обязателен: без него сборка резолвит
+# caret-диапазоны из package.json заново на КАЖДЫЙ деплой и приезжает на версиях,
+# которых никто не тестировал. Прецедент 2026-07-23: билд подтянул nuxt 4.5.0 +
+# vite 8 вместо зафиксированных 4.4.2 + vite 7, и приложение отдавало
+# «500 hooks.hookOnce is not a function» во вкладке задачи.
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/.npmrc ./
 
-# Install dependencies
-RUN pnpm install --no-frozen-lockfile
+# Install dependencies строго по lock-файлу — сборка воспроизводима,
+# обновление версий становится явным шагом (pnpm update + коммит lock-файла).
+RUN pnpm install --frozen-lockfile
 
 # Copy source code
 COPY frontend/ .
