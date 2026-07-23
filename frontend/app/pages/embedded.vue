@@ -145,6 +145,9 @@ onMounted(async () => {
     } catch (e: unknown) {
         processErrorGlobal(e)
         error.value = (e as { message?: string }).message
+    } finally {
+        // Единственный владелец завершения загрузки: какой бы веткой ни закончился
+        // init (нет ID задачи, конфигурация не загрузилась, отказ REST), спиннер гаснет.
         isLoading.value = false
     }
 })
@@ -917,21 +920,22 @@ async function deleteItemDirect(item: Record<string, unknown>) {
         </div>
     </section>
 
-    <section v-if="isLoading" class="ms-surface embedded-state">
-        <div class="embedded-state__content">
-            <span class="material-symbols-outlined text-5xl animate-spin text-[#0075ff]">progress_activity</span>
-            <div class="text-base font-semibold text-slate-900">Загрузка данных</div>
-            <p class="text-sm text-slate-500">Получаем задачи и записи времени.</p>
-        </div>
-    </section>
-
-    <section v-else-if="error" class="ms-surface embedded-state">
+    <!-- Ошибка идёт ПЕРЕД загрузкой: иначе залипший isLoading прячет причину отказа. -->
+    <section v-if="error" class="ms-surface embedded-state">
         <div class="embedded-state__content">
             <div class="rounded-2xl bg-rose-100 p-3 text-rose-600">
                 <span class="material-symbols-outlined text-4xl">error</span>
             </div>
             <div class="text-base font-semibold text-slate-900">Ошибка загрузки</div>
             <p class="max-w-lg text-sm leading-6 text-slate-600">{{ error }}</p>
+        </div>
+    </section>
+
+    <section v-else-if="isLoading" class="ms-surface embedded-state">
+        <div class="embedded-state__content">
+            <span class="material-symbols-outlined text-5xl animate-spin text-[#0075ff]">progress_activity</span>
+            <div class="text-base font-semibold text-slate-900">Загрузка данных</div>
+            <p class="text-sm text-slate-500">Получаем задачи и записи времени.</p>
         </div>
     </section>
 

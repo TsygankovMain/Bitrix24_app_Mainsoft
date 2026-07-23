@@ -106,6 +106,9 @@ onMounted(async () => {
     } catch (e: unknown) {
         processErrorGlobal(e)
         error.value = (e as { message?: string }).message
+    } finally {
+        // Единственный владелец завершения загрузки: какой бы веткой ни закончился
+        // init (нет ID задачи, конфигурация не загрузилась, отказ REST), спиннер гаснет.
         isLoading.value = false
     }
 })
@@ -260,21 +263,22 @@ async function handleTransferToReport() {
             </div>
         </section>
 
-        <section v-if="isLoading" class="ms-surface px-6 py-14 text-center">
-            <div class="mx-auto flex max-w-sm flex-col items-center gap-3 text-slate-500">
-                <span class="material-symbols-outlined text-4xl animate-spin text-[#0075ff]">progress_activity</span>
-                <div class="text-base font-medium text-slate-700">Загрузка данных задачи</div>
-                <div class="text-sm text-slate-500">Получаем дерево подзадач и записи времени.</div>
-            </div>
-        </section>
-
-        <section v-else-if="initError || error" class="ms-surface px-6 py-10">
+        <!-- Ошибка идёт ПЕРЕД загрузкой: иначе залипший isLoading прячет причину отказа. -->
+        <section v-if="initError || error" class="ms-surface px-6 py-10">
             <div class="mx-auto max-w-xl text-center">
                 <div class="mx-auto mb-4 inline-flex rounded-2xl bg-rose-100 p-3 text-rose-600">
                     <span class="material-symbols-outlined text-3xl">error</span>
                 </div>
                 <h2 class="text-xl font-semibold text-slate-900">Не удалось открыть вкладку задачи</h2>
                 <p class="mt-3 text-sm leading-6 text-slate-600">{{ initError || error }}</p>
+            </div>
+        </section>
+
+        <section v-else-if="isLoading" class="ms-surface px-6 py-14 text-center">
+            <div class="mx-auto flex max-w-sm flex-col items-center gap-3 text-slate-500">
+                <span class="material-symbols-outlined text-4xl animate-spin text-[#0075ff]">progress_activity</span>
+                <div class="text-base font-medium text-slate-700">Загрузка данных задачи</div>
+                <div class="text-sm text-slate-500">Получаем дерево подзадач и записи времени.</div>
             </div>
         </section>
 

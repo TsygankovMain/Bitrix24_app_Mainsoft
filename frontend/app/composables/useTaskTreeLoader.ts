@@ -102,6 +102,13 @@ export function useTaskTreeLoader() {
 
   async function loadTaskTree($b24: B24Frame, taskId: string) {
     if (!config.value?.DEFAULT_SMART_PROCESS_ID) {
+      // Терминальный отказ: грузить нечего. Выходить молча нельзя — isLoading
+      // стартует как true и гасится только в finally ниже, поэтому ранний return
+      // оставлял вкладку задачи навсегда на «Загрузка данных задачи» без причины.
+      error.value = error.value
+        || fieldConfigStore.loadError
+        || 'Конфигурация не найдена. Зайдите в Настройки → Настройка полей и настройте поля.'
+      isLoading.value = false
       return
     }
 
