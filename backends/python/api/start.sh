@@ -43,8 +43,12 @@ echo -e "${GREEN}Starting Gunicorn (WSGI) server...${NC}"
 
 # Пользователи: полный синк раз в час (юзеров мало, меняются редко; полный
 # синк дешёвый — отдельная "ночная" сверка не нужна, часовой цикл её заменяет,
-# см. Global Constraints / Self-Review).
-( while true; do sleep 3600; python manage.py sync_all_portals --scope users || true; done ) &
+# см. Global Constraints / Self-Review). Первый прогон — сразу, БЕЗ начального
+# sleep 3600: таблица portal_user новая и пустая на всех порталах в момент
+# деплоя, а синк дешёвый — час ожидания ничем не оправдан (Дефект 3
+# финального ревью Фазы 2).
+( python manage.py sync_all_portals --scope users || true
+  while true; do sleep 3600; python manage.py sync_all_portals --scope users || true; done ) &
 
 exec gunicorn wsgi:application \
     --bind 0.0.0.0:8000 \
