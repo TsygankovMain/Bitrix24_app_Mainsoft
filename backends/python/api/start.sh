@@ -5,9 +5,16 @@ set -e
 GREEN='\033[0;32m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}Skipping automatic migrations at runtime...${NC}"
 echo "DB Config: HOST=$DB_HOST, PORT=$DB_PORT, NAME=$DB_NAME, USER=$DB_USER"
-echo "Run 'python manage.py migrate --noinput' as a release step before starting the app."
+
+# Миграции применяются при старте контейнера. Раньше это был ручной релизный шаг,
+# и его пропускали: 2026-07-27 прод-БД оказалась на 0011 при коде 0015 — таблицы
+# sync_run не существовало, и фоновый синк проектов молча падал на каждой итерации.
+# Инстанс один, migrate идемпотентен. При ошибке миграции set -e останавливает старт
+# (контейнер не поднимется) — это видно сразу в логе деплоя, в отличие от 500-х на
+# каждом запросе к моделям при отсутствующей колонке.
+echo -e "${GREEN}Applying database migrations...${NC}"
+python manage.py migrate --noinput
 
 echo -e "${GREEN}Collecting static files...${NC}"
 python manage.py collectstatic --noinput || echo "ERROR: collectstatic failed. Continuing..."
