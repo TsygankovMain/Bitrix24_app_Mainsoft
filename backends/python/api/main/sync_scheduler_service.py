@@ -44,6 +44,7 @@ from .configuration_service import ConfigurationService
 from .project_sync_service import ProjectSyncService
 from .tenant_scoping import portal_scoping_enabled
 from .timesheet_sync_service import TimesheetSyncService
+from .user_sync_service import UserSyncService
 # Под USE_PORTAL_SCOPING account_sync_lock ключуется по portal.pk (замок «по
 # компании»), выбор субъекта — внутри замка по флагу; вызовы ниже не меняются.
 from .utils.decorators.sync_lock import account_sync_lock, SyncLockBusy
@@ -93,9 +94,14 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
     date_to = now.date().isoformat()
     date_from = (now - timedelta(days=days)).date().isoformat()
 
-    # scope="project" остаётся на одном представителе; scope="timesheet" зависит
-    # от USE_PORTAL_SCOPING (fixwave CRITICAL #1, см. _timesheet_sync_accounts).
-    reps = select_portal_accounts() if scope == "project" else _timesheet_sync_accounts()
+    # scope="project" и scope="users" остаются на одном представителе портала;
+    # scope="timesheet" зависит от USE_PORTAL_SCOPING (fixwave CRITICAL #1,
+    # см. _timesheet_sync_accounts).
+    reps = (
+        select_portal_accounts()
+        if scope in ("project", "users")
+        else _timesheet_sync_accounts()
+    )
     run.portals_total = len(reps)
 
     synced = 0
@@ -127,6 +133,22 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                 synced += 1
                 items_total += int(count or 0)
                 logger.info("Scheduled project-sync portal %s: %s items.", account.member_id, count)
+
+            elif scope == "users":
+                try:
+                    with account_sync_lock(account, scope="users"):
+                        service = UserSyncService(account.client, account)
+                        result = service.sync()
+                except SyncLockBusy:
+                    logger.info("Portal %s user-sync skipped: lock busy.",
+                                account.member_id)
+                    continue
+
+                # UserSyncService.sync() возвращает dict с ключами synced/created/updated
+                count = result.get("synced", 0) if isinstance(result, dict) else 0
+                synced += 1
+                items_total += int(count or 0)
+                logger.info("Scheduled user-sync portal %s: %s users.", account.member_id, count)
 
             else:  # scope == "timesheet"
                 if not config.get("sp_entity_type_id"):

@@ -27,10 +27,10 @@ python manage.py collectstatic --noinput || echo "ERROR: collectstatic failed. C
 # держать заметно меньше доступного лимита соединений. timeout 300 — на долгие синки.
 echo -e "${GREEN}Starting Gunicorn (WSGI) server...${NC}"
 
-# Встроенный планировщик (App Platform не имеет внешнего cron): три независимых
+# Встроенный планировщик (App Platform не имеет внешнего cron): четыре независимых
 # фоновых цикла — отдельные дочерние процессы, переживают exec gunicorn. Сначала
 # спим в каждом, чтобы не конкурировать со стартом/миграциями; advisory-lock
-# (per-scope: project/timesheet) защищает от дублей при нескольких инстансах
+# (per-scope: project/timesheet/users) защищает от дублей при нескольких инстансах
 # App Platform. Падение одной итерации (|| true) не убивает цикл.
 
 # Проекты: полный синк раз в 3 часа.
@@ -40,6 +40,11 @@ echo -e "${GREEN}Starting Gunicorn (WSGI) server...${NC}"
 ( while true; do sleep 1200; python manage.py sync_all_portals --scope timesheet || true; done ) &
 # Таймшиты: полная ночная сверка раз в сутки (ловит удаления/пропуски).
 ( while true; do sleep 86400; python manage.py sync_all_portals --scope timesheet --full || true; done ) &
+
+# Пользователи: полный синк раз в час (юзеров мало, меняются редко; полный
+# синк дешёвый — отдельная "ночная" сверка не нужна, часовой цикл её заменяет,
+# см. Global Constraints / Self-Review).
+( while true; do sleep 3600; python manage.py sync_all_portals --scope users || true; done ) &
 
 exec gunicorn wsgi:application \
     --bind 0.0.0.0:8000 \

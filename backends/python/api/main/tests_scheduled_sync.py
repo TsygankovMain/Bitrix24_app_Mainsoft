@@ -304,6 +304,96 @@ class RunScheduledSyncProjectScopeTest(TestCase):
         mock_ts_cls.assert_not_called()
 
 
+class RunScheduledSyncUsersScopeTest(TestCase):
+    """Тесты scope="users": синк пользователей без timesheet/project."""
+
+    @patch("main.sync_scheduler_service.UserSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_users_scope_calls_user_sync_service(self, mock_cfg_cls, mock_user_cls):
+        _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+        mock_user_svc = MagicMock()
+        mock_user_svc.sync.return_value = {"synced": 42, "created": 10, "updated": 32}
+        mock_user_cls.return_value = mock_user_svc
+
+        run = run_scheduled_sync(scope="users")
+
+        self.assertIsInstance(run, SyncRun)
+        self.assertEqual(run.scope, "users")
+        self.assertEqual(run.status, "success")
+        self.assertEqual(run.portals_total, 1)
+        self.assertEqual(run.portals_synced, 1)
+        self.assertEqual(run.items_synced, 42)
+        mock_user_svc.sync.assert_called_once()
+
+    @patch("main.sync_scheduler_service.UserSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_users_scope_lock_uses_users_scope(self, mock_cfg_cls, mock_user_cls):
+        _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+        mock_user_cls.return_value.sync.return_value = {"synced": 1, "created": 1, "updated": 0}
+
+        with patch("main.sync_scheduler_service.account_sync_lock") as mock_lock:
+            mock_lock.return_value.__enter__ = MagicMock(return_value=None)
+            mock_lock.return_value.__exit__ = MagicMock(return_value=False)
+            run_scheduled_sync(scope="users")
+
+        mock_lock.assert_called_once()
+        _, kwargs = mock_lock.call_args
+        self.assertEqual(kwargs.get("scope"), "users")
+
+    @patch("main.sync_scheduler_service.UserSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_users_scope_auto_sync_disabled_skips_portal(self, mock_cfg_cls, mock_user_cls):
+        _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": False}
+        mock_cfg_cls.return_value = mock_cfg
+        mock_user_cls.return_value = MagicMock()
+
+        run = run_scheduled_sync(scope="users")
+        self.assertEqual(run.portals_synced, 0)
+        mock_user_cls.return_value.sync.assert_not_called()
+
+    @patch("main.sync_scheduler_service.UserSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_users_scope_one_portal_failure_does_not_abort_run(self, mock_cfg_cls, mock_user_cls):
+        _account("m1", master=True, b24_user_id=1)
+        _account("m2", master=True, b24_user_id=3)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+        mock_user_svc = MagicMock()
+        mock_user_svc.sync.side_effect = [RuntimeError("users_boom"), {"synced": 7, "created": 2, "updated": 5}]
+        mock_user_cls.return_value = mock_user_svc
+
+        run = run_scheduled_sync(scope="users")
+        self.assertEqual(run.portals_total, 2)
+        self.assertEqual(run.portals_synced, 1)
+        self.assertEqual(run.status, "partial")
+        self.assertIn("users_boom", run.error_summary or "")
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ProjectSyncService")
+    @patch("main.sync_scheduler_service.UserSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_users_scope_does_not_call_other_services(self, mock_cfg_cls, mock_user_cls, mock_proj_cls, mock_ts_cls):
+        _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+        mock_user_cls.return_value.sync.return_value = {"synced": 1, "created": 1, "updated": 0}
+
+        run_scheduled_sync(scope="users")
+
+        mock_proj_cls.assert_not_called()
+        mock_ts_cls.assert_not_called()
+
+
 class RunScheduledSyncTimesheetAccountSetTest(TestCase):
     """CRITICAL fixwave finding #1.
 

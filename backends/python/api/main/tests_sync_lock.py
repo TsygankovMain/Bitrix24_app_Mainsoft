@@ -24,6 +24,13 @@ class AdvisoryKeyTest(TestCase):
             _advisory_key(account_pk=11, scope="timesheet"),
         )
 
+    def test_users_scope_produces_distinct_key(self):
+        k_ts = _advisory_key(account_pk=10, scope="timesheet")
+        k_pr = _advisory_key(account_pk=10, scope="project")
+        k_us = _advisory_key(account_pk=10, scope="users")
+        self.assertNotEqual(k_us, k_ts)
+        self.assertNotEqual(k_us, k_pr)
+
 
 class AdvisoryKeyBigintRangeTest(TestCase):
     """PK аккаунта — UUID (128 бит). Наивный int(pk) << 4 переполняет bigint:
