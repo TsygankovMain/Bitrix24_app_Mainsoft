@@ -1584,14 +1584,29 @@ def timesheet_list(request: AuthorizedRequest):
 @log_errors("get_users")
 @auth_required
 def get_users(request: AuthorizedRequest):
-    queryset = PortalUser.objects.filter(**scope_to_tenant(request.bitrix24_account)).order_by("last_name", "name")
+    # order_by("last_name", "name") тайбрейкается "bitrix_id" (уникален в
+    # пределах тенанта — unique_together на PortalUser): без него SQL не
+    # гарантирует стабильный порядок между запросами разных страниц при
+    # совпадении last_name/name, что даёт дубли/пропуски при постраничном
+    # обходе с фронта (Задача 6). См. ревью Задачи 5, Important #2.
+    queryset = PortalUser.objects.filter(**scope_to_tenant(request.bitrix24_account)).order_by("last_name", "name", "bitrix_id")
 
     active_only = str(request.GET.get("active_only", "")).strip().lower() in {"1", "true", "y", "yes"}
     if active_only:
         queryset = queryset.filter(active=True)
 
     page_number = request.GET.get("page", 1)
-    page_size = request.GET.get("limit", 50)
+
+    # limit из query string не должен идти в Paginator невалидированным:
+    # limit=0 -> ZeroDivisionError, limit<0 -> вводящее в заблуждение EmptyPage
+    # ("page number is less than 1"), limit=abc -> ValueError из int() — все
+    # три давали 500 с сырым текстом исключения клиенту. Клэмп сверху (200)
+    # не даёт ?limit=100000 сериализовать весь справочник в один ответ.
+    # См. ревью Задачи 5, Important #1.
+    try:
+        page_size = max(1, min(int(request.GET.get("limit", 50)), 200))
+    except (TypeError, ValueError):
+        page_size = 50
 
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
