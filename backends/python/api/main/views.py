@@ -98,6 +98,7 @@ __all__ = [
     "timesheet_sync",
     "timesheet_sync_status",
     "timesheet_list",
+    "get_users",
     "get_configuration",
     "save_configuration",
     "get_smart_processes",
@@ -1568,6 +1569,44 @@ def timesheet_list(request: AuthorizedRequest):
             "created_at": item.created_at.isoformat()
         })
         
+    return JsonResponse({
+        "items": items,
+        "total": paginator.count,
+        "page": page_obj.number,
+        "pages": paginator.num_pages,
+        "has_next": page_obj.has_next(),
+        "has_previous": page_obj.has_previous(),
+    })
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_users")
+@auth_required
+def get_users(request: AuthorizedRequest):
+    queryset = PortalUser.objects.filter(**scope_to_tenant(request.bitrix24_account)).order_by("last_name", "name")
+
+    active_only = str(request.GET.get("active_only", "")).strip().lower() in {"1", "true", "y", "yes"}
+    if active_only:
+        queryset = queryset.filter(active=True)
+
+    page_number = request.GET.get("page", 1)
+    page_size = request.GET.get("limit", 50)
+
+    paginator = Paginator(queryset, page_size)
+    page_obj = paginator.get_page(page_number)
+
+    items = [
+        {
+            "id": item.bitrix_id,
+            "name": item.name,
+            "last_name": item.last_name,
+            "active": item.active,
+            "updated_at": item.updated_at.isoformat(),
+        }
+        for item in page_obj
+    ]
+
     return JsonResponse({
         "items": items,
         "total": paginator.count,
