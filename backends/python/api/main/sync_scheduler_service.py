@@ -55,14 +55,25 @@ DEFAULT_WINDOW_DAYS = 7
 
 
 def select_portal_accounts() -> List[Bitrix24Account]:
-    """Один представитель на портал (member_id): мастер, иначе первый активный.
+    """Один представитель на портал (member_id): мастер, иначе первый по порядку.
+
+    Критерий синк-пригодности — refresh_token, а НЕ status: Bitrix24Account.status
+    хранит статус подписки приложения из Битрикса (OAuthPlacementData.status —
+    F/D/T/P/L/S), а не "active"/"inactive", и литерал "active" в него никогда не
+    попадает (см. models.update_or_create_from_oauth_placement_data). Старый
+    фильтр status="active" не совпадал НИ С ОДНИМ реальным аккаунтом — боевой
+    инцидент, планировщик не синкал ни одного портала ни разу.
 
     Используется для scope="project" всегда, и для scope="timesheet" только
     под USE_PORTAL_SCOPING=True (см. _timesheet_sync_accounts)."""
-    active = Bitrix24Account.objects.filter(status="active").order_by("member_id", "-is_master_account")
+    eligible = (
+        Bitrix24Account.objects.exclude(refresh_token__isnull=True)
+        .exclude(refresh_token="")
+        .order_by("member_id", "-is_master_account")
+    )
     seen = set()
     reps: List[Bitrix24Account] = []
-    for acc in active:
+    for acc in eligible:
         if not acc.member_id or acc.member_id in seen:
             continue
         seen.add(acc.member_id)
@@ -75,16 +86,19 @@ def _timesheet_sync_accounts() -> List[Bitrix24Account]:
 
     TimesheetItem скоуплен через tenant_scoping.scope_to_tenant по-разному в
     зависимости от флага:
-    - USE_PORTAL_SCOPING=False -> ПО АККАУНТУ. Синкать нужно каждый активный
-      аккаунт отдельно — иначе один представитель обновляет только свои же
-      строки, а отчёты остальных пользователей портала не видят свежих данных.
+    - USE_PORTAL_SCOPING=False -> ПО АККАУНТУ. Синкать нужно каждый аккаунт,
+      способный авторизоваться (refresh_token — см. select_portal_accounts),
+      отдельно — иначе один представитель обновляет только свои же строки, а
+      отчёты остальных пользователей портала не видят свежих данных.
     - USE_PORTAL_SCOPING=True  -> по порталу (общие данные). Одного
       представителя достаточно; маркер синка проставляется всем активным
       аккаунтам портала в run_scheduled_sync.
     """
     if portal_scoping_enabled():
         return select_portal_accounts()
-    return list(Bitrix24Account.objects.filter(status="active"))
+    return list(
+        Bitrix24Account.objects.exclude(refresh_token__isnull=True).exclude(refresh_token="")
+    )
 
 
 def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet", full: bool = False) -> SyncRun:

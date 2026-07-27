@@ -12,11 +12,21 @@ from .models import Bitrix24Account, Portal, SyncRun
 from .sync_scheduler_service import run_scheduled_sync, select_portal_accounts
 
 
-def _account(member_id, master=True, b24_user_id=1, status="active", portal=None):
+def _account(member_id, master=True, b24_user_id=1, status="active", portal=None, refresh_token="rt"):
+    """refresh_token по умолчанию непустой: реальные аккаунты Bitrix24Account
+
+    ВСЕГДА получают refresh_token при установке (см.
+    update_or_create_from_oauth_placement_data) — это и есть новый критерий
+    синк-пригодности (Дефект 1 fixwave-ревью). status ("active" по умолчанию)
+    больше НЕ влияет на выбор аккаунтов для синка — в реальности это поле
+    хранит статус подписки Битрикса (F/D/T/P/L/S), а не "active"/"inactive"
+    (см. SelectPortalAccountsStatusFilterTest); параметр оставлен для тестов,
+    которым нужно проверить именно значение поля status."""
     return Bitrix24Account.objects.create(
         b24_user_id=b24_user_id, is_b24_user_admin=True, member_id=member_id,
         is_master_account=master, domain_url=f"{member_id}.bitrix24.ru",
         status=status, application_version=1, portal=portal,
+        refresh_token=refresh_token,
     )
 
 
@@ -31,10 +41,87 @@ class SelectPortalAccountsTest(TestCase):
         self.assertIn(m2.pk, rep_ids)
         self.assertEqual(len(reps), 2)  # по одному на member_id
 
-    def test_skips_inactive_accounts(self):
-        _account("m3", master=True, status="inactive")
+    def test_skips_accounts_without_refresh_token(self):
+        """Критерий синк-пригодности — refresh_token, не status (см.
+        SelectPortalAccountsStatusFilterTest). status оставлен дефолтным
+        ("active" — как и у любого другого фикстурного аккаунта в этом
+        файле), чтобы тест был RED именно из-за refresh_token, а не
+        случайно проходил из-за нереалистичного значения status."""
+        _account("m3", master=True, refresh_token="")
         reps = select_portal_accounts()
         self.assertEqual(len(reps), 0)
+
+
+class SelectPortalAccountsStatusFilterTest(TestCase):
+    """Дефект 1 (боевой инцидент, найден на прод-БД): Bitrix24Account.status
+
+    хранит статус ПОДПИСКИ ПРИЛОЖЕНИЯ из Битрикса
+    (OAuthPlacementData.status — см. models.update_or_create_from_oauth_placement_data,
+    единственное место записи поля), а не "active"/"inactive". Значения на
+    проде — только буквенные коды F/D/T/P/L/S ("подписка"), литерал "active"
+    в это поле не попадает НИКОГДА. Прежний фильтр
+    Bitrix24Account.objects.filter(status="active") поэтому не совпадал ни с
+    одним реальным аккаунтом (прод: 157/157 аккаунтов status='S') — и
+    select_portal_accounts()/_timesheet_sync_accounts() всегда возвращали
+    пустой список: планировщик не синкал ни одного портала ни разу, ни для
+    timesheet, ни для project.
+
+    Новый критерий синк-пригодности — refresh_token: если он есть, аккаунт
+    в принципе способен обновить access_token и авторизоваться в Bitrix24.
+    """
+
+    def test_selects_accounts_with_real_bitrix_statuses(self):
+        for i, status in enumerate(["S", "L", "F", "T", "D", "P"], start=1):
+            _account(f"m{i}", master=True, b24_user_id=i, status=status)
+
+        reps = select_portal_accounts()
+
+        self.assertEqual(len(reps), 6)
+
+    def test_excludes_account_with_null_refresh_token(self):
+        # status оставлен дефолтным ("active"), чтобы этот тест был RED до
+        # фикса именно из-за refresh_token=None, а не из-за status.
+        _account("m1", master=True, refresh_token=None)
+
+        reps = select_portal_accounts()
+
+        self.assertEqual(reps, [])
+
+
+class AccountScopedSyncAccountsStatusFilterTest(TestCase):
+    """Тот же Дефект 1, но для приватной _timesheet_sync_accounts() —
+
+    проверяется через run_scheduled_sync(scope="timesheet"), т.к. функция не
+    публичная."""
+
+    @override_settings(USE_PORTAL_SCOPING=False)
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_selects_accounts_with_real_bitrix_statuses(self, mock_cfg_cls, mock_svc_cls):
+        for i, status in enumerate(["S", "L", "F", "T", "D", "P"], start=1):
+            _account(f"m{i}", master=True, b24_user_id=i, status=status)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc_cls.return_value.sync_all.return_value = 0
+
+        run = run_scheduled_sync(scope="timesheet")
+
+        self.assertEqual(run.portals_total, 6)
+
+    @override_settings(USE_PORTAL_SCOPING=False)
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_excludes_account_without_refresh_token(self, mock_cfg_cls, mock_svc_cls):
+        _account("m1", master=True, refresh_token="")  # status дефолтный "active"
+        mock_cfg_cls.return_value = MagicMock()
+
+        run = run_scheduled_sync(scope="timesheet")
+
+        self.assertEqual(run.portals_total, 0)
 
 
 class RunScheduledSyncTest(TestCase):
