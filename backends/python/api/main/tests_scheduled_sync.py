@@ -105,6 +105,105 @@ class RunScheduledSyncTest(TestCase):
         self.assertEqual(run.status, "partial")
         self.assertIn("boom", run.error_summary or "")
 
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_full_mode_calls_sync_all_without_dates(self, mock_cfg_cls, mock_svc_cls):
+        _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 0
+        mock_svc_cls.return_value = mock_svc
+
+        run_scheduled_sync(days=7, scope="timesheet", full=True)
+
+        # full → без date_from/date_to (ночная полная сверка, _sync_full)
+        _, kwargs = mock_svc.sync_all.call_args
+        self.assertIsNone(kwargs.get("date_from"))
+        self.assertIsNone(kwargs.get("date_to"))
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_incremental_mode_still_passes_dates(self, mock_cfg_cls, mock_svc_cls):
+        _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 3
+        mock_svc_cls.return_value = mock_svc
+
+        run_scheduled_sync(days=7, scope="timesheet", full=False)
+
+        _, kwargs = mock_svc.sync_all.call_args
+        self.assertTrue(kwargs.get("date_from"))
+        self.assertTrue(kwargs.get("date_to"))
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_marks_last_timesheet_synced_at_after_incremental_sync(self, mock_cfg_cls, mock_svc_cls):
+        account = _account("m1", master=True)
+        self.assertIsNone(account.last_timesheet_synced_at)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 5
+        mock_svc_cls.return_value = mock_svc
+
+        run_scheduled_sync(scope="timesheet")
+
+        account.refresh_from_db()
+        self.assertIsNotNone(account.last_timesheet_synced_at)
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_marks_last_timesheet_synced_at_after_full_sync(self, mock_cfg_cls, mock_svc_cls):
+        account = _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 12
+        mock_svc_cls.return_value = mock_svc
+
+        run_scheduled_sync(scope="timesheet", full=True)
+
+        account.refresh_from_db()
+        self.assertIsNotNone(account.last_timesheet_synced_at)
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_does_not_mark_when_sync_fails(self, mock_cfg_cls, mock_svc_cls):
+        account = _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.side_effect = RuntimeError("boom")
+        mock_svc_cls.return_value = mock_svc
+
+        run_scheduled_sync(scope="timesheet")
+
+        account.refresh_from_db()
+        self.assertIsNone(account.last_timesheet_synced_at)
+
 
 class RunScheduledSyncProjectScopeTest(TestCase):
     """Тесты scope="project": синк проектов без timesheet."""

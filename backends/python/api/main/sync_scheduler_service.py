@@ -7,11 +7,16 @@
 параметру scope:
 
 - scope="project"  : полный синк проектов (ProjectSyncService.sync()), раз в 3 часа.
-- scope="timesheet": инкрементальный синк трудозатрат (TimesheetSyncService.sync_all()),
-                     используется для ручного запуска или on-demand дозагрузки.
+- scope="timesheet": инкрементальный синк трудозатрат (TimesheetSyncService.sync_all()
+                     с окном date_from/date_to), фоновый цикл каждые 20 минут.
+- scope="timesheet", full=True: полная сверка без окна дат (TimesheetSyncService.sync_all()
+                     -> _sync_full), фоновый цикл раз в сутки — ловит удаления/пропуски,
+                     которые инкремент не видит. Параметр `full` игнорируется при scope="project".
 
-Трудозатраты по расписанию НЕ синкаются — дозагрузка происходит при открытии
-отчёта через endpoint timesheet_sync. Планировщик запускает только scope=project.
+После успешного синка представительного аккаунта в ветке timesheet проставляется
+account.last_timesheet_synced_at — тот же маркер, что ставит on-demand дозагрузка
+на endpoint timesheet_sync (задача 2.2), чтобы индикатор «данные на ЧЧ:ММ» в отчёте
+отражал и фоновые синки, а не только визиты пользователя.
 
 Падение одного портала не прерывает остальные. Совместимо с advisory-lock из 2.2
 (на Postgres лок берётся честно, на sqlite no-op).
@@ -49,7 +54,7 @@ def select_portal_accounts() -> List[Bitrix24Account]:
     return reps
 
 
-def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet") -> SyncRun:
+def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet", full: bool = False) -> SyncRun:
     run = SyncRun.objects.create(scope=scope, status="running", window_days=days)
 
     now = timezone.now()
@@ -98,7 +103,15 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                 try:
                     with account_sync_lock(account, scope="timesheet"):
                         service = TimesheetSyncService(account.client, account, config)
-                        count = service.sync_all(date_from=date_from, date_to=date_to)
+                        if full:
+                            count = service.sync_all()  # без дат → _sync_full (ночная сверка)
+                        else:
+                            count = service.sync_all(date_from=date_from, date_to=date_to)
+                        # Маркер «данные свежи на» для индикатора отчёта (гейт в timesheet_sync,
+                        # задача 2.2) — иначе фоновые синки его не двигают, и виджет всегда
+                        # показывал бы устаревшее время, пока пользователь не откроет отчёт сам.
+                        account.last_timesheet_synced_at = timezone.now()
+                        account.save(update_fields=["last_timesheet_synced_at"])
                 except SyncLockBusy:
                     logger.info("Portal %s sync skipped: lock busy (manual sync running).",
                                 account.member_id)
