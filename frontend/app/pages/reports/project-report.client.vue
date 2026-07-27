@@ -23,6 +23,8 @@ const isModalOpen = ref(false)
 const modalError = ref<string | null>(null)
 const isSaving = ref(false)
 const projectCardCache = new Map<string, ProjectBoardCardRecord>()
+const lastSyncedAt = ref<string | null>(null)
+const isRefreshing = ref(false)
 
 useHead({
   title: 'Отчет по проекту'
@@ -78,6 +80,7 @@ onMounted(async () => {
         currentGroupId.value = groupId
 
         await loadUser()
+        void loadSyncStatus()
         await fetchData()
 
     } catch (e: unknown) {
@@ -150,6 +153,30 @@ async function fetchData() {
         error.value = "Ошибка загрузки данных: " + (e as Error).message
     } finally {
         isLoading.value = false
+    }
+}
+
+async function loadSyncStatus() {
+    try {
+        lastSyncedAt.value = (await apiStore.getTimesheetSyncStatus()).last_synced_at
+    } catch {
+        // индикатор не критичен для работы страницы
+    }
+}
+
+async function refreshTimesheets() {
+    if (isRefreshing.value) return
+    isRefreshing.value = true
+    try {
+        const to = new Date()
+        const from = new Date()
+        from.setDate(from.getDate() - 30)
+        const iso = (d: Date) => d.toISOString().slice(0, 10)
+        await apiStore.syncTimesheets(iso(from), iso(to)) // scoped-синк за 30 дней → быстрый путь + гейт свежести (Task 2)
+        await loadSyncStatus()
+        await fetchData()
+    } finally {
+        isRefreshing.value = false
     }
 }
 
@@ -358,10 +385,12 @@ const handleSaveMeeting = async () => {
 
         closeModal()
         await fetchData()
-        
-        apiStore.syncTimesheets().then(() => {
-            projectCardCache.clear()
-        }).catch(e => console.warn('[ProjectReport] Background sync failed', e))
+
+        // Фаза 1 sync-offload: полный синк таймшитов на критпути сохранения карточки убран
+        // (тот же антипаттерн, что и в embedded.vue). Кеш карточки просто сбрасывается —
+        // актуализация придёт следующим фоновым синком/планировщиком или кнопкой «Обновить»
+        // (write-through при сохранении — Фаза 3).
+        projectCardCache.clear()
     } catch (e: unknown) {
         modalError.value = (e as Error).message
     } finally {
@@ -381,8 +410,14 @@ const handleSaveMeeting = async () => {
                 </h1>
                 <p v-if="currentGroupId" class="text-xs text-slate-500 mt-1">ID Проекта: {{ currentGroupId }}</p>
             </div>
-            <div class="flex gap-2">
-                 <button class="p-2 text-slate-500 hover:text-blue-600 transition-colors rounded-full hover:bg-blue-50" @click="fetchData">
+            <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2 text-xs text-slate-500">
+                    <span v-if="lastSyncedAt">данные на {{ new Date(lastSyncedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }}</span>
+                    <button :disabled="isRefreshing" class="px-2 py-1 border rounded hover:bg-slate-50 disabled:opacity-50" @click="refreshTimesheets">
+                        {{ isRefreshing ? 'Обновляю…' : 'Обновить' }}
+                    </button>
+                </div>
+                <button class="p-2 text-slate-500 hover:text-blue-600 transition-colors rounded-full hover:bg-blue-50" @click="fetchData">
                     <span class="material-symbols-outlined">refresh</span>
                 </button>
             </div>

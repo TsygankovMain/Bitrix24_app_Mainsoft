@@ -582,6 +582,12 @@ export const useApiStore = defineStore(
       return result
     }
 
+    const getTimesheetSyncStatus = async (): Promise<{ last_synced_at: string | null; count: number }> => {
+      return await $api<{ last_synced_at: string | null, count: number }>('/api/timesheet-sync-status', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
     const getTimesheetsList = async (page: number = 1, limit: number = 50, createdFrom?: string, createdTo?: string): Promise<{ items: unknown[], total: number, page: number, pages: number }> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
@@ -1065,6 +1071,7 @@ export const useApiStore = defineStore(
       getReportTimeEntryDiscipline,
       getReportFocusAnalysis,
       syncTimesheets,
+      getTimesheetSyncStatus,
       getTimesheetsList,
       getProjectBoard,
       getProjectBoardMeta,
