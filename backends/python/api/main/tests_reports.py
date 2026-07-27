@@ -1118,9 +1118,10 @@ class FinanceOperationServiceTest(TestCase):
         )
 
     def _build_service(self, call_method_mock):
+        # Bitrix24Account.client — read-only property, клиент передаём явным аргументом:
+        # FinanceOperationService прокидывает его дальше в ConfigurationService.
         client = Mock()
         client._bitrix_token.call_method = call_method_mock
-        self.account.client = client
         return FinanceOperationService(client, self.account)
 
     def test_list_operations_normalizes_rows(self):
@@ -1168,11 +1169,10 @@ class FinanceOperationServiceTest(TestCase):
             "source": "deal_embed",
             "comment": "Оплата",
         }
-        service = Mock(spec=FinanceOperationService)
-        service.list_operations.return_value = {"operations": [existing_row], "count": 1}
-        service._build_idempotency_key = FinanceOperationService._build_idempotency_key
-        service._normalize_create_payload = FinanceOperationService._normalize_create_payload
-        service._find_duplicate = FinanceOperationService._find_duplicate
+        # Реальный экземпляр без __init__ (как в соседних тестах): у Mock(spec=...)
+        # хелперы вроде _to_float/_clean_str возвращают Mock и ломают нормализацию.
+        service = FinanceOperationService.__new__(FinanceOperationService)
+        service.list_operations = Mock(return_value={"operations": [existing_row], "count": 1})
 
         payload = {
             "project_item_id": "101",
@@ -1183,10 +1183,16 @@ class FinanceOperationServiceTest(TestCase):
             "source": "deal_embed",
             "comment": "Оплата",
         }
-        normalized = FinanceOperationService._normalize_create_payload(service, payload)
-        duplicate = FinanceOperationService._find_duplicate(service, normalized)
+        normalized = service._normalize_create_payload(payload)
+        duplicate = service._find_duplicate(normalized)
+
         self.assertIsNotNone(duplicate)
         self.assertEqual(duplicate["id"], "777")
+        service.list_operations.assert_called_once_with(
+            project_item_id="101",
+            deal_id="45",
+            limit=50,
+        )
 
     def test_normalize_create_payload_requires_deal_id_for_non_manual_source(self):
         service = FinanceOperationService.__new__(FinanceOperationService)
