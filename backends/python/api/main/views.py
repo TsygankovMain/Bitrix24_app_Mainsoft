@@ -32,6 +32,7 @@ from .services import (
 )
 from .installation_service import InstallationService, InstallationError
 from .tenant_scoping import scope_to_tenant
+from .employee_ids import extract_bitrix_user_id
 from .perf import ReportProfiler
 from .report_queries import (
     TREE_REPORT_FIELDS,
@@ -134,13 +135,26 @@ def _get_user_map(request: AuthorizedRequest, user_ids):
     """Строит {employee_id: "Фамилия Имя"} из локальной БД (portal_user),
     а не через Bitrix user.get. Убирает 3-7с "user_map" на отчётах (был
     холодный промах per-воркер Django LocMemCache) — см. Фаза 2 sync-offload.
+
+    Входящие user_ids (из TimesheetItem.employee_id, в т.ч. историчные
+    строки) нормализуются через extract_bitrix_user_id ДО запроса — тем же
+    конвертером, которым UserSyncService пишет PortalUser.bitrix_id, — иначе
+    неканоничные формы ("[12]", "12.0") не совпадут с каноничным bitrix_id в
+    БД. Ключи результата тоже каноничные: resolve_employee_name ищет сначала
+    по normalize_employee_id(employee_id), так что канонический ключ находит
+    имя и для сырого, и для неканоничного значения строки.
     """
     if not user_ids:
         return {}
 
+    normalized_ids = {extract_bitrix_user_id(uid) for uid in user_ids}
+    normalized_ids.discard("")
+    if not normalized_ids:
+        return {}
+
     rows = PortalUser.objects.filter(
         **scope_to_tenant(request.bitrix24_account),
-        bitrix_id__in=list(user_ids),
+        bitrix_id__in=list(normalized_ids),
     ).values("bitrix_id", "name", "last_name")
 
     return {
