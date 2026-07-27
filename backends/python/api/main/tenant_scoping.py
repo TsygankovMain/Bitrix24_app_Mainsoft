@@ -21,7 +21,9 @@ from typing import Any, Dict
 from django.conf import settings
 
 
-def _portal_scoping_enabled() -> bool:
+def portal_scoping_enabled() -> bool:
+    """Публичный хелпер флага — переиспользуется вне модуля (например,
+    sync_scheduler_service при выборе множества аккаунтов для scope="timesheet")."""
     return bool(getattr(settings, "USE_PORTAL_SCOPING", False))
 
 
@@ -32,7 +34,7 @@ def scope_to_tenant(account: Any, *, write: bool = False) -> Dict[str, Any]:
         # (вызывающий код и так не должен звать без аккаунта).
         return {"bitrix24_account": account}
 
-    if not _portal_scoping_enabled():
+    if not portal_scoping_enabled():
         return {"bitrix24_account": account}
 
     portal = getattr(account, "portal", None)

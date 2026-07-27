@@ -1,25 +1,36 @@
-"""Фоновая синхронизация по расписанию (задача 3.6).
+"""Фоновая синхронизация по расписанию (задача 3.6; fixwave CRITICAL #1).
 
 Запускается management-командой sync_all_portals из встроенного планировщика
-(фоновый цикл в start.sh) или вручную. Для каждого портала (group by member_id)
-берёт один представительный аккаунт (мастер, иначе первый активный), читает
-его конфиг (app.option), и если автосинк включён — выполняет синк согласно
-параметру scope:
+(фоновый цикл в start.sh) или вручную. Множество аккаунтов, которое обходит
+run_scheduled_sync, зависит от scope:
 
-- scope="project"  : полный синк проектов (ProjectSyncService.sync()), раз в 3 часа.
-- scope="timesheet": инкрементальный синк трудозатрат (TimesheetSyncService.sync_all()
-                     с окном date_from/date_to), фоновый цикл каждые 20 минут.
-- scope="timesheet", full=True: полная сверка без окна дат (TimesheetSyncService.sync_all()
-                     -> _sync_full), фоновый цикл раз в сутки — ловит удаления/пропуски,
-                     которые инкремент не видит. Параметр `full` игнорируется при scope="project".
+- scope="project": один представительный аккаунт на портал (group by member_id;
+  мастер, иначе первый активный — select_portal_accounts()). ProjectCard не
+  скоуплена по пользователю, представителя достаточно. Полный синк проектов
+  (ProjectSyncService.sync()), раз в 3 часа. Этот выбор НЕ зависит от
+  USE_PORTAL_SCOPING и фиксом ниже не затронут.
+- scope="timesheet": множество зависит от settings.USE_PORTAL_SCOPING, потому
+  что TimesheetItem скоуплен по-разному (tenant_scoping.scope_to_tenant):
+    - флаг OFF (дефолт) -> данные ПО АККАУНТУ -> синкается КАЖДЫЙ активный
+      аккаунт (_timesheet_sync_accounts()); один представитель освежал бы
+      только свои же строки, а отчёты остальных пользователей портала
+      замирали бы навсегда.
+    - флаг ON -> данные по порталу (общие) -> один представитель, как и для
+      project; маркер синка проставляется всем активным аккаунтам портала
+      (см. run_scheduled_sync).
+  Инкремент — TimesheetSyncService.sync_all() с окном date_from/date_to,
+  фоновый цикл каждые 20 минут. С full=True — полная сверка без окна дат
+  (-> _sync_full), фоновый цикл раз в сутки — ловит удаления/пропуски,
+  которые инкремент не видит. Параметр `full` игнорируется при scope="project".
 
-После успешного синка представительного аккаунта в ветке timesheet проставляется
-account.last_timesheet_synced_at — тот же маркер, что ставит on-demand дозагрузка
-на endpoint timesheet_sync (задача 2.2), чтобы индикатор «данные на ЧЧ:ММ» в отчёте
-отражал и фоновые синки, а не только визиты пользователя.
+Для каждого аккаунта из подобранного множества: читает конфиг (app.option) и,
+если автосинк включён, выполняет синк. После успешного синка в ветке timesheet
+проставляется last_timesheet_synced_at — тот же маркер, что ставит on-demand
+дозагрузка на endpoint timesheet_sync (задача 2.2), чтобы индикатор «данные на
+ЧЧ:ММ» в отчёте отражал и фоновые синки, а не только визиты пользователя.
 
-Падение одного портала не прерывает остальные. Совместимо с advisory-lock из 2.2
-(на Postgres лок берётся честно, на sqlite no-op).
+Падение одного портала/аккаунта не прерывает остальные. Совместимо с
+advisory-lock из 2.2 (на Postgres лок берётся честно, на sqlite no-op).
 """
 
 import logging
@@ -31,6 +42,7 @@ from django.utils import timezone
 from .models import Bitrix24Account, SyncRun
 from .configuration_service import ConfigurationService
 from .project_sync_service import ProjectSyncService
+from .tenant_scoping import portal_scoping_enabled
 from .timesheet_sync_service import TimesheetSyncService
 # Под USE_PORTAL_SCOPING account_sync_lock ключуется по portal.pk (замок «по
 # компании»), выбор субъекта — внутри замка по флагу; вызовы ниже не меняются.
@@ -42,7 +54,10 @@ DEFAULT_WINDOW_DAYS = 7
 
 
 def select_portal_accounts() -> List[Bitrix24Account]:
-    """Один представитель на портал (member_id): мастер, иначе первый активный."""
+    """Один представитель на портал (member_id): мастер, иначе первый активный.
+
+    Используется для scope="project" всегда, и для scope="timesheet" только
+    под USE_PORTAL_SCOPING=True (см. _timesheet_sync_accounts)."""
     active = Bitrix24Account.objects.filter(status="active").order_by("member_id", "-is_master_account")
     seen = set()
     reps: List[Bitrix24Account] = []
@@ -54,6 +69,23 @@ def select_portal_accounts() -> List[Bitrix24Account]:
     return reps
 
 
+def _timesheet_sync_accounts() -> List[Bitrix24Account]:
+    """Множество аккаунтов для scope="timesheet" (fixwave CRITICAL #1).
+
+    TimesheetItem скоуплен через tenant_scoping.scope_to_tenant по-разному в
+    зависимости от флага:
+    - USE_PORTAL_SCOPING=False -> ПО АККАУНТУ. Синкать нужно каждый активный
+      аккаунт отдельно — иначе один представитель обновляет только свои же
+      строки, а отчёты остальных пользователей портала не видят свежих данных.
+    - USE_PORTAL_SCOPING=True  -> по порталу (общие данные). Одного
+      представителя достаточно; маркер синка проставляется всем активным
+      аккаунтам портала в run_scheduled_sync.
+    """
+    if portal_scoping_enabled():
+        return select_portal_accounts()
+    return list(Bitrix24Account.objects.filter(status="active"))
+
+
 def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet", full: bool = False) -> SyncRun:
     run = SyncRun.objects.create(scope=scope, status="running", window_days=days)
 
@@ -61,7 +93,9 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
     date_to = now.date().isoformat()
     date_from = (now - timedelta(days=days)).date().isoformat()
 
-    reps = select_portal_accounts()
+    # scope="project" остаётся на одном представителе; scope="timesheet" зависит
+    # от USE_PORTAL_SCOPING (fixwave CRITICAL #1, см. _timesheet_sync_accounts).
+    reps = select_portal_accounts() if scope == "project" else _timesheet_sync_accounts()
     run.portals_total = len(reps)
 
     synced = 0
@@ -110,8 +144,22 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                         # Маркер «данные свежи на» для индикатора отчёта (гейт в timesheet_sync,
                         # задача 2.2) — иначе фоновые синки его не двигают, и виджет всегда
                         # показывал бы устаревшее время, пока пользователь не откроет отчёт сам.
-                        account.last_timesheet_synced_at = timezone.now()
-                        account.save(update_fields=["last_timesheet_synced_at"])
+                        sync_marker = timezone.now()
+                        if portal_scoping_enabled() and account.portal_id:
+                            # Под portal-скоупингом синкает один представитель, но данные
+                            # общие на портал -> маркер получают ВСЕ активные аккаунты
+                            # портала (fixwave CRITICAL #1), иначе их отчёты показывали бы
+                            # «устарело», хотя данные уже свежие. account.portal_id (а не
+                            # account.portal) — чтобы не тянуть лишний SELECT.
+                            Bitrix24Account.objects.filter(
+                                status="active", portal_id=account.portal_id,
+                            ).update(last_timesheet_synced_at=sync_marker)
+                            account.last_timesheet_synced_at = sync_marker
+                        else:
+                            # Флаг OFF, либо portal ещё null (переходный период backfill) —
+                            # маркер только этому аккаунту, как и раньше.
+                            account.last_timesheet_synced_at = sync_marker
+                            account.save(update_fields=["last_timesheet_synced_at"])
                 except SyncLockBusy:
                     logger.info("Portal %s sync skipped: lock busy (manual sync running).",
                                 account.member_id)

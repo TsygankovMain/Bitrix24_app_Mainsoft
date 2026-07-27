@@ -5,18 +5,18 @@ Django TestCase, sqlite, мок Bitrix/сервисов.
 """
 from unittest.mock import patch, MagicMock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from .models import Bitrix24Account, SyncRun
+from .models import Bitrix24Account, Portal, SyncRun
 from .sync_scheduler_service import run_scheduled_sync, select_portal_accounts
 
 
-def _account(member_id, master=True, b24_user_id=1, status="active"):
+def _account(member_id, master=True, b24_user_id=1, status="active", portal=None):
     return Bitrix24Account.objects.create(
         b24_user_id=b24_user_id, is_b24_user_admin=True, member_id=member_id,
         is_master_account=master, domain_url=f"{member_id}.bitrix24.ru",
-        status=status, application_version=1,
+        status=status, application_version=1, portal=portal,
     )
 
 
@@ -302,3 +302,114 @@ class RunScheduledSyncProjectScopeTest(TestCase):
         run_scheduled_sync(scope="project")
 
         mock_ts_cls.assert_not_called()
+
+
+class RunScheduledSyncTimesheetAccountSetTest(TestCase):
+    """CRITICAL fixwave finding #1.
+
+    scope="timesheet" раньше ВСЕГДА синкал один представитель на портал
+    (select_portal_accounts()), но TimesheetItem скоуплен по-разному в
+    зависимости от USE_PORTAL_SCOPING (см. tenant_scoping.scope_to_tenant):
+    под флагом OFF (дефолт) — ПО АККАУНТУ. Значит представитель освежал только
+    свои же строки, а отчёты остальных пользователей того же портала замирали
+    навсегда (планировщик их никогда не трогал). scope="project" эта проблема
+    не касается (ProjectCard общая на портал) — регресс ниже это подтверждает.
+    """
+
+    @override_settings(USE_PORTAL_SCOPING=False)
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_flag_off_syncs_every_active_account_and_marks_each(self, mock_cfg_cls, mock_svc_cls):
+        """Флаг OFF: данные по аккаунту -> синкать нужно ВСЕХ активных, не
+        только представителя портала."""
+        acc1 = _account("m1", master=True, b24_user_id=1)
+        acc2 = _account("m1", master=False, b24_user_id=2)  # тот же портал (member_id), второй юзер
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 5
+        mock_svc_cls.return_value = mock_svc
+
+        run = run_scheduled_sync(scope="timesheet")
+
+        self.assertEqual(run.portals_total, 2)
+        self.assertEqual(run.portals_synced, 2)
+        self.assertEqual(mock_svc_cls.call_count, 2)  # оба аккаунта реально синканы
+        acc1.refresh_from_db()
+        acc2.refresh_from_db()
+        self.assertIsNotNone(acc1.last_timesheet_synced_at)
+        self.assertIsNotNone(acc2.last_timesheet_synced_at)
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_flag_on_syncs_one_representative_but_marks_whole_portal(self, mock_cfg_cls, mock_svc_cls):
+        """Флаг ON: данные общие на портал -> синкает один представитель, но
+        маркер свежести проставляется ВСЕМ активным аккаунтам портала."""
+        portal = Portal.objects.create(member_id="m1", domain_url="m1.bitrix24.ru", status="active")
+        acc1 = _account("m1", master=True, b24_user_id=1, portal=portal)
+        acc2 = _account("m1", master=False, b24_user_id=2, portal=portal)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 5
+        mock_svc_cls.return_value = mock_svc
+
+        run = run_scheduled_sync(scope="timesheet")
+
+        self.assertEqual(run.portals_total, 1)       # один представитель в множестве
+        self.assertEqual(run.portals_synced, 1)
+        self.assertEqual(mock_svc_cls.call_count, 1)  # реально синкается только он
+        acc1.refresh_from_db()
+        acc2.refresh_from_db()
+        self.assertIsNotNone(acc1.last_timesheet_synced_at)
+        self.assertIsNotNone(acc2.last_timesheet_synced_at)  # но маркер — обоим
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_flag_on_without_portal_marks_only_that_account(self, mock_cfg_cls, mock_svc_cls):
+        """Флаг ON, но account.portal ещё null (переходный период backfill) ->
+        фолбэк: маркер только этому аккаунту, без падения на portal=None."""
+        acc = _account("m1", master=True, b24_user_id=1, portal=None)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 5
+        mock_svc_cls.return_value = mock_svc
+
+        run_scheduled_sync(scope="timesheet")
+
+        acc.refresh_from_db()
+        self.assertIsNotNone(acc.last_timesheet_synced_at)
+
+    @patch("main.sync_scheduler_service.ProjectSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_project_scope_still_uses_one_representative_regardless_of_flag(self, mock_cfg_cls, mock_proj_cls):
+        """Регресс: scope="project" не должен трогаться этим фиксом — всегда
+        один представитель на портал (member_id), независимо от USE_PORTAL_SCOPING."""
+        _account("m1", master=True, b24_user_id=1)
+        _account("m1", master=False, b24_user_id=2)  # тот же портал — должен быть пропущен
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+        mock_proj = MagicMock()
+        mock_proj.sync.return_value = {"synced": 1, "created": 1, "updated": 0}
+        mock_proj_cls.return_value = mock_proj
+
+        run = run_scheduled_sync(scope="project")
+
+        self.assertEqual(run.portals_total, 1)
+        self.assertEqual(mock_proj_cls.call_count, 1)
