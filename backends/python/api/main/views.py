@@ -11,7 +11,7 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from .utils.decorators import auth_required, log_errors, rate_limit
 from .utils.decorators.sync_lock import sync_lock, account_sync_lock, SyncLockBusy
 from .utils import AuthorizedRequest
-from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard
+from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard, PortalUser
 
 import logging
 import json
@@ -131,13 +131,22 @@ def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
 
 
 def _get_user_map(request: AuthorizedRequest, user_ids):
+    """Строит {employee_id: "Фамилия Имя"} из локальной БД (portal_user),
+    а не через Bitrix user.get. Убирает 3-7с "user_map" на отчётах (был
+    холодный промах per-воркер Django LocMemCache) — см. Фаза 2 sync-offload.
+    """
     if not user_ids:
         return {}
 
-    config_service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
-    config = config_service.get_configuration_sync()
-    data_service = BitrixDataService(request.bitrix24_account.client, config, request.bitrix24_account)
-    return data_service.fetch_users(list(user_ids))
+    rows = PortalUser.objects.filter(
+        **scope_to_tenant(request.bitrix24_account),
+        bitrix_id__in=list(user_ids),
+    ).values("bitrix_id", "name", "last_name")
+
+    return {
+        row["bitrix_id"]: (f"{row['last_name']} {row['name']}".strip() or row["bitrix_id"])
+        for row in rows
+    }
 
 
 def _get_data_service(request: AuthorizedRequest):
