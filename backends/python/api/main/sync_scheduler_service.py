@@ -2,29 +2,29 @@
 
 Запускается management-командой sync_all_portals из встроенного планировщика
 (фоновый цикл в start.sh) или вручную. Множество аккаунтов, которое обходит
-run_scheduled_sync, зависит от scope:
+run_scheduled_sync, одинаково для ВСЕХ скоупов и зависит только от
+settings.USE_PORTAL_SCOPING (_account_scoped_sync_accounts()), потому что все
+три проекции — TimesheetItem, ProjectCard, PortalUser — скоуплены через один и
+тот же tenant_scoping.scope_to_tenant:
 
-- scope="project": один представительный аккаунт на портал (group by member_id;
-  мастер, иначе первый — select_portal_accounts()). ProjectCard не скоуплена
-  по пользователю, представителя достаточно. Полный синк проектов
-  (ProjectSyncService.sync()), раз в 3 часа. Этот выбор НЕ зависит от
-  USE_PORTAL_SCOPING и фиксом ниже не затронут.
-- scope="timesheet" и scope="users": множество зависит от
-  settings.USE_PORTAL_SCOPING, потому что TimesheetItem и PortalUser
-  скоуплены одинаково (tenant_scoping.scope_to_tenant):
     - флаг OFF (дефолт) -> данные ПО АККАУНТУ -> синкается КАЖДЫЙ аккаунт,
       способный авторизоваться (_account_scoped_sync_accounts()); один
       представитель освежал бы только свои же строки (timesheet) или писал
-      бы PortalUser только под своим FK (users), а остальные пользователи
-      портала не видели бы свежих данных вовсе.
-    - флаг ON -> данные по порталу (общие) -> один представитель, как и для
-      project; для timesheet маркер синка проставляется всем активным
-      аккаунтам портала (см. run_scheduled_sync).
+      бы ProjectCard/PortalUser только под своим FK (project/users), а
+      остальные пользователи портала не видели бы свежих данных вовсе — для
+      ProjectCard это давало пустую доску проектов всем, кроме представителя
+      (тот же баг, что и с timesheet/users, найден отдельно и позже).
+    - флаг ON -> данные по порталу (общие) -> один представитель
+      (select_portal_accounts()); для timesheet маркер синка проставляется
+      всем активным аккаунтам портала (см. run_scheduled_sync).
+
+  Project: полный синк проектов (ProjectSyncService.sync()), раз в 3 часа.
+  Параметр `full` игнорируется.
   Timesheet: инкремент — TimesheetSyncService.sync_all() с окном
   date_from/date_to, фоновый цикл каждые 20 минут. С full=True — полная
   сверка без окна дат (-> _sync_full), фоновый цикл раз в сутки — ловит
   удаления/пропуски, которые инкремент не видит. Параметр `full`
-  игнорируется при scope="project"/"users".
+  используется только в этой ветке (для project/users игнорируется).
   Users: UserSyncService.sync() — полный синк справочника сотрудников, без
   инкремента (см. UserSyncService), часовой фоновый цикл (start.sh).
 
@@ -78,8 +78,8 @@ def select_portal_accounts() -> List[Bitrix24Account]:
     фильтр status="active" не совпадал НИ С ОДНИМ реальным аккаунтом — боевой
     инцидент, планировщик не синкал ни одного портала ни разу.
 
-    Используется для scope="project" всегда, и для scope="timesheet"/"users"
-    только под USE_PORTAL_SCOPING=True (см. _account_scoped_sync_accounts)."""
+    Используется только под USE_PORTAL_SCOPING=True, для любого scope (см.
+    _account_scoped_sync_accounts)."""
     eligible = (
         Bitrix24Account.objects.exclude(refresh_token__isnull=True)
         .exclude(refresh_token="")
@@ -96,15 +96,16 @@ def select_portal_accounts() -> List[Bitrix24Account]:
 
 
 def _account_scoped_sync_accounts() -> List[Bitrix24Account]:
-    """Множество аккаунтов для scope="timesheet" и scope="users" (fixwave CRITICAL #1).
+    """Множество аккаунтов для ЛЮБОГО scope (fixwave CRITICAL #1).
 
-    TimesheetItem и PortalUser скоуплены через один и тот же
+    TimesheetItem, ProjectCard и PortalUser скоуплены через один и тот же
     tenant_scoping.scope_to_tenant, поэтому множество аккаунтов для них общее:
     - USE_PORTAL_SCOPING=False -> ПО АККАУНТУ. Синкать нужно каждый аккаунт,
       способный авторизоваться (см. select_portal_accounts про refresh_token),
       отдельно — иначе один представитель обновляет только свои же строки
-      (timesheet) или пишет PortalUser только под своим FK (users), а
-      остальные пользователи портала не видят свежих данных вовсе.
+      (timesheet) или пишет ProjectCard/PortalUser только под своим FK
+      (project/users), а остальные пользователи портала не видят свежих
+      данных вовсе.
     - USE_PORTAL_SCOPING=True  -> по порталу (общие данные). Одного
       представителя достаточно; для timesheet маркер синка проставляется всем
       активным аккаунтам портала в run_scheduled_sync.
@@ -123,16 +124,13 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
     date_to = now.date().isoformat()
     date_from = (now - timedelta(days=days)).date().isoformat()
 
-    # scope="project" остаётся на одном представителе портала (ProjectCard
-    # общая на портал, представителя достаточно). scope="timesheet" и
-    # scope="users" зависят от USE_PORTAL_SCOPING (fixwave CRITICAL #1, см.
-    # _account_scoped_sync_accounts) — TimesheetItem и PortalUser скоуплены
-    # одинаково, поэтому идут по одной ветке.
-    reps = (
-        select_portal_accounts()
-        if scope == "project"
-        else _account_scoped_sync_accounts()
-    )
+    # Множество одинаково для всех скоупов и зависит только от
+    # USE_PORTAL_SCOPING (fixwave CRITICAL #1, см. _account_scoped_sync_accounts):
+    # TimesheetItem, ProjectCard и PortalUser скоуплены одинаково, поэтому под
+    # флагом OFF один представитель на портал оставлял бы остальных
+    # сотрудников с пустой доской проектов/справочником, а свои строки
+    # timesheet — незасинканными.
+    reps = _account_scoped_sync_accounts()
     run.portals_total = len(reps)
 
     synced = 0

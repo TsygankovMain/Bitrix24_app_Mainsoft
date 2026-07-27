@@ -8,8 +8,11 @@ from unittest.mock import patch, MagicMock
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from .models import Bitrix24Account, Portal, SyncRun
+from .models import Bitrix24Account, Portal, ProjectCard, SyncRun, TimesheetItem
+from .project_board_shared import get_project_card_queryset
+from .report_queries import build_filtered_timesheet_queryset
 from .sync_scheduler_service import run_scheduled_sync, select_portal_accounts
+from .tenant_scoping import scope_to_tenant
 
 
 def _account(member_id, master=True, b24_user_id=1, status="active", portal=None, refresh_token="rt"):
@@ -489,8 +492,10 @@ class RunScheduledSyncTimesheetAccountSetTest(TestCase):
     зависимости от USE_PORTAL_SCOPING (см. tenant_scoping.scope_to_tenant):
     под флагом OFF (дефолт) — ПО АККАУНТУ. Значит представитель освежал только
     свои же строки, а отчёты остальных пользователей того же портала замирали
-    навсегда (планировщик их никогда не трогал). scope="project" эта проблема
-    не касается (ProjectCard общая на портал) — регресс ниже это подтверждает.
+    навсегда (планировщик их никогда не трогал). scope="project" болеет ТЕМ ЖЕ
+    (ProjectCard скоуплена через тот же tenant_scoping.scope_to_tenant) — см.
+    RunScheduledSyncProjectAccountSetTest и ProjectBoardCrossAccountVisibilityTest
+    ниже.
     """
 
     @override_settings(USE_PORTAL_SCOPING=False)
@@ -572,13 +577,57 @@ class RunScheduledSyncTimesheetAccountSetTest(TestCase):
         acc.refresh_from_db()
         self.assertIsNotNone(acc.last_timesheet_synced_at)
 
+
+class RunScheduledSyncProjectAccountSetTest(TestCase):
+    """ProjectCard-версия fixwave CRITICAL #1 (тот же класс бага, что у
+
+    timesheet/users, см. RunScheduledSyncTimesheetAccountSetTest /
+    RunScheduledSyncUsersAccountSetTest).
+
+    ProjectSyncService пишет ProjectCard через tenant_scoping.scope_to_tenant —
+    ТАК ЖЕ, как TimesheetItem и PortalUser. Множество аккаунтов для
+    scope="project" поэтому должно совпадать с scope="timesheet"/"users"
+    (_account_scoped_sync_accounts), а не всегда быть одним представителем
+    (select_portal_accounts): под USE_PORTAL_SCOPING=False (боевой дефолт)
+    представитель писал бы ProjectCard только под своим account FK, а
+    остальные сотрудники портала (у каждого свой Bitrix24Account — заводится
+    /api/getToken при первом открытии приложения) читают строго под своим FK
+    и не расширяются на портал -> доска проектов пуста навсегда у всех, кроме
+    представителя. См. также ProjectBoardCrossAccountVisibilityTest ниже —
+    регресс через реальную точку чтения (get_project_card_queryset)."""
+
+    @override_settings(USE_PORTAL_SCOPING=False)
     @patch("main.sync_scheduler_service.ProjectSyncService")
     @patch("main.sync_scheduler_service.ConfigurationService")
-    def test_project_scope_still_uses_one_representative_regardless_of_flag(self, mock_cfg_cls, mock_proj_cls):
-        """Регресс: scope="project" не должен трогаться этим фиксом — всегда
-        один представитель на портал (member_id), независимо от USE_PORTAL_SCOPING."""
+    def test_project_flag_off_syncs_every_active_account(self, mock_cfg_cls, mock_proj_cls):
+        """Флаг OFF: ProjectCard скоуплена по аккаунту -> синкать нужно ВСЕХ
+        аккаунтов портала (а не одного представителя), иначе доска проектов
+        пуста у всех, кроме представителя."""
         _account("m1", master=True, b24_user_id=1)
-        _account("m1", master=False, b24_user_id=2)  # тот же портал — должен быть пропущен
+        _account("m1", master=False, b24_user_id=2)  # тот же портал (member_id)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+        mock_proj = MagicMock()
+        mock_proj.sync.return_value = {"synced": 1, "created": 1, "updated": 0}
+        mock_proj_cls.return_value = mock_proj
+
+        run = run_scheduled_sync(scope="project")
+
+        self.assertEqual(run.portals_total, 2)
+        self.assertEqual(run.portals_synced, 2)
+        self.assertEqual(mock_proj_cls.call_count, 2)  # оба аккаунта реально синканы
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    @patch("main.sync_scheduler_service.ProjectSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_project_flag_on_syncs_one_representative(self, mock_cfg_cls, mock_proj_cls):
+        """Флаг ON: ProjectCard общая на портал (write=True пишет portal+account,
+        read по флагу читает по portal) -> одного представителя достаточно,
+        как и раньше."""
+        portal = Portal.objects.create(member_id="m1", domain_url="m1.bitrix24.ru", status="active")
+        _account("m1", master=True, b24_user_id=1, portal=portal)
+        _account("m1", master=False, b24_user_id=2, portal=portal)
         mock_cfg = MagicMock()
         mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
         mock_cfg_cls.return_value = mock_cfg
@@ -590,6 +639,113 @@ class RunScheduledSyncTimesheetAccountSetTest(TestCase):
 
         self.assertEqual(run.portals_total, 1)
         self.assertEqual(mock_proj_cls.call_count, 1)
+
+
+class ProjectBoardCrossAccountVisibilityTest(TestCase):
+    """Регресс ЧТЕНИЯ: доска проектов (и отчёты) должны быть видны КАЖДОМУ
+
+    сотруднику портала, а не только тому аккаунту, которого планировщик
+    выбрал представителем для scope="project".
+
+    Проверяется через реальные точки чтения: get_project_card_queryset —
+    воронка, через которую читают ВСЕ потребители карточек
+    (ProjectCardService.get_board_data/get_meta/get_card_data/
+    get_homepage_snapshot, report_queries, stage_automation_service,
+    project_budget_notifier, inn_backfill_service) — и
+    build_filtered_timesheet_queryset, который использует список карточек для
+    исключения архивных проектов из отчётов. Пустой ответ там — это HTTP 200
+    с cards: [], то есть молча пустая доска, а не ошибка."""
+
+    @override_settings(USE_PORTAL_SCOPING=False)
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_both_accounts_of_portal_see_cards_after_scheduled_sync(self, mock_cfg_cls):
+        acc1 = _account("m1", master=True, b24_user_id=1)
+        acc2 = _account("m1", master=False, b24_user_id=2)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+
+        # Заглушка ProjectSyncService, повторяющая реальную запись карточки:
+        # ProjectCard.objects.create(**scope_to_tenant(self.account, write=True), ...)
+        # — то есть привязку строго к тому аккаунту, который ей передали.
+        def fake_project_sync(client, account):
+            service = MagicMock()
+
+            def _sync(*args, **kwargs):
+                ProjectCard.objects.create(
+                    **scope_to_tenant(account, write=True),
+                    project_id="777", project_name="Проект Альфа", stage="Новый",
+                )
+                return {"synced": 1, "created": 1, "updated": 0}
+
+            service.sync.side_effect = _sync
+            return service
+
+        with patch("main.sync_scheduler_service.ProjectSyncService", side_effect=fake_project_sync):
+            run_scheduled_sync(scope="project")
+
+        for account in (acc1, acc2):
+            names = list(get_project_card_queryset(account).values_list("project_name", flat=True))
+            self.assertEqual(
+                names, ["Проект Альфа"],
+                f"аккаунт b24_user_id={account.b24_user_id} не видит карточек портала",
+            )
+
+    @override_settings(USE_PORTAL_SCOPING=False)
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_archived_projects_excluded_from_reports_for_every_account(self, mock_cfg_cls):
+        """Симптом хуже пустой доски: НЕВЕРНЫЕ ЦИФРЫ в отчётах.
+
+        build_filtered_timesheet_queryset строит список архивных проектов из
+        get_project_card_queryset(account) (report_queries.py) и исключает их
+        строки из отчёта. У аккаунта без карточек этот список пуст, .exclude()
+        превращается в no-op — и часы архивных проектов молча попадают в отчёт.
+        Двое сотрудников одного портала видят РАЗНЫЕ суммы по одному отчёту.
+
+        Симптом активировался, когда timesheet стал синкаться по каждому
+        аккаунту (fixwave CRITICAL #1): у всех аккаунтов появились строки
+        TimesheetItem, но карточки для их фильтрации до этого фикса
+        оставались только у представителя.
+        """
+        acc1 = _account("m1", master=True, b24_user_id=1)
+        acc2 = _account("m1", master=False, b24_user_id=2)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+
+        # Списание по архивному проекту есть у ОБОИХ аккаунтов: timesheet
+        # синкается для каждого активного аккаунта (fixwave CRITICAL #1).
+        for account in (acc1, acc2):
+            TimesheetItem.objects.create(
+                bitrix24_account=account, bitrix_id=account.b24_user_id, task_id="1",
+                employee_id="1", hours=8.0, project_id="500",
+                project_title="Архивный", date_reflection=timezone.now(),
+            )
+
+        def fake_project_sync(client, account):
+            service = MagicMock()
+
+            def _sync(*args, **kwargs):
+                ProjectCard.objects.create(
+                    **scope_to_tenant(account, write=True),
+                    project_id="500", project_name="Архивный", stage="Успех",
+                    is_archived=True,
+                )
+                return {"synced": 1, "created": 1, "updated": 0}
+
+            service.sync.side_effect = _sync
+            return service
+
+        with patch("main.sync_scheduler_service.ProjectSyncService", side_effect=fake_project_sync):
+            run_scheduled_sync(scope="project")
+
+        for account in (acc1, acc2):
+            rows = build_filtered_timesheet_queryset(account, {}).count()
+            self.assertEqual(
+                rows, 0,
+                f"аккаунт b24_user_id={account.b24_user_id}: часы архивного проекта "
+                f"протекли в отчёт ({rows} строк вместо 0)",
+            )
 
 
 class RunScheduledSyncUsersAccountSetTest(TestCase):
@@ -607,10 +763,8 @@ class RunScheduledSyncUsersAccountSetTest(TestCase):
     открытии приложения) читают строго под своим FK и не расширяются на
     портал -> справочник пуст навсегда у всех, кроме представителя.
 
-    scope="project" эта правка НЕ затрагивает (см.
-    test_project_scope_still_uses_one_representative_regardless_of_flag
-    выше) — ProjectCard-версия этого же класса бага заведена отдельной
-    задачей."""
+    scope="project" болеет ТЕМ ЖЕ — см. RunScheduledSyncProjectAccountSetTest
+    и ProjectBoardCrossAccountVisibilityTest выше."""
 
     @override_settings(USE_PORTAL_SCOPING=False)
     @patch("main.sync_scheduler_service.UserSyncService")
