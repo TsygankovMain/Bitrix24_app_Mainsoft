@@ -118,6 +118,32 @@ config = load_config()
 logger = logging.getLogger(__name__)
 
 
+# Потолок страницы для диагностических (/api/logs/*) эндпоинтов: они админские
+# и читаются человеком при разборе инцидента, где выборка в 200 записей часто
+# обрывается на середине проблемы. Тело записи RequestLog ограничено сверху
+# (RequestLoggingMiddleware.MAX_BODY_LENGTH), так что ответ остаётся конечным.
+LOG_PAGE_SIZE_MAX = 500
+
+
+def _parse_page_size(request, default: int = 50, max_value: int = 200) -> int:
+    """`limit` из query string -> безопасный размер страницы для Paginator.
+
+    Невалидированный limit ронял вьюху пятисоткой: limit=0 -> ZeroDivisionError,
+    limit<0 -> EmptyPage с вводящим в заблуждение текстом ("That page number is
+    less than 1" — жалуется на page, хотя проблема в limit), limit=abc ->
+    ValueError из int(). Клиент получал 500 с сырым текстом Python-исключения,
+    а log_errors на каждый такой запрос писал в SystemLog ERROR с traceback —
+    шум в мониторинге на банальной ошибке ввода.
+
+    Верхняя граница не даёт ?limit=100000 сериализовать всю таблицу в один
+    ответ; конкретное значение задаёт вызывающий эндпоинт.
+    """
+    try:
+        return max(1, min(int(request.GET.get("limit", default)), max_value))
+    except (TypeError, ValueError):
+        return default
+
+
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
     return build_filtered_timesheet_queryset(
         request.bitrix24_account,
@@ -1549,11 +1575,11 @@ def timesheet_list(request: AuthorizedRequest):
     queryset = _apply_created_at_filters(queryset, created_from, created_to)
 
     page_number = request.GET.get('page', 1)
-    page_size = request.GET.get('limit', 50)
+    page_size = _parse_page_size(request)
 
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
-    
+
     items = []
     for item in page_obj:
         items.append({
@@ -1596,17 +1622,9 @@ def get_users(request: AuthorizedRequest):
         queryset = queryset.filter(active=True)
 
     page_number = request.GET.get("page", 1)
-
-    # limit из query string не должен идти в Paginator невалидированным:
-    # limit=0 -> ZeroDivisionError, limit<0 -> вводящее в заблуждение EmptyPage
-    # ("page number is less than 1"), limit=abc -> ValueError из int() — все
-    # три давали 500 с сырым текстом исключения клиенту. Клэмп сверху (200)
-    # не даёт ?limit=100000 сериализовать весь справочник в один ответ.
-    # См. ревью Задачи 5, Important #1.
-    try:
-        page_size = max(1, min(int(request.GET.get("limit", 50)), 200))
-    except (TypeError, ValueError):
-        page_size = 50
+    # Клэмп сверху (200) не даёт ?limit=100000 сериализовать весь справочник
+    # сотрудников в один ответ. См. ревью Задачи 5, Important #1.
+    page_size = _parse_page_size(request)
 
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
@@ -1955,8 +1973,11 @@ def report_daily_workload(request: AuthorizedRequest):
 @auth_required
 def get_request_logs(request: AuthorizedRequest):
     page_number = request.GET.get('page', 1)
-    page_size = request.GET.get('limit', 50)
-    
+    # Диагностический админский эндпоинт: разбор инцидента выигрывает от
+    # страницы больше, чем у пользовательских списков, а тело каждой записи
+    # ограничено сверху (RequestLoggingMiddleware.MAX_BODY_LENGTH).
+    page_size = _parse_page_size(request, max_value=LOG_PAGE_SIZE_MAX)
+
     queryset = RequestLog.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-timestamp')
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)
@@ -1988,8 +2009,8 @@ def get_request_logs(request: AuthorizedRequest):
 @auth_required
 def get_system_logs(request: AuthorizedRequest):
     page_number = request.GET.get('page', 1)
-    page_size = request.GET.get('limit', 50)
-    
+    page_size = _parse_page_size(request, max_value=LOG_PAGE_SIZE_MAX)
+
     queryset = SystemLog.objects.filter(bitrix24_account=request.bitrix24_account).order_by('-timestamp')
     paginator = Paginator(queryset, page_size)
     page_obj = paginator.get_page(page_number)

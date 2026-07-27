@@ -263,3 +263,115 @@ class RedactSecretsTest(TestCase):
         body = "just some plain text with no secrets"
         result = self._redact(body)
         self.assertEqual(result, body)
+
+
+# ---------------------------------------------------------------------------
+# (г) `limit` из query string валидируется перед Paginator
+# ---------------------------------------------------------------------------
+
+class LogEndpointPageSizeValidationTest(TestCase):
+    """`limit` шёл в Paginator(queryset, page_size) невалидированным: limit=0 ->
+    ZeroDivisionError, limit=-1 -> вводящее в заблуждение EmptyPage ("page number
+    is less than 1" — жалуется на page, хотя проблема в limit), limit=abc ->
+    ValueError из int(). Все три давали 500 с сырым текстом Python-исключения
+    и ERROR с traceback в SystemLog на каждый запрос.
+
+    Диагностические эндпоинты админские, разбор инцидента выигрывает от большой
+    страницы, поэтому верхняя граница здесь 500, а не 200 как у /api/users.
+    """
+
+    MAX_PAGE_SIZE = 500
+
+    def setUp(self):
+        self.account = _make_account("portal-limits.bitrix24.ru", b24_user_id=7)
+        self.client = Client()
+
+    def _get(self, path, query=""):
+        return self.client.get(f"{path}{query}", HTTP_AUTHORIZATION=_auth_header(self.account))
+
+    def _request_logs(self, count):
+        RequestLog.objects.bulk_create([
+            RequestLog(
+                method="GET", path=f"/api/thing/{i}", status_code=200, duration_ms=1.0,
+                request_body="", response_body="", bitrix24_account=self.account,
+            )
+            for i in range(count)
+        ])
+
+    def _system_logs(self, count):
+        SystemLog.objects.bulk_create([
+            SystemLog(level="INFO", module="test", message=f"msg {i}", bitrix24_account=self.account)
+            for i in range(count)
+        ])
+
+    def _seed(self, path, count):
+        if path == "/api/logs/requests":
+            self._request_logs(count)
+        else:
+            self._system_logs(count)
+
+    def _both(self):
+        return ("/api/logs/requests", "/api/logs/system")
+
+    def test_limit_zero_is_clamped_to_minimum_not_500(self):
+        for path in self._both():
+            with self.subTest(path=path):
+                self._seed(path, 2)
+
+                response = self._get(path, "?limit=0")
+
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+                self.assertEqual(len(data["items"]), 1)  # limit=0 -> клэмп к минимуму 1
+                self.assertEqual(data["pages"], 2)
+
+    def test_limit_negative_is_clamped_to_minimum_not_500(self):
+        for path in self._both():
+            with self.subTest(path=path):
+                self._seed(path, 2)
+
+                response = self._get(path, "?limit=-1")
+
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+                self.assertEqual(len(data["items"]), 1)
+                self.assertEqual(data["pages"], 2)
+
+    def test_limit_non_numeric_falls_back_to_default_not_500(self):
+        for path in self._both():
+            with self.subTest(path=path):
+                self._seed(path, 3)
+
+                response = self._get(path, "?limit=abc")
+
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+                self.assertEqual(len(data["items"]), 3)  # дефолт 50 -> всё на одной странице
+                self.assertEqual(data["pages"], 1)
+
+    def test_limit_above_upper_bound_is_clamped(self):
+        for path in self._both():
+            with self.subTest(path=path):
+                self._seed(path, self.MAX_PAGE_SIZE + 1)
+
+                response = self._get(path, "?limit=100000")
+
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+                # верхний предел — не вся таблица логов в одном ответе
+                self.assertEqual(len(data["items"]), self.MAX_PAGE_SIZE)
+                self.assertEqual(data["pages"], 2)
+
+    def test_invalid_limit_does_not_write_error_to_system_log(self):
+        # log_errors ловит исключение вьюхи и пишет SystemLog(level="ERROR") с
+        # полным traceback: каждый запрос с кривым limit давал шум в мониторинге
+        # — причём в той самой таблице, которую эти эндпоинты и показывают.
+        for path in self._both():
+            with self.subTest(path=path):
+                SystemLog.objects.all().delete()
+                self._seed(path, 2)
+
+                for query in ("?limit=0", "?limit=-1", "?limit=abc", "?limit=100000"):
+                    self._get(path, query)
+
+                self.assertEqual(SystemLog.objects.filter(level="ERROR").count(), 0)
