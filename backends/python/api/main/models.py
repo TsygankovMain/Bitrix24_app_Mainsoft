@@ -272,7 +272,8 @@ class PortalUser(models.Model):
     Кэш для user_map отчётов и /api/users вместо per-request user.get с
     LocMemCache (см. BitrixDataService.fetch_users). Хранит И активных, И
     неактивных сотрудников: user_map отчётов должен резолвить имя и по
-    уволенным (историчные списания) — см. report_services.resolve_employee_name.
+    уволенным (историчные списания) — см. employee_ids.resolve_employee_name
+    (используется в report_services для сборки user_map).
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     bitrix24_account = models.ForeignKey(Bitrix24Account, on_delete=models.CASCADE, related_name="portal_users")
