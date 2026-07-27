@@ -122,3 +122,46 @@ test('loadConfigAndUsers: подгружает больше 50 сотрудни�
   const lastUser = loader.usersMap.value['201'] as { NAME?: string } | undefined
   assert.equal(lastUser?.NAME, 'Имя201', 'сотрудник со второй страницы должен резолвиться')
 })
+
+test('loadConfigAndUsers: сбой /api/users на первой странице — не бросает исключение, конфигурация всё равно грузится', async () => {
+  const stub = makeConfigStub(87)
+  let loadFromB24Called = false
+  stub.loadFromB24 = async () => { loadFromB24Called = true }
+  fieldConfigStub = stub
+
+  apiStoreStub = {
+    getUsers: async () => {
+      throw new Error('Network error')
+    }
+  }
+
+  const loader = useTaskTreeLoader()
+  await assert.doesNotReject(loader.loadConfigAndUsers({} as never, {}), 'сбой справочника сотрудников не должен ронять всё приложение')
+
+  assert.equal(loadFromB24Called, true, 'дерево задачи не должно блокироваться сбоем справочника сотрудников')
+  assert.equal(loader.usersList.value.length, 0, 'при падении на первой странице список сотрудников пуст, но не выбрасывает')
+})
+
+test('loadConfigAndUsers: сбой /api/users на второй странице — сохраняет уже загруженных сотрудников с первой', async () => {
+  fieldConfigStub = makeConfigStub(87)
+
+  const page1 = Array.from({ length: 200 }, (_, i) => ({
+    id: String(i + 1), name: `Имя${i + 1}`, last_name: 'Фамилия', active: true, updated_at: '2026-07-27T00:00:00Z'
+  }))
+
+  apiStoreStub = {
+    getUsers: async (page: number) => {
+      if (page === 1) {
+        return { items: page1, total: 400, page: 1, pages: 2, has_next: true, has_previous: false }
+      }
+      throw new Error('Сервер недоступен')
+    }
+  }
+
+  const loader = useTaskTreeLoader()
+  await assert.doesNotReject(loader.loadConfigAndUsers({} as never, {}), 'сбой на второй странице не должен ронять всё приложение')
+
+  assert.equal(loader.usersList.value.length, 200, 'сотрудники с первой (успешной) страницы не должны теряться при сбое второй')
+  const firstUser = loader.usersMap.value['1'] as { NAME?: string } | undefined
+  assert.equal(firstUser?.NAME, 'Имя1', 'частично собранные до сбоя данные должны попасть в usersMap')
+})

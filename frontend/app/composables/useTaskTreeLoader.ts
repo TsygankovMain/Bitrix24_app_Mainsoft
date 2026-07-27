@@ -74,15 +74,30 @@ export function useTaskTreeLoader() {
     const USERS_PAGE_LIMIT = 200
     const USERS_MAX_PAGES = 25 // защита от зацикливания; 25*200 = 5000 сотрудников с запасом
     let page = 1
-    while (page <= USERS_MAX_PAGES) {
-      const response = await apiStore.getUsers(page, USERS_PAGE_LIMIT, true)
-      for (const item of response.items) {
-        map[String(item.id)] = { ID: item.id, NAME: item.name, LAST_NAME: item.last_name }
+    let hitPageCap = false
+    try {
+      while (page <= USERS_MAX_PAGES) {
+        const response = await apiStore.getUsers(page, USERS_PAGE_LIMIT, true)
+        for (const item of response.items) {
+          map[String(item.id)] = { ID: item.id, NAME: item.name, LAST_NAME: item.last_name }
+        }
+        if (!response.has_next) {
+          break
+        }
+        if (page === USERS_MAX_PAGES) {
+          hitPageCap = true
+        }
+        page += 1
       }
-      if (!response.has_next) {
-        break
-      }
-      page += 1
+    } catch (usersError) {
+      // Деградация должна быть мягкой: сбой справочника сотрудников (сеть, 5xx,
+      // бэкенд ещё не поднялся после деплоя) не должен ронять всю вкладку задачи —
+      // profile-батч и fieldConfigStore.loadFromB24 ниже обязаны отработать. Уже
+      // накопленные до сбоя страницы не выбрасываются (частичный usersMap лучше пустого).
+      console.error('Failed to load users directory from /api/users', usersError)
+    }
+    if (hitPageCap) {
+      console.warn(`useTaskTreeLoader: достигнут лимит страниц (${USERS_MAX_PAGES}) при загрузке /api/users, но есть ещё данные — часть сотрудников может отображаться как "User <id>"`)
     }
     usersMap.value = map
 
