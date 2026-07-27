@@ -127,6 +127,61 @@ class AccountScopedSyncAccountsStatusFilterTest(TestCase):
         self.assertEqual(run.portals_total, 0)
 
 
+class MarkPortalAccountsStatusFilterTest(TestCase):
+    """Тот же Дефект 1 (status vs refresh_token), третье и последнее место в
+
+    этом файле: маркер last_timesheet_synced_at, который run_scheduled_sync
+    проставляет ВСЕМ аккаунтам портала под USE_PORTAL_SCOPING=True (данные
+    общие на портал, синкает один представитель, но индикатор «данные свежи
+    на» должен обновиться у каждого аккаунта портала).
+
+    Bitrix24Account.objects.filter(status="active", portal_id=...) — тот же
+    фильтр, что не совпадал НИ С ОДНИМ реальным аккаунтом в
+    select_portal_accounts()/_account_scoped_sync_accounts() (см.
+    SelectPortalAccountsStatusFilterTest). Сейчас это латентно, потому что
+    флаг USE_PORTAL_SCOPING выключен в проде — при флаге OFF работает другая
+    ветка (else, без фильтра по status). Но при этом фильтре не обновляется
+    даже сам представитель: в ветке if нет .save() на account, только
+    bulk .update() выше и присваивание атрибута в памяти — если .update() не
+    находит ни одной строки (статус не "active"), в БД не долетает ничей
+    маркер, включая представителя, который реально сходил в Bitrix."""
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_marks_whole_portal_with_realistic_bitrix_status(self, mock_cfg_cls, mock_svc_cls):
+        """status="S" (боевое значение, а не тестовый дефолт "active") —
+        маркер обязан долететь и до представителя, и до второго аккаунта
+        портала."""
+        portal = Portal.objects.create(member_id="m1", domain_url="m1.bitrix24.ru", status="active")
+        acc1 = _account("m1", master=True, b24_user_id=1, portal=portal, status="S")
+        acc2 = _account("m1", master=False, b24_user_id=2, portal=portal, status="S")
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 5
+        mock_svc_cls.return_value = mock_svc
+
+        run_scheduled_sync(scope="timesheet")
+
+        acc1.refresh_from_db()
+        acc2.refresh_from_db()
+        self.assertIsNotNone(
+            acc1.last_timesheet_synced_at,
+            "маркер не долетел даже до представителя (синкавшего аккаунта) — "
+            "фильтр status=\"active\" не совпадает с боевым статусом 'S'",
+        )
+        self.assertIsNotNone(
+            acc2.last_timesheet_synced_at,
+            "маркер не долетел до второго аккаунта портала — "
+            "фильтр status=\"active\" не совпадает с боевым статусом 'S'",
+        )
+
+
 class RunScheduledSyncTest(TestCase):
     @patch("main.sync_scheduler_service.TimesheetSyncService")
     @patch("main.sync_scheduler_service.ConfigurationService")

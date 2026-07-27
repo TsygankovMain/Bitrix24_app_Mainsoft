@@ -198,13 +198,21 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                         sync_marker = timezone.now()
                         if portal_scoping_enabled() and account.portal_id:
                             # Под portal-скоупингом синкает один представитель, но данные
-                            # общие на портал -> маркер получают ВСЕ активные аккаунты
-                            # портала (fixwave CRITICAL #1), иначе их отчёты показывали бы
-                            # «устарело», хотя данные уже свежие. account.portal_id (а не
-                            # account.portal) — чтобы не тянуть лишний SELECT.
-                            Bitrix24Account.objects.filter(
-                                status="active", portal_id=account.portal_id,
-                            ).update(last_timesheet_synced_at=sync_marker)
+                            # общие на портал -> маркер получают ВСЕ аккаунты портала,
+                            # способные авторизоваться (fixwave CRITICAL #1), иначе их
+                            # отчёты показывали бы «устарело», хотя данные уже свежие.
+                            # account.portal_id (а не account.portal) — чтобы не тянуть
+                            # лишний SELECT. Критерий — refresh_token, а не status: то же
+                            # поле, тот же боевой инцидент, что и в select_portal_accounts/
+                            # _account_scoped_sync_accounts (status="active" не совпадает
+                            # НИ С ОДНИМ реальным аккаунтом — см. модульный докстринг выше).
+                            # Без этого фильтра bulk .update() не находит ни одной строки,
+                            # включая самого представителя (ниже нет .save() — только
+                            # присваивание атрибута в памяти), и маркер не долетает вообще
+                            # ни до кого.
+                            Bitrix24Account.objects.filter(portal_id=account.portal_id).exclude(
+                                refresh_token__isnull=True
+                            ).exclude(refresh_token="").update(last_timesheet_synced_at=sync_marker)
                             account.last_timesheet_synced_at = sync_marker
                         else:
                             # Флаг OFF, либо portal ещё null (переходный период backfill) —
