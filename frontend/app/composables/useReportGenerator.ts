@@ -58,7 +58,9 @@ export function useReportGenerator(options: UseReportGeneratorOptions = {}) {
 
     try {
       const reportTitle = config.reportName ? `Отчёт «${config.reportName}»` : 'Отчёт'
-      const willSync = config.syncTimesheets !== false
+      // Синк выключен по умолчанию: отчёт формируется из БД мгновенно. Явный синк —
+      // только когда вызвавший передал syncTimesheets: true. (Фаза 1 sync-offload.)
+      const willSync = config.syncTimesheets === true
 
       // Этап 1: синхронизация (если включена). Иначе сразу формирование — одним шагом.
       progress.begin(
