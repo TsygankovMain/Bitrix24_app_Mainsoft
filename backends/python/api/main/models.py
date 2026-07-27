@@ -266,6 +266,36 @@ class ProjectCard(models.Model):
         )
 
 
+class PortalUser(models.Model):
+    """Локальная копия справочника пользователей Bitrix24 (Фаза 2 sync-offload).
+
+    Кэш для user_map отчётов и /api/users вместо per-request user.get с
+    LocMemCache (см. BitrixDataService.fetch_users). Хранит И активных, И
+    неактивных сотрудников: user_map отчётов должен резолвить имя и по
+    уволенным (историчные списания) — см. report_services.resolve_employee_name.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(Bitrix24Account, on_delete=models.CASCADE, related_name="portal_users")
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="portal_users", db_index=True,
+    )
+    bitrix_id = models.CharField(max_length=50, db_index=True)
+    name = models.CharField(max_length=255, blank=True, default="")
+    last_name = models.CharField(max_length=255, blank=True, default="")
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_user"
+        unique_together = ("bitrix24_account", "bitrix_id")
+        indexes = [
+            models.Index(fields=["bitrix24_account", "active"], name="portal_user_acc_active_idx"),
+        ]
+
+
 class RequestLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     timestamp = models.DateTimeField(auto_now_add=True)
