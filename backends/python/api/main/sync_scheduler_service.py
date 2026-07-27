@@ -5,23 +5,37 @@
 run_scheduled_sync, зависит от scope:
 
 - scope="project": один представительный аккаунт на портал (group by member_id;
-  мастер, иначе первый активный — select_portal_accounts()). ProjectCard не
-  скоуплена по пользователю, представителя достаточно. Полный синк проектов
+  мастер, иначе первый — select_portal_accounts()). ProjectCard не скоуплена
+  по пользователю, представителя достаточно. Полный синк проектов
   (ProjectSyncService.sync()), раз в 3 часа. Этот выбор НЕ зависит от
   USE_PORTAL_SCOPING и фиксом ниже не затронут.
-- scope="timesheet": множество зависит от settings.USE_PORTAL_SCOPING, потому
-  что TimesheetItem скоуплен по-разному (tenant_scoping.scope_to_tenant):
-    - флаг OFF (дефолт) -> данные ПО АККАУНТУ -> синкается КАЖДЫЙ активный
-      аккаунт (_timesheet_sync_accounts()); один представитель освежал бы
-      только свои же строки, а отчёты остальных пользователей портала
-      замирали бы навсегда.
+- scope="timesheet" и scope="users": множество зависит от
+  settings.USE_PORTAL_SCOPING, потому что TimesheetItem и PortalUser
+  скоуплены одинаково (tenant_scoping.scope_to_tenant):
+    - флаг OFF (дефолт) -> данные ПО АККАУНТУ -> синкается КАЖДЫЙ аккаунт,
+      способный авторизоваться (_account_scoped_sync_accounts()); один
+      представитель освежал бы только свои же строки (timesheet) или писал
+      бы PortalUser только под своим FK (users), а остальные пользователи
+      портала не видели бы свежих данных вовсе.
     - флаг ON -> данные по порталу (общие) -> один представитель, как и для
-      project; маркер синка проставляется всем активным аккаунтам портала
-      (см. run_scheduled_sync).
-  Инкремент — TimesheetSyncService.sync_all() с окном date_from/date_to,
-  фоновый цикл каждые 20 минут. С full=True — полная сверка без окна дат
-  (-> _sync_full), фоновый цикл раз в сутки — ловит удаления/пропуски,
-  которые инкремент не видит. Параметр `full` игнорируется при scope="project".
+      project; для timesheet маркер синка проставляется всем активным
+      аккаунтам портала (см. run_scheduled_sync).
+  Timesheet: инкремент — TimesheetSyncService.sync_all() с окном
+  date_from/date_to, фоновый цикл каждые 20 минут. С full=True — полная
+  сверка без окна дат (-> _sync_full), фоновый цикл раз в сутки — ловит
+  удаления/пропуски, которые инкремент не видит. Параметр `full`
+  игнорируется при scope="project"/"users".
+  Users: UserSyncService.sync() — полный синк справочника сотрудников, без
+  инкремента (см. UserSyncService), часовой фоновый цикл (start.sh).
+
+Множество для project/timesheet/users НЕ фильтруется по Bitrix24Account.status:
+это поле хранит статус ПОДПИСКИ ПРИЛОЖЕНИЯ из Битрикса (OAuthPlacementData.status
+— буквенные коды F/D/T/P/L/S, см. models.update_or_create_from_oauth_placement_data,
+единственное место записи), а не "active"/"inactive" — литерал "active" в него не
+попадает никогда. Прежний фильтр status="active" поэтому не совпадал НИ С ОДНИМ
+реальным аккаунтом (боевой инцидент: планировщик не синкал ни одного портала ни
+разу, ни для project, ни для timesheet/users). Критерий синк-пригодности —
+refresh_token: если он есть, аккаунт в принципе способен авторизоваться.
 
 Для каждого аккаунта из подобранного множества: читает конфиг (app.option) и,
 если автосинк включён, выполняет синк. После успешного синка в ветке timesheet
@@ -64,8 +78,8 @@ def select_portal_accounts() -> List[Bitrix24Account]:
     фильтр status="active" не совпадал НИ С ОДНИМ реальным аккаунтом — боевой
     инцидент, планировщик не синкал ни одного портала ни разу.
 
-    Используется для scope="project" всегда, и для scope="timesheet" только
-    под USE_PORTAL_SCOPING=True (см. _timesheet_sync_accounts)."""
+    Используется для scope="project" всегда, и для scope="timesheet"/"users"
+    только под USE_PORTAL_SCOPING=True (см. _account_scoped_sync_accounts)."""
     eligible = (
         Bitrix24Account.objects.exclude(refresh_token__isnull=True)
         .exclude(refresh_token="")
@@ -81,18 +95,19 @@ def select_portal_accounts() -> List[Bitrix24Account]:
     return reps
 
 
-def _timesheet_sync_accounts() -> List[Bitrix24Account]:
-    """Множество аккаунтов для scope="timesheet" (fixwave CRITICAL #1).
+def _account_scoped_sync_accounts() -> List[Bitrix24Account]:
+    """Множество аккаунтов для scope="timesheet" и scope="users" (fixwave CRITICAL #1).
 
-    TimesheetItem скоуплен через tenant_scoping.scope_to_tenant по-разному в
-    зависимости от флага:
+    TimesheetItem и PortalUser скоуплены через один и тот же
+    tenant_scoping.scope_to_tenant, поэтому множество аккаунтов для них общее:
     - USE_PORTAL_SCOPING=False -> ПО АККАУНТУ. Синкать нужно каждый аккаунт,
-      способный авторизоваться (refresh_token — см. select_portal_accounts),
-      отдельно — иначе один представитель обновляет только свои же строки, а
-      отчёты остальных пользователей портала не видят свежих данных.
+      способный авторизоваться (см. select_portal_accounts про refresh_token),
+      отдельно — иначе один представитель обновляет только свои же строки
+      (timesheet) или пишет PortalUser только под своим FK (users), а
+      остальные пользователи портала не видят свежих данных вовсе.
     - USE_PORTAL_SCOPING=True  -> по порталу (общие данные). Одного
-      представителя достаточно; маркер синка проставляется всем активным
-      аккаунтам портала в run_scheduled_sync.
+      представителя достаточно; для timesheet маркер синка проставляется всем
+      активным аккаунтам портала в run_scheduled_sync.
     """
     if portal_scoping_enabled():
         return select_portal_accounts()
@@ -108,13 +123,15 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
     date_to = now.date().isoformat()
     date_from = (now - timedelta(days=days)).date().isoformat()
 
-    # scope="project" и scope="users" остаются на одном представителе портала;
-    # scope="timesheet" зависит от USE_PORTAL_SCOPING (fixwave CRITICAL #1,
-    # см. _timesheet_sync_accounts).
+    # scope="project" остаётся на одном представителе портала (ProjectCard
+    # общая на портал, представителя достаточно). scope="timesheet" и
+    # scope="users" зависят от USE_PORTAL_SCOPING (fixwave CRITICAL #1, см.
+    # _account_scoped_sync_accounts) — TimesheetItem и PortalUser скоуплены
+    # одинаково, поэтому идут по одной ветке.
     reps = (
         select_portal_accounts()
-        if scope in ("project", "users")
-        else _timesheet_sync_accounts()
+        if scope == "project"
+        else _account_scoped_sync_accounts()
     )
     run.portals_total = len(reps)
 

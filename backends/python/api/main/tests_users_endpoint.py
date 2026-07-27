@@ -1,7 +1,11 @@
 """GET /api/users — пагинированный список сотрудников из локальной БД."""
-from django.test import Client, TestCase
+from unittest.mock import MagicMock, patch
+
+from django.test import Client, TestCase, override_settings
 
 from .models import Bitrix24Account, PortalUser
+from .sync_scheduler_service import run_scheduled_sync
+from .tenant_scoping import scope_to_tenant
 
 
 class GetUsersEndpointTest(TestCase):
@@ -140,3 +144,67 @@ class GetUsersEndpointTest(TestCase):
         # детерминированный возрастающий порядок при равенстве last_name/name
         # -> обход постранично не теряет и не дублирует записи.
         self.assertEqual(ids_in_page_order, ["10", "20", "30"])
+
+
+class SyncSchedulerUsersReadPathTest(TestCase):
+    """READ-путь Дефекта 2 финального ревью Фазы 2 (тот же класс бага, что
+
+    fixwave CRITICAL #1 у timesheet): scope="users" должен синкать КАЖДЫЙ
+    аккаунт портала под USE_PORTAL_SCOPING=False, а не одного представителя
+    — иначе GET /api/users отдаёт пустой список всем сотрудникам портала,
+    кроме того единственного аккаунта, которого планировщик выбрал бы
+    представителем. Регресс на уровне run_scheduled_sync() —
+    RunScheduledSyncUsersAccountSetTest в tests_scheduled_sync.py.
+
+    Здесь UserSyncService замокан на уровне класса (как в
+    ProjectSyncService-тестах tests_scheduled_sync.py), но side_effect
+    воспроизводит РЕАЛЬНУЮ запись UserSyncService._save_batch — создаёт
+    PortalUser через scope_to_tenant(account, write=True) для ТОГО аккаунта,
+    которому планировщик выдал сервис. Это и есть причинно-следственная
+    цепочка: кого выбрал планировщик -> под чьим FK пишутся строки -> кто их
+    увидит на чтении."""
+
+    @override_settings(USE_PORTAL_SCOPING=False)
+    @patch("main.sync_scheduler_service.UserSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_both_accounts_of_portal_see_users_after_scheduled_sync(self, mock_cfg_cls, mock_user_cls):
+        acc1 = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-users-read-1",
+            is_master_account=True, domain_url="m-users-read-1.bitrix24.ru",
+            status="S", application_version=1, refresh_token="rt1",
+        )
+        acc2 = Bitrix24Account.objects.create(
+            b24_user_id=2, is_b24_user_admin=True, member_id="m-users-read-1",
+            is_master_account=False, domain_url="m-users-read-1.bitrix24.ru",
+            status="S", application_version=1, refresh_token="rt2",
+        )
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+
+        def fake_user_sync(client, account):
+            service = MagicMock()
+
+            def _sync(*args, **kwargs):
+                PortalUser.objects.create(
+                    **scope_to_tenant(account, write=True),
+                    bitrix_id="777", name="Иван", last_name="Тестов",
+                )
+                return {"synced": 1, "created": 1, "updated": 0}
+
+            service.sync.side_effect = _sync
+            return service
+
+        mock_user_cls.side_effect = fake_user_sync
+
+        run_scheduled_sync(scope="users")
+
+        for account in (acc1, acc2):
+            token = account.create_jwt_token()
+            response = Client().get("/api/users", HTTP_AUTHORIZATION=f"Bearer {token}")
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertGreater(
+                data["total"], 0,
+                f"аккаунт b24_user_id={account.b24_user_id} не видит сотрудников после синка",
+            )

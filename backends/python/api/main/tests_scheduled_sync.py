@@ -89,10 +89,10 @@ class SelectPortalAccountsStatusFilterTest(TestCase):
 
 
 class AccountScopedSyncAccountsStatusFilterTest(TestCase):
-    """Тот же Дефект 1, но для приватной _timesheet_sync_accounts() —
+    """Тот же Дефект 1, но для приватной _timesheet_sync_accounts() (переезжает
 
-    проверяется через run_scheduled_sync(scope="timesheet"), т.к. функция не
-    публичная."""
+    в _account_scoped_sync_accounts() вместе с фиксом Дефекта 2) — проверяется
+    через run_scheduled_sync(scope="timesheet"), т.к. функция не публичная."""
 
     @override_settings(USE_PORTAL_SCOPING=False)
     @patch("main.sync_scheduler_service.TimesheetSyncService")
@@ -590,3 +590,68 @@ class RunScheduledSyncTimesheetAccountSetTest(TestCase):
 
         self.assertEqual(run.portals_total, 1)
         self.assertEqual(mock_proj_cls.call_count, 1)
+
+
+class RunScheduledSyncUsersAccountSetTest(TestCase):
+    """Дефект 2 финального ревью Фазы 2 (тот же класс бага, что fixwave
+
+    CRITICAL #1 у timesheet, см. RunScheduledSyncTimesheetAccountSetTest).
+
+    UserSyncService пишет PortalUser через tenant_scoping.scope_to_tenant —
+    ТАК ЖЕ, как TimesheetItem. Значит множество аккаунтов для scope="users"
+    должно совпадать с scope="timesheet" (_account_scoped_sync_accounts), а
+    не всегда быть одним представителем (select_portal_accounts): под
+    USE_PORTAL_SCOPING=False (боевой дефолт) представитель писал бы
+    PortalUser только под своим account FK, а остальные сотрудники портала
+    (у каждого свой Bitrix24Account — заводится /api/getToken при первом
+    открытии приложения) читают строго под своим FK и не расширяются на
+    портал -> справочник пуст навсегда у всех, кроме представителя.
+
+    scope="project" эта правка НЕ затрагивает (см.
+    test_project_scope_still_uses_one_representative_regardless_of_flag
+    выше) — ProjectCard-версия этого же класса бага заведена отдельной
+    задачей."""
+
+    @override_settings(USE_PORTAL_SCOPING=False)
+    @patch("main.sync_scheduler_service.UserSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_flag_off_syncs_every_active_account(self, mock_cfg_cls, mock_user_cls):
+        """Флаг OFF: PortalUser скоуплен по аккаунту -> синкать нужно ВСЕХ
+        аккаунтов портала (а не одного представителя), иначе GET /api/users
+        отдаёт пустой список всем, кроме представителя."""
+        acc1 = _account("m1", master=True, b24_user_id=1)
+        acc2 = _account("m1", master=False, b24_user_id=2)  # тот же портал (member_id)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+        mock_user_svc = MagicMock()
+        mock_user_svc.sync.return_value = {"synced": 1, "created": 1, "updated": 0}
+        mock_user_cls.return_value = mock_user_svc
+
+        run = run_scheduled_sync(scope="users")
+
+        self.assertEqual(run.portals_total, 2)
+        self.assertEqual(run.portals_synced, 2)
+        self.assertEqual(mock_user_cls.call_count, 2)  # оба аккаунта реально синканы
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    @patch("main.sync_scheduler_service.UserSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_flag_on_syncs_one_representative(self, mock_cfg_cls, mock_user_cls):
+        """Флаг ON: PortalUser общий на портал (write=True пишет portal+account,
+        read по флагу читает по portal) -> одного представителя достаточно,
+        как и раньше."""
+        portal = Portal.objects.create(member_id="m1", domain_url="m1.bitrix24.ru", status="active")
+        _account("m1", master=True, b24_user_id=1, portal=portal)
+        _account("m1", master=False, b24_user_id=2, portal=portal)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+        mock_user_svc = MagicMock()
+        mock_user_svc.sync.return_value = {"synced": 1, "created": 1, "updated": 0}
+        mock_user_cls.return_value = mock_user_svc
+
+        run = run_scheduled_sync(scope="users")
+
+        self.assertEqual(run.portals_total, 1)
+        self.assertEqual(mock_user_cls.call_count, 1)
