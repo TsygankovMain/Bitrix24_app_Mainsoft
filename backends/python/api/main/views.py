@@ -2330,8 +2330,6 @@ def export_raw_data(request: AuthorizedRequest):
             )
 
     # --- Resolve employee IDs to names ---
-    user_map = {}  # {str(user_id): "Фамилия Имя"}
-
     # Collect unique user IDs only from employee fields that were selected
     selected_employee_fields = [fid for fid in selected_fields if fid in employee_field_ids]
     user_ids_to_fetch = set()
@@ -2345,39 +2343,30 @@ def export_raw_data(request: AuthorizedRequest):
             elif val:
                 user_ids_to_fetch.add(str(val))
 
-    # Fetch user names via user.get with FILTER (uppercase) — proven approach from BitrixDataService
-    # user.get accepts an array of IDs in FILTER[ID], returns list of user objects in result
-    if user_ids_to_fetch:
-        uid_list = list(user_ids_to_fetch)
-        BATCH_SIZE = 50
-        for i in range(0, len(uid_list), BATCH_SIZE):
-            chunk = uid_list[i:i + BATCH_SIZE]
-            try:
-                user_response = request.bitrix24_account.client._bitrix_token.call_method(
-                    "user.get",
-                    {"FILTER": {"ID": chunk}}
-                )
-                users = user_response.get("result", [])
-                for u in users:
-                    if not isinstance(u, dict):
-                        continue
-                    uid = str(u.get("ID", ""))
-                    # Format: "Фамилия Имя" (without patronymic)
-                    parts = [u.get("LAST_NAME", ""), u.get("NAME", "")]
-                    name = " ".join(p for p in parts if p).strip()
-                    if uid:
-                        user_map[uid] = name if name else uid
-            except Exception:
-                # Non-critical: fall back to showing raw IDs
-                pass
+    # Имена — из локального PortalUser тем же _get_user_map, что и 14 report_*
+    # (Фаза 2 sync-offload). Раньше здесь был собственный батчинг user.get по 50
+    # id: синхронные вызовы Bitrix на каждый экспорт, мимо scope_to_tenant и
+    # нормализации id. Карта — {канонический id: "Фамилия Имя"}.
+    user_map = _get_user_map(request, user_ids_to_fetch)
+
+    def _employee_name(val) -> str:
+        """Имя сотрудника или сырой id, если имени нет.
+
+        _get_user_map ключей для нерезолвнутых id не отдаёт вовсе, поэтому
+        фолбэк на сырой id держим здесь (в отличие от resolve_employee_name с
+        его "Сотрудник <id>" — в выгрузке сырых данных нужен именно id).
+        Ключи карты каноничные, поэтому сначала ищем по нормализованному id,
+        затем по сырому значению.
+        """
+        raw = str(val)
+        return user_map.get(extract_bitrix_user_id(val)) or user_map.get(raw) or raw
 
     def resolve_employee(val) -> str:
         """Convert employee field value to human-readable name string."""
         if isinstance(val, list):
-            names = [user_map.get(str(v), str(v)) for v in val if v is not None]
-            return "; ".join(names)
+            return "; ".join(_employee_name(v) for v in val if v is not None)
         elif val is not None:
-            return user_map.get(str(val), str(val))
+            return _employee_name(val)
         return ""
 
     # --- Build Excel workbook ---
