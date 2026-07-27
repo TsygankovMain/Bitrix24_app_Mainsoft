@@ -59,13 +59,14 @@ CORS_ALLOWED_ORIGINS=
 SUPPORT_OPENLINE_CODE=...
 ```
 
-## 5. Release step перед стартом
+## 5. Миграции и статика при старте
 
-Текущий `start.sh` не запускает миграции автоматически. Значит release step обязателен:
+`start.sh` сам применяет миграции (`migrate --noinput`) и собирает статику (`collectstatic --noinput`) при старте контейнера — отдельный release step не нужен. При ошибке миграции контейнер не стартует (`set -e`) и это видно в логе деплоя.
+
+Проверить состояние вручную (при разборе инцидента):
 
 ```bash
-python manage.py migrate --noinput
-python manage.py collectstatic --noinput
+python manage.py showmigrations main
 ```
 
 Если нужен доступ в admin:
