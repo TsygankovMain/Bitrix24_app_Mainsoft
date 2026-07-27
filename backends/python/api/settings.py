@@ -53,7 +53,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware", # Added for static files
+    "main.whitenoise_immutable.ImmutableNuxtWhiteNoiseMiddleware", # WhiteNoise + immutable-кеш для /_nuxt/*
     "main.middleware.RequestLoggingMiddleware",
     "main.middleware.ApiTrailingSlashNormalizeMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
