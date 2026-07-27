@@ -52,6 +52,7 @@ urlpatterns = [
 
     # Timesheets
     path('api/sync-timesheets', views.timesheet_sync, name='sync_timesheets'), # Matches api.ts: /api/sync-timesheets
+    path('api/timesheet-sync-status', views.timesheet_sync_status, name='timesheet_sync_status'),
     path('api/timesheets', views.timesheet_list, name='list_timesheets'),      # Matches api.ts: /api/timesheets
     path('api/export-raw-data', views.export_raw_data, name='export_raw_data'),
 

@@ -95,6 +95,7 @@ __all__ = [
     "report_time_entry_discipline",
     "report_focus_analysis",
     "timesheet_sync",
+    "timesheet_sync_status",
     "timesheet_list",
     "get_configuration",
     "save_configuration",
@@ -1417,6 +1418,20 @@ def report_focus_analysis(request: AuthorizedRequest):
     return response
 
 
+TIMESHEET_SYNC_GATE_MINUTES = 3
+
+
+def should_skip_timesheet_sync(account, now, gate_minutes=TIMESHEET_SYNC_GATE_MINUTES):
+    """Гейт свежести: True, если последний синк моложе gate_minutes минут.
+
+    account.last_timesheet_synced_at is None -> никогда не синкали -> False (синкать).
+    """
+    last = account.last_timesheet_synced_at
+    if last is None:
+        return False
+    return (now - last).total_seconds() < gate_minutes * 60
+
+
 @xframe_options_exempt
 @csrf_exempt
 @require_POST
@@ -1438,6 +1453,17 @@ def timesheet_sync(request: AuthorizedRequest):
     date_from = body.get("date_from")
     date_to = body.get("date_to")
     is_scoped = bool(date_from and date_to)
+
+    now = timezone.now()
+    if not is_scoped and should_skip_timesheet_sync(request.bitrix24_account, now):
+        db_count = TimesheetItem.objects.filter(**scope_to_tenant(request.bitrix24_account)).count()
+        profiler.set_metric("status", "fresh")
+        profiler.log()
+        return JsonResponse({
+            "status": "fresh",
+            "count": db_count,
+            "last_synced_at": request.bitrix24_account.last_timesheet_synced_at.isoformat(),
+        })
 
     service = TimesheetSyncService(request.bitrix24_account.client, request.bitrix24_account, config)
     try:
@@ -1463,11 +1489,27 @@ def timesheet_sync(request: AuthorizedRequest):
 
     with profiler.stage("invalidate_caches"):
         invalidate_project_runtime_caches(request.bitrix24_account)
+    request.bitrix24_account.last_timesheet_synced_at = now
+    request.bitrix24_account.save(update_fields=["last_timesheet_synced_at"])
     profiler.set_metric("count", count)
-    response = JsonResponse({"status": "success", "count": count})
+    response = JsonResponse({"status": "success", "count": count, "last_synced_at": now.isoformat()})
     profiler.attach_to_response(response)
     profiler.log()
     return response
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("timesheet_sync_status")
+@auth_required
+def timesheet_sync_status(request: AuthorizedRequest):
+    acc = request.bitrix24_account
+    count = TimesheetItem.objects.filter(**scope_to_tenant(acc)).count()
+    last = acc.last_timesheet_synced_at
+    return JsonResponse({
+        "last_synced_at": last.isoformat() if last else None,
+        "count": count,
+    })
 
 
 @xframe_options_exempt
