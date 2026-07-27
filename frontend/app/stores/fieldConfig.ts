@@ -231,6 +231,21 @@ export const useFieldConfigStore = defineStore(
         }
 
         async function autoDetectMissingMappings($b24: B24Frame, rawConfig: AppConfigurationPayload) {
+            // app.option.set — метод ТОЛЬКО для администратора портала
+            // (https://apidocs.bitrix24.ru/api-reference/common/settings/app-option-set.html).
+            // У рядового сотрудника запись падает с AccessException, результат не
+            // сохраняется — значит тяжёлый crm.item.fields и заведомо провальный
+            // app.option.set повторяются на КАЖДОЙ загрузке в критическом пути
+            // (loadFromB24 → до loadTaskTree). Это и тормозило вкладку задачи у всех,
+            // кто не админ. Автоопределение полей — разовая админская настройка:
+            // выполняет его только тот, кто способен сохранить результат портально
+            // (app.option — общее хранилище приложения, видно всем сразу).
+            const userStore = useUserStore()
+            if (!userStore.isAdmin) {
+                console.log('[FieldConfig] Auto-detect skipped: сохранить маппинг полей может только администратор')
+                return
+            }
+
             const spEntityTypeId = Number(rawConfig?.sp_entity_type_id || 0)
             if (!spEntityTypeId) {
                 console.log('[FieldConfig] Auto-detect skipped: no sp_entity_type_id')
