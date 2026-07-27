@@ -38,6 +38,7 @@ class Bitrix24Account(models.Model, AbstractBitrixToken):
         "Portal", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="accounts", db_index=True,
     )
+    last_timesheet_synced_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = True
