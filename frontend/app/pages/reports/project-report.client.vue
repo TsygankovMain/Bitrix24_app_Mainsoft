@@ -10,6 +10,7 @@ const { locales: localesI18n, setLocale } = useI18n()
 let $b24: null | B24Frame = null
 const fieldConfigStore = useFieldConfigStore()
 const apiStore = useApiStore()
+const toast = useToast()
 
 // --- STATE ---
 const isLoading = ref(true)
@@ -172,9 +173,15 @@ async function refreshTimesheets() {
         const from = new Date()
         from.setDate(from.getDate() - 30)
         const iso = (d: Date) => d.toISOString().slice(0, 10)
-        await apiStore.syncTimesheets(iso(from), iso(to)) // scoped-синк за 30 дней → быстрый путь + гейт свежести (Task 2)
-        await loadSyncStatus()
+        // scoped-синк за 30 дней → быстрый путь + гейт свежести (Task 2). Бэкенд всегда
+        // кладёт last_synced_at в ответ — отдельный GET getTimesheetSyncStatus не нужен.
+        const result = await apiStore.syncTimesheets(iso(from), iso(to))
+        if (result.last_synced_at) {
+            lastSyncedAt.value = result.last_synced_at
+        }
         await fetchData()
+    } catch (e: unknown) {
+        toast.add({ title: 'Ошибка обновления данных: ' + (e as { message?: string }).message, color: 'air-primary-alert' })
     } finally {
         isRefreshing.value = false
     }

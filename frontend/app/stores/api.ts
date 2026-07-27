@@ -570,8 +570,8 @@ export const useApiStore = defineStore(
       return await runReportRequest<FocusAnalysisReport>('/api/report-focus-analysis', dateFrom, dateTo, empIds, projIds)
     }
 
-    const syncTimesheets = async (dateFrom?: string, dateTo?: string): Promise<{ status: string; count: number }> => {
-      const result = await $api<{ status: string, count: number }>('/api/sync-timesheets', {
+    const syncTimesheets = async (dateFrom?: string, dateTo?: string): Promise<{ status: string; count: number; last_synced_at?: string | null }> => {
+      const result = await $api<{ status: string, count: number, last_synced_at?: string | null }>('/api/sync-timesheets', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
