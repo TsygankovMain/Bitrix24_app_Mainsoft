@@ -10,4 +10,9 @@ DATABASES = {
 
 STATICFILES_DIRS = []
 
-MIDDLEWARE = [item for item in MIDDLEWARE if item != "whitenoise.middleware.WhiteNoiseMiddleware"]
+# Сравнение по подстроке, а не по полному пути класса: раньше здесь стояло
+# сравнение с голой строкой "whitenoise.middleware.WhiteNoiseMiddleware", и после
+# замены в settings.py на main.whitenoise_immutable.ImmutableNuxtWhiteNoiseMiddleware
+# фильтр молча перестал совпадать — WhiteNoise оставался в эффективном MIDDLEWARE
+# тестового прогона (см. main.tests_static_immutable.TestEnvironmentMiddlewareIsolationTest).
+MIDDLEWARE = [item for item in MIDDLEWARE if "WhiteNoiseMiddleware" not in item]

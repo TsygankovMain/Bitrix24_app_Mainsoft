@@ -10,8 +10,14 @@ from whitenoise.middleware import WhiteNoiseMiddleware
 
 
 def is_immutable_nuxt_url(url: str) -> bool:
-    """URL относится к хешированным бандлам Nuxt (/_nuxt/...)."""
-    return "/_nuxt/" in (url or "")
+    """URL относится к хешированным бандлам Nuxt (/_nuxt/...).
+
+    Исключение — /_nuxt/builds/: при включённом experimental.appManifest Nuxt
+    пишет туда build-манифест (например, latest.json) стабильным именем без
+    хеша содержимого, и его нельзя кешировать навсегда, как обычные бандлы.
+    """
+    url = url or ""
+    return "/_nuxt/" in url and "/_nuxt/builds/" not in url
 
 
 class ImmutableNuxtWhiteNoiseMiddleware(WhiteNoiseMiddleware):
