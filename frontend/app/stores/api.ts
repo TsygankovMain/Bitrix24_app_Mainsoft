@@ -602,6 +602,23 @@ export const useApiStore = defineStore(
       })
     }
 
+    const getUsers = async (
+      page: number = 1,
+      limit: number = 50,
+      activeOnly: boolean = false
+    ): Promise<{ items: Array<{ id: string, name: string, last_name: string, active: boolean, updated_at: string }>, total: number, page: number, pages: number, has_next: boolean, has_previous: boolean }> => {
+      const params = new URLSearchParams()
+      params.append('page', page.toString())
+      params.append('limit', limit.toString())
+      if (activeOnly) params.append('active_only', '1')
+
+      return await $api(`/api/users?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
     const getProjectBoard = async (forceRefresh = false): Promise<ProjectBoardResponse> => {
       return await withBrowserCache('project-board', browserCacheTtl.board, async () => {
         return await $api('/api/project-board', {
@@ -1073,6 +1090,7 @@ export const useApiStore = defineStore(
       syncTimesheets,
       getTimesheetSyncStatus,
       getTimesheetsList,
+      getUsers,
       getProjectBoard,
       getProjectBoardMeta,
       getProjectBoardCard,

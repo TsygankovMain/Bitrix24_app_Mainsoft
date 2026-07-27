@@ -63,31 +63,35 @@ export function useTaskTreeLoader() {
   const clientHourRate = computed(() => fieldConfigStore.hourlyRate)
 
   async function loadConfigAndUsers($b24: B24Frame, options: LoadTaskTreeOptions = {}) {
-    const batch: Record<string, { method: string; params?: Record<string, unknown> }> = {
-      users: { method: 'user.get', params: { FILTER: { ACTIVE: 'Y' }, sort: 'LAST_NAME', order: 'ASC' } }
-    }
-
-    if (options.includeProfile) {
-      batch.profile = { method: 'profile' }
-    }
-
+    const apiStore = useApiStore()
     const client = $b24 as unknown as B24BatchClient
-    const result = await client.callBatch(batch)
-    const data = result.getData()
 
-    const usersResponse = data.users as RawRecord | undefined
-    if (usersResponse && !usersResponse.error) {
-      const users = extractResult(usersResponse)
-      const map: Record<string, TaskWorkspaceUser> = {}
-      if (Array.isArray(users)) {
-        for (const user of users) {
-          map[String(user.ID)] = user
-        }
+    // Сотрудники — из локальной БД через /api/users (пагинированно), а не прямым
+    // user.get у Bitrix: user.get без курсора отдавал только первые 50 (баг «только
+    // 50 сотрудников» / «User <id>» в дереве задачи). БД держит полную актуальную
+    // копию (Фаза 2 sync-offload).
+    const map: Record<string, TaskWorkspaceUser> = {}
+    const USERS_PAGE_LIMIT = 200
+    const USERS_MAX_PAGES = 25 // защита от зацикливания; 25*200 = 5000 сотрудников с запасом
+    let page = 1
+    while (page <= USERS_MAX_PAGES) {
+      const response = await apiStore.getUsers(page, USERS_PAGE_LIMIT, true)
+      for (const item of response.items) {
+        map[String(item.id)] = { ID: item.id, NAME: item.name, LAST_NAME: item.last_name }
       }
-      usersMap.value = map
+      if (!response.has_next) {
+        break
+      }
+      page += 1
     }
+    usersMap.value = map
 
     if (options.includeProfile) {
+      const batch: Record<string, { method: string; params?: Record<string, unknown> }> = {
+        profile: { method: 'profile' }
+      }
+      const result = await client.callBatch(batch)
+      const data = result.getData()
       const profile = extractResult(data.profile) as RawRecord | null
       if (profile?.ID) {
         currentUserId.value = String(profile.ID)

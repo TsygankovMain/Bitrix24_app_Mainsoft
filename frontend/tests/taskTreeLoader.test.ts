@@ -18,10 +18,12 @@ import { computed, ref } from 'vue'
 type Global = Record<string, unknown>
 
 let fieldConfigStub: Record<string, unknown>
+let apiStoreStub: Record<string, unknown>
 
 ;(globalThis as unknown as Global).ref = ref
 ;(globalThis as unknown as Global).computed = computed
 ;(globalThis as unknown as Global).useFieldConfigStore = () => fieldConfigStub
+;(globalThis as unknown as Global).useApiStore = () => apiStoreStub
 
 const { useTaskTreeLoader } = await import('../app/composables/useTaskTreeLoader')
 
@@ -91,4 +93,32 @@ test('loadTaskTree: Bitrix отдал ошибку — спиннер гасне
 
   assert.equal(loader.isLoading.value, false, 'падение REST не должно оставлять спиннер')
   assert.match(String(loader.error.value), /Слишком много запросов/)
+})
+
+test('loadConfigAndUsers: подгружает больше 50 сотрудников постранично из /api/users', async () => {
+  fieldConfigStub = makeConfigStub(87)
+
+  const page1 = Array.from({ length: 200 }, (_, i) => ({
+    id: String(i + 1), name: `Имя${i + 1}`, last_name: 'Фамилия', active: true, updated_at: '2026-07-27T00:00:00Z'
+  }))
+  const page2 = [{ id: '201', name: 'Имя201', last_name: 'Фамилия', active: true, updated_at: '2026-07-27T00:00:00Z' }]
+
+  let callCount = 0
+  apiStoreStub = {
+    getUsers: async (page: number) => {
+      callCount += 1
+      if (page === 1) {
+        return { items: page1, total: 201, page: 1, pages: 2, has_next: true, has_previous: false }
+      }
+      return { items: page2, total: 201, page: 2, pages: 2, has_next: false, has_previous: true }
+    }
+  }
+
+  const loader = useTaskTreeLoader()
+  await loader.loadConfigAndUsers({} as never, {})
+
+  assert.equal(loader.usersList.value.length, 201, 'все 201 сотрудник должны загрузиться, а не первые 50')
+  assert.equal(callCount, 2, 'должно быть ровно две страницы запроса')
+  const lastUser = loader.usersMap.value['201'] as { NAME?: string } | undefined
+  assert.equal(lastUser?.NAME, 'Имя201', 'сотрудник со второй страницы должен резолвиться')
 })
