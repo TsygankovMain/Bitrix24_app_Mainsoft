@@ -509,10 +509,16 @@ def _build_project_spa_validation_payload(
 
 
 def _load_request_json(request: AuthorizedRequest):
+    # json.loads может успешно разобрать НЕ-объект (список/число/строку/true/
+    # null/[]) — все вызывающие в этой ветке (update_project_board,
+    # update_project_board_stage, archive_project_board) сразу зовут
+    # .get(...) на результате без проверки типа. Тот же приём, что и в
+    # остальных восьми местах этой правки: после разбора гарантируем dict.
     try:
-        return json.loads(request.body or "{}")
+        parsed = json.loads(request.body or "{}")
     except (TypeError, ValueError, json.JSONDecodeError):
         return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _apply_created_at_filters(queryset, created_from, created_to):

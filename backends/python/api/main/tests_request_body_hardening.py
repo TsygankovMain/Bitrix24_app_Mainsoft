@@ -439,3 +439,129 @@ class AuthRequiredPlacementBranchMalformedBodyTest(TestCase):
             REMOTE_ADDR="203.0.113.55",
         )
         self.assertEqual(resp.status_code, 400)
+
+
+# ---------------------------------------------------------------------------
+# Тир 1 (доп., внесено отдельным коммитом) — _load_request_json (views.py),
+# общий хелпер, ещё НЕ защищён в этой ветке / в prod_2026.
+#
+# Правка хелпера уже существует и протестирована на невлитой ветке
+# feat/create-project-button (коммит b038bdf: "_load_request_json всегда
+# возвращает dict"), но prod_2026 (и эта ветка, отведённая от той же точки
+# c873b8c) её не содержит — подтверждено чтением _load_request_json из
+# views.py и `git branch --contains b038bdf`. Эта ветка задумана как
+# самодостаточная и выкатывается независимо от кнопки создания проекта,
+# поэтому сюда дублируется только сам фикс хелпера (НЕ весь коммит b038bdf —
+# в нём есть ещё добавление create_project_board в __all__, а этой функции
+# в prod_2026 нет, она появится вместе с кнопкой).
+#
+# Из четырёх потребителей хелпера в прод-коде существуют три:
+# update_project_board, update_project_board_stage, archive_project_board —
+# каждый сразу зовёт payload.get(...) без проверки типа результата
+# _load_request_json. Четвёртый (create_project_board) — тоже часть той же
+# невлитой ветки кнопки, эндпоинта нет, тестировать нечего.
+# ---------------------------------------------------------------------------
+
+class UpdateProjectBoardMalformedBodyTest(TestCase):
+    """POST /api/project-board/update: `payload = _load_request_json(request)`,
+    затем сразу `payload.get("project_id")` без проверки типа — до фикса
+    хелпера 500 с сырым текстом AttributeError. После фикса payload -> {},
+    что уже штатно ведёт к 400 "project_id is required" (тот же ответ, что и
+    при явном {} — см. control ниже). Bitrix не мокаем: код не доходит до
+    ProjectCardService, возврат раньше."""
+
+    def _post(self, account, value):
+        return Client().post(
+            "/api/project-board/update",
+            data=json.dumps(value),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=_auth_header(account),
+        )
+
+    def test_malformed_bodies_return_400_not_500(self):
+        for label, value in MALFORMED_BODIES.items():
+            with self.subTest(label=label):
+                account = _make_account(f"portal-upd-board-{label}.bitrix24.ru")
+                resp = self._post(account, value)
+                self.assertEqual(
+                    resp.status_code, 400,
+                    f"body={value!r} must degrade to the same 'project_id is required' 400, "
+                    f"got {resp.status_code}: {resp.content!r}",
+                )
+                self.assertEqual(resp.json(), {"error": "project_id is required"})
+                _assert_no_exception_leak(self, resp)
+
+    def test_control_empty_object_gives_the_same_400(self):
+        account = _make_account("portal-upd-board-control.bitrix24.ru")
+        resp = self._post(account, {})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json(), {"error": "project_id is required"})
+
+
+class UpdateProjectBoardStageMalformedBodyTest(TestCase):
+    """POST /api/project-board/update-stage: тот же паттерн —
+    payload.get("project_id")/payload.get("stage") без проверки типа. До
+    фикса хелпера — 500 с сырым текстом AttributeError. После — {} -> штатные
+    400 "project_id and stage are required"."""
+
+    def _post(self, account, value):
+        return Client().post(
+            "/api/project-board/update-stage",
+            data=json.dumps(value),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=_auth_header(account),
+        )
+
+    def test_malformed_bodies_return_400_not_500(self):
+        for label, value in MALFORMED_BODIES.items():
+            with self.subTest(label=label):
+                account = _make_account(f"portal-upd-stage-{label}.bitrix24.ru")
+                resp = self._post(account, value)
+                self.assertEqual(
+                    resp.status_code, 400,
+                    f"body={value!r} must degrade to the same 'project_id and stage are required' 400, "
+                    f"got {resp.status_code}: {resp.content!r}",
+                )
+                self.assertEqual(resp.json(), {"error": "project_id and stage are required"})
+                _assert_no_exception_leak(self, resp)
+
+    def test_control_empty_object_gives_the_same_400(self):
+        account = _make_account("portal-upd-stage-control.bitrix24.ru")
+        resp = self._post(account, {})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json(), {"error": "project_id and stage are required"})
+
+
+class ArchiveProjectBoardMalformedBodyTest(TestCase):
+    """POST /api/project-board/archive: `payload.get("project_id")` без
+    проверки типа (payload.get("is_archived", "") тоже вызывается, но позже
+    и безопасно — падение происходит раньше, на project_id). До фикса
+    хелпера — 500 с сырым текстом AttributeError. После — {} -> штатные 400
+    "project_id is required"."""
+
+    def _post(self, account, value):
+        return Client().post(
+            "/api/project-board/archive",
+            data=json.dumps(value),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=_auth_header(account),
+        )
+
+    def test_malformed_bodies_return_400_not_500(self):
+        for label, value in MALFORMED_BODIES.items():
+            with self.subTest(label=label):
+                account = _make_account(f"portal-archive-{label}.bitrix24.ru")
+                resp = self._post(account, value)
+                self.assertEqual(
+                    resp.status_code, 400,
+                    f"body={value!r} must degrade to the same 'project_id is required' 400, "
+                    f"got {resp.status_code}: {resp.content!r}",
+                )
+                self.assertEqual(resp.json(), {"error": "project_id is required"})
+                _assert_no_exception_leak(self, resp)
+
+    def test_control_empty_object_gives_the_same_400(self):
+        account = _make_account("portal-archive-control.bitrix24.ru")
+        resp = self._post(account, {})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json(), {"error": "project_id is required"})
