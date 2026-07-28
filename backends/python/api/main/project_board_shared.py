@@ -45,7 +45,12 @@ PROJECT_CARD_TABLE_NAME = ProjectCard._meta.db_table
 TIMESHEET_ITEM_TABLE_NAME = TimesheetItem._meta.db_table
 PROJECT_CARD_SCHEMA_CACHE_KEY = "mainsoft:v2:project-card-schema-ready"
 PROJECT_CARD_SCHEMA_TTL = 60
-BITRIX_REFERENCE_CACHE_TTL = 60 * 30
+# Справочники (сотрудники/компании/юрлица) меняются редко, кэш — LocMemCache
+# (CACHES не задан в settings.py -> дефолт Django), т.е. свой у каждого
+# воркера gunicorn и полностью теряется при рестарте контейнера. Долгий TTL
+# безопасен: у пользователя есть кнопка принудительного обновления
+# (refreshReferenceOptions на фронте -> POST /api/project-board/sync).
+BITRIX_REFERENCE_CACHE_TTL = 60 * 60 * 6
 PROJECT_BOARD_CACHE_TTL = 60 * 2
 HOMEPAGE_CACHE_TTL = 60 * 2
 FILTER_EMPLOYEES_CACHE_SUFFIX = "filter-employees-v3"
