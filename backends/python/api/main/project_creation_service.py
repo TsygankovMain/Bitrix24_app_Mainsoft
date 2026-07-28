@@ -13,7 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from b24pysdk import Client
 
-from .models import Bitrix24Account
+from .models import Bitrix24Account, ProjectCard
+from .project_creation_defaults import ResolvedProjectFields
+from .tenant_scoping import scope_to_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -271,3 +273,135 @@ class ProjectCreationService:
             return StepResult(status="error", error="Битрикс не вернул идентификатор проекта.")
 
         return StepResult(status="created", id=created_id, name=group_name)
+
+    @staticmethod
+    def _to_bitrix_id(value: Any) -> Any:
+        """Битрикс ждёт числовые id числами; нечисловое отдаём как есть."""
+        text = _clean_str(value)
+        return int(text) if text.isdigit() else (text or None)
+
+    def build_card_fields(
+        self, fields: ResolvedProjectFields, group_id: str, mapping: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Собирает поля crm.item.add по маппингу портала.
+
+        Ключи те же, что у ProjectCardService._build_project_spa_update_fields —
+        маппинг общий. Незамапленное и пустое не пишем: на разных порталах набор
+        настроенных полей разный, а пустое значение затрёт то, что уже есть.
+        """
+        values = {
+            "title": fields.project_name,
+            "bitrix_group_id": self._to_bitrix_id(group_id),
+            "stage_id": fields.stage,
+            "company_id": self._to_bitrix_id(fields.company_id),
+            "our_legal_entity_id": self._to_bitrix_id(fields.our_legal_entity_id),
+            "curator_id": self._to_bitrix_id(fields.curator_user_id),
+            "hourly_rate": fields.hourly_rate,
+            "project_hours_budget": fields.project_hours_budget,
+            "start_date": fields.project_start_date.isoformat() if fields.project_start_date else None,
+            "finish_date": fields.project_end_date.isoformat() if fields.project_end_date else None,
+            "is_support": "Y" if fields.is_support else "N",
+        }
+
+        built: Dict[str, Any] = {}
+        for mapping_key, value in values.items():
+            field_code = _clean_str((mapping or {}).get(mapping_key))
+            if not field_code or value in (None, ""):
+                continue
+            built[field_code] = value
+        return built
+
+    def ensure_card(
+        self,
+        fields: ResolvedProjectFields,
+        group_id: str,
+        *,
+        entity_type_id: int,
+        mapping: Dict[str, Any],
+    ) -> StepResult:
+        """Шаг 3: карточка смарт-процесса, связанная с группой."""
+        if not entity_type_id or not mapping:
+            return StepResult(
+                status="skipped",
+                error="Смарт-процесс проектов не настроен — карточка не создана.",
+            )
+
+        group_field = _clean_str((mapping or {}).get("bitrix_group_id"))
+        if group_field:
+            try:
+                response = self._call(
+                    "crm.item.list",
+                    {
+                        "entityTypeId": entity_type_id,
+                        "filter": {group_field: self._to_bitrix_id(group_id)},
+                        "select": ["id"],
+                    },
+                )
+            except Exception as exc:
+                logger.warning("ensure_card: crm.item.list failed: %s", exc)
+                return StepResult(status="error", error=f"Не удалось найти карточку: {exc}")
+
+            existing, parsed_ok = _extract_rows(response)
+            if not parsed_ok:
+                return StepResult(status="error", error="Битрикс вернул ответ неожиданного вида при поиске карточки.")
+            if existing:
+                return StepResult(
+                    status="found",
+                    id=_clean_str(existing[0].get("id") or existing[0].get("ID")),
+                    name=fields.project_name,
+                )
+
+        try:
+            created = self._call(
+                "crm.item.add",
+                {
+                    "entityTypeId": entity_type_id,
+                    "fields": self.build_card_fields(fields, group_id, mapping),
+                },
+            )
+        except Exception as exc:
+            logger.warning("ensure_card: crm.item.add failed: %s", exc)
+            return StepResult(status="error", error=f"Не удалось создать карточку: {exc}")
+
+        # crm.item.add отдаёт созданную запись как result.item — достаём id
+        # через тот же защищённый разбор, что и везде (заведён в Task 2).
+        # crm.item.add отдаёт созданную запись как result.item — _extract_rows
+        # здесь не годится, он не знает ключа в единственном числе.
+        created_id = _clean_str(_extract_created_id(created))
+        if not created_id:
+            return StepResult(status="error", error="Битрикс не вернул идентификатор карточки.")
+
+        return StepResult(status="created", id=created_id, name=fields.project_name)
+
+    def write_through(
+        self, fields: ResolvedProjectFields, group_id: str, item_id: Optional[str]
+    ) -> None:
+        """Пишет карточку в локальную таблицу сразу после создания в Битриксе,
+        чтобы проект появился на доске немедленно, а не через фоновый синк:
+        иначе сотрудник решит, что не сработало, и нажмёт повторно."""
+        defaults = {
+            "project_name": fields.project_name,
+            "stage": fields.stage,
+            "project_item_id": _clean_str(item_id) or None,
+            "project_hours_budget": fields.project_hours_budget,
+            "hourly_rate": fields.hourly_rate,
+            "planned_budget_amount": fields.planned_budget_amount,
+            "is_support": fields.is_support,
+            "project_type": fields.project_type,
+            "budget_mode": fields.budget_mode,
+            "curator_user_id": fields.curator_user_id,
+            "curator_name": fields.curator_name,
+            "project_start_date": fields.project_start_date,
+            "project_end_date": fields.project_end_date,
+            "company_id": fields.company_id,
+            "company_name": fields.company_name,
+            "our_legal_entity_id": fields.our_legal_entity_id,
+            "our_legal_entity_name": fields.our_legal_entity_name,
+            "is_archived": False,
+            "stage_source": "manual",
+        }
+        ProjectCard.objects.update_or_create(
+            **scope_to_tenant(self.account, write=True),
+            project_id=_clean_str(group_id),
+            defaults=defaults,
+        )

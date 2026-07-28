@@ -3,9 +3,12 @@
 Паттерн _FakeClient — как в tests_user_sync_service.py: подменяем call_method и
 записываем вызовы, чтобы проверять идемпотентность без сети.
 """
+from datetime import date
+
 from django.test import TestCase
 
-from .models import Bitrix24Account
+from .models import Bitrix24Account, ProjectCard
+from .project_creation_defaults import resolve_project_fields
 from .project_creation_service import ProjectCreationService
 
 
@@ -349,3 +352,202 @@ class EnsureGroupTest(_ServiceTestCase):
         result = self.service(client).ensure_group("Портал АО Ромашка")
 
         self.assertEqual(result.status, "created")
+
+    def test_create_throws_exception(self):
+        """sonet_group.create бросает исключение — по образцу
+        EnsureCompanyTest.test_add_throws_exception (пробел отмечен ревью
+        задачи 3: у этого шага не было теста на отказ создания)."""
+        client = _FakeClient({
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": RuntimeError("Ошибка при создании группы"),
+        })
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("Ошибка при создании группы", result.error)
+
+    def test_create_returns_empty_id(self):
+        """sonet_group.create ответил без пригодного идентификатора — по
+        образцу EnsureCompanyTest.test_add_returns_empty_id."""
+        client = _FakeClient({
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": {"result": ""},
+        })
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("идентификатор", result.error)
+
+
+def _resolved_fields(**overrides):
+    form = {
+        "project_name": "Портал АО Ромашка",
+        "company_id": "15",
+        "company_name": "АО Ромашка",
+        "project_hours_budget": "10",
+    }
+    form.update(overrides)
+    fields, _ = resolve_project_fields(
+        form,
+        config={"hourly_rate": 1500},
+        current_user_id="42",
+        current_user_name="Петров Иван",
+        today=date(2026, 7, 28),
+        legal_entities=[{"id": "7", "name": "ООО Мейнсофт"}],
+        stage_options=[{"id": "DT180_7:NEW", "title": "Новый"}],
+    )
+    return fields
+
+
+_MAPPING = {
+    "title": "title",
+    "bitrix_group_id": "ufCrm7Group",
+    "stage_id": "stageId",
+    "company_id": "ufCrm7Company",
+    "our_legal_entity_id": "ufCrm7Legal",
+    "curator_id": "ufCrm7Curator",
+    "hourly_rate": "ufCrm7Rate",
+    "project_hours_budget": "ufCrm7Hours",
+    "start_date": "ufCrm7Start",
+    "finish_date": "ufCrm7Finish",
+    "is_support": "ufCrm7Support",
+}
+
+
+class BuildCardFieldsTest(_ServiceTestCase):
+    def test_maps_every_configured_field(self):
+        service = self.service(_FakeClient())
+        built = service.build_card_fields(_resolved_fields(), "44", _MAPPING)
+
+        self.assertEqual(built["title"], "Портал АО Ромашка")
+        self.assertEqual(built["ufCrm7Group"], 44)
+        self.assertEqual(built["stageId"], "DT180_7:NEW")
+        self.assertEqual(built["ufCrm7Company"], 15)
+        self.assertEqual(built["ufCrm7Legal"], 7)
+        self.assertEqual(built["ufCrm7Curator"], 42)
+        self.assertEqual(built["ufCrm7Rate"], 1500.0)
+        self.assertEqual(built["ufCrm7Hours"], 10.0)
+        self.assertEqual(built["ufCrm7Start"], "2026-07-28")
+        self.assertEqual(built["ufCrm7Finish"], "2027-07-28")
+        self.assertEqual(built["ufCrm7Support"], "N")
+
+    def test_unmapped_keys_are_skipped_not_guessed(self):
+        service = self.service(_FakeClient())
+        built = service.build_card_fields(_resolved_fields(), "44", {"title": "title"})
+
+        self.assertEqual(list(built.keys()), ["title"])
+
+    def test_empty_hours_budget_is_not_written_as_zero(self):
+        service = self.service(_FakeClient())
+        fields = _resolved_fields(project_hours_budget="")
+        built = service.build_card_fields(fields, "44", _MAPPING)
+
+        self.assertNotIn("ufCrm7Hours", built)
+
+
+class EnsureCardTest(_ServiceTestCase):
+    def test_existing_card_for_group_is_reused(self):
+        client = _FakeClient({"crm.item.list": {"result": {"items": [{"id": 900}]}}})
+        result = self.service(client).ensure_card(
+            _resolved_fields(), "44", entity_type_id=180, mapping=_MAPPING
+        )
+
+        self.assertEqual(result.status, "found")
+        self.assertEqual(result.id, "900")
+        self.assertNotIn("crm.item.add", client.methods_called())
+
+    def test_no_card_creates_one(self):
+        client = _FakeClient({
+            "crm.item.list": {"result": {"items": []}},
+            "crm.item.add": {"result": {"item": {"id": 901}}},
+        })
+        result = self.service(client).ensure_card(
+            _resolved_fields(), "44", entity_type_id=180, mapping=_MAPPING
+        )
+
+        self.assertEqual(result.status, "created")
+        self.assertEqual(result.id, "901")
+
+    def test_unconfigured_smart_process_is_skipped_not_crashed(self):
+        client = _FakeClient()
+        result = self.service(client).ensure_card(
+            _resolved_fields(), "44", entity_type_id=0, mapping=_MAPPING
+        )
+
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(client.methods_called(), [])
+
+    def test_bitrix_failure_becomes_error_status(self):
+        client = _FakeClient({
+            "crm.item.list": {"result": {"items": []}},
+            "crm.item.add": RuntimeError("поле не найдено"),
+        })
+        result = self.service(client).ensure_card(
+            _resolved_fields(), "44", entity_type_id=180, mapping=_MAPPING
+        )
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("поле не найдено", result.error)
+
+    def test_created_card_without_id_becomes_error(self):
+        """crm.item.add ответил без пригодного идентификатора — тот же класс
+        тестов, что и test_create_returns_empty_id у EnsureGroupTest
+        (пробел, отмеченный ревью задачи 3, закрывается по образцу
+        EnsureCompanyTest и для этого шага). Разбор ответа — только через
+        _extract_created_id, вручную не трогаем."""
+        client = _FakeClient({
+            "crm.item.list": {"result": {"items": []}},
+            "crm.item.add": {"result": {"item": {}}},
+        })
+        result = self.service(client).ensure_card(
+            _resolved_fields(), "44", entity_type_id=180, mapping=_MAPPING
+        )
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("идентификатор", result.error)
+
+
+class WriteThroughTest(_ServiceTestCase):
+    def test_creates_local_row_so_board_shows_project_immediately(self):
+        service = self.service(_FakeClient())
+        service.write_through(_resolved_fields(), "44", "901")
+
+        card = ProjectCard.objects.get(bitrix24_account=self.account, project_id="44")
+        self.assertEqual(card.project_name, "Портал АО Ромашка")
+        self.assertEqual(card.project_item_id, "901")
+        self.assertEqual(card.company_id, "15")
+        self.assertEqual(card.our_legal_entity_id, "7")
+        self.assertEqual(card.curator_user_id, "42")
+        self.assertEqual(card.hourly_rate, 1500.0)
+        self.assertEqual(card.project_hours_budget, 10.0)
+        self.assertEqual(card.planned_budget_amount, 15000.0)
+        self.assertEqual(card.project_start_date, date(2026, 7, 28))
+        self.assertEqual(card.project_end_date, date(2027, 7, 28))
+        self.assertEqual(card.stage, "DT180_7:NEW")
+        self.assertFalse(card.is_archived)
+
+    def test_second_call_updates_instead_of_duplicating(self):
+        service = self.service(_FakeClient())
+        service.write_through(_resolved_fields(), "44", "901")
+        service.write_through(_resolved_fields(project_name="Переименован"), "44", "901")
+
+        cards = ProjectCard.objects.filter(bitrix24_account=self.account, project_id="44")
+        self.assertEqual(cards.count(), 1)
+        self.assertEqual(cards.first().project_name, "Переименован")
+
+    def test_other_portal_does_not_see_the_row(self):
+        """Изоляция между порталами (§9 спеки): чужой аккаунт не должен видеть
+        созданный проект ни при account-, ни при portal-скоупинге."""
+        from .tenant_scoping import scope_to_tenant
+
+        other = Bitrix24Account.objects.create(
+            b24_user_id=2, is_b24_user_admin=True, member_id="m-create-2",
+            is_master_account=True, domain_url="other.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        self.service(_FakeClient()).write_through(_resolved_fields(), "44", "901")
+
+        visible_here = ProjectCard.objects.filter(**scope_to_tenant(self.account), project_id="44")
+        visible_there = ProjectCard.objects.filter(**scope_to_tenant(other), project_id="44")
+        self.assertEqual(visible_here.count(), 1)
+        self.assertEqual(visible_there.count(), 0)
