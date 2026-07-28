@@ -212,6 +212,25 @@ function handleCompanySelected(option: ProjectBoardDirectoryOption | null) {
   form.value.company_name = option ? String(option.name) : ''
 }
 
+// Д2 хотфикса 2026-07-29: SearchableSelect эмитит create-requested по явному
+// клику на действие "Создать компанию «...»" (см. showCreateAction/
+// shouldOfferCompanyCreation в companySearch.ts) — раньше при пустом
+// результате поиска показывалась неактивная надпись "Ничего не найдено", а
+// подсказка под полем обещала автоматику, которой не существовало.
+//
+// Пишем company_id/company_name ОДНОЙ операцией через companyFieldsForQuery —
+// тот же приём и по той же причине (Важное 3 финального ревью), что и в
+// searchCompanyOptions выше. Берём query из события, а не полагаемся на уже
+// имеющийся form.company_name: он синхронизируется только на реально
+// стартовавший (прошедший debounce) поиск, и человек мог допечатать текст
+// уже после того, как пришёл пустой ответ — событие несёт то значение,
+// которое он видел в кнопке действия в момент клика.
+function handleCompanyCreationRequested(query: string) {
+  const fields = companyFieldsForQuery(query)
+  form.value.company_id = fields.company_id
+  form.value.company_name = fields.company_name
+}
+
 function resetForm() {
   form.value = blankForm()
   endDateTouched.value = false
@@ -333,8 +352,9 @@ function closeModal() {
             :search-fn="searchCompanyOptions"
             :pending-company-name="form.company_name"
             @update:selected="handleCompanySelected"
+            @create-requested="handleCompanyCreationRequested"
           />
-          <span class="text-xs text-slate-400">Не нашли в поиске — введённое название станет именем новой компании.</span>
+          <span class="text-xs text-slate-400">Не нашли компанию в поиске — нажмите «Создать компанию» в списке, чтобы завести новую с введённым названием.</span>
           <span v-if="missing.includes('company')" class="text-xs text-rose-600">Выберите компанию или впишите название новой.</span>
         </div>
 

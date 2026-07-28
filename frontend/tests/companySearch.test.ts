@@ -3,12 +3,14 @@ import assert from 'node:assert/strict'
 
 import {
   classifyCompanySearchError,
+  companyCreationActionLabel,
   companyFieldsForQuery,
   companySearchNoticeText,
   createCompanySearchGate,
   isRateLimitError,
   normalizeCompanyQuery,
   pendingCompanyDisplayLabel,
+  shouldOfferCompanyCreation,
   shouldSearchCompanies,
 } from '../app/utils/companySearch'
 
@@ -189,4 +191,48 @@ test('pendingCompanyDisplayLabel: пустая строка выбранного
   // функция обязана трактовать её как "не выбрано", а не как выбор с именем "".
   const label = pendingCompanyDisplayLabel({ selectedName: '', pendingName: 'Лютик', emptyLabel: 'Не выбрано' })
   assert.match(label, /Лютик/)
+})
+
+// --- shouldOfferCompanyCreation ---
+//
+// Д2 хотфикса 2026-07-29 (см. .superpowers/sdd/2026-07-28-create-project-button/
+// hotfix-new-company-brief.md): при пустом результате поиска показывалась
+// неактивная надпись "Ничего не найдено", хотя подсказка под полем обещала
+// действие "создать компанию с этим названием". Обещание было, механизма —
+// не было.
+
+test('shouldOfferCompanyCreation: запрос валиден, поиск завершён, вариантов ноль — true', () => {
+  assert.equal(shouldOfferCompanyCreation({ query: 'Лютик', isSearching: false, optionCount: 0 }), true)
+})
+
+test('shouldOfferCompanyCreation: поиск ещё идёт — false, даже при нуле вариантов на экране', () => {
+  // serverResults на старте нового запроса не очищаются (см. SearchableSelect.vue::
+  // runServerSearch) — 0 в этот момент может значить "ещё не пришёл ответ", а не
+  // "точно ничего нет". Предлагать создание в этот момент — обгонять сервер.
+  assert.equal(shouldOfferCompanyCreation({ query: 'Лютик', isSearching: true, optionCount: 0 }), false)
+})
+
+test('shouldOfferCompanyCreation: запрос короче двух символов — false', () => {
+  assert.equal(shouldOfferCompanyCreation({ query: 'р', isSearching: false, optionCount: 0 }), false)
+})
+
+test('shouldOfferCompanyCreation: пустой и пробельный запрос — false', () => {
+  assert.equal(shouldOfferCompanyCreation({ query: '', isSearching: false, optionCount: 0 }), false)
+  assert.equal(shouldOfferCompanyCreation({ query: '   ', isSearching: false, optionCount: 0 }), false)
+})
+
+test('shouldOfferCompanyCreation: сервер вернул варианты — действие не предлагаем, даже без точного совпадения', () => {
+  // Осознанное решение (см. докстринг функции): сигнатура получает только
+  // optionCount, не сами варианты, поэтому "есть похожие, но ни один не
+  // совпадает дословно" неотличимо здесь от "есть точное совпадение" — и то,
+  // и другое трактуется как "варианты есть", действие не показываем.
+  assert.equal(shouldOfferCompanyCreation({ query: 'Ромашка Казань', isSearching: false, optionCount: 3 }), false)
+  assert.equal(shouldOfferCompanyCreation({ query: 'Ромашка Казань', isSearching: false, optionCount: 1 }), false)
+})
+
+// --- companyCreationActionLabel ---
+
+test('companyCreationActionLabel: показывает обрезанное введённое название в кавычках', () => {
+  assert.equal(companyCreationActionLabel('Лютик'), 'Создать компанию «Лютик»')
+  assert.equal(companyCreationActionLabel('  Лютик  '), 'Создать компанию «Лютик»')
 })

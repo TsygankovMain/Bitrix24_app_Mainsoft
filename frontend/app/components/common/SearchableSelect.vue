@@ -3,9 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ProjectBoardDirectoryOption } from '~/utils/projectBoard'
 import {
   classifyCompanySearchError,
+  companyCreationActionLabel,
   companySearchNoticeText,
   createCompanySearchGate,
   pendingCompanyDisplayLabel,
+  shouldOfferCompanyCreation,
   shouldSearchCompanies,
   type CompanySearchNotice,
 } from '~/utils/companySearch'
@@ -61,6 +63,12 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (event: 'update:modelValue', value: string): void
   (event: 'update:selected', option: ProjectBoardDirectoryOption | null): void
+  /** Д2 хотфикса 2026-07-29: клик по действию "Создать компанию «...»" (см.
+   * showCreateAction ниже). Несёт query, а не полагается на то, что
+   * form.company_name у родителя уже синхронизирован — searchCompanyOptions
+   * пишет его только на реально стартовавший (прошедший debounce) поиск, а
+   * человек мог допечатать текст уже после того, как пришёл пустой ответ. */
+  (event: 'create-requested', query: string): void
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
@@ -217,6 +225,19 @@ const filteredOptions = computed(() => {
 /** Список, который реально показывается в открытом выпадающем окне. */
 const visibleOptions = computed(() => (isServerSearchMode.value ? serverResults.value : filteredOptions.value))
 
+// Д2 хотфикса 2026-07-29: режим создания включён, только когда родитель
+// передал pendingCompanyName (см. её докстринг выше) — без этого пропа
+// действие "создать компанию" не появится никогда, даже в серверном режиме
+// поиска (фильтр "Компания" на доске проектов/странице проектов и там
+// searchFn есть, а смысла создавать компанию из фильтра — нет).
+const canOfferCompanyCreation = computed(() => isServerSearchMode.value && props.pendingCompanyName !== undefined)
+
+const showCreateAction = computed(() => canOfferCompanyCreation.value && shouldOfferCompanyCreation({
+  query: query.value,
+  isSearching: isSearching.value,
+  optionCount: visibleOptions.value.length,
+}))
+
 function closeDropdown() {
   isOpen.value = false
   query.value = ''
@@ -244,6 +265,14 @@ function selectOption(option: ProjectBoardDirectoryOption) {
   pinnedOption.value = option
   emit('update:modelValue', String(option.id))
   emit('update:selected', option)
+  closeDropdown()
+}
+
+/** Клик по действию "Создать компанию «...»" (см. showCreateAction). Отдаёт
+ * query наверх ДО closeDropdown() — closeDropdown очищает query, а событию
+ * нужно донести значение, каким оно было в момент клика. */
+function requestCompanyCreation() {
+  emit('create-requested', query.value)
   closeDropdown()
 }
 
@@ -354,6 +383,15 @@ onBeforeUnmount(() => {
         >
           Начните вводить название или ИНН
         </div>
+
+        <button
+          v-else-if="showCreateAction"
+          type="button"
+          class="w-full rounded-xl px-3 py-3 text-left text-sm font-medium text-[#0075ff] transition hover:bg-blue-50"
+          @click="requestCompanyCreation"
+        >
+          {{ companyCreationActionLabel(query) }}
+        </button>
 
         <button
           v-else-if="!visibleOptions.length && !(isServerSearchMode && isSearching)"
