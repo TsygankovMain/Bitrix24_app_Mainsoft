@@ -80,6 +80,14 @@ class ResolveProjectFieldsTest(SimpleTestCase):
         self.assertEqual(fields.our_legal_entity_id, "9")
         self.assertEqual(fields.our_legal_entity_name, "ИП Цыганков")
 
+    def test_empty_legal_entities_do_not_block_creation(self):
+        # На портале нет ни одной компании с признаком «моя» — сотруднику
+        # физически не из чего выбрать в форме. Это не ошибка данных: поле
+        # остаётся необязательным, а не блокирует создание проекта.
+        fields, missing = _resolve({"project_name": "П", "company_id": "15"}, legal_entities=[])
+        self.assertIsNone(fields.our_legal_entity_id)
+        self.assertNotIn("our_legal_entity_id", missing)
+
     def test_rate_missing_in_config_makes_the_field_required(self):
         fields, missing = _resolve({"project_name": "П", "company_id": "15"}, config=_config(hourly_rate=0))
         self.assertIn("hourly_rate", missing)
@@ -89,10 +97,29 @@ class ResolveProjectFieldsTest(SimpleTestCase):
         self.assertEqual(fields.hourly_rate, 2000.0)
         self.assertEqual(missing, [])
 
+    def test_comma_is_accepted_as_decimal_separator_in_hourly_rate(self):
+        fields, _ = _resolve({"project_name": "П", "company_id": "15", "hourly_rate": "1500,50"})
+        self.assertEqual(fields.hourly_rate, 1500.5)
+
+    def test_comma_is_accepted_as_decimal_separator_in_project_hours_budget(self):
+        fields, _ = _resolve({"project_name": "П", "company_id": "15", "project_hours_budget": "7,5"})
+        self.assertEqual(fields.project_hours_budget, 7.5)
+
     def test_planned_amount_is_hours_times_rate(self):
         fields, _ = _resolve({"project_name": "П", "company_id": "15", "project_hours_budget": "10"})
         self.assertEqual(fields.project_hours_budget, 10.0)
         self.assertEqual(fields.planned_budget_amount, 15000.0)
+
+    def test_planned_amount_is_none_when_rate_is_unknown(self):
+        # Ставка не резолвилась ни из формы, ни из конфига — плановая сумма
+        # должна остаться None, а не молча превратиться в 0 ₽: в живом
+        # пересчёте формы 0 читается как факт, а не как «неизвестно».
+        fields, missing = _resolve(
+            {"project_name": "П", "company_id": "15", "project_hours_budget": "10"},
+            config=_config(hourly_rate=0),
+        )
+        self.assertIsNone(fields.planned_budget_amount)
+        self.assertIn("hourly_rate", missing)
 
     def test_end_date_follows_explicit_start_date(self):
         fields, _ = _resolve(
@@ -120,3 +147,7 @@ class ResolveProjectFieldsTest(SimpleTestCase):
         fields, missing = _resolve({"project_name": "П", "company_id": "15"}, stage_options=[])
         self.assertEqual(fields.stage, "")
         self.assertEqual(missing, [])
+
+    def test_is_support_y_is_parsed_as_true(self):
+        fields, _ = _resolve({"project_name": "П", "company_id": "15", "is_support": "Y"})
+        self.assertTrue(fields.is_support)

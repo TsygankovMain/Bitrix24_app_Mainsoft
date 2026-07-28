@@ -2,10 +2,8 @@
 «Создать проект».
 
 Правило заказчика (§5 спеки 2026-07-28): пустых полей не остаётся — у каждого
-поля есть источник значения, автоматика или пользователь. Осознанные
-исключения — project_hours_budget и производная от неё planned_budget_amount:
-на момент заведения проекта объём часто неизвестен, а выдуманное число попало
-бы в отчёты как факт.
+поля есть источник значения, автоматика или пользователь. Полный список
+осознанных исключений — в докстринге resolve_project_fields.
 
 Модуль намеренно не знает ни про Битрикс, ни про Django ORM: те же правила
 дублирует форма на фронте, и арифметику надо проверять без моков сети.
@@ -95,6 +93,18 @@ def resolve_project_fields(
 
     Ключи в списке missing: "project_name", "company", "our_legal_entity_id",
     "hourly_rate" — их фронт подсвечивает в форме.
+
+    Исключения из правила «пустых полей не остаётся» (см. докстринг модуля),
+    перечислены полностью:
+    - project_hours_budget — на момент заведения проекта объём часто
+      неизвестен, а выдуманное число попало бы в отчёты как факт;
+    - planned_budget_amount — производная от часов и ставки: остаётся None,
+      если неизвестна любая из двух величин;
+    - our_legal_entity_id — остаётся None без записи в missing, если на
+      портале нет ни одного своего юрлица (legal_entities пуст): выбирать
+      физически не из чего, поэтому поле не блокирует создание проекта;
+    - stage — остаётся пустой строкой, если воронка смарт-процесса ещё не
+      настроена (stage_options пуст), чтобы не падать на пустом портале.
     """
     form = form or {}
     missing: List[str] = []
@@ -119,7 +129,10 @@ def resolve_project_fields(
         only = legal_entities[0]
         legal_entity_id = _clean_str(only.get("id")) or None
         legal_entity_name = _clean_str(only.get("name"))
-    elif legal_entities:
+    elif len(legal_entities or []) > 1:
+        # Ровно 0 сюда не попадает намеренно: если на портале нет ни одного
+        # своего юрлица, выбирать не из чего и поле не должно блокировать
+        # создание проекта (см. докстринг resolve_project_fields).
         missing.append("our_legal_entity_id")
 
     curator_user_id = _clean_str(form.get("curator_user_id")) or _clean_str(current_user_id)
@@ -133,12 +146,13 @@ def resolve_project_fields(
     hourly_rate = _parse_float(form.get("hourly_rate"))
     if hourly_rate is None:
         hourly_rate = _parse_float((config or {}).get("hourly_rate"))
-    if not hourly_rate:
+    hourly_rate_is_known = bool(hourly_rate)
+    if not hourly_rate_is_known:
         missing.append("hourly_rate")
         hourly_rate = 0.0
 
     planned_amount = None
-    if hours_budget is not None:
+    if hours_budget is not None and hourly_rate_is_known:
         planned_amount = round(hours_budget * hourly_rate, 2)
 
     stage = _clean_str(form.get("stage"))
