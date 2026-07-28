@@ -49,7 +49,14 @@ PROJECT_CARD_SCHEMA_TTL = 60
 # (CACHES не задан в settings.py -> дефолт Django), т.е. свой у каждого
 # воркера gunicorn и полностью теряется при рестарте контейнера. Долгий TTL
 # безопасен: у пользователя есть кнопка принудительного обновления
-# (refreshReferenceOptions на фронте -> POST /api/project-board/sync).
+# (refreshReferenceOptions на фронте -> GET /api/project-board/meta?refresh=1
+# -> ProjectCardService.get_meta(bypass_cache=True), см. views.py и задачу 4
+# плана "справочники из локальной базы").
+#
+# Честная оговорка: кэш живёт в памяти процесса, а воркеров gunicorn
+# несколько — форс-рефреш гарантированно пробивает кэш только того воркера,
+# который принял именно этот запрос. Остальные воркеры продолжают отдавать
+# старое значение до истечения TTL либо до собственного форс-рефреша.
 BITRIX_REFERENCE_CACHE_TTL = 60 * 60 * 6
 PROJECT_BOARD_CACHE_TTL = 60 * 2
 HOMEPAGE_CACHE_TTL = 60 * 2

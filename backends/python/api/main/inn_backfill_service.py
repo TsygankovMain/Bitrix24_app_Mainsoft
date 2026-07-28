@@ -3,7 +3,7 @@
 
 Цепочка: карточка списания (элемент СП) → проект (ProjectCard по project_item_id/project_id)
 → company_id (клиент) / our_legal_entity_id (наше юрлицо) → ИНН (резолв из реквизитов,
-кэш ProjectCardService.get_companies()/get_legal_entities()) → запись в поля
+полный обход ProjectCardService.get_full_company_directory()) → запись в поля
 OUR_INN/CLIENT_INN элемента СП через crm.item.update.
 
 Поля OUR_INN/CLIENT_INN существуют в СП, но не заполняются автоматически — этот сервис
