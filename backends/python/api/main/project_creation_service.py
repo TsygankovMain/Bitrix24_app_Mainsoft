@@ -209,3 +209,65 @@ class ProjectCreationService:
             )
 
         return StepResult(status="created", id=created_id, name=company_name)
+
+    def ensure_group(self, group_name: str) -> StepResult:
+        """Шаг 2: проект/группа в Задачах.
+
+        sonet_group.get фильтрует по подстроке, поэтому совпадением считаем
+        только точное равенство имени — иначе «Портал Ромашка» подцепит
+        «Портал Ромашка 2» и списания уедут в чужой проект.
+
+        Группа создаётся под токеном текущего сотрудника, он же становится
+        владельцем; отдельно владельца не назначаем и участников не добавляем.
+        """
+        group_name = _clean_str(group_name)
+        if not group_name:
+            return StepResult(status="error", error="Не указано название проекта.")
+
+        try:
+            response = self._call(
+                "sonet_group.get",
+                {"FILTER": {"NAME": group_name}, "SELECT": ["ID", "NAME"]},
+            )
+        except Exception as exc:
+            logger.warning("ensure_group: sonet_group.get failed: %s", exc)
+            return StepResult(status="error", error=f"Не удалось найти проект: {exc}")
+
+        # _extract_rows, а не response.get("result") напрямую: разбор ответа
+        # обязан быть таким же защищённым, как сам вызов. Шаг оркестратора не
+        # имеет права бросить исключение — иначе следующие шаги не выполнятся
+        # и вызывающий код не соберёт частичный результат (заведено в Task 2).
+        rows, parsed_ok = _extract_rows(response)
+        if not parsed_ok:
+            # Ответ непонятен. Создавать нельзя: если совпадение там было, в
+            # Задачах навсегда останется дубль проекта — мы ничего не удаляем.
+            return StepResult(status="error", error="Битрикс вернул ответ неожиданного вида при поиске проекта.")
+
+        matches = [
+            {"id": _clean_str(row.get("ID")), "name": _clean_str(row.get("NAME"))}
+            for row in rows
+            if _clean_str(row.get("ID")) and _clean_str(row.get("NAME")) == group_name
+        ]
+
+        if len(matches) == 1:
+            return StepResult(status="found", id=matches[0]["id"], name=matches[0]["name"])
+        if len(matches) > 1:
+            return StepResult(status="ambiguous", candidates=matches)
+
+        try:
+            created = self._call(
+                "sonet_group.create",
+                {"NAME": group_name, "PROJECT": "Y", "VISIBLE": "Y", "OPENED": "N"},
+            )
+        except Exception as exc:
+            logger.warning("ensure_group: sonet_group.create failed: %s", exc)
+            return StepResult(status="error", error=f"Не удалось создать проект: {exc}")
+
+        # _extract_created_id (заведён в Task 2) переживает created=None и
+        # result, оказавшийся словарём или списком: без него _clean_str тихо
+        # положил бы в id строку вида "{'ID': 44}" со статусом "created".
+        created_id = _clean_str(_extract_created_id(created))
+        if not created_id:
+            return StepResult(status="error", error="Битрикс не вернул идентификатор проекта.")
+
+        return StepResult(status="created", id=created_id, name=group_name)

@@ -262,3 +262,90 @@ class EnsureCompanyTest(_ServiceTestCase):
         self.assertEqual(result.status, "error")
         self.assertIn("неожиданном формате", result.error)
         self.assertNotIn("crm.company.add", client.methods_called())
+
+
+class EnsureGroupTest(_ServiceTestCase):
+    def test_single_match_is_reused(self):
+        client = _FakeClient({
+            "sonet_group.get": {"result": [{"ID": "31", "NAME": "Портал АО Ромашка"}]},
+        })
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "found")
+        self.assertEqual(result.id, "31")
+        self.assertNotIn("sonet_group.create", client.methods_called())
+
+    def test_no_match_creates_project_group(self):
+        client = _FakeClient({
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": {"result": 44},
+        })
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "created")
+        self.assertEqual(result.id, "44")
+        method, params = client.calls[-1]
+        self.assertEqual(method, "sonet_group.create")
+        self.assertEqual(params["NAME"], "Портал АО Ромашка")
+        self.assertEqual(params["PROJECT"], "Y")
+        # Владельца не назначаем: им становится создатель — текущий сотрудник.
+        self.assertNotIn("OWNER_ID", params)
+
+    def test_two_matches_return_ambiguous_and_create_nothing(self):
+        client = _FakeClient({
+            "sonet_group.get": {"result": [
+                {"ID": "31", "NAME": "Портал АО Ромашка"},
+                {"ID": "32", "NAME": "Портал АО Ромашка"},
+            ]},
+        })
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "ambiguous")
+        self.assertIsNone(result.id)
+        self.assertEqual(sorted(c["id"] for c in result.candidates), ["31", "32"])
+        self.assertNotIn("sonet_group.create", client.methods_called())
+
+    def test_search_matches_by_exact_name_only(self):
+        """sonet_group.get фильтрует по подстроке — одноимённый префикс не должен
+        считаться совпадением, иначе привяжемся к чужому проекту."""
+        client = _FakeClient({
+            "sonet_group.get": {"result": [{"ID": "31", "NAME": "Портал АО Ромашка 2"}]},
+            "sonet_group.create": {"result": 44},
+        })
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "created")
+        self.assertEqual(result.id, "44")
+
+    def test_bitrix_failure_becomes_error_status(self):
+        client = _FakeClient({"sonet_group.get": RuntimeError("нет прав")})
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("нет прав", result.error)
+
+    def test_blank_name_is_an_error(self):
+        client = _FakeClient()
+        result = self.service(client).ensure_group("  ")
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(client.methods_called(), [])
+
+    def test_unreadable_response_does_not_create_group(self):
+        """Ответ непонятного вида — не повод создавать: если совпадение там
+        было, в Задачах навсегда останется дубль проекта."""
+        client = _FakeClient({"sonet_group.get": {"result": {"unexpected": "shape"}}})
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("sonet_group.create", client.methods_called())
+
+    def test_empty_result_list_still_creates(self):
+        """Пустой список — честный ответ «не нашлось», а не ошибка разбора."""
+        client = _FakeClient({
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": {"result": 44},
+        })
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "created")
