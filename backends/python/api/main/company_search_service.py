@@ -36,10 +36,17 @@ def _clean_str(value: Any) -> str:
 def _safe_int(value: Any, default: int) -> int:
     """`int(value)`, но никогда не бросает исключение — что угодно, что не
     разбирается в число (пустая строка, `None`, произвольный мусор), даёт
-    `default` вместо `ValueError`/`TypeError`."""
+    `default` вместо падения. Перехватываются все три исключения, которые
+    реально может бросить `int()` на значениях, приходящих из JSON-ответа
+    Битрикса: `TypeError` (`None`, список, словарь), `ValueError`
+    (нечисловая строка, `float('nan')`) и `OverflowError` (`float('inf')`/
+    `float('-inf')`). Последнее — не гипотетический случай: стандартный
+    json-парсер Python по умолчанию принимает `Infinity`/`-Infinity`/`NaN`
+    как валидные числа, так что поле `total` в ответе `crm.company.list`
+    вполне может прийти именно такими значениями."""
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -68,7 +75,12 @@ def _normalize_rows(response: Dict[str, Any], method_name: str) -> Tuple[List[Di
     """
     raw_result = response.get("result")
     if raw_result is None:
-        return [], False
+        # {"result": None} — это не пустой список ("ничего не нашлось"), а
+        # неожиданный ответ Битрикса. Считать его успехом опасно: search() и
+        # list_my_companies() кэшируют успешный результат (второй — на
+        # MY_COMPANIES_CACHE_TTL, шесть часов), и один такой ответ спрятал бы
+        # уже существующие компании/юрлица на весь этот срок.
+        return [], True
     if isinstance(raw_result, list):
         rows = [row for row in raw_result if isinstance(row, dict)]
         failed = len(rows) < len(raw_result)

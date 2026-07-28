@@ -1,9 +1,9 @@
 """Тесты поиска компаний: один запрос с фильтром вместо обхода справочника портала."""
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 from .models import Bitrix24Account
-from .company_search_service import CompanySearchService
+from .company_search_service import CompanySearchService, _safe_int
 
 
 class _FakeClient:
@@ -287,3 +287,103 @@ class MyCompaniesTest(TestCase):
 
         self.assertEqual(result["companies"], [])
         self.assertTrue(result["failed"])
+
+
+class SafeIntOverflowTest(SimpleTestCase):
+    """`_safe_int` разбирает total/limit и обязан пережить любой мусор, включая
+    float('inf')/float('nan'): response.json() по умолчанию принимает
+    Infinity/-Infinity/NaN как валидные числа, так что поле total в ответе
+    Битрикса может прийти именно такими значениями (не гипотетический ввод)."""
+
+    def test_positive_infinity_returns_default(self):
+        self.assertEqual(_safe_int(float("inf"), 0), 0)
+
+    def test_negative_infinity_returns_default(self):
+        self.assertEqual(_safe_int(float("-inf"), 7), 7)
+
+    def test_nan_returns_default(self):
+        self.assertEqual(_safe_int(float("nan"), 3), 3)
+
+
+class SearchTotalOverflowTest(TestCase):
+    """Интеграционная проверка той же проблемы на уровне search(): total,
+    дошедший как float('inf')/nan, разбирается вне try/except вокруг самого
+    HTTP-вызова Битрикса — до фикса OverflowError вылетал необработанным и
+    ронял весь запрос (см. SafeIntOverflowTest на уровень ниже)."""
+
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-search-total-inf-1",
+            is_master_account=True, domain_url="search-total-inf.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def service(self, client):
+        return CompanySearchService(client, self.account)
+
+    def test_infinite_total_does_not_crash_search(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 4)]
+        client = _FakeClient({"crm.company.list": {"result": rows, "total": float("inf")}})
+
+        result = self.service(client).search("Компания", limit=50)
+
+        self.assertEqual(len(result["companies"]), 3)
+
+    def test_negative_infinite_total_does_not_crash_search(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 4)]
+        client = _FakeClient({"crm.company.list": {"result": rows, "total": float("-inf")}})
+
+        result = self.service(client).search("Компания", limit=50)
+
+        self.assertEqual(len(result["companies"]), 3)
+
+    def test_nan_total_does_not_crash_search(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 4)]
+        client = _FakeClient({"crm.company.list": {"result": rows, "total": float("nan")}})
+
+        result = self.service(client).search("Компания", limit=50)
+
+        self.assertEqual(len(result["companies"]), 3)
+
+
+class NoneResultIsNotCachedAsSuccessTest(TestCase):
+    """{"result": None} — не пустой список ("ничего не нашлось"), а неожиданный
+    ответ Битрикса. Раньше _normalize_rows считал его успехом, и такой ответ
+    кэшировался: для search() — на SEARCH_CACHE_TTL (5 минут), а для
+    list_my_companies() — на MY_COMPANIES_CACHE_TTL (6 часов), то есть один
+    странный ответ мог спрятать юрлица на полдня."""
+
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-none-result-1",
+            is_master_account=True, domain_url="none-result.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def test_search_none_result_is_marked_failed_and_not_cached(self):
+        client = _FakeClient({"crm.company.list": {"result": None}})
+        service = CompanySearchService(client, self.account)
+
+        first = service.search("Ромашка")
+        self.assertEqual(first["companies"], [])
+        self.assertTrue(first["failed"])
+
+        # Второй вызов обязан снова опросить Битрикс — неудачный разбор не
+        # должен был попасть в кэш.
+        client.calls.clear()
+        service.search("Ромашка")
+        self.assertEqual(client.methods_called(), ["crm.company.list"])
+
+    def test_list_my_companies_none_result_is_marked_failed_and_not_cached(self):
+        client = _FakeClient({"crm.company.list": {"result": None}})
+        service = CompanySearchService(client, self.account)
+
+        first = service.list_my_companies()
+        self.assertEqual(first["companies"], [])
+        self.assertTrue(first["failed"])
+
+        client.calls.clear()
+        service.list_my_companies()
+        self.assertEqual(client.methods_called(), ["crm.company.list"])
