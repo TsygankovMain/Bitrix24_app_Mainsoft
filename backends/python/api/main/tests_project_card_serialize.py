@@ -216,6 +216,76 @@ class ProjectCardServiceSerializeCardSingleTest(TestCase):
         self.assertEqual(result["our_legal_entity_name"], "ООО Наша Компания")
         self.assertEqual(client.call_count("crm.requisite.list"), 2)
 
+    # --- Fix-round: пустое card.company_name должно резолвиться точечным
+    # crm.company.list, а не сразу деградировать до идентификатора (регресс
+    # найден при ревью: старый _resolve_reference_details умел взять имя из
+    # справочника при пустом card.company_name, новый _resolve_reference_
+    # details_single сразу подставлял id — узкий, но реальный случай, когда
+    # синк не заполняет company_name). ---
+
+    # 1. Имя в карточке заполнено -> crm.company.list не вызывается вообще.
+    def test_single_card_name_present_skips_company_list_lookup(self):
+        client = _FakeClient({"crm.requisite.list": _requisite_response("555", "7701234567")})
+        service = ProjectCardService(client, self.account)
+        card = self._make_card(company_name="ООО Клиент")
+
+        result = service.serialize_card(card)
+
+        self.assertEqual(result["company_name"], "ООО Клиент")
+        self.assertEqual(client.call_count("crm.company.list"), 0)
+
+    # 2. Имя пустое, company_id заполнен -> ровно один вызов crm.company.list,
+    # в фильтре ID этой компании, TITLE из ответа попадает в результат.
+    def test_single_card_empty_name_fetches_via_single_company_list_call(self):
+        client = _FakeClient({
+            "crm.requisite.list": _requisite_response("555", "7701234567"),
+            "crm.company.list": {"result": [{"ID": "555", "TITLE": "АО Ромашка"}]},
+        })
+        service = ProjectCardService(client, self.account)
+        card = self._make_card(company_name=None)
+
+        result = service.serialize_card(card)
+
+        self.assertEqual(client.call_count("crm.company.list"), 1)
+        params = client.calls_for("crm.company.list")[0]
+        self.assertEqual(params["filter"]["ID"], 555)
+        self.assertEqual(result["company_name"], "АО Ромашка")
+
+    # 3. Имя пустое, Битрикс вернул пусто -> идентификатор в результате,
+    # отрицательный результат закэширован, второй вызов не идёт в Битрикс.
+    def test_single_card_empty_name_bitrix_empty_degrades_to_id_and_caches(self):
+        client = _FakeClient({
+            "crm.requisite.list": _requisite_response("555", "7701234567"),
+            "crm.company.list": {"result": []},
+        })
+        service = ProjectCardService(client, self.account)
+        card = self._make_card(company_name=None)
+
+        first = service.serialize_card(card)
+        second = service.serialize_card(card)
+
+        self.assertEqual(first["company_name"], "555")
+        self.assertEqual(second["company_name"], "555")
+        self.assertEqual(client.call_count("crm.company.list"), 1)
+
+    # 4. Имя пустое, crm.company.list бросает исключение -> карточка не падает,
+    # имя деградирует до id, ошибка НЕ кэшируется (повторный вызов снова идёт
+    # в Битрикс — симметрично поведению точечного лукапа ИНН).
+    def test_single_card_empty_name_lookup_failure_degrades_without_caching(self):
+        client = _FakeClient({
+            "crm.requisite.list": _requisite_response("555", "7701234567"),
+            "crm.company.list": RuntimeError("bitrix timeout"),
+        })
+        service = ProjectCardService(client, self.account)
+        card = self._make_card(company_name=None)
+
+        first = service.serialize_card(card)  # не должно бросить исключение
+        second = service.serialize_card(card)
+
+        self.assertEqual(first["company_name"], "555")
+        self.assertEqual(second["company_name"], "555")
+        self.assertEqual(client.call_count("crm.company.list"), 2)
+
     # Форма ответа (набор ключей) не меняется относительно текущего API.
     def test_response_shape_keys_unchanged(self):
         client = _FakeClient({"crm.requisite.list": _requisite_response("555", "7701234567")})
@@ -273,6 +343,22 @@ class ProjectCardServiceSerializeCardBoardPathTest(TestCase):
 
         self.assertEqual(result["company_inn"], "9998887766")
         self.assertEqual(client.call_count("crm.requisite.list"), 0)
+
+    # Fix-round: путь доски резолвит имя из переданного справочника даже при
+    # пустом card.company_name — точечный лукап имени (crm.company.list) не
+    # должен вызываться, когда companies= передан явно.
+    def test_board_path_name_resolution_unaffected_by_point_lookup(self):
+        client = _FakeClient({
+            "crm.company.list": {"result": [{"ID": "555", "TITLE": "ДОЛЖНО-НЕ-ИСПОЛЬЗОВАТЬСЯ"}]},
+        })
+        service = ProjectCardService(client, self.account)
+        card = self._make_card(company_name=None)
+        companies = [{"id": "555", "name": "ООО Клиент из справочника", "inn": "9998887766"}]
+
+        result = service.serialize_card(card, companies=companies, legal_entities=[])
+
+        self.assertEqual(result["company_name"], "ООО Клиент из справочника")
+        self.assertEqual(client.call_count("crm.company.list"), 0)
 
     # 9. get_board_data загружает справочники один раз, а не на каждую карточку.
     def test_get_board_data_loads_companies_once_for_multiple_cards(self):
