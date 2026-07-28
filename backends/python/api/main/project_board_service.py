@@ -1186,12 +1186,33 @@ class ProjectCardService:
                 continue
             seen_ids.add(status_id)
             semantics = self._clean_str(status.get("SEMANTICS") or status.get("semantics"))
+            # PROJECT_AUTO_STAGES хранит стадии как ЧЕЛОВЕЧЕСКИЕ названия
+            # (project_board_shared.py), а живой crm.status.list отдаёт
+            # каждой стадии ещё и Bitrix STATUS_ID (например
+            # "DT180_7:UC_NOWRITE30"). Совпасть с PROJECT_AUTO_STAGES может
+            # любое из двух полей — сверяем оба, как и де-дуп синтетических
+            # заглушек чуть ниже (сверка по title). Без этого настоящая
+            # автостадия, которую Битрикс вернул как обычную живую запись,
+            # получала бы kind="manual" наравне с ручными стадиями — именно
+            # так и было до фикса.
+            is_auto_stage = status_id in PROJECT_AUTO_STAGES or title in PROJECT_AUTO_STAGES
             options.append(
                 {
                     "id": status_id,
                     "title": title,
-                    "kind": "manual",
-                    "can_drop": semantics not in {"S", "F"},
+                    "kind": "auto" if is_auto_stage else "manual",
+                    # semantics ("S"/"F" — терминальные won/lost стадии
+                    # Bitrix) остаётся источником истины для can_drop у
+                    # настоящих ручных стадий — это не в скоупе этого фикса.
+                    # Для распознанной автостадии can_drop всегда False,
+                    # тем же образом, что и у синтетических заглушек ниже:
+                    # единственный потребитель can_drop — ProjectBoardColumn
+                    # на фронте, где False одновременно запрещает
+                    # drag-and-drop на колонку и меняет подпись на «Статус
+                    # назначается автоматически» — то же самое требование
+                    # «в автостадию нельзя писать руками», что и у формы
+                    # создания проекта.
+                    "can_drop": False if is_auto_stage else semantics not in {"S", "F"},
                     "semantics": semantics,
                     "sort": status.get("SORT"),
                 }
