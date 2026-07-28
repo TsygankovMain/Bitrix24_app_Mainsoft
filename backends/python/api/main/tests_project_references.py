@@ -5,6 +5,7 @@ from django.test import TestCase
 from .models import Bitrix24Account, ProjectCard
 from .project_board_service import ProjectCardService
 from .project_board_shared import invalidate_project_runtime_caches
+from .tenant_scoping import scope_to_tenant
 
 
 class _FakeClient:
@@ -115,3 +116,78 @@ class LegalEntitiesCacheInvalidationTest(TestCase):
         third = service.get_legal_entities()
         self.assertEqual([e["id"] for e in third], ["2"])
         self.assertEqual(client.methods_called(), [])
+
+
+class CompaniesFromDbTest(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-refs-2",
+            is_master_account=True, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        ProjectCard.objects.create(
+            **scope_to_tenant(self.account, write=True),
+            project_id="44", project_name="Портал АО Ромашка", stage="NEW",
+            company_id="15", company_name="АО Ромашка",
+        )
+
+    def test_companies_come_from_project_cards_without_touching_bitrix(self):
+        client = _FakeClient()
+        companies = ProjectCardService(client, self.account).get_companies()
+
+        self.assertEqual([c["id"] for c in companies], ["15"])
+        self.assertEqual([c["name"] for c in companies], ["АО Ромашка"])
+        self.assertEqual(client.methods_called(), [])
+
+    def test_no_project_cards_gives_empty_list_not_full_scan(self):
+        ProjectCard.objects.all().delete()
+        client = _FakeClient()
+        companies = ProjectCardService(client, self.account).get_companies()
+
+        self.assertEqual(companies, [])
+        self.assertEqual(client.methods_called(), [])
+
+    def test_other_portal_companies_are_not_visible(self):
+        other = Bitrix24Account.objects.create(
+            b24_user_id=2, is_b24_user_admin=True, member_id="m-refs-3",
+            is_master_account=True, domain_url="other.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        companies = ProjectCardService(_FakeClient(), other).get_companies()
+
+        self.assertEqual(companies, [])
+
+    def test_board_data_does_not_scan_the_portal(self):
+        """get_board_data() не должен ОБХОДИТЬ портал: не должно быть ни
+        постраничного справочника компаний (crm.item.list — первый метод в
+        _fetch_companies_live), ни постраничного обхода реквизитов за ИНН
+        (crm.requisite.list — _fetch_company_inn_map). Оба уходят вместе со
+        старым get_companies().
+
+        crm.company.list НЕ включён в список запрещённых методов: он законно
+        вызывается один раз (без пагинации, с серверным фильтром
+        IS_MY_COMPANY=Y) из get_legal_entities() — это уже сделанная и
+        отревьюженная Task 2 плана, вне скоупа этой задачи ("Не трогай",
+        см. бриф). Разница видна и по счётчику вызовов: до этой правки
+        get_board_data() дёргал crm.company.list ДВАЖДЫ (второй раз — как
+        второй метод внутри старого get_companies()/_fetch_companies_live),
+        после — ровно один раз, от get_legal_entities().
+        """
+        client = _FakeClient()
+        ProjectCardService(client, self.account).get_board_data()
+
+        methods_called = client.methods_called()
+        for method in ("crm.item.list", "crm.requisite.list"):
+            self.assertNotIn(method, methods_called)
+        self.assertEqual(methods_called.count("crm.company.list"), 1)
+
+    def test_full_directory_is_still_available_for_admin_path(self):
+        """Полный обход не удалён — он нужен дозаполнению ИНН, но вызывается
+        только явно и никогда с пользовательского пути."""
+        client = _FakeClient({
+            "crm.company.list": {"result": [{"ID": "15", "TITLE": "АО Ромашка"}]},
+        })
+        directory = ProjectCardService(client, self.account).get_full_company_directory()
+
+        self.assertEqual([c["id"] for c in directory], ["15"])
