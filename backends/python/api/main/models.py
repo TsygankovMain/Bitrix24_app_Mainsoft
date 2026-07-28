@@ -39,6 +39,9 @@ class Bitrix24Account(models.Model, AbstractBitrixToken):
         related_name="accounts", db_index=True,
     )
     last_timesheet_synced_at = models.DateTimeField(null=True, blank=True)
+    sync_disabled_until = models.DateTimeField(null=True, blank=True)
+    sync_failure_count = models.IntegerField(default=0)
+    sync_failure_reason = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
         managed = True

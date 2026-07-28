@@ -51,7 +51,16 @@ import logging
 from datetime import timedelta
 from typing import List
 
+from django.db.models import Q
 from django.utils import timezone
+
+from b24pysdk.error import (
+    BitrixAPIForbidden,
+    BitrixAPIServiceUnavailable,
+    BitrixAPIUnauthorized,
+    BitrixRequestTimeout,
+    BitrixResponseJSONDecodeError,
+)
 
 from .models import Bitrix24Account, SyncRun
 from .configuration_service import ConfigurationService
@@ -67,6 +76,80 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WINDOW_DAYS = 7
 
+# Пауза для мёртвых порталов: первая постоянная ошибка -> 6ч, вторая и
+# последующие подряд -> 24ч (см. is_permanent_sync_failure/run_scheduled_sync).
+COOLDOWN_FIRST_FAILURE = timedelta(hours=6)
+COOLDOWN_REPEAT_FAILURE = timedelta(hours=24)
+
+# Временные сигналы — сеть моргнула/лимит запросов. Портал НЕ ставится на
+# паузу: он просто повторится в следующем цикле (каждые 20 минут для
+# timesheet), поэтому проверяются раньше и с приоритетом над permanent-текстом.
+_TEMPORARY_TEXT_MARKERS = (
+    "timed out",
+    "timeout",
+    "too many requests",
+    "over_limit",
+    "connection reset",
+    "connection aborted",
+    "connection refused",
+    "remotedisconnected",
+    "broken pipe",
+)
+
+# Постоянные сигналы — портал объективно мёртв (снесено приложение, кончилась
+# подписка, заблокирован сканером лицензий, авторизация невосстановима, домен
+# не резолвится, ответ — не JSON). Тексты дословно из прод-лога
+# sync_all_portals --scope timesheet.
+_PERMANENT_TEXT_MARKERS = (
+    "application not installed",
+    "subscription has been ended",
+    "portal is blocked",
+    "nameresolutionerror",
+    "failed to resolve",
+    "name or service not known",
+    "getaddrinfo failed",
+    "unauthorized",
+    "forbidden",
+)
+
+
+def is_permanent_sync_failure(exc: BaseException) -> bool:
+    """Классификация ошибки планировщика: постоянная (мёртвый портал -> пауза,
+
+    см. run_scheduled_sync) или временная (сеть моргнула/лимит -> ничего не
+    трогаем, портал просто повторится в следующем цикле).
+
+    Классифицируем и по типу исключения (реальные классы b24pysdk, когда
+    долетают как есть — например BitrixAPIErrorOAuth, подкласс
+    BitrixAPIUnauthorized), и по тексту сообщения (прод-строки вроде
+    "Subscription has been ended"/"Portal is blocked by the license scanner",
+    для которых отдельного класса SDK нет, плюс устойчивость на случай, если
+    исключение обёрнуто/переупаковано выше по стеку).
+
+    Неизвестная ошибка -> временная. Осторожная сторона: лучше лишний повтор
+    через 20 минут, чем молча выключить синк живому порталу.
+    """
+    # Явные временные сигналы SDK — проверяем первыми, чтобы их не мог
+    # перекрыть более широкий permanent-матч (по типу или по тексту).
+    if isinstance(exc, (BitrixRequestTimeout, BitrixAPIServiceUnavailable)):
+        return False
+
+    haystack = f"{type(exc).__name__}: {exc}".lower()
+
+    if any(marker in haystack for marker in _TEMPORARY_TEXT_MARKERS):
+        return False
+
+    # Явные постоянные сигналы SDK: авторизация невосстановима (401/403,
+    # включая BitrixAPIErrorOAuth "Application not installed") или портал
+    # отдаёт не-JSON ответ (HTML/пусто вместо REST API).
+    if isinstance(exc, (BitrixAPIUnauthorized, BitrixAPIForbidden, BitrixResponseJSONDecodeError)):
+        return True
+
+    if any(marker in haystack for marker in _PERMANENT_TEXT_MARKERS):
+        return True
+
+    return False
+
 
 def select_portal_accounts() -> List[Bitrix24Account]:
     """Один представитель на портал (member_id): мастер, иначе первый по порядку.
@@ -79,10 +162,16 @@ def select_portal_accounts() -> List[Bitrix24Account]:
     инцидент, планировщик не синкал ни одного портала ни разу.
 
     Используется только под USE_PORTAL_SCOPING=True, для любого scope (см.
-    _account_scoped_sync_accounts)."""
+    _account_scoped_sync_accounts).
+
+    Аккаунты на паузе (sync_disabled_until в будущем — мёртвый портал,
+    см. is_permanent_sync_failure/run_scheduled_sync) исключены: планировщик
+    не должен долбиться в заведомо мёртвый портал каждые 20 минут/час/3 часа."""
+    now = timezone.now()
     eligible = (
         Bitrix24Account.objects.exclude(refresh_token__isnull=True)
         .exclude(refresh_token="")
+        .filter(Q(sync_disabled_until__isnull=True) | Q(sync_disabled_until__lte=now))
         .order_by("member_id", "-is_master_account")
     )
     seen = set()
@@ -112,8 +201,11 @@ def _account_scoped_sync_accounts() -> List[Bitrix24Account]:
     """
     if portal_scoping_enabled():
         return select_portal_accounts()
+    now = timezone.now()
     return list(
-        Bitrix24Account.objects.exclude(refresh_token__isnull=True).exclude(refresh_token="")
+        Bitrix24Account.objects.exclude(refresh_token__isnull=True)
+        .exclude(refresh_token="")
+        .filter(Q(sync_disabled_until__isnull=True) | Q(sync_disabled_until__lte=now))
     )
 
 
@@ -132,6 +224,18 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
     # timesheet — незасинканными.
     reps = _account_scoped_sync_accounts()
     run.portals_total = len(reps)
+
+    # Мёртвые порталы уже исключены из reps (см. _account_scoped_sync_accounts/
+    # select_portal_accounts — фильтр по sync_disabled_until), поэтому здесь
+    # только считаем, сколько было пропущено для итоговой строки прогона —
+    # без этого числа "portals X/Y" молча ужимается, и непонятно, то ли
+    # аккаунтов стало меньше, то ли часть просто на паузе.
+    skipped_cooldown = (
+        Bitrix24Account.objects.exclude(refresh_token__isnull=True)
+        .exclude(refresh_token="")
+        .filter(sync_disabled_until__gt=now)
+        .count()
+    )
 
     synced = 0
     items_total = 0
@@ -229,9 +333,39 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                 logger.info("Scheduled sync portal %s: %s items.", account.member_id, count)
 
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Scheduled sync failed for portal %s (account %s)",
-                             account.member_id, account.pk)
+            if is_permanent_sync_failure(exc):
+                # Мёртвый портал (снесли приложение, кончилась подписка,
+                # заблокирован, домен не резолвится...) — не трейсбек в лог на
+                # разбор заказчику, а одна строка + пауза, чтобы планировщик
+                # не долбился сюда каждые 20 минут/час/3 часа.
+                account.sync_failure_count = (account.sync_failure_count or 0) + 1
+                account.sync_failure_reason = f"{type(exc).__name__}: {exc}"[:255]
+                cooldown = COOLDOWN_FIRST_FAILURE if account.sync_failure_count == 1 else COOLDOWN_REPEAT_FAILURE
+                account.sync_disabled_until = timezone.now() + cooldown
+                account.save(update_fields=["sync_failure_count", "sync_failure_reason", "sync_disabled_until"])
+                logger.warning(
+                    "Scheduled sync: portal %s (account %s) looks permanently dead (%s) — "
+                    "paused until %s (failure #%s).",
+                    account.member_id, account.pk, account.sync_failure_reason,
+                    account.sync_disabled_until, account.sync_failure_count,
+                )
+            else:
+                # Временная ошибка (сеть моргнула/лимит запросов) — портал может
+                # быть живым, паузу не ставим, логируем с трейсбеком как раньше:
+                # это может быть настоящая проблема, которую нужно разобрать.
+                logger.exception("Scheduled sync failed for portal %s (account %s)",
+                                 account.member_id, account.pk)
             errors.append(f"{account.member_id}: {type(exc).__name__}: {exc}")
+        else:
+            # Успешный синк (или явный skip выше по continue сюда не попадает —
+            # else у try выполняется только при чистом завершении try без
+            # исключений) — сбрасываем состояние "мёртвого портала", если оно
+            # было: портал ожил, следующий сбой снова начнёт счёт с 6ч.
+            if account.sync_failure_count or account.sync_disabled_until or account.sync_failure_reason:
+                account.sync_failure_count = 0
+                account.sync_failure_reason = None
+                account.sync_disabled_until = None
+                account.save(update_fields=["sync_failure_count", "sync_failure_reason", "sync_disabled_until"])
 
     run.portals_synced = synced
     run.items_synced = items_total
@@ -244,4 +378,8 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
         run.status = "success"
     run.error_summary = "\n".join(errors)[:4000] if errors else None
     run.save()
+    logger.info(
+        "Scheduled sync done: scope=%s, portals %s/%s, items=%s, skipped_cooldown=%s",
+        scope, synced, run.portals_total, items_total, skipped_cooldown,
+    )
     return run

@@ -3,15 +3,27 @@
 Django TestCase, sqlite, мок Bitrix/сервисов.
 БЕЗ sys.modules/django.setup() — Django уже настроен test-раннером.
 """
+from datetime import timedelta
 from unittest.mock import patch, MagicMock
 
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
+from b24pysdk.error import (
+    BitrixAPIAccessDenied,
+    BitrixAPIErrorOAuth,
+    BitrixAPINoAuthFound,
+    BitrixAPIOverloadLimit,
+    BitrixAPIQueryLimitExceeded,
+    BitrixRequestError,
+    BitrixRequestTimeout,
+    BitrixResponseJSONDecodeError,
+)
+
 from .models import Bitrix24Account, Portal, ProjectCard, SyncRun, TimesheetItem
 from .project_board_shared import get_project_card_queryset
 from .report_queries import build_filtered_timesheet_queryset
-from .sync_scheduler_service import run_scheduled_sync, select_portal_accounts
+from .sync_scheduler_service import is_permanent_sync_failure, run_scheduled_sync, select_portal_accounts
 from .tenant_scoping import scope_to_tenant
 
 
@@ -864,3 +876,221 @@ class RunScheduledSyncUsersAccountSetTest(TestCase):
 
         self.assertEqual(run.portals_total, 1)
         self.assertEqual(mock_user_cls.call_count, 1)
+
+
+class IsPermanentSyncFailureTest(TestCase):
+    """Классификатор ошибок планировщика: постоянная (мёртвый портал -> пауза)
+
+    или временная (сеть моргнула/лимит -> просто повторим в следующем
+    цикле). Таблица случаев — дословно из прод-лога sync_all_portals
+    --scope timesheet (см. задание): ~20 из 38 порталов мертвы навсегда
+    (снесено приложение/кончилась подписка/заблокирован/домен не резолвится),
+    и планировщик не должен долбиться в них каждые 20 минут.
+
+    Не наследует TestCase.databases — чистая функция, БД не нужна, но
+    TestCase взят для единообразия с остальным файлом и assertion-набора.
+    """
+
+    def test_permanent_cases(self):
+        cases = [
+            ("BitrixAPIErrorOAuth: Application not installed (класс SDK)", BitrixAPIErrorOAuth(
+                json_response={"error": "ERROR_OAUTH", "error_description": "Application not installed"},
+                response=MagicMock(),
+            )),
+            ("Subscription has been ended (текст — своего класса SDK нет)",
+                RuntimeError("Subscription has been ended")),
+            ("Portal is blocked by the license scanner (текст)",
+                RuntimeError("Portal is blocked by the license scanner")),
+            ("BitrixAPINoAuthFound — 401 общий (класс SDK)", BitrixAPINoAuthFound(
+                json_response={"error": "NO_AUTH_FOUND", "error_description": "Wrong authorization data."},
+                response=MagicMock(),
+            )),
+            ("BitrixAPIAccessDenied — 403 (класс SDK)", BitrixAPIAccessDenied(
+                json_response={"error": "ACCESS_DENIED", "error_description": "REST API is available only on commercial plans."},
+                response=MagicMock(),
+            )),
+            ("BitrixResponseJSONDecodeError — портал отдаёт не-JSON (класс SDK)", BitrixResponseJSONDecodeError(
+                original_error=ValueError("Expecting value: line 1 column 1 (char 0)"),
+                response=MagicMock(),
+            )),
+            ("NameResolutionError — домен не резолвится (обёрнуто как BitrixRequestError)", BitrixRequestError(
+                Exception(
+                    "HTTPSConnectionPool(host='bitrix.ashburnrus.ru', port=443): Max retries "
+                    "exceeded with url: /rest/1/xxx/profile (Caused by NameResolutionError("
+                    "\"Failed to resolve 'bitrix.ashburnrus.ru' ([Errno 8] nodename nor servname "
+                    "provided, or not known)\"))"
+                ),
+            )),
+        ]
+        for label, exc in cases:
+            with self.subTest(label):
+                self.assertTrue(is_permanent_sync_failure(exc), f"должно быть ПОСТОЯННОЙ: {label}")
+
+    def test_temporary_cases(self):
+        cases = [
+            ("таймаут (класс SDK BitrixRequestTimeout)", BitrixRequestTimeout(TimeoutError("Read timed out"), 30)),
+            ("обрыв соединения (текст)", RuntimeError("Connection reset by peer")),
+            ("Too many requests (текст)", RuntimeError("Too many requests")),
+            ("over_limit (текст)", RuntimeError("over_limit")),
+            ("503 overload (класс SDK BitrixAPIOverloadLimit)", BitrixAPIOverloadLimit(
+                json_response={"error": "OVERLOAD_LIMIT", "error_description": "REST API is blocked due to overload."},
+                response=MagicMock(),
+            )),
+            ("503 query limit exceeded (класс SDK BitrixAPIQueryLimitExceeded)", BitrixAPIQueryLimitExceeded(
+                json_response={"error": "QUERY_LIMIT_EXCEEDED", "error_description": "Too many requests."},
+                response=MagicMock(),
+            )),
+            ("неизвестная ошибка -> временная по умолчанию (осторожная сторона)",
+                RuntimeError("something totally unexpected")),
+        ]
+        for label, exc in cases:
+            with self.subTest(label):
+                self.assertFalse(is_permanent_sync_failure(exc), f"должно быть ВРЕМЕННОЙ: {label}")
+
+
+class SyncCooldownTest(TestCase):
+    """Пауза для мёртвых порталов (fixwave: заказчик подтвердил вторую часть
+
+    боевого фикса). Постоянная ошибка (is_permanent_sync_failure) ставит
+    sync_disabled_until (6ч на первый раз, 24ч на второй и далее подряд) —
+    аккаунт перестаёт попадать в выборку run_scheduled_sync, пока пауза не
+    истечёт. Успешный синк сбрасывает счётчик/причину/паузу. Работает
+    одинаково для всех scope (timesheet/users/project), т.к. они уже ходят
+    через общий отбор (_account_scoped_sync_accounts/select_portal_accounts).
+    """
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_permanent_failure_sets_six_hour_cooldown_and_count_one(self, mock_cfg_cls, mock_svc_cls):
+        account = _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.side_effect = RuntimeError("Application not installed")
+        mock_svc_cls.return_value = mock_svc
+
+        before = timezone.now()
+        run_scheduled_sync(scope="timesheet")
+
+        account.refresh_from_db()
+        self.assertEqual(account.sync_failure_count, 1)
+        self.assertIn("Application not installed", account.sync_failure_reason or "")
+        self.assertIsNotNone(account.sync_disabled_until)
+        self.assertGreater(account.sync_disabled_until, before + timedelta(hours=5))
+        self.assertLess(account.sync_disabled_until, before + timedelta(hours=7))
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_second_permanent_failure_in_a_row_escalates_to_24h(self, mock_cfg_cls, mock_svc_cls):
+        account = _account("m1", master=True)
+        # Уже падал один раз ранее; предыдущая пауза истекла -> снова в выборке.
+        account.sync_failure_count = 1
+        account.sync_failure_reason = "previous reason"
+        account.sync_disabled_until = timezone.now() - timedelta(hours=1)
+        account.save(update_fields=["sync_failure_count", "sync_failure_reason", "sync_disabled_until"])
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.side_effect = RuntimeError("Application not installed")
+        mock_svc_cls.return_value = mock_svc
+
+        before = timezone.now()
+        run_scheduled_sync(scope="timesheet")
+
+        account.refresh_from_db()
+        self.assertEqual(account.sync_failure_count, 2)
+        self.assertGreater(account.sync_disabled_until, before + timedelta(hours=23))
+        self.assertLess(account.sync_disabled_until, before + timedelta(hours=25))
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_temporary_failure_does_not_set_cooldown(self, mock_cfg_cls, mock_svc_cls):
+        account = _account("m1", master=True)
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.side_effect = RuntimeError("Read timed out")
+        mock_svc_cls.return_value = mock_svc
+
+        run_scheduled_sync(scope="timesheet")
+
+        account.refresh_from_db()
+        self.assertIsNone(account.sync_disabled_until)
+        self.assertEqual(account.sync_failure_count, 0)
+        self.assertIsNone(account.sync_failure_reason)
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_successful_sync_resets_failure_state(self, mock_cfg_cls, mock_svc_cls):
+        account = _account("m1", master=True)
+        account.sync_failure_count = 2
+        account.sync_failure_reason = "old reason"
+        account.sync_disabled_until = timezone.now() - timedelta(hours=1)  # истекла -> в выборке
+        account.save(update_fields=["sync_failure_count", "sync_failure_reason", "sync_disabled_until"])
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 5
+        mock_svc_cls.return_value = mock_svc
+
+        run_scheduled_sync(scope="timesheet")
+
+        account.refresh_from_db()
+        self.assertEqual(account.sync_failure_count, 0)
+        self.assertIsNone(account.sync_failure_reason)
+        self.assertIsNone(account.sync_disabled_until)
+
+    @patch("main.sync_scheduler_service.TimesheetSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_paused_account_excluded_from_run_and_counted_as_skipped(self, mock_cfg_cls, mock_svc_cls):
+        alive = _account("m-alive", master=True, b24_user_id=1)
+        dead = _account("m-dead", master=True, b24_user_id=2)
+        dead.sync_disabled_until = timezone.now() + timedelta(hours=3)
+        dead.save(update_fields=["sync_disabled_until"])
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {
+            "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
+            "auto_sync_enabled": True,
+        }
+        mock_cfg_cls.return_value = mock_cfg
+        mock_svc = MagicMock()
+        mock_svc.sync_all.return_value = 5
+        mock_svc_cls.return_value = mock_svc
+
+        with self.assertLogs("main.sync_scheduler_service", level="INFO") as logs:
+            run = run_scheduled_sync(scope="timesheet")
+
+        self.assertEqual(run.portals_total, 1)        # мёртвый исключён из выборки ещё до цикла
+        self.assertEqual(mock_svc_cls.call_count, 1)  # синканут только живой
+        self.assertTrue(
+            any("skipped_cooldown=1" in msg for msg in logs.output),
+            f"итоговая строка прогона должна содержать skipped_cooldown=1: {logs.output}",
+        )
+
+    def test_select_portal_accounts_excludes_paused(self):
+        alive = _account("m-alive", master=True, b24_user_id=1)
+        dead = _account("m-dead", master=True, b24_user_id=2)
+        dead.sync_disabled_until = timezone.now() + timedelta(hours=3)
+        dead.save(update_fields=["sync_disabled_until"])
+
+        reps = select_portal_accounts()
+
+        rep_ids = {a.pk for a in reps}
+        self.assertIn(alive.pk, rep_ids)
+        self.assertNotIn(dead.pk, rep_ids)
