@@ -159,9 +159,10 @@ def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
 
 
 def _get_user_map(request: AuthorizedRequest, user_ids):
-    """Строит {employee_id: "Фамилия Имя"} из локальной БД (portal_user),
-    а не через Bitrix user.get. Убирает 3-7с "user_map" на отчётах (был
-    холодный промах per-воркер Django LocMemCache) — см. Фаза 2 sync-offload.
+    """Строит {employee_id: "Фамилия Имя"}: быстрый путь — локальная БД
+    (portal_user), Bitrix user.get — страховка для id, которых там нет.
+    Быстрый путь убирает 3-7с "user_map" на отчётах (был холодный промах
+    per-воркер Django LocMemCache) — см. Фаза 2 sync-offload.
 
     Входящие user_ids (из TimesheetItem.employee_id, в т.ч. историчные
     строки) нормализуются через extract_bitrix_user_id ДО запроса — тем же
@@ -170,6 +171,16 @@ def _get_user_map(request: AuthorizedRequest, user_ids):
     БД. Ключи результата тоже каноничные: resolve_employee_name ищет сначала
     по normalize_employee_id(employee_id), так что канонический ключ находит
     имя и для сырого, и для неканоничного значения строки.
+
+    Хотфикс 2026-07-28 (прод-регресс «User <id>» в дереве задачи): синк
+    PortalUser молодой и может не покрывать всех сотрудников (плюс отдельно
+    чинится баг парсинга ACTIVE в UserSyncService, из-за которого локальный
+    справочник был почти пуст) — id, которых нет в локальной БД, дорезолвятся
+    через BitrixDataService.fetch_users (со своим LocMemCache). Сбой Bitrix
+    здесь НЕ должен ронять отчёт: в худшем случае недостающие имена просто не
+    резолвятся (fallback на "Сотрудник <id>" — уровнем выше, в
+    resolve_employee_name). Данные из PortalUser всегда в приоритете —
+    Bitrix запрашивается только за тем, чего не хватило локально.
     """
     if not user_ids:
         return {}
@@ -184,10 +195,28 @@ def _get_user_map(request: AuthorizedRequest, user_ids):
         bitrix_id__in=list(normalized_ids),
     ).values("bitrix_id", "name", "last_name")
 
-    return {
+    user_map = {
         row["bitrix_id"]: (f"{row['last_name']} {row['name']}".strip() or row["bitrix_id"])
         for row in rows
     }
+
+    missing_ids = normalized_ids - user_map.keys()
+    if missing_ids:
+        fallback_map = {}
+        try:
+            fallback_map = _get_data_service(request).fetch_users(list(missing_ids))
+        except Exception:
+            logger.exception(
+                "_get_user_map: Bitrix-фоллбэк упал для %d недостающих id", len(missing_ids)
+            )
+        for uid, name in fallback_map.items():
+            user_map.setdefault(uid, name)
+        logger.info(
+            "_get_user_map: PortalUser не покрыл %d из %d id, Bitrix-фоллбэк дорезолвил %d",
+            len(missing_ids), len(normalized_ids), len(fallback_map),
+        )
+
+    return user_map
 
 
 def _get_data_service(request: AuthorizedRequest):

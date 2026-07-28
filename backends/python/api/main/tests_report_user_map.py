@@ -33,8 +33,19 @@ class GetUserMapReadsFromPortalUserTest(TestCase):
         self.assertEqual(result, {"1": "Петров Иван", "2": "Сидорова Анна"})
 
     def test_missing_user_id_is_simply_absent_from_map(self):
-        result = views._get_user_map(self._request(), {"999"})
-        self.assertEqual(result, {})  # resolve_employee_name падает на fallback "Сотрудник 999"
+        """Локально нет, и Bitrix-фоллбэк тоже не резолвит (см.
+        GetUserMapBitrixFallbackTest ниже за остальными сценариями фоллбэка) ->
+        id отсутствует в карте, resolve_employee_name падает на "Сотрудник 999"."""
+        config_service = MagicMock()
+        config_service.get_configuration_sync.return_value = {}
+        bitrix_service = MagicMock()
+        bitrix_service.fetch_users.return_value = {}
+
+        with patch.object(views, "ConfigurationService", return_value=config_service), \
+                patch.object(views, "BitrixDataService", return_value=bitrix_service):
+            result = views._get_user_map(self._request(), {"999"})
+
+        self.assertEqual(result, {})
 
     def test_empty_user_ids_returns_empty_dict(self):
         self.assertEqual(views._get_user_map(self._request(), set()), {})
@@ -49,6 +60,82 @@ class GetUserMapReadsFromPortalUserTest(TestCase):
 
         result = views._get_user_map(self._request(), {"1"})
         self.assertEqual(result, {})
+
+
+class GetUserMapBitrixFallbackTest(TestCase):
+    """Хотфикс 2026-07-28 (прод-регресс «User <id>» в дереве задачи): локальный
+    PortalUser может не покрывать всех сотрудников (молодой синк, порталы, ещё
+    не синкавшиеся, и т.д.). _get_user_map обязан дорезолвить недостающие id
+    через BitrixDataService.fetch_users — локальный справочник остаётся
+    быстрым путём, Bitrix — страховкой, и никогда не должен ронять отчёт."""
+
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-map-fallback-1",
+            is_master_account=True, domain_url="fallback.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def _request(self):
+        request = RequestFactory().get("/api/report-employee-project")
+        request.bitrix24_account = self.account
+        return request
+
+    def _mock_bitrix(self, fetch_users_return=None, fetch_users_side_effect=None):
+        config_service = MagicMock()
+        config_service.get_configuration_sync.return_value = {}
+        bitrix_service = MagicMock()
+        if fetch_users_side_effect is not None:
+            bitrix_service.fetch_users.side_effect = fetch_users_side_effect
+        else:
+            bitrix_service.fetch_users.return_value = fetch_users_return or {}
+        return (
+            patch.object(views, "ConfigurationService", return_value=config_service),
+            patch.object(views, "BitrixDataService", return_value=bitrix_service),
+            bitrix_service,
+        )
+
+    def test_partial_local_hit_falls_back_to_bitrix_for_missing_ids(self):
+        PortalUser.objects.create(bitrix24_account=self.account, bitrix_id="1",
+                                  name="Иван", last_name="Петров", active=True)
+
+        p_config, p_bitrix, bitrix_service = self._mock_bitrix(fetch_users_return={"2": "Сидорова Анна"})
+        with p_config, p_bitrix:
+            result = views._get_user_map(self._request(), {"1", "2"})
+
+        self.assertEqual(result, {"1": "Петров Иван", "2": "Сидорова Анна"})
+        called_ids = set(bitrix_service.fetch_users.call_args[0][0])
+        self.assertEqual(called_ids, {"2"}, "Bitrix должен запрашиваться только за недостающими id")
+
+    def test_empty_local_directory_resolves_all_names_from_bitrix(self):
+        p_config, p_bitrix, _ = self._mock_bitrix(
+            fetch_users_return={"5": "Смирнов Игорь", "6": "Кузнецова Ольга"}
+        )
+        with p_config, p_bitrix:
+            result = views._get_user_map(self._request(), {"5", "6"})
+
+        self.assertEqual(result, {"5": "Смирнов Игорь", "6": "Кузнецова Ольга"})
+
+    def test_bitrix_failure_does_not_crash_and_keeps_local_results(self):
+        PortalUser.objects.create(bitrix24_account=self.account, bitrix_id="1",
+                                  name="Иван", last_name="Петров", active=True)
+
+        p_config, p_bitrix, _ = self._mock_bitrix(fetch_users_side_effect=Exception("Bitrix недоступен"))
+        with p_config, p_bitrix:
+            result = views._get_user_map(self._request(), {"1", "999"})
+
+        self.assertEqual(result, {"1": "Петров Иван"})
+
+    def test_local_data_has_priority_and_bitrix_is_not_called_when_nothing_missing(self):
+        PortalUser.objects.create(bitrix24_account=self.account, bitrix_id="1",
+                                  name="Иван", last_name="Петров", active=True)
+
+        p_config, p_bitrix, bitrix_service = self._mock_bitrix(fetch_users_return={"1": "НЕПРАВИЛЬНОЕ Имя"})
+        with p_config, p_bitrix:
+            result = views._get_user_map(self._request(), {"1"})
+
+        self.assertEqual(result, {"1": "Петров Иван"})
+        bitrix_service.fetch_users.assert_not_called()
 
 
 class GetUserMapNormalizesNonCanonicalIdsTest(TestCase):
