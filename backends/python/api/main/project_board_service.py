@@ -34,6 +34,12 @@ from .tenant_scoping import scope_to_tenant
 
 logger = logging.getLogger(__name__)
 
+# Точечный лукап ИНН одной компании/юрлица (serialize_card в одиночном режиме,
+# см. _resolve_reference_details_single). ИНН компании не меняется -> кэш
+# долгий (сутки). Отдельная константа от BITRIX_REFERENCE_CACHE_TTL (общий
+# справочник компаний целиком, project_board_shared.py) — её здесь не трогаем.
+COMPANY_INN_CACHE_TTL = 60 * 60 * 24
+
 
 def _extract_items_from_response(response: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[int]]:
     result = response.get("result", [])
@@ -141,11 +147,20 @@ class ProjectCardService:
             cache.set(cache_key, payload, PROJECT_BOARD_CACHE_TTL)
             return payload
 
+        # Справочники компаний/юрлиц грузим ОДИН раз на всю доску (амортизация
+        # на сотнях карточек) и передаём в каждый serialize_card явно — так
+        # одиночный путь (get_card_data и др.) ниже может отличить "иду по
+        # доске" от "сериализую одну карточку" по наличию этих аргументов.
+        board_companies = self.get_companies()
+        board_legal_entities = self.get_legal_entities()
+
         serialized_cards: List[Dict[str, Any]] = []
         failed_cards = 0
         for card in cards:
             try:
-                serialized_cards.append(self.serialize_card(card))
+                serialized_cards.append(
+                    self.serialize_card(card, companies=board_companies, legal_entities=board_legal_entities)
+                )
             except Exception as exc:
                 failed_cards += 1
                 self._log_board_exception(
@@ -575,18 +590,49 @@ class ProjectCardService:
             fallback=self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name"),
         )
 
-    def serialize_card(self, card: ProjectCard) -> Dict[str, Any]:
+    def serialize_card(
+        self,
+        card: ProjectCard,
+        *,
+        companies: Optional[List[Dict[str, Any]]] = None,
+        legal_entities: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Сериализует одну карточку проекта.
+
+        Два режима, по наличию companies=/legal_entities=:
+        - Переданы (путь доски, get_board_data): справочник уже загружен один
+          раз на всю доску — резолвим по нему, как раньше, без похода в Битрикс
+          на карточку.
+        - Не переданы (одиночный путь: get_card_data, update_project_card,
+          update_stage, archive_project): НЕ тянем справочник целиком, а
+          резолвим ИНН точечно через _resolve_reference_details_single. До
+          хотфикса 2026-07-28 одиночная карточка обходила все 23 252 компании
+          и 16 382 реквизита ради одной строки — /api/project-board/card висел
+          218с и отдавал 502 (HAR с прода).
+        """
         stage_lookup = self.get_project_stage_lookup()
-        company_id, company_name, company_inn = self._resolve_reference_details(
-            card.company_id,
-            card.company_name,
-            self.get_companies(),
-        )
-        legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details(
-            card.our_legal_entity_id,
-            card.our_legal_entity_name,
-            self.get_legal_entities(),
-        )
+        if companies is not None:
+            company_id, company_name, company_inn = self._resolve_reference_details(
+                card.company_id,
+                card.company_name,
+                companies,
+            )
+        else:
+            company_id, company_name, company_inn = self._resolve_reference_details_single(
+                card.company_id,
+                card.company_name,
+            )
+        if legal_entities is not None:
+            legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details(
+                card.our_legal_entity_id,
+                card.our_legal_entity_name,
+                legal_entities,
+            )
+        else:
+            legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details_single(
+                card.our_legal_entity_id,
+                card.our_legal_entity_name,
+            )
 
         if company_id and not company_inn:
             logger.warning(
@@ -661,6 +707,108 @@ class ProjectCardService:
             resolved_name = lookup_name or resolved_name or resolved_id
 
         return resolved_id, resolved_name, resolved_inn
+
+    def _resolve_reference_details_single(
+        self, reference_id: Any, reference_name: Any
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Название берём из самой карточки (оно там уже есть) — а если его там
+        нет, точечным crm.company.list по ID, а не обходом справочника. ИНН —
+        одним запросом по конкретной компании вместо обхода всего справочника
+        портала.
+
+        До этого одиночная карточка тянула все 23 252 компании и 16 382 реквизита:
+        /api/project-board/card висел 218 секунд и отдавал 502 (HAR 2026-07-28).
+        """
+        resolved_id = self._clean_str(reference_id)
+        resolved_name = self._clean_str(reference_name)
+
+        if not resolved_id:
+            return resolved_id, resolved_name, None
+
+        # Имя, как правило, уже лежит в карточке (фоновый синк) — в Битрикс не
+        # ходим. Но если синк почему-то не заполнил company_name (маппинг полей
+        # не настроен и т.п.), точечно спрашиваем название одной компании —
+        # вместо того чтобы сразу показывать пользователю голый идентификатор.
+        if not resolved_name or resolved_name == resolved_id:
+            resolved_name = self._fetch_single_reference_name(resolved_id) or resolved_id
+
+        return resolved_id, resolved_name, self._fetch_single_reference_inn(resolved_id)
+
+    def _fetch_single_reference_name(self, reference_id: str) -> Optional[str]:
+        cache_key = build_account_cache_key(self.account, f"company-name:{reference_id}")
+        cached_name = cache.get(cache_key)
+        if cached_name is not None:
+            # "" — закэшированный отрицательный результат (компания не найдена).
+            return cached_name or None
+
+        resolved_name: Optional[str] = None
+        try:
+            response = self.client._bitrix_token.call_method(
+                "crm.company.list",
+                {
+                    "filter": {"ID": self._to_bitrix_id(reference_id)},
+                    "select": ["ID", "TITLE"],
+                },
+            )
+            rows, _ = _extract_items_from_response(response)
+            for row in rows:
+                candidate = self._clean_str(row.get("TITLE") or row.get("title"))
+                if candidate:
+                    resolved_name = candidate
+                    break
+        except Exception as exc:
+            # Сбой Битрикса здесь не должен ронять карточку: вызывающий код и
+            # так деградирует до идентификатора при пустом имени. Отрицательный
+            # результат из-за ОШИБКИ не кэшируем — может быть временный сбой,
+            # при следующем показе карточки стоит повторить попытку.
+            logger.warning(
+                "[ProjectBoard][NAME] Single-lookup crm.company.list failed for domain=%s reference_id=%s: %s",
+                self.account.domain_url,
+                reference_id,
+                exc,
+            )
+            return None
+
+        cache.set(cache_key, resolved_name or "", COMPANY_INN_CACHE_TTL)
+        return resolved_name
+
+    def _fetch_single_reference_inn(self, reference_id: str) -> Optional[str]:
+        cache_key = build_account_cache_key(self.account, f"company-inn:{reference_id}")
+        cached_inn = cache.get(cache_key)
+        if cached_inn is not None:
+            # "" — закэшированный отрицательный результат (у компании нет ИНН).
+            return cached_inn or None
+
+        resolved_inn: Optional[str] = None
+        try:
+            response = self.client._bitrix_token.call_method(
+                "crm.requisite.list",
+                {
+                    "filter": {"ENTITY_TYPE_ID": 4, "ENTITY_ID": self._to_bitrix_id(reference_id)},
+                    "select": ["ENTITY_ID", "RQ_INN"],
+                },
+            )
+            rows, _ = _extract_items_from_response(response)
+            for row in rows:
+                candidate = self._clean_str(row.get("RQ_INN") or row.get("rqInn"))
+                if candidate:
+                    resolved_inn = candidate
+                    break
+        except Exception as exc:
+            # Сбой Битрикса здесь не должен ронять карточку: карточка без ИНН —
+            # рабочее состояние (см. предупреждение [ProjectBoard][INN] ниже по
+            # коду). Отрицательный результат из-за ОШИБКИ не кэшируем — это
+            # может быть временный сбой, при следующем запросе стоит повторить.
+            logger.warning(
+                "[ProjectBoard][INN] Single-lookup crm.requisite.list failed for domain=%s reference_id=%s: %s",
+                self.account.domain_url,
+                reference_id,
+                exc,
+            )
+            return None
+
+        cache.set(cache_key, resolved_inn or "", COMPANY_INN_CACHE_TTL)
+        return resolved_inn
 
     def _load_config(self) -> Dict[str, Any]:
         return ConfigurationService(self.client, self.account).get_configuration_sync()
