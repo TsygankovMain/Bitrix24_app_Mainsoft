@@ -21,6 +21,7 @@ import type {
 } from '~/types/config'
 import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
+import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
 
 type SaveConfigurationResponse = {
   status?: string
@@ -838,6 +839,25 @@ export const useApiStore = defineStore(
       return result
     }
 
+    // Кнопка «Создать проект»: компания -> группа в Задачах -> карточка
+    // смарт-процесса (project_creation_service.ProjectCreationService.create).
+    // Идемпотентно: повторный вызов с теми же данными достраивает только
+    // недостающие шаги (ProjectCreationResult.done=false не значит ошибку
+    // сети — см. типы в ~/types/project-creation). Бэкенд сам ловит свои
+    // исключения и всегда отвечает 200 с частичным результатом, поэтому
+    // здесь нет отдельной обработки ошибок шагов — только транспорт.
+    const createProject = async (form: ProjectCreationForm): Promise<ProjectCreationResult> => {
+      const result = await $api<ProjectCreationResult>('/api/project-board/create', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        body: form
+      })
+      clearCache('project-board', 'project-board-meta', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
     const updateProjectCard = async (payload: Record<string, unknown>): Promise<unknown> => {
       const result = await $api('/api/project-board/update', {
         method: 'POST',
@@ -1161,6 +1181,7 @@ export const useApiStore = defineStore(
       getProjectBoardCard,
       searchCompanies,
       getMyCompanies,
+      createProject,
       getFinanceOperations,
       createFinanceOperation,
       getHomepagePortfolio,
