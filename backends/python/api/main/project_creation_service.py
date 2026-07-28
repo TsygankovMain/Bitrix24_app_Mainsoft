@@ -34,11 +34,16 @@ class StepResult:
     error: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
+        # list(...), а не self.candidates напрямую: create() подставляет один
+        # и тот же экземпляр StepResult(status="skipped") сразу в три ключа
+        # ответа (company/group/card) — без копии все три получили бы ссылку
+        # на один список, и правка candidates одного шага тихо портила бы
+        # два других (ревью фикс-раунда задачи 5).
         return {
             "status": self.status,
             "id": self.id,
             "name": self.name,
-            "candidates": self.candidates,
+            "candidates": list(self.candidates),
             "error": self.error,
         }
 

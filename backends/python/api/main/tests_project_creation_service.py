@@ -10,7 +10,7 @@ from django.test import TestCase, override_settings
 
 from .models import Bitrix24Account, Portal, ProjectCard
 from .project_creation_defaults import resolve_project_fields
-from .project_creation_service import ProjectCreationService
+from .project_creation_service import ProjectCreationService, StepResult
 from .tenant_scoping import scope_to_tenant
 from .utils.decorators.sync_lock import SyncLockBusy
 
@@ -52,6 +52,29 @@ class _ServiceTestCase(TestCase):
 
     def service(self, client):
         return ProjectCreationService(client, self.account)
+
+
+class StepResultAsDictTest(TestCase):
+    """Ревью фикс-раунда задачи 5: as_dict() клал self.candidates в ответ по
+    ссылке. В create() один и тот же экземпляр StepResult(status="skipped")
+    подставляется сразу в три ключа ответа (company/group/card) — общий
+    список означал бы, что мутация candidates одного шага тихо портит два
+    других. Сегодня безобидно (список пустой, ответ сразу уходит в JSON), но
+    as_dict() обязан отдавать копию независимо от того, пуст список или нет."""
+
+    def test_as_dict_candidates_is_independent_copy(self):
+        result = StepResult(status="ambiguous", candidates=[{"id": "1", "name": "АО Ромашка"}])
+
+        dict_1 = result.as_dict()
+        dict_2 = result.as_dict()
+
+        self.assertEqual(dict_1["candidates"], [{"id": "1", "name": "АО Ромашка"}])
+        self.assertIsNot(dict_1["candidates"], result.candidates)
+        self.assertIsNot(dict_1["candidates"], dict_2["candidates"])
+
+        dict_1["candidates"].append({"id": "2", "name": "чужой кандидат"})
+        self.assertEqual(len(result.candidates), 1)
+        self.assertEqual(len(dict_2["candidates"]), 1)
 
 
 class EnsureCompanyTest(_ServiceTestCase):
