@@ -2,6 +2,7 @@
 from django.core.cache import cache
 from django.test import TestCase
 
+from .inn_backfill_service import InnBackfillService
 from .models import Bitrix24Account, ProjectCard
 from .project_board_service import ProjectCardService
 from .project_board_shared import invalidate_project_runtime_caches
@@ -191,3 +192,69 @@ class CompaniesFromDbTest(TestCase):
         directory = ProjectCardService(client, self.account).get_full_company_directory()
 
         self.assertEqual([c["id"] for c in directory], ["15"])
+
+
+class InnBackfillUsesFullDirectoryTest(TestCase):
+    """Task 6 плана ("вне очереди", блокирует выкатку ветки): get_companies()
+    после Task 3 читает локальную проекцию карточек и не отдаёт ИНН вовсе (в
+    project_card такого поля нет). Дозаполнению ИНН (inn_backfill_service.py)
+    нужен явный полный обход портала — единственное место во всём приложении,
+    которому обход разрешён. Все пользовательские пути (доска/meta/главный
+    экран/резолверы имён — см. остальные тесты этого файла) обход НЕ
+    выполняют; здесь, наоборот, обход обязателен и ожидаем."""
+
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-refs-inn-1",
+            is_master_account=True, domain_url="example-inn.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        # Карточка с той же компанией/юрлицом, что в фейковом ответе Битрикса
+        # ниже — воспроизводит ровно репро ревьюера: до этой правки
+        # get_companies()/get_legal_entities() отдали бы {'15': ''} / {'9': ''}
+        # (ключи есть — из этой карточки, значения ИНН пусты, т.к. в
+        # project_card ИНН не хранится).
+        ProjectCard.objects.create(
+            **scope_to_tenant(self.account, write=True),
+            project_id="44", project_name="Портал АО Ромашка", stage="NEW",
+            company_id="15", company_name="АО Ромашка",
+            our_legal_entity_id="9", our_legal_entity_name="ООО Свои",
+        )
+
+    def _service(self, client):
+        cfg = {"sp_entity_type_id": 123, "fields_mapping": {
+            "our_inn": "UF_OUR", "client_inn": "UF_CLIENT"}}
+        return InnBackfillService(client, self.account, cfg)
+
+    def test_inn_maps_performs_full_scan_not_local_list(self):
+        client = _FakeClient({
+            "crm.item.list": {"result": [
+                {"id": "15", "title": "АО Ромашка", "isMyCompany": "N"},
+                {"id": "9", "title": "ООО Свои", "isMyCompany": "Y"},
+            ]},
+            "crm.requisite.list": {"result": [
+                {"ENTITY_ID": "15", "RQ_INN": "7701234567"},
+                {"ENTITY_ID": "9", "RQ_INN": "7709876543"},
+            ]},
+        })
+
+        companies_inn, legal_inn = self._service(client)._inn_maps()
+
+        # ИНН резолвится через полный обход. До этой правки _inn_maps()
+        # звал get_companies()/get_legal_entities() — оба после Task 3 не
+        # отдают "inn" вовсе, и карты были бы {'15': ''} / {'9': ''}
+        # (ревьюер подтвердил прогоном: resolve_card_inn(...) -> ('', '')).
+        self.assertEqual(companies_inn.get("15"), "7701234567")
+        self.assertEqual(legal_inn.get("9"), "7709876543")
+        # "Чужая" (не своя) компания попадает в общий справочник компаний,
+        # но не в юрлица — is_my_company=N её отсеивает.
+        self.assertNotIn("15", legal_inn)
+
+        # Постраничный обход РЕАЛЬНО произошёл — здесь, в отличие от всех
+        # пользовательских путей этого файла, это ожидаемо и правильно:
+        # это разовое админское действие с экрана настроек, которому
+        # действительно нужен весь справочник компаний с реквизитами.
+        methods_called = client.methods_called()
+        self.assertIn("crm.item.list", methods_called)
+        self.assertIn("crm.requisite.list", methods_called)

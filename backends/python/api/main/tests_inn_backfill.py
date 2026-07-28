@@ -18,6 +18,7 @@ from main.inn_backfill_service import (  # noqa: E402
     STATUS_READY,
     build_project_lookup,
     classify_row,
+    has_resolved_inn,
     is_blank,
     resolve_card_inn,
 )
@@ -68,6 +69,16 @@ class PureFnTests(unittest.TestCase):
         self.assertEqual(classify_row(False, True, "", "", True), STATUS_ATTENTION)
         self.assertEqual(classify_row(True, True, "", "b", True), STATUS_ATTENTION)
         self.assertEqual(classify_row(True, True, "a", "b", False), STATUS_NO_PROJECT)
+
+    def test_has_resolved_inn(self):
+        # Пустой словарь целиком — как и раньше, "ИНН не резолвился".
+        self.assertFalse(has_resolved_inn({}))
+        # Регресс Task 3: словарь непуст (ключи компаний есть), но каждое
+        # значение — пустая строка/пробелы. Именно этот случай старое условие
+        # `not (companies_inn or legal_inn)` не ловило (bool({"C1": ""}) is True).
+        self.assertFalse(has_resolved_inn({"C1": "", "L1": "   "}))
+        # Хотя бы один резолвившийся ИНН — уже не деградация.
+        self.assertTrue(has_resolved_inn({"C1": "", "L1": "7709876543"}))
 
 
 class ApplyTests(unittest.TestCase):
@@ -160,6 +171,22 @@ class ScanTests(unittest.TestCase):
         m_qs.return_value = [self.card]
         svc = self._service()
         svc._inn_maps = lambda: ({}, {})  # реквизиты недоступны
+        res = svc.scan("2026-05-01", "2026-05-31")
+        self.assertIsNotNone(res["warning"])
+
+    @mock.patch("main.inn_backfill_service.get_project_card_queryset")
+    def test_scan_warns_when_inn_maps_have_only_blank_values(self, m_qs):
+        """Молчащий предохранитель (найдено при ревью Task 3): после перевода
+        get_companies() на локальную базу _inn_maps() отдаёт словари, у
+        которых ЕСТЬ ключи (id компаний из карточек), но каждое значение —
+        пустая строка (ИНН не резолвился). Старое условие
+        `not (companies_inn or legal_inn)` проверяло пустоту словаря
+        целиком и не срабатывало: ревьюер подтвердил прогоном warning=None
+        при resolvable=0 — администратор видел обычный экран без единого
+        намёка, что источник ИНН сломан."""
+        m_qs.return_value = [self.card]
+        svc = self._service()
+        svc._inn_maps = lambda: ({"C1": ""}, {"L1": ""})  # ключи есть, ИНН пуст
         res = svc.scan("2026-05-01", "2026-05-31")
         self.assertIsNotNone(res["warning"])
 
