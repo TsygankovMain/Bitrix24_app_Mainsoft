@@ -763,7 +763,7 @@ class ProjectCardService:
             # результат из-за ОШИБКИ не кэшируем — может быть временный сбой,
             # при следующем показе карточки стоит повторить попытку.
             logger.warning(
-                "[ProjectBoard][INN] Single-lookup crm.company.list (name) failed for domain=%s reference_id=%s: %s",
+                "[ProjectBoard][NAME] Single-lookup crm.company.list failed for domain=%s reference_id=%s: %s",
                 self.account.domain_url,
                 reference_id,
                 exc,
