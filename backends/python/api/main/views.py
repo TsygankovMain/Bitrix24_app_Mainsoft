@@ -1630,6 +1630,12 @@ def timesheet_sync(request: AuthorizedRequest):
         body = json.loads(request.body or "{}")
     except (TypeError, ValueError, json.JSONDecodeError):
         body = {}
+    # json.loads может успешно разобрать НЕ-объект (список/число/строку/true) —
+    # тогда body.get(...) ниже упал бы AttributeError. date_from/date_to здесь
+    # необязательное сужение по датам, поэтому не-словарное тело трактуем как
+    # "не задано" (как и при {} или битом JSON выше), а не как ошибку клиента.
+    if not isinstance(body, dict):
+        body = {}
     date_from = body.get("date_from")
     date_to = body.get("date_to")
     is_scoped = bool(date_from and date_to)
@@ -1913,6 +1919,13 @@ def save_configuration(request: AuthorizedRequest):
     service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     try:
         body = json.loads(request.body)
+        # json.loads может успешно разобрать НЕ-объект (список/число/строку/true/
+        # null/[]) — тогда body.get(...) ниже упал бы AttributeError, пойманный
+        # общим except Exception как 500, хотя виноват клиент. save_configuration
+        # — операция с побочным эффектом (перезаписывает сохранённые настройки),
+        # поэтому здесь честный 400, а не тихая деградация в {}.
+        if not isinstance(body, dict):
+            return JsonResponse({"error": "Некорректный формат тела запроса."}, status=400)
         config = body.get('config', {})
         if not isinstance(config, dict):
             return JsonResponse({"error": "Некорректный формат конфигурации."}, status=400)
@@ -2038,6 +2051,12 @@ def create_fields(request: AuthorizedRequest):
     import json as json_module
     try:
         body = json_module.loads(request.body)
+        # json_module.loads может успешно разобрать НЕ-объект — body.get(...)
+        # ниже упал бы AttributeError (пойман общим except Exception как 500).
+        # entityTypeId и так обязателен и уже проверяется явно ниже — пустой
+        # словарь просто заводит не-объектное тело в ту же ветку валидации.
+        if not isinstance(body, dict):
+            body = {}
         sp_id = body.get('entityTypeId')
         if not sp_id:
             return JsonResponse({"error": "Не указан ID смарт-процесса"}, status=400)
@@ -2061,6 +2080,11 @@ def create_mapped_field(request: AuthorizedRequest):
     import json as json_module
     try:
         body = json_module.loads(request.body)
+        # См. create_fields выше — тот же приём: не-объектное тело -> {}, и
+        # entityTypeId/fieldKey естественно попадают в уже существующую
+        # проверку ниже вместо AttributeError из body.get(...).
+        if not isinstance(body, dict):
+            body = {}
         sp_id = body.get('entityTypeId')
         field_key = body.get('fieldKey')
         mapping_type = body.get('mappingType') or 'timesheet'
@@ -2253,6 +2277,13 @@ def inn_backfill_apply(request: AuthorizedRequest):
         body = json.loads(request.body)
     except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
         return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    # json.loads может успешно разобрать НЕ-объект — body.get(...) ниже упал бы
+    # AttributeError необработанным (утечка сырого текста исключения клиенту
+    # через log_errors). Запись ИНН необратима на стороне Bitrix — честный 400,
+    # а не тихая деградация в {} (которая дала бы тот же 400, но по неверной
+    # причине "карточки не выбраны").
+    if not isinstance(body, dict):
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
     items = body.get("items", [])
     if not isinstance(items, list) or not items:
         return JsonResponse({"error": "Не переданы карточки для простановки"}, status=400)
@@ -2276,6 +2307,12 @@ def inn_backfill_project_items(request: AuthorizedRequest):
     try:
         body = json.loads(request.body)
     except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    # См. inn_backfill_apply выше: не-объектное тело проходит json.loads, но
+    # body.get(...) ниже (после похода в ConfigurationService) упал бы
+    # AttributeError необработанным. Тот же принцип — честный 400 сразу,
+    # не дожидаясь похода в Bitrix за конфигурацией.
+    if not isinstance(body, dict):
         return JsonResponse({"error": "Invalid JSON body"}, status=400)
     config = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account).get_configuration_sync()
     service = InnBackfillService(request.bitrix24_account.client, request.bitrix24_account, config)
@@ -2315,7 +2352,15 @@ def export_raw_data(request: AuthorizedRequest):
     """
     try:
         body = json.loads(request.body)
-    except (json.JSONDecodeError, Exception):
+    except Exception:
+        # (json.JSONDecodeError, Exception) было избыточно: JSONDecodeError и
+        # так подкласс Exception — упрощено при этой же правке.
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    # json.loads может успешно разобрать НЕ-объект — .get(...) на date_from/
+    # date_type/fields ниже упал бы AttributeError необработанным. Это выгрузка
+    # по явным фильтрам пользователя — честный 400, а не тихая выгрузка "всего
+    # без фильтров" (что дал бы молчаливый {}).
+    if not isinstance(body, dict):
         return JsonResponse({"error": "Invalid JSON body"}, status=400)
 
     date_from = body.get("date_from", "")
