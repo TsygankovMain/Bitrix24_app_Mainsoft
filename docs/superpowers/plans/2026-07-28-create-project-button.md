@@ -1473,16 +1473,23 @@ git commit -m "feat(create-project): оркестратор трёх шагов 
 
 ---
 
-### Task 6: HTTP-эндпоинт
+### Task 6: HTTP-эндпоинты — создание проекта и поиск компаний
 
 **Files:**
 - Modify: `backends/python/api/main/views.py`
 - Modify: `backends/python/api/main/urls.py`
 - Test: `backends/python/api/main/tests_project_creation_service.py`
+- Test: `backends/python/api/main/tests_company_search.py`
 
 **Interfaces:**
 - Consumes: `ProjectCreationService.create` (Task 5).
-- Produces: `POST /api/project-board/create` → JSON из Task 5.
+- Produces:
+  - `POST /api/project-board/create` → JSON из Task 5.
+  - `GET /api/project-board/companies/search?q=<строка>&limit=50` → `{"companies": [{"id", "name", "inn"}], "truncated": bool}`
+
+**Почему поиск компаний живёт здесь, а не берётся из `/api/project-board/meta`.** На боевом портале 23 252 компании. До хотфикса 2026-07-28 ответ `meta` весил 37,9 МБ, сейчас — около 12,6 МБ, и это по-прежнему весь справочник портала. Форма создания проекта не может его грузить: она станет такой же медленной, как экран, который мы только что чинили. Поэтому компании в форме ищутся по мере ввода — одним запросом к Битриксу с фильтром, а не постраничным обходом.
+
+Этот же эндпоинт — основная часть варианта Б (`docs/superpowers/specs/2026-07-28-project-references-performance-design.md`): когда до него дойдут руки, на него переключится и экран проектов.
 
 Эндпоинт повторяет паттерн соседей (`update_project_board`): декораторы `@xframe_options_exempt`, `@csrf_exempt`, `@require_POST`, `@log_errors(...)`, `@auth_required`, тело через `_load_request_json`. Добавляется `@rate_limit("create-project", 10, 60, key="account")` — создание сущностей на портале дороже чтения.
 
@@ -1577,6 +1584,395 @@ git add backends/python/api/main/views.py backends/python/api/main/urls.py backe
 git commit -m "feat(create-project): эндпоинт POST /api/project-board/create"
 ```
 
+- [ ] **Step 6: Написать падающий тест на поиск компаний**
+
+Создать `backends/python/api/main/tests_company_search.py`:
+
+```python
+"""Тесты поиска компаний: один запрос с фильтром вместо обхода справочника портала."""
+from django.core.cache import cache
+from django.test import TestCase
+
+from .models import Bitrix24Account
+from .company_search_service import CompanySearchService
+
+
+class _FakeClient:
+    def __init__(self, responses=None):
+        self._responses = dict(responses or {})
+        self.calls = []
+        self._bitrix_token = self
+
+    def call_method(self, method, params=None):
+        self.calls.append((method, params or {}))
+        value = self._responses.get(method, {"result": []})
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    def methods_called(self):
+        return [m for m, _ in self.calls]
+
+
+class CompanySearchTest(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-search-1",
+            is_master_account=True, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def service(self, client):
+        return CompanySearchService(client, self.account)
+
+    def test_short_query_does_not_touch_bitrix(self):
+        client = _FakeClient()
+        result = self.service(client).search("а")
+
+        self.assertEqual(result["companies"], [])
+        self.assertEqual(client.methods_called(), [])
+
+    def test_blank_query_does_not_touch_bitrix(self):
+        client = _FakeClient()
+        result = self.service(client).search("   ")
+
+        self.assertEqual(result["companies"], [])
+        self.assertEqual(client.methods_called(), [])
+
+    def test_search_by_title_makes_one_filtered_call(self):
+        client = _FakeClient({
+            "crm.company.list": {"result": [
+                {"ID": "15", "TITLE": "АО Ромашка"},
+                {"ID": "16", "TITLE": "АО Ромашка-2"},
+            ]},
+        })
+        result = self.service(client).search("Ромашка")
+
+        self.assertEqual([c["id"] for c in result["companies"]], ["15", "16"])
+        self.assertEqual(client.methods_called(), ["crm.company.list"])
+        _, params = client.calls[0]
+        self.assertEqual(params["filter"]["%TITLE"], "Ромашка")
+
+    def test_ten_digit_query_also_searches_by_inn(self):
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.requisite.list": {"result": [{"ENTITY_ID": "15", "RQ_INN": "7701234567"}]},
+        })
+        result = self.service(client).search("7701234567")
+
+        self.assertIn("crm.requisite.list", client.methods_called())
+
+    def test_five_digit_query_does_not_search_by_inn(self):
+        client = _FakeClient({"crm.company.list": {"result": []}})
+        self.service(client).search("12345")
+
+        self.assertNotIn("crm.requisite.list", client.methods_called())
+
+    def test_limit_caps_results_and_sets_truncated(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 61)]
+        client = _FakeClient({"crm.company.list": {"result": rows}})
+        result = self.service(client).search("Компания", limit=50)
+
+        self.assertEqual(len(result["companies"]), 50)
+        self.assertTrue(result["truncated"])
+
+    def test_bitrix_failure_returns_empty_list_not_exception(self):
+        client = _FakeClient({"crm.company.list": RuntimeError("портал недоступен")})
+        result = self.service(client).search("Ромашка")
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+
+    def test_repeated_query_is_served_from_cache(self):
+        client = _FakeClient({"crm.company.list": {"result": [{"ID": "15", "TITLE": "АО Ромашка"}]}})
+        service = self.service(client)
+        service.search("Ромашка")
+        service.search("Ромашка")
+
+        self.assertEqual(client.methods_called().count("crm.company.list"), 1)
+```
+
+- [ ] **Step 7: Убедиться, что тест падает**
+
+```bash
+cd backends/python/api && python manage.py test main.tests_company_search --settings=test_settings -v 2
+```
+
+Ожидаемо: `ModuleNotFoundError: No module named 'main.company_search_service'`.
+
+- [ ] **Step 8: Написать минимальную реализацию**
+
+Создать `backends/python/api/main/company_search_service.py`:
+
+```python
+"""Поиск компаний по мере ввода — одним запросом к Битриксу с фильтром.
+
+Альтернатива (выгрузить справочник и фильтровать на клиенте) на боевом портале
+означает 23 252 компании и 465 страниц на каждое открытие формы: ровно то, что
+чинил хотфикс 2026-07-28. Поэтому ищем на стороне Битрикса.
+"""
+import hashlib
+import logging
+from typing import Any, Dict, List, Optional
+
+from b24pysdk import Client
+from django.core.cache import cache
+
+from .models import Bitrix24Account
+from .project_board_shared import build_account_cache_key
+
+logger = logging.getLogger(__name__)
+
+MIN_QUERY_LENGTH = 2
+DEFAULT_LIMIT = 50
+MAX_LIMIT = 100
+SEARCH_CACHE_TTL = 60 * 5
+INN_LENGTHS = {10, 12}
+
+
+def _clean_str(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+class CompanySearchService:
+    def __init__(self, client: Optional[Client], account: Bitrix24Account):
+        self.client = client or account.client
+        self.account = account
+
+    def search(self, query: str, limit: int = DEFAULT_LIMIT) -> Dict[str, Any]:
+        query = _clean_str(query)
+        limit = max(1, min(int(limit or DEFAULT_LIMIT), MAX_LIMIT))
+
+        if len(query) < MIN_QUERY_LENGTH:
+            return {"companies": [], "truncated": False, "failed": False}
+
+        digest = hashlib.sha1(f"{query}|{limit}".encode("utf-8")).hexdigest()[:16]
+        cache_key = build_account_cache_key(self.account, f"company-search:{digest}")
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        rows: List[Dict[str, Any]] = []
+        failed = False
+        try:
+            response = self.client._bitrix_token.call_method(
+                "crm.company.list",
+                {"filter": {"%TITLE": query}, "select": ["ID", "TITLE"], "order": {"TITLE": "ASC"}},
+            )
+            rows = list(response.get("result") or [])
+        except Exception as exc:
+            failed = True
+            logger.warning("Company search by title failed for %s: %s", query, exc)
+
+        inn_by_company: Dict[str, str] = {}
+        if query.isdigit() and len(query) in INN_LENGTHS:
+            try:
+                inn_response = self.client._bitrix_token.call_method(
+                    "crm.requisite.list",
+                    {
+                        "filter": {"ENTITY_TYPE_ID": 4, "%RQ_INN": query},
+                        "select": ["ENTITY_ID", "RQ_INN"],
+                    },
+                )
+                for row in inn_response.get("result") or []:
+                    entity_id = _clean_str(row.get("ENTITY_ID") or row.get("entityId"))
+                    inn = _clean_str(row.get("RQ_INN") or row.get("rqInn"))
+                    if entity_id and inn:
+                        inn_by_company.setdefault(entity_id, inn)
+            except Exception as exc:
+                failed = True
+                logger.warning("Company search by INN failed for %s: %s", query, exc)
+
+            for entity_id, inn in inn_by_company.items():
+                if not any(_clean_str(r.get("ID") or r.get("id")) == entity_id for r in rows):
+                    rows.append({"ID": entity_id, "TITLE": "", "RQ_INN": inn})
+
+        companies: List[Dict[str, Any]] = []
+        seen = set()
+        for row in rows:
+            company_id = _clean_str(row.get("ID") or row.get("id"))
+            if not company_id or company_id in seen:
+                continue
+            seen.add(company_id)
+            companies.append({
+                "id": company_id,
+                "name": _clean_str(row.get("TITLE") or row.get("title")) or company_id,
+                "inn": inn_by_company.get(company_id) or _clean_str(row.get("RQ_INN")) or None,
+            })
+
+        truncated = len(companies) > limit
+        payload = {"companies": companies[:limit], "truncated": truncated, "failed": failed}
+
+        # Неудачный поиск не кэшируем: сбой Битрикса может быть временным, и
+        # запирать пользователя на пять минут с пустым списком неправильно.
+        if not failed:
+            cache.set(cache_key, payload, SEARCH_CACHE_TTL)
+        return payload
+```
+
+Добавить view в `backends/python/api/main/views.py` рядом с `get_project_board_companies`:
+
+```python
+@xframe_options_exempt
+@require_GET
+@log_errors("search_project_board_companies")
+@auth_required
+def search_project_board_companies(request: AuthorizedRequest):
+    """Поиск компаний по мере ввода. Полный справочник портала (23 тыс. записей
+    на боевом) сюда не выгружается — см. Task 6 плана."""
+    service = CompanySearchService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        limit = int(request.GET.get("limit") or 50)
+    except (TypeError, ValueError):
+        limit = 50
+    return JsonResponse(service.search(request.GET.get("q") or "", limit))
+```
+
+и импорт `from .company_search_service import CompanySearchService` в блок импортов сервисов.
+
+Маршрут в `backends/python/api/main/urls.py` рядом с `api/project-board/companies`:
+
+```python
+    path('api/project-board/companies/search', views.search_project_board_companies, name='search_project_board_companies'),
+```
+
+- [ ] **Step 9: Убедиться, что тесты проходят**
+
+```bash
+cd backends/python/api && python manage.py test main.tests_company_search main.tests_project_creation_service main.tests_project_creation_defaults --settings=test_settings -v 2
+```
+
+Ожидаемо: 52 теста PASS (8 поиска + 30 оркестратора + 14 расчёта полей).
+
+- [ ] **Step 10: Коммит**
+
+```bash
+git add backends/python/api/main/company_search_service.py backends/python/api/main/tests_company_search.py backends/python/api/main/views.py backends/python/api/main/urls.py
+git commit -m "feat(create-project): поиск компаний по мере ввода вместо выгрузки справочника"
+```
+
+- [ ] **Step 11: Написать падающий тест на список своих юрлиц**
+
+Форме нужен выбор юрлица, когда своих компаний на портале несколько. Брать его из `/api/project-board/meta` нельзя по той же причине, что и компании, — там весь справочник портала. Существующий `ProjectCardService.get_legal_entities()` тоже не подходит: под капотом он выкачивает все 23 252 компании и фильтрует «мои» уже в Python. Нужен серверный фильтр.
+
+Дописать в `backends/python/api/main/tests_company_search.py`:
+
+```python
+class MyCompaniesTest(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-mycomp-1",
+            is_master_account=True, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def test_filters_on_bitrix_side_without_paging_whole_directory(self):
+        client = _FakeClient({
+            "crm.company.list": {"result": [{"ID": "7", "TITLE": "ООО Мейнсофт"}]},
+        })
+        result = CompanySearchService(client, self.account).list_my_companies()
+
+        self.assertEqual([c["id"] for c in result["companies"]], ["7"])
+        self.assertEqual(client.methods_called(), ["crm.company.list"])
+        _, params = client.calls[0]
+        self.assertEqual(params["filter"]["IS_MY_COMPANY"], "Y")
+
+    def test_second_call_is_served_from_cache(self):
+        client = _FakeClient({"crm.company.list": {"result": [{"ID": "7", "TITLE": "ООО Мейнсофт"}]}})
+        service = CompanySearchService(client, self.account)
+        service.list_my_companies()
+        service.list_my_companies()
+
+        self.assertEqual(client.methods_called().count("crm.company.list"), 1)
+
+    def test_bitrix_failure_returns_empty_list_not_exception(self):
+        client = _FakeClient({"crm.company.list": RuntimeError("нет прав")})
+        result = CompanySearchService(client, self.account).list_my_companies()
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+```
+
+- [ ] **Step 12: Написать минимальную реализацию**
+
+Метод в `CompanySearchService`:
+
+```python
+    def list_my_companies(self) -> Dict[str, Any]:
+        """Свои юрлица — серверным фильтром IS_MY_COMPANY.
+
+        ProjectCardService.get_legal_entities() делает то же самое, но выкачивая
+        весь справочник портала и фильтруя в Python: на боевом это 465 страниц
+        ради нескольких записей.
+        """
+        cache_key = build_account_cache_key(self.account, "my-companies")
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            response = self.client._bitrix_token.call_method(
+                "crm.company.list",
+                {"filter": {"IS_MY_COMPANY": "Y"}, "select": ["ID", "TITLE"], "order": {"TITLE": "ASC"}},
+            )
+        except Exception as exc:
+            logger.warning("My companies fetch failed: %s", exc)
+            return {"companies": [], "failed": True}
+
+        companies = []
+        seen = set()
+        for row in response.get("result") or []:
+            company_id = _clean_str(row.get("ID") or row.get("id"))
+            if not company_id or company_id in seen:
+                continue
+            seen.add(company_id)
+            companies.append({
+                "id": company_id,
+                "name": _clean_str(row.get("TITLE") or row.get("title")) or company_id,
+            })
+
+        payload = {"companies": companies, "failed": False}
+        cache.set(cache_key, payload, MY_COMPANIES_CACHE_TTL)
+        return payload
+```
+
+Константа рядом с остальными: `MY_COMPANIES_CACHE_TTL = 60 * 60 * 6` — свои юрлица меняются ещё реже, чем компании.
+
+View в `views.py`:
+
+```python
+@xframe_options_exempt
+@require_GET
+@log_errors("list_my_companies")
+@auth_required
+def list_my_companies(request: AuthorizedRequest):
+    """Свои юрлица для формы создания проекта. Серверный фильтр вместо обхода
+    всего справочника портала — см. Task 6 плана."""
+    service = CompanySearchService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(service.list_my_companies())
+```
+
+Маршрут в `urls.py`:
+
+```python
+    path('api/project-board/my-companies', views.list_my_companies, name='list_my_companies'),
+```
+
+- [ ] **Step 13: Убедиться, что тесты проходят, и закоммитить**
+
+```bash
+cd backends/python/api && python manage.py test main.tests_company_search main.tests_project_creation_service main.tests_project_creation_defaults --settings=test_settings -v 2
+```
+
+Ожидаемо: 55 тестов PASS (11 поиска и юрлиц + 30 оркестратора + 14 расчёта полей).
+
+```bash
+git add backends/python/api/main/company_search_service.py backends/python/api/main/tests_company_search.py backends/python/api/main/views.py backends/python/api/main/urls.py
+git commit -m "feat(create-project): свои юрлица серверным фильтром IS_MY_COMPANY"
+```
+
 ---
 
 ### Task 7: Фронт — типы и метод стора
@@ -1592,7 +1988,10 @@ git commit -m "feat(create-project): эндпоинт POST /api/project-board/cr
   - `interface ProjectCreationStep { status: 'created' | 'found' | 'ambiguous' | 'skipped' | 'error'; id: string | null; name: string; candidates: Array<{ id: string; name: string }>; error: string | null }`
   - `interface ProjectCreationResult { company: ProjectCreationStep; group: ProjectCreationStep; card: ProjectCreationStep; done: boolean; missing_fields: string[] }`
   - `interface ProjectCreationForm { project_name: string; company_id: string | null; company_name: string; our_legal_entity_id: string | null; project_start_date: string; project_end_date: string; project_hours_budget: string; hourly_rate: string; project_type: string; is_support: boolean }`
+  - `interface CompanySearchResult { companies: Array<{ id: string; name: string; inn: string | null }>; truncated: boolean; failed: boolean }`
   - `useApiStore().createProject(form: ProjectCreationForm): Promise<ProjectCreationResult>`
+  - `useApiStore().searchCompanies(query: string, limit?: number): Promise<CompanySearchResult>`
+  - `useApiStore().getMyCompanies(): Promise<{ companies: Array<{ id: string; name: string }>; failed: boolean }>`
   - `addOneYear(iso: string): string` (экспорт из `frontend/app/types/project-creation.ts`) — тот же календарный край, что на бэкенде.
 
 - [ ] **Step 1: Написать падающий тест**
@@ -1658,6 +2057,14 @@ export interface ProjectCreationResult {
   missing_fields: string[]
 }
 
+export interface CompanySearchResult {
+  companies: Array<{ id: string; name: string; inn: string | null }>
+  /** true — показаны не все совпадения, стоит уточнить запрос. */
+  truncated: boolean
+  /** true — Битрикс не ответил; список пуст не потому, что ничего не нашлось. */
+  failed: boolean
+}
+
 export interface ProjectCreationForm {
   project_name: string
   company_id: string | null
@@ -1700,10 +2107,10 @@ export function plannedAmount(hours: string, rate: string): number | null {
 В `frontend/app/stores/api.ts` добавить импорт типов рядом с существующим импортом `~/types/project-board`:
 
 ```typescript
-import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
+import type { CompanySearchResult, ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
 ```
 
-и метод рядом с `updateProjectBoard` (сохраняя стиль соседей — сброс кэша после записи):
+и два метода рядом с `updateProjectBoard` (сохраняя стиль соседей — сброс кэша после записи):
 
 ```typescript
     async createProject(form: ProjectCreationForm): Promise<ProjectCreationResult> {
@@ -1713,6 +2120,25 @@ import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project
       })
       clearCache('project-board', 'project-board-meta', 'homepage-portfolio', 'filter-projects')
       return result
+    },
+
+    // Поиск не кэшируем на клиенте: кэш живёт на бэкенде (5 минут по строке
+    // запроса), а здесь запрос меняется на каждый ввод — локальный кэш только
+    // раздувал бы память браузера.
+    async searchCompanies(query: string, limit = 50): Promise<CompanySearchResult> {
+      const params = new URLSearchParams({ q: query, limit: String(limit) })
+      return await $api<CompanySearchResult>(`/api/project-board/companies/search?${params.toString()}`, {
+        method: 'GET'
+      })
+    },
+
+    // Свои юрлица — маленький список, кэшируется на бэкенде на 6 часов.
+    // Намеренно НЕ берём его из getProjectBoardMeta: там весь справочник портала.
+    async getMyCompanies(): Promise<{ companies: Array<{ id: string; name: string }>; failed: boolean }> {
+      return await $api<{ companies: Array<{ id: string; name: string }>; failed: boolean }>(
+        '/api/project-board/my-companies',
+        { method: 'GET' }
+      )
     },
 ```
 
@@ -1855,12 +2281,15 @@ const canSubmit = computed(() =>
   && Boolean(form.value.hourly_rate.trim())
 )
 
+// ВАЖНО: getProjectBoardMeta() здесь звать НЕЛЬЗЯ. Это весь справочник компаний
+// портала — на боевом 23 252 записи и около 12,6 МБ даже после хотфикса
+// 2026-07-28. Форма грузит только то, что ей нужно: свои юрлица отдельным
+// маленьким эндпоинтом, компании — поиском по мере ввода.
 async function loadReferences() {
   loadError.value = ''
   try {
-    const meta = await apiStore.getProjectBoardMeta()
-    companies.value = meta.directories?.companies ?? meta.companies ?? meta.filters?.companies ?? []
-    legalEntities.value = meta.directories?.legal_entities ?? meta.legal_entities ?? meta.filters?.legal_entities ?? []
+    const my = await apiStore.getMyCompanies()
+    legalEntities.value = my.companies
     if (legalEntities.value.length === 1) {
       form.value.our_legal_entity_id = String(legalEntities.value[0]!.id)
     }
@@ -1873,6 +2302,34 @@ async function loadReferences() {
     loadError.value = 'Не удалось загрузить справочники. Заполните поля вручную.'
     console.error('CreateProjectModal: failed to load references', error)
   }
+}
+
+// Поиск компаний с задержкой: без неё каждый символ уходил бы в Битрикс.
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+const companySearching = ref(false)
+const companySearchTruncated = ref(false)
+
+function onCompanyQuery(query: string) {
+  if (searchTimer) clearTimeout(searchTimer)
+  if (query.trim().length < 2) {
+    companies.value = []
+    companySearchTruncated.value = false
+    return
+  }
+  searchTimer = setTimeout(async () => {
+    companySearching.value = true
+    try {
+      const found = await apiStore.searchCompanies(query.trim())
+      companies.value = found.companies
+      companySearchTruncated.value = found.truncated
+      if (found.failed) loadError.value = 'Поиск компаний временно недоступен — можно ввести название вручную.'
+    } catch (error) {
+      companies.value = []
+      console.error('CreateProjectModal: company search failed', error)
+    } finally {
+      companySearching.value = false
+    }
+  }, 300)
 }
 
 watch(open, (isOpen) => { if (isOpen) loadReferences() }, { immediate: true })
@@ -1905,7 +2362,7 @@ function chooseCandidate(step: 'company', id: string) {
 Требования к разметке (используй компоненты `@bitrix24/b24ui-nuxt` с префиксом `B24`, как в соседних файлах `frontend/app/components/projects/`):
 
 - `B24Modal` с заголовком «Создать проект».
-- Поля в порядке §5: название (обязательное), компания (`B24Select` из `meta.companies` + возможность ввести новое название), наше юрлицо (показывать `B24Select` только когда в `meta.legal_entities` больше одного, иначе скрытое предзаполненное значение), куратор (предзаполнен текущим сотрудником), дата начала (по умолчанию сегодня), дата окончания (по умолчанию `addOneYear(project_start_date)`, пересчитывается при смене начала, но не затирает ручную правку — держи флаг `endDateTouched`), бюджет часов (необязательное), ставка (предзаполнена из `meta.hourly_rate`, обязательна только если та пустая), плановая сумма (только для чтения, `plannedAmount(hours, rate)`), тип проекта (`B24Select`, по умолчанию «Поставка»), признак поддержки (`B24Switch`, выключен).
+- Поля в порядке §5: название (обязательное), компания (поиск по мере ввода — поле с автодополнением, вызывает `onCompanyQuery`; подсказка «начните вводить название или ИНН», при `companySearchTruncated` — пометка «показаны первые 50, уточните запрос»; если ничего не нашлось, введённый текст используется как название новой компании), наше юрлицо (показывать выбор только когда `legalEntities.length > 1`, иначе значение уже подставлено и поле можно не показывать), куратор (предзаполнен текущим сотрудником), дата начала (по умолчанию сегодня), дата окончания (по умолчанию `addOneYear(project_start_date)`, пересчитывается при смене начала, но не затирает ручную правку — держи флаг `endDateTouched`), бюджет часов (необязательное), ставка (предзаполнена из настроек портала, обязательна только если там пусто), плановая сумма (только для чтения, `plannedAmount(hours, rate)`), тип проекта (`B24Select`, по умолчанию «Поставка»), признак поддержки (`B24Switch`, выключен).
 - Кнопка «Создать» отключена, пока не заполнены обязательные поля.
 - После отправки — три строки статуса вида «Компания ✓ создано · Проект ✓ создано · Карточка ✗ ошибка» через `stepLabel`, тексты ошибок показываются под строкой.
 - При `status === 'ambiguous'` — `B24Select` из `candidates` и кнопка «Повторить», отправляющая ту же форму с выбранным `company_id`.
