@@ -33,6 +33,29 @@ def _clean_str(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _safe_int(value: Any, default: int) -> int:
+    """`int(value)`, но никогда не бросает исключение — что угодно, что не
+    разбирается в число (пустая строка, `None`, произвольный мусор), даёт
+    `default` вместо `ValueError`/`TypeError`."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_limit(limit: Any) -> int:
+    """Разбирает пользовательский `limit`, не доверяя ничему.
+
+    Пустая строка (`?limit=` без значения в будущем HTTP-эндпоинте), `None`,
+    нечисловой мусор — это не «странный лимит», а «лимит не передали»:
+    подставляется `DEFAULT_LIMIT`. Валидные, но не влезающие в диапазон числа
+    (0, отрицательные, больше `MAX_LIMIT`; `bool` тоже `int` в Python, так что
+    `True`/`False` тоже проходят через `int()`) — отсекаются `max`/`min`.
+    Никогда не бросает исключение.
+    """
+    return max(1, min(_safe_int(limit, DEFAULT_LIMIT), MAX_LIMIT))
+
+
 def _normalize_rows(response: Dict[str, Any], method_name: str) -> Tuple[List[Dict[str, Any]], bool]:
     """Приводит response["result"] к списку словарей, не доверяя форме ответа.
 
@@ -60,9 +83,16 @@ class CompanySearchService:
         self.account = account
 
     def search(self, query: str, limit: int = DEFAULT_LIMIT) -> Dict[str, Any]:
+        """Ищет компании по названию, а для похожих на ИНН запросов — ещё и по ИНН.
+
+        `failed=True` означает «не доверяй полноте списка», а НЕ «список
+        пуст»: при сбое по форме ответа Битрикса (см. `_normalize_rows`) уже
+        разобранные записи всё равно попадают в `companies` одновременно с
+        `failed=True`. Проверяйте оба поля независимо, не выводите одно из
+        другого.
+        """
         query = _clean_str(query)
-        limit = DEFAULT_LIMIT if limit is None else int(limit)
-        limit = max(1, min(limit, MAX_LIMIT))
+        limit = _parse_limit(limit)
 
         if len(query) < MIN_QUERY_LENGTH:
             return {"companies": [], "truncated": False, "failed": False}
@@ -104,7 +134,17 @@ class CompanySearchService:
                         "select": ["ENTITY_ID", "RQ_INN"],
                     },
                 )
-                for row in inn_response.get("result") or []:
+                # _normalize_rows фильтрует весь список разом, поэтому не
+                # важно, где именно оказался мусор — до, после или между
+                # валидными записями (ср. с list_my_companies() и веткой
+                # crm.company.list выше, где так было не всегда: цикл падал
+                # необработанным исключением на первом же плохом элементе,
+                # и то, что до него успело записаться в inn_by_company,
+                # переживало except — асимметрично, в зависимости от порядка).
+                inn_rows, inn_shape_failed = _normalize_rows(inn_response, "crm.requisite.list")
+                if inn_shape_failed:
+                    failed = True
+                for row in inn_rows:
                     entity_id = _clean_str(row.get("ENTITY_ID") or row.get("entityId"))
                     inn = _clean_str(row.get("RQ_INN") or row.get("rqInn"))
                     if entity_id and inn:
@@ -138,7 +178,7 @@ class CompanySearchService:
         truncated = (
             len(companies) > limit
             or bool(response.get("next"))
-            or int(response.get("total") or 0) > title_rows_count
+            or _safe_int(response.get("total"), 0) > title_rows_count
         )
         payload = {"companies": companies[:limit], "truncated": truncated, "failed": failed}
 
@@ -154,6 +194,12 @@ class CompanySearchService:
         ProjectCardService.get_legal_entities() делает то же самое, но выкачивая
         весь справочник портала и фильтруя в Python: на боевом это 465 страниц
         ради нескольких записей.
+
+        Как и в `search()`: `failed=True` означает «не доверяй полноте
+        списка», а НЕ «список пуст». При сбое сети `companies` действительно
+        будет пуст, но при сбое по форме ответа (см. `_normalize_rows`)
+        частично разобранные записи всё равно попадут в `companies`
+        одновременно с `failed=True`.
         """
         cache_key = build_account_cache_key(self.account, "my-companies")
         cached = cache.get(cache_key)

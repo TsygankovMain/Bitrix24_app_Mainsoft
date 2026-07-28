@@ -161,6 +161,64 @@ class CompanySearchTest(TestCase):
         self.assertEqual(result["companies"], [])
         self.assertTrue(result["failed"])
 
+    def test_empty_string_limit_defaults_without_crashing(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 4)]
+        client = _FakeClient({"crm.company.list": {"result": rows}})
+        result = self.service(client).search("Компания", limit="")
+
+        self.assertEqual(len(result["companies"]), 3)
+        self.assertFalse(result["truncated"])
+
+    def test_non_numeric_limit_defaults_without_crashing(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 4)]
+        client = _FakeClient({"crm.company.list": {"result": rows}})
+        result = self.service(client).search("Компания", limit="many")
+
+        self.assertEqual(len(result["companies"]), 3)
+        self.assertFalse(result["truncated"])
+
+    def test_negative_limit_is_clamped_to_one_without_crashing(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 4)]
+        client = _FakeClient({"crm.company.list": {"result": rows}})
+        result = self.service(client).search("Компания", limit=-5)
+
+        self.assertEqual(len(result["companies"]), 1)
+        self.assertTrue(result["truncated"])
+
+    def test_false_limit_is_clamped_to_one_without_crashing(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 4)]
+        client = _FakeClient({"crm.company.list": {"result": rows}})
+        result = self.service(client).search("Компания", limit=False)
+
+        self.assertEqual(len(result["companies"]), 1)
+        self.assertTrue(result["truncated"])
+
+    def test_non_numeric_total_does_not_crash(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 51)]
+        client = _FakeClient({
+            "crm.company.list": {"result": rows, "total": "many"},
+        })
+        result = self.service(client).search("Компания", limit=50)
+
+        self.assertEqual(len(result["companies"]), 50)
+
+    def test_inn_lookup_survives_garbage_after_valid_entry(self):
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.requisite.list": {"result": [
+                {"ENTITY_ID": "15", "RQ_INN": "7701234567"},
+                "trash",
+                {"ENTITY_ID": "16", "RQ_INN": "7709876543"},
+            ]},
+        })
+        result = self.service(client).search("7701234567")
+
+        # Мусор в середине списка не должен обрывать разбор: запись ДО и
+        # запись ПОСЛЕ мусора обе должны попасть в результат — независимо от
+        # порядка, а не только если мусор оказался последним элементом.
+        self.assertEqual(sorted(c["id"] for c in result["companies"]), ["15", "16"])
+        self.assertTrue(result["failed"])
+
 
 class MyCompaniesTest(TestCase):
     def setUp(self):
