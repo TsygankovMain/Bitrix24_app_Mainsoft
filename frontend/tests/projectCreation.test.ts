@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { addOneYear, plannedAmount } from '../app/types/project-creation'
-import { stepBadgeClass, stepLabel } from '../app/utils/projectCreationLabels'
+import { stepBadgeClass, stepErrorTextClass, stepLabel } from '../app/utils/projectCreationLabels'
 import {
   missingFieldLabel,
   shouldRefetchLegalEntities,
@@ -63,6 +63,29 @@ test('stepBadgeClass: успех — зелёный, пропущено — не
 
 test('stepBadgeClass: неизвестный статус не роняет интерфейс', () => {
   assert.equal(stepBadgeClass({ status: 'xxx' } as never), 'bg-slate-100 text-slate-500')
+})
+
+// Важное 1 финального ревью: шаг карточки возвращает status='skipped' ВМЕСТЕ
+// с текстом причины, когда смарт-процесс проектов не настроен (ensure_card
+// в project_creation_service.py: error="Смарт-процесс проектов не
+// настроен — карточка не создана."). Разметка красила текст ЛЮБОГО .error
+// одинаково тревожным rose-600 — под нейтральным серым бейджом
+// "— пропущено" оказывалась красная строка, бейдж и подпись противоречили
+// друг другу. Тревожным (rose-600) остаётся только текст при статусе
+// 'error' — остальное, включая неизвестные статусы, нейтрально, тем же
+// приёмом "не пугать несуществующей проблемой", что и у stepLabel/stepBadgeClass.
+test('stepErrorTextClass: skipped с текстом причины — нейтральный, не тревожный', () => {
+  const step = { status: 'skipped', id: null, name: '', candidates: [], error: 'Смарт-процесс проектов не настроен — карточка не создана.' } as never
+  assert.equal(stepErrorTextClass(step), 'text-xs text-slate-500')
+})
+
+test('stepErrorTextClass: error — тревожный красный текст', () => {
+  const step = { status: 'error', id: null, name: '', candidates: [], error: 'Не удалось создать компанию.' } as never
+  assert.equal(stepErrorTextClass(step), 'text-xs text-rose-600')
+})
+
+test('stepErrorTextClass: неизвестный статус — нейтральный по умолчанию, как у stepLabel/stepBadgeClass', () => {
+  assert.equal(stepErrorTextClass({ status: 'xxx' } as never), 'text-xs text-slate-500')
 })
 
 // Фикс-раунд ревью задачи 8, находка 1: безусловный сброс формы при каждом

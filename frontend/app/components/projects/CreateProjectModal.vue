@@ -6,7 +6,7 @@ import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from '~/utils/apiErrors'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { formatProjectCurrency } from '~/utils/projectBoard'
-import { stepBadgeClass, stepLabel } from '~/utils/projectCreationLabels'
+import { stepBadgeClass, stepErrorTextClass, stepLabel } from '~/utils/projectCreationLabels'
 import {
   missingFieldLabel,
   shouldRefetchLegalEntities,
@@ -407,9 +407,9 @@ function closeModal() {
             <span :class="['ms-pill', stepBadgeClass(result.card)]">Карточка {{ stepLabel(result.card) }}</span>
           </div>
 
-          <p v-if="result.company.error" class="text-xs text-rose-600">Компания: {{ result.company.error }}</p>
-          <p v-if="result.group.error" class="text-xs text-rose-600">Проект: {{ result.group.error }}</p>
-          <p v-if="result.card.error" class="text-xs text-rose-600">Карточка: {{ result.card.error }}</p>
+          <p v-if="result.company.error" :class="stepErrorTextClass(result.company)">Компания: {{ result.company.error }}</p>
+          <p v-if="result.group.error" :class="stepErrorTextClass(result.group)">Проект: {{ result.group.error }}</p>
+          <p v-if="result.card.error" :class="stepErrorTextClass(result.card)">Карточка: {{ result.card.error }}</p>
 
           <div v-if="result.company.status === 'ambiguous'" class="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
             <p class="text-xs text-amber-800">Нашлось несколько компаний с таким названием — выберите нужную:</p>
