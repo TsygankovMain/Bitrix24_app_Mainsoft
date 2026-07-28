@@ -10,6 +10,7 @@ import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption, ProjectBoardR
 import { upsertProjectBoardCard, buildProjectBoardSummary, formatProjectDate, getTimelineAnchor, parseProjectDateValue } from '~/utils/projectBoard'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
+import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from '~/utils/apiErrors'
 
 const router = useRouter()
 const route = useRoute()
@@ -396,10 +397,25 @@ async function refreshReferenceOptions(showToast = true) {
       }
     }
   } catch (error) {
-    if (showToast) {
-      showStatus('error', 'Не удалось обновить справочники компаний и кураторов.')
+    // HTTP 429 от board_meta_refresh (6 запросов/60 секунд на аккаунт, см.
+    // backends/python/api/main/utils/decorators/rate_limit.py) — это ожидаемая,
+    // самовосстанавливающаяся ситуация «подождите минуту», а не сбой
+    // приложения. processErrorGlobal зовёт showError({..., fatal: true}), а
+    // frontend/app/error.vue рендерит фатальную ошибку без пути лёгкого
+    // возврата (:clear="false") — единственный выход тогда: перезагрузка
+    // страницы. Непропорциональная реакция на превышение лимита, поэтому для
+    // 429 показываем только лёгкое самоочищающееся уведомление (showStatus)
+    // и НЕ эскалируем. Остальные ошибки — как раньше, без изменений.
+    if (isRateLimitError(error)) {
+      if (showToast) {
+        showStatus('warning', RATE_LIMIT_NOTICE_TEXT)
+      }
+    } else {
+      if (showToast) {
+        showStatus('error', 'Не удалось обновить справочники компаний и кураторов.')
+      }
+      processErrorGlobal(error)
     }
-    processErrorGlobal(error)
   } finally {
     isRefreshingMeta.value = false
   }
@@ -429,8 +445,17 @@ async function syncBoard(showToast = true) {
     } catch {
       // keep original sync error for global handler
     }
-    showStatus('error', 'Не удалось синхронизировать проекты. Попробуйте еще раз или проверьте права приложения в Битрикс24.')
-    processErrorGlobal(error)
+
+    // См. пояснение в catch у refreshReferenceOptions выше: HTTP 429 от
+    // лимитера "sync" (или от board_meta_refresh — один клик «Синхронизировать»
+    // тратит бюджет обоих, см. Promise.all([loadMeta(true), loadBoard(true)])
+    // выше) не должен уводить на фатальный экран.
+    if (isRateLimitError(error)) {
+      showStatus('warning', RATE_LIMIT_NOTICE_TEXT)
+    } else {
+      showStatus('error', 'Не удалось синхронизировать проекты. Попробуйте еще раз или проверьте права приложения в Битрикс24.')
+      processErrorGlobal(error)
+    }
   } finally {
     isSyncing.value = false
     progress.end()
@@ -574,14 +599,26 @@ onMounted(async () => {
     await $b24.parent.setTitle('Управление проектами')
     isInit.value = true
 
-    const [meta] = await Promise.all([
+    // Раньше здесь при скудном справочнике (isMetaSparse) автоматически
+    // запускался refreshReferenceOptions(false) — тихий форс-рефреш без ведома
+    // человека. Убрано намеренно: на портале, где в CRM действительно мало
+    // компаний, isMetaSparse истинна ПОСТОЯННО, а не изредка, — значит каждое
+    // открытие страницы, каждая вкладка и каждая перезагрузка молча тратили
+    // единицу общего бюджета лимитера board_meta_refresh (6 запросов/60 секунд
+    // на аккаунт, см. backends/python/api/main/utils/decorators/rate_limit.py),
+    // конкурируя за тот же бюджет с сознательными кликами по кнопкам
+    // «Синхронизировать проекты» и «Обновить справочники». Именно это превращало
+    // «пару лишних кликов» в исчерпанный лимит без единого сознательного действия
+    // человека — например, у того, кто просто открыл приложение в трёх вкладках.
+    // Автоматическое действие, которое молча тратит ограниченный бюджет без
+    // ведома человека, — плохая идея сама по себе, независимо от лимита.
+    // Справочник и так подтягивается обычным путём (loadMeta() выше, из
+    // серверного или браузерного кэша); сознательное обновление остаётся за
+    // кнопкой «Обновить справочники».
+    await Promise.all([
       loadMeta(),
       loadBoard()
     ])
-
-    if (isMetaSparse(meta)) {
-      void refreshReferenceOptions(false)
-    }
   } catch (error) {
     processErrorGlobal(error)
   } finally {
