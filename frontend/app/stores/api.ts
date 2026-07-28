@@ -1,5 +1,6 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { withoutTrailingSlash } from 'ufo'
+import { withRefreshParam } from '~/utils/apiCache'
 import { buildReportSearchParams } from '~/utils/reportFilters'
 import type {
   DailyWorkloadReport,
@@ -650,7 +651,14 @@ export const useApiStore = defineStore(
 
     const getProjectBoard = async (forceRefresh = false): Promise<ProjectBoardResponse> => {
       return await withBrowserCache('project-board', browserCacheTtl.board, async () => {
-        return await $api('/api/project-board', {
+        // forceRefresh раньше управлял только этим браузерным кэшем — сам
+        // запрос уходил без параметров, и бэкенд отдавал свой серверный кэш
+        // независимо от кнопки «Обновить». withRefreshParam (см.
+        // frontend/app/utils/apiCache.ts, тот же приём, что и у
+        // getProjectBoardMeta) сообщает бэкенду, что нужно обойти именно его,
+        // серверный, кэш — иначе он per-процессный и не видит сброс, который
+        // сделал другой процесс бэкенда (Блокер 2 финального ревью).
+        return await $api(withRefreshParam('/api/project-board', forceRefresh), {
           headers: {
             Authorization: `Bearer ${tokenJWT.value}`
           }
@@ -671,9 +679,11 @@ export const useApiStore = defineStore(
 
       // forceRefresh раньше управлял только этим браузерным кэшем — сам
       // запрос уходил без параметров, и бэкенд отдавал свой серверный кэш
-      // (6 часов) независимо от кнопки «Обновить справочники». ?refresh=1
-      // сообщает бэкенду, что нужно принудительно перечитать источники.
-      const url = forceRefresh ? '/api/project-board/meta?refresh=1' : '/api/project-board/meta'
+      // (6 часов) независимо от кнопки «Обновить справочники». withRefreshParam
+      // (frontend/app/utils/apiCache.ts) сообщает бэкенду, что нужно
+      // принудительно перечитать источники — тот же ?refresh=1, что и раньше,
+      // теперь общий с getProjectBoard/getHomepagePortfolio.
+      const url = withRefreshParam('/api/project-board/meta', forceRefresh)
       const value = await $api<ProjectBoardMetaPayload>(url, {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
@@ -795,7 +805,10 @@ export const useApiStore = defineStore(
 
     const getHomepagePortfolio = async (forceRefresh = false): Promise<unknown> => {
       return await withBrowserCache('homepage-portfolio', browserCacheTtl.homepage, async () => {
-        return await $api('/api/homepage/portfolio', {
+        // См. комментарий в getProjectBoard — тот же приём и та же причина
+        // (Блокер 2 финального ревью): без параметра форсится только браузерный
+        // кэш, серверный (per-процессный) остаётся стухшим до TTL.
+        return await $api(withRefreshParam('/api/homepage/portfolio', forceRefresh), {
           headers: {
             Authorization: `Bearer ${tokenJWT.value}`
           }
