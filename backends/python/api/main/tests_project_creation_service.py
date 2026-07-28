@@ -1061,3 +1061,82 @@ class CreateCacheInvalidationTest(_ServiceTestCase):
             budgets.get("44"), 25.0,
             "Кэш доски не сброшен после повторного create() (found/found/found) — правка не видна.",
         )
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    def test_already_on_board_branch_still_invalidates_the_calling_accounts_cache(self):
+        """Ре-ревью task-9-cache-fix-report.md: ветка already_on_board (строку
+        для этого project_id уже написал ДРУГОЙ аккаунт того же портала —
+        редкая гонка двух почти одновременных создателей, см. докстринг
+        create()) не сбрасывала кэш ЭТОГО (self.account) аккаунта, хотя
+        exists() только что подтвердил, что локальная строка гарантированно
+        уже есть — просто её создал не он.
+
+        Симптом идентичен основному багу: у кэша каждого аккаунта СВОЙ ключ
+        (build_account_cache_key), и если доска сотрудника Б прогрелась ДО
+        того, как коллега А дописал проект, кнопка Б отчитается успехом
+        (done=True, get_project_board_create и до фикса, и после — карточка
+        уже есть), а доска Б останется пустой до истечения
+        PROJECT_BOARD_CACHE_TTL. Кто из двух сотрудников попадёт в эту ветку —
+        вопрос гонки, но человек в моменте не знает, что попал в редкий путь:
+        он просто видит, что кнопка соврала.
+
+        Portal/USE_PORTAL_SCOPING=True — как и в
+        CreateOrchestrationConcurrencyTest.test_second_account_same_portal_does_not_duplicate_local_row,
+        без них already_on_board недостижима: scope_to_tenant(account) без
+        portal падает на скоуп по одному аккаунту, и один аккаунт никогда не
+        увидит строку другого."""
+        portal = Portal.objects.create(
+            member_id="m-create-cache-race", domain_url="cache-race.bitrix24.ru", status="active",
+        )
+        account_a = Bitrix24Account.objects.create(
+            b24_user_id=30, is_b24_user_admin=True, member_id="m-create-cache-race",
+            is_master_account=True, domain_url="cache-race.bitrix24.ru",
+            status="active", application_version=1, portal=portal,
+        )
+        account_b = Bitrix24Account.objects.create(
+            b24_user_id=31, is_b24_user_admin=False, member_id="m-create-cache-race",
+            is_master_account=False, domain_url="cache-race.bitrix24.ru",
+            status="active", application_version=1, portal=portal,
+        )
+
+        board_service_b = ProjectCardService(self._client(), account_b)
+        # Сотрудник Б открыл доску РАНЬШЕ, чем коллега А создал проект —
+        # кэш аккаунта Б прогревается пустым снимком.
+        warm_b = board_service_b.get_board_data()
+        self.assertEqual(warm_b["cards"], [])
+
+        # Коллега А создаёт проект с нуля (обычный happy path).
+        result_a = ProjectCreationService(self._client(), account_a).create(
+            self._form(), current_user_id="10", current_user_name="Коллега А",
+            today=date(2026, 7, 28),
+        )
+        self.assertTrue(result_a["done"])
+        self.assertEqual(ProjectCard.objects.filter(portal=portal, project_id="44").count(), 1)
+
+        # Сотрудник Б тоже нажимает «Создать проект» — попадает на уже
+        # существующие компанию/группу/карточку (все found), локальную
+        # строку уже написал А: already_on_board=True для Б, write_through
+        # для Б не вызывается.
+        client_b = self._client(**{
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+            "sonet_group.get": {"result": [{"ID": "44", "NAME": "Портал АО Ромашка"}]},
+            "crm.item.list": {"result": {"items": [{"id": 901}]}},
+        })
+        result_b = ProjectCreationService(client_b, account_b).create(
+            self._form(), current_user_id="11", current_user_name="Сотрудник Б",
+            today=date(2026, 7, 28),
+        )
+        self.assertEqual(result_b["company"]["status"], "found")
+        self.assertEqual(result_b["group"]["status"], "found")
+        self.assertTrue(result_b["done"])
+        # Дедуп сработал: вторая строка не появилась, дубля на доске нет.
+        self.assertEqual(ProjectCard.objects.filter(portal=portal, project_id="44").count(), 1)
+
+        # Доска сотрудника Б обязана немедленно показать проект коллеги —
+        # не через PROJECT_BOARD_CACHE_TTL.
+        board_b = board_service_b.get_board_data()
+        project_ids = [card["project_id"] for card in board_b["cards"]]
+        self.assertIn(
+            "44", project_ids,
+            "Кэш аккаунта Б не сброшен в ветке already_on_board — проект коллеги не виден.",
+        )

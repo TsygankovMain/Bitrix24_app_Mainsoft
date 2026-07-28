@@ -591,28 +591,31 @@ class ProjectCreationService:
                 )
             else:
                 self.write_through(fields, group.id, card.id)
-                # Доска и главный экран кэшируют локальную таблицу на 2 минуты
-                # (PROJECT_BOARD_CACHE_TTL/HOMEPAGE_CACHE_TTL,
-                # project_board_shared.py), а кэш прогревается уже тем, что
-                # человек находится на доске — без сброса свежесозданный
-                # проект пропадал с доски до истечения TTL (находка ревью,
-                # заблокировавшая выкатку кнопки; воспроизведено тестами в
-                # CreateCacheInvalidationTest, tests_project_creation_service.py).
-                # Сбрасываем ТОЛЬКО после успешного write_through — как и все
-                # остальные изменяющие пути (update_card/update_stage/
-                # archive_project/ProjectSyncService.sync/
-                # StageAutomationService/сохранение настроек/синк таймшитов,
-                # см. invalidate_project_runtime_caches) — единообразно с
-                # ними и без попытки отличить "запись реально что-то
-                # поменяла" от "переписала тем же самым": write_through делает
-                # update_or_create безусловно, и даже "все три шага нашлись"
-                # (company/group/card status="found") может быть первым
-                # появлением локальной строки для проекта, заведённого в
-                # Битриксе до этого приложения — пропуск сброса в этом случае
-                # воспроизвёл бы тот же баг для более редкого пути. Если
-                # запись не удалась (except ниже) — кэш не трогаем: показать
-                # всё равно нечего, локальная строка не появилась.
-                invalidate_project_runtime_caches(self.account)
+
+            # К этой строке локальная запись для project_id=group.id
+            # гарантированно существует — либо её только что записал
+            # write_through выше, либо exists() только что подтвердил, что
+            # её раньше записал другой аккаунт того же портала
+            # (already_on_board=True). В ОБОИХ случаях сбрасываем кэш ЭТОГО
+            # аккаунта (self.account): у кэша свой собственный
+            # account-scoped ключ (build_account_cache_key), и после чужой
+            # записи его некому сбросить, кроме этого же запроса — чужой
+            # write_through чистил только СВОЙ (чужой) кэш-ключ. Без сброса
+            # в ветке already_on_board кнопка отчитывалась бы успехом, а
+            # доска ЭТОГО пользователя (если её кэш прогрелся до чужой
+            # записи) оставалась пустой до истечения PROJECT_BOARD_CACHE_TTL/
+            # HOMEPAGE_CACHE_TTL (2 минуты, project_board_shared.py) — тот же
+            # симптом, что и основной баг, просто на более узком окне гонки
+            # (ре-ревью, находка после первого раунда фикса; воспроизведено
+            # тестами в CreateCacheInvalidationTest,
+            # tests_project_creation_service.py). Сбрасываем БЕЗУСЛОВНО, не
+            # различая found/created (write_through делает update_or_create
+            # независимо от статусов шагов — см. отчёт в
+            # task-9-cache-fix-report.md). Если сама попытка (exists() выше
+            # или write_through) упадёт — except ниже — кэш не трогаем:
+            # локальная строка в этом случае не гарантирована, показывать
+            # нечего.
+            invalidate_project_runtime_caches(self.account)
         except Exception as exc:
             logger.warning("create: write_through failed for group %s: %s", group.id, exc)
 
