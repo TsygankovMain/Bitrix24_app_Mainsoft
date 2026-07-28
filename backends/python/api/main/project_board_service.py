@@ -584,7 +584,7 @@ class ProjectCardService:
             fallback=self._get_project_card_fallback_options("company_id", "company_name"),
         )
 
-    def get_legal_entities(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def get_legal_entities(self, config: Optional[Dict[str, Any]] = None, *, bypass_cache: bool = False) -> List[Dict[str, Any]]:
         """Свои юрлица через CompanySearchService.list_my_companies() — один
         запрос crm.company.list с фильтром IS_MY_COMPANY=Y на стороне Битрикса.
 
@@ -598,15 +598,28 @@ class ProjectCardService:
         считали, а ждали, — и из-за очереди даже статический файл на 10 КБ
         отдавался пять секунд; сам Битрикс к концу обхода отваливался по
         таймауту.
+
+        bypass_cache=True — форс-рефреш: пропускает и внешний кэш
+        "project-board-legal-entities" (см. _fetch_references_with_cache), и
+        внутренний кэш list_my_companies ("my-companies", свой собственный
+        TTL). Нужен, потому что invalidate_project_runtime_caches чистит
+        ТОЛЬКО первый — про второй, вложенный в CompanySearchService, она не
+        знает и знать не должна (список суффиксов для инвалидации — это
+        связь по имени, которую легко забыть при следующем таком кэше).
+        Вызывай сразу после invalidate_project_runtime_caches в месте,
+        которое выполняет принудительное обновление (ProjectSyncService.sync) —
+        иначе админ жмёт «Обновить», получает 200, а новое юрлицо не
+        появится в справочнике до истечения MY_COMPANIES_CACHE_TTL (6 часов).
         """
         def _fetch_my_companies() -> List[Dict[str, Any]]:
-            result = CompanySearchService(self.client, self.account).list_my_companies()
+            result = CompanySearchService(self.client, self.account).list_my_companies(bypass_cache=bypass_cache)
             return result.get("companies") or []
 
         return self._fetch_references_with_cache(
             "project-board-legal-entities",
             _fetch_my_companies,
             fallback=self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name"),
+            bypass_cache=bypass_cache,
         )
 
     def serialize_card(
@@ -1118,13 +1131,19 @@ class ProjectCardService:
         fetcher,
         fallback: Optional[List[Dict[str, Any]]] = None,
         ttl: int = BITRIX_REFERENCE_CACHE_TTL,
+        bypass_cache: bool = False,
     ) -> List[Dict[str, Any]]:
+        """bypass_cache=True пропускает ЧТЕНИЕ кэша по cache_suffix (для
+        принудительного тёплого обновления сразу после инвалидации — см.
+        get_legal_entities). Успешный результат всё равно перезаписывает
+        кэш, так что последующие обычные вызовы получают уже свежие данные."""
         cache_key = build_account_cache_key(self.account, cache_suffix)
-        cached = cache.get(cache_key)
-        if self._has_reference_options(cached):
-            return cached
-        if cached == []:
-            cache.delete(cache_key)
+        if not bypass_cache:
+            cached = cache.get(cache_key)
+            if self._has_reference_options(cached):
+                return cached
+            if cached == []:
+                cache.delete(cache_key)
 
         live_result: List[Dict[str, Any]] = []
         try:

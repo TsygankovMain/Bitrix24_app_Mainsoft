@@ -188,7 +188,7 @@ class CompanySearchService:
             cache.set(cache_key, payload, SEARCH_CACHE_TTL)
         return payload
 
-    def list_my_companies(self) -> Dict[str, Any]:
+    def list_my_companies(self, bypass_cache: bool = False) -> Dict[str, Any]:
         """Свои юрлица — серверным фильтром IS_MY_COMPANY.
 
         ProjectCardService.get_legal_entities() делает то же самое, но выкачивая
@@ -200,11 +200,21 @@ class CompanySearchService:
         будет пуст, но при сбое по форме ответа (см. `_normalize_rows`)
         частично разобранные записи всё равно попадут в `companies`
         одновременно с `failed=True`.
+
+        bypass_cache=True пропускает ЧТЕНИЕ кэша (используется сразу после
+        принудительной инвалидации внешних project-board-кэшей, см.
+        ProjectCardService.get_legal_entities/_fetch_references_with_cache —
+        у этого метода собственный кэш "my-companies" на MY_COMPANIES_CACHE_TTL,
+        и внешняя инвалидация по списку суффиксов о нём не знает и не должна:
+        такой список — это связь по имени, которую легко забыть при следующем
+        кэше). Результат успешного запроса всё равно перезаписывает кэш, так
+        что обычные вызовы без флага сразу после этого читают уже свежие данные.
         """
         cache_key = build_account_cache_key(self.account, "my-companies")
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
+        if not bypass_cache:
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return cached
 
         try:
             response = self.client._bitrix_token.call_method(

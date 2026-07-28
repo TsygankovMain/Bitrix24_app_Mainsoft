@@ -133,6 +133,17 @@ class ProjectSyncService:
             result["warning"] = warning
 
         invalidate_project_runtime_caches(self.account)
+        # invalidate_project_runtime_caches чистит только внешний кэш
+        # "project-board-legal-entities". У его источника, CompanySearchService.
+        # list_my_companies(), собственный вложенный кэш ("my-companies", тоже
+        # часы TTL) — про него внешняя инвалидация по суффиксам не знает и не
+        # должна (см. ProjectCardService.get_legal_entities). Это единственное
+        # место, представляющее пользователю "принудительное обновление"
+        # (frontend syncBoard() дергает именно этот endpoint, а затем сразу
+        # перечитывает доску/meta), поэтому греем оба слоя кэша здесь —
+        # иначе новое юрлицо, заведённое в Битриксе, не появится в
+        # справочнике до истечения MY_COMPANIES_CACHE_TTL, хотя sync ответит 200.
+        self.card_service.get_legal_entities(bypass_cache=True)
         return result
 
     def _sync_from_groups(
