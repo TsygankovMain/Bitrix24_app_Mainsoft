@@ -34,7 +34,6 @@ const open = defineModel<boolean>('open', { required: true })
 const emit = defineEmits<{ created: [result: ProjectCreationResult] }>()
 
 const apiStore = useApiStore()
-const fieldConfigStore = useFieldConfigStore()
 const userStore = useUserStore()
 
 /** SearchableSelect в серверном режиме сам показывает найденное; локального
@@ -50,6 +49,16 @@ const PROJECT_TYPE_ITEMS = [
 ]
 
 const legalEntities = ref<ProjectBoardDirectoryOption[]>([])
+// Блокер 1 финального ревью: идентификатор смарт-процесса ПРОЕКТОВ (не
+// путать с fieldConfigStore.entityTypeId — тот держит смарт-процесс
+// СПИСАНИЙ ЧАСОВ, другую сущность). Источник — configuration.project_sp_entity_type_id,
+// та же конфигурация, которую loadReferences() уже грузит ради hourly_rate;
+// тот же приём, что и в frontend/app/pages/handler/placement-crm-deal-detail-tab.client.vue
+// (projectSpaEntityTypeId). 0 — валидное «ещё не загружено/не настроено» и
+// специально falsy: v-if кнопки «Открыть карточку» ниже не должен звать
+// openCrmItemCard с нулевым entityTypeId (адрес вида /crm/type/0/details/...
+// вёл в никуда — тот самый Блокер 1).
+const projectEntityTypeId = ref(0)
 const submitting = ref(false)
 const result = ref<ProjectCreationResult | null>(null)
 const loadError = ref('')
@@ -158,6 +167,11 @@ async function loadReferences() {
     const config = await apiStore.getConfiguration()
     const rate = Number(config?.hourly_rate ?? 0)
     if (rate > 0 && !form.value.hourly_rate) form.value.hourly_rate = String(rate)
+    // Блокер 1: id смарт-процесса проектов — для ссылки «Открыть карточку»
+    // на успешном экране ниже. Перезаписываем безусловно (не «если пусто»,
+    // как hourly_rate/our_legal_entity_id) — это не пользовательский ввод,
+    // который нельзя затирать повторным вызовом, а конфигурация портала.
+    projectEntityTypeId.value = Number(config?.project_sp_entity_type_id || 0)
   } catch (error) {
     // Справочники не догрузились — форму всё равно показываем: названия
     // компании и проекта можно ввести руками, бэкенд их найдёт или создаст.
@@ -419,10 +433,10 @@ function closeModal() {
             <div class="flex flex-wrap gap-2">
               <B24Button v-if="result.group.id" label="Открыть проект" color="link" @click="openProjectGroup(result.group.id)" />
               <B24Button
-                v-if="result.card.id"
+                v-if="result.card.id && projectEntityTypeId"
                 label="Открыть карточку"
                 color="link"
-                @click="openCrmItemCard(fieldConfigStore.entityTypeId, result.card.id)"
+                @click="openCrmItemCard(projectEntityTypeId, result.card.id)"
               />
             </div>
           </div>
