@@ -72,6 +72,7 @@ __all__ = [
     "get_project_board_meta",
     "get_project_board_card",
     "sync_project_board",
+    "create_project_board",
     "update_project_board",
     "update_project_board_stage",
     "archive_project_board",
@@ -524,10 +525,25 @@ def _build_project_spa_validation_payload(
 
 
 def _load_request_json(request: AuthorizedRequest):
+    """Разбирает JSON-тело запроса и ГАРАНТИРУЕТ словарь на выходе.
+
+    Все вызывающие (create_project_board, update_project_board,
+    update_project_board_stage, archive_project_board) обращаются к
+    результату как к dict — сразу .get(...), без проверки типа. Раньше сюда
+    пропускалось любое успешно разобранное JSON-значение как есть: null и []
+    случайно гасились чужой конструкцией `x or {}` ниже по стеку (например,
+    resolve_project_fields), а вот непустой список/число/строка/true —
+    истинны, "x or {}" их не трогает, и они долетали до первого чужого
+    payload.get(...) с 500 "'list'/'int'/'str'/'bool' object has no
+    attribute 'get'". Проверка типа здесь, а не у каждого вызывающего:
+    у хелпера один контракт на всех, а не N мест, которые обязаны помнить
+    о нём сами.
+    """
     try:
-        return json.loads(request.body or "{}")
+        parsed = json.loads(request.body or "{}")
     except (TypeError, ValueError, json.JSONDecodeError):
         return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _apply_created_at_filters(queryset, created_from, created_to):
