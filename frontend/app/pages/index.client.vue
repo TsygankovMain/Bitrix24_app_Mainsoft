@@ -5,6 +5,7 @@ import { buildReportRouteLocation, type ReportRouteName, type ReportRoutePayload
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
+import CreateProjectModal from '~/components/projects/CreateProjectModal.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
@@ -67,6 +68,9 @@ const isArchiving = ref(false)
 const employeeDirectory = ref<ProjectBoardDirectoryOption[]>([])
 const companyDirectory = ref<ProjectBoardDirectoryOption[]>([])
 const legalEntityDirectory = ref<ProjectBoardDirectoryOption[]>([])
+
+// --- Create project modal state ---
+const createProjectOpen = ref(false)
 
 type AppSection = {
   id: string
@@ -298,6 +302,9 @@ async function loadPortfolio(forceRefresh = false) {
   }
 }
 
+async function onProjectCreated() {
+  await loadPortfolio(true)
+}
 
 function openProject(card?: ProjectBoardCardRecord | null) {
   const targetCard = card || selectedProject.value
@@ -446,6 +453,7 @@ onMounted(async () => {
         <B24Button label="Настройки" color="default" @click="openSettings" />
         <B24Button label="Юзергайд" color="default" @click="openGuide" />
         <B24Button label="Канбан проектов" color="primary" @click="router.push('/projects')" />
+        <B24Button label="Создать проект" color="primary" @click="createProjectOpen = true" />
       </template>
     </B24PageHeader>
 
@@ -629,5 +637,7 @@ onMounted(async () => {
       @open-project="openProject"
       @open-spa="openSpa"
     />
+
+    <CreateProjectModal v-model:open="createProjectOpen" @created="onProjectCreated" />
   </B24Container>
 </template>
