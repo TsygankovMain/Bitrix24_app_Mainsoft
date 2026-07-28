@@ -5,7 +5,7 @@
 from django.test import TestCase
 
 from .models import Bitrix24Account, PortalUser
-from .user_sync_service import UserSyncService
+from .user_sync_service import UserSyncService, _parse_active_flag
 
 
 class _FakeClient:
@@ -100,3 +100,96 @@ class UserSyncServiceTest(TestCase):
 
         other_row = PortalUser.objects.get(bitrix24_account=other, bitrix_id="1")
         self.assertEqual(other_row.name, "Чужой")  # не тронут синком другого аккаунта
+
+
+class ParseActiveFlagTest(TestCase):
+    """Инцидент 2026-07-28 (прод-регресс «User <id>» вместо имён): Bitrix REST
+    отдаёт ACTIVE как JSON boolean (True/False), а не только строку "Y"/"N".
+    Старый парсинг str(user.get("ACTIVE", "Y")).upper() == "Y" для True даёт
+    "TRUE" != "Y" -> ВСЕ пользователи синкались как неактивные (0 активных из
+    56 на проде), /api/users?active_only=true отдавал пустой список, дерево
+    задачи резолвило всех через "User <id>".
+
+    _parse_active_flag обязан понимать все формы, которые реально шлёт Bitrix
+    REST: JSON boolean, "Y"/"N", "true"/"false", 1/0. Отсутствие значения ->
+    активен (безопасный дефолт: лучше по ошибке показать уволенного, чем
+    спрятать активного из-за парсинга)."""
+
+    def test_boolean_true_is_active(self):
+        self.assertTrue(_parse_active_flag(True))
+
+    def test_boolean_false_is_inactive(self):
+        self.assertFalse(_parse_active_flag(False))
+
+    def test_string_y_is_active_any_case(self):
+        self.assertTrue(_parse_active_flag("Y"))
+        self.assertTrue(_parse_active_flag("y"))
+
+    def test_string_n_is_inactive_any_case(self):
+        self.assertFalse(_parse_active_flag("N"))
+        self.assertFalse(_parse_active_flag("n"))
+
+    def test_string_true_is_active_any_case(self):
+        self.assertTrue(_parse_active_flag("true"))
+        self.assertTrue(_parse_active_flag("TRUE"))
+
+    def test_string_false_is_inactive_any_case(self):
+        self.assertFalse(_parse_active_flag("false"))
+        self.assertFalse(_parse_active_flag("FALSE"))
+
+    def test_int_one_is_active(self):
+        self.assertTrue(_parse_active_flag(1))
+
+    def test_int_zero_is_inactive(self):
+        self.assertFalse(_parse_active_flag(0))
+
+    def test_missing_value_defaults_to_active(self):
+        """Отсутствие ACTIVE в ответе Bitrix (None после .get()) -> активен."""
+        self.assertTrue(_parse_active_flag(None))
+
+    def test_unrecognized_value_defaults_to_active(self):
+        """Неизвестный формат -> безопасный дефолт "активен"."""
+        self.assertTrue(_parse_active_flag("something-unexpected"))
+
+
+class UserSyncServiceActiveFlagRegressionTest(TestCase):
+    """Регресс инцидента: реальный ответ Bitrix REST шлёт ACTIVE булевым."""
+
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-usersync-active-1",
+            is_master_account=True, domain_url="active-regress.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def test_sync_boolean_active_true_from_bitrix_rest_is_saved_as_active(self):
+        pages = [{"result": [{"ID": "1", "NAME": "Евгений", "LAST_NAME": "Абиденко", "ACTIVE": True}]}]
+        service = UserSyncService(_FakeClient(pages), self.account)
+        service.sync()
+
+        row = PortalUser.objects.get(bitrix24_account=self.account, bitrix_id="1")
+        self.assertTrue(row.active)
+
+    def test_sync_boolean_active_false_from_bitrix_rest_is_saved_as_inactive(self):
+        pages = [{"result": [{"ID": "2", "NAME": "А", "LAST_NAME": "Б", "ACTIVE": False}]}]
+        service = UserSyncService(_FakeClient(pages), self.account)
+        service.sync()
+
+        row = PortalUser.objects.get(bitrix24_account=self.account, bitrix_id="2")
+        self.assertFalse(row.active)
+
+    def test_sync_updates_active_flag_on_existing_user_when_source_value_changes(self):
+        """Ветка обновления _save_batch (bulk_update) обязана подхватывать active
+        у уже существующих записей, а не только у новых — иначе исправленный
+        парсинг не долечит уже засинканные строки portal_user на проде до
+        следующего изменения ACTIVE на стороне Bitrix."""
+        PortalUser.objects.create(
+            bitrix24_account=self.account, bitrix_id="3", name="Ирина", last_name="Волкова", active=False,
+        )
+        pages = [{"result": [{"ID": "3", "NAME": "Ирина", "LAST_NAME": "Волкова", "ACTIVE": True}]}]
+        service = UserSyncService(_FakeClient(pages), self.account)
+        result = service.sync()
+
+        self.assertEqual(result, {"synced": 1, "created": 0, "updated": 1})
+        row = PortalUser.objects.get(bitrix24_account=self.account, bitrix_id="3")
+        self.assertTrue(row.active)

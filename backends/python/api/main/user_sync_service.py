@@ -11,6 +11,30 @@ from .tenant_scoping import scope_to_tenant
 
 logger = logging.getLogger(__name__)
 
+_INACTIVE_ACTIVE_VALUES = {"N", "NO", "FALSE", "0"}
+
+
+def _parse_active_flag(raw_value: Any) -> bool:
+    """Разбирает ACTIVE из ответа Bitrix user.get в python bool.
+
+    Инцидент 2026-07-28 (прод-регресс «User <id>» в дереве задачи): Bitrix
+    REST отдаёт ACTIVE как JSON boolean (true/false), а не только строку
+    "Y"/"N". Старое str(value).upper() == "Y" для True давало "TRUE" != "Y"
+    -> ВСЕ пользователи считались уволенными (0 активных из 56 на проде).
+
+    Принимает JSON boolean, "Y"/"N", "true"/"false", 1/0 (строки — в любом
+    регистре). Отсутствие значения (None) или нераспознанный формат ->
+    активен: безопасный дефолт, лучше по ошибке показать уволенного, чем
+    спрятать активного из-за парсинга.
+    """
+    if isinstance(raw_value, bool):
+        return raw_value
+    if raw_value is None:
+        return True
+    if isinstance(raw_value, (int, float)):
+        return raw_value != 0
+    return str(raw_value).strip().upper() not in _INACTIVE_ACTIVE_VALUES
+
 
 class UserSyncService:
     """Полный постраничный синк справочника пользователей Bitrix24 -> PortalUser.
@@ -95,7 +119,7 @@ class UserSyncService:
                 {
                     "name": user.get("NAME") or "",
                     "last_name": user.get("LAST_NAME") or "",
-                    "active": str(user.get("ACTIVE", "Y")).upper() == "Y",
+                    "active": _parse_active_flag(user.get("ACTIVE")),
                 },
             ))
 
