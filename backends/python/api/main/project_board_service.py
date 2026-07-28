@@ -632,14 +632,14 @@ class ProjectCardService:
         НЕЛЬЗЯ — для них есть быстрый get_companies() (локальная база, без
         обращений к Битриксу).
 
-        Примечание по состоянию на эту задачу (Task 3 плана): inn_backfill_service.py
-        пока вызывает старое имя get_companies() и получит быстрые локальные
-        данные вместо полного справочника — перевод на явный вызов этого
-        метода запланирован отдельной задачей (Task 6 плана), сюда сознательно
-        не входит.
+        inn_backfill_service._inn_maps() зовёт именно этот метод явно (Task 6
+        плана) — свой собственный кэш-суффикс ("admin-company-directory", не
+        "project-board-companies") отражает это: имя больше не про общий
+        список компаний "для пользовательских списков", а именно про
+        админский полный справочник с ИНН.
         """
         return self._fetch_references_with_cache(
-            "project-board-companies",
+            "admin-company-directory",
             self._fetch_companies_live,
             fallback=self._get_project_card_fallback_options("company_id", "company_name"),
         )

@@ -78,7 +78,7 @@ def invalidate_project_runtime_caches(account: Bitrix24Account) -> None:
             "filter-projects",
             "project-board",
             "project-board-meta",
-            "project-board-companies",
+            "admin-company-directory",
             "project-board-legal-entities",
             "project-board-homepage",
         ],
