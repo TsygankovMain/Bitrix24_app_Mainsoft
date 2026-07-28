@@ -429,6 +429,22 @@ git commit -m "feat(create-project): чистый расчёт полей кар
 - Produces:
   - `@dataclass StepResult` с полями `status: str`, `id: Optional[str]`, `name: str`, `candidates: List[Dict[str, str]]`, `error: Optional[str]`; метод `as_dict() -> Dict[str, Any]`.
   - `class ProjectCreationService` с `__init__(self, client, account)` и методом `ensure_company(self, company_id: Optional[str], company_name: str) -> StepResult`.
+  - `_extract_rows(response: Any) -> Tuple[List[Dict[str, Any]], bool]` — защищённый разбор списочного ответа Битрикса. Возвращает `(rows, parsed_ok)`.
+  - `_extract_scalar_id(response: Any) -> Optional[str]` — защищённое извлечение скалярного идентификатора из `result`; `None`, если там словарь, список или `None`.
+
+**Разбор ответа обязан быть таким же защищённым, как сам вызов.** Шаг оркестратора не имеет права бросить исключение: вызывающий код собирает частичный результат по трём шагам, и падение первого шага означает, что два следующих не выполнятся вовсе. `response.get("result")` напрямую использовать нельзя — Битрикс отдаёт `result` то списком, то словарём, а при нештатных ситуациях чем угодно. Тот же приём уже применён в проекте: см. `extract_items_from_response` в `project_sync_service.py`.
+
+**`parsed_ok` — это не мелочь, а защита от необратимого действия.** Нужно различать «Битрикс честно ответил, что ничего не нашлось» и «ответ не удалось разобрать»:
+
+| `result` | `rows` | `parsed_ok` | Что делать |
+|---|---|---|---|
+| `[]` | `[]` | `True` | ничего не нашлось → создаём |
+| `[{...}]` | записи | `True` | нашлось → используем |
+| `{...}` без `items` | `[]` | `False` | **не создаём**, `status: "error"` |
+| `["строка"]` | `[]` | `False` | **не создаём**, `status: "error"` |
+| отсутствует / не словарь | `[]` | `False` | **не создаём**, `status: "error"` |
+
+Причина: мы ничего никогда не удаляем. Если ответ непонятен, а совпадение в нём было, молчаливое создание оставит в CRM клиента вечный дубль. Это тот же принцип, что и `ambiguous`: при неопределённости необратимое действие не выполняется.
 
 Статусы шага: `"found"` (передан id или найдено ровно одно совпадение), `"created"`, `"ambiguous"` (больше одного совпадения), `"error"`.
 
@@ -766,6 +782,25 @@ class EnsureGroupTest(_ServiceTestCase):
 
         self.assertEqual(result.status, "error")
         self.assertEqual(client.methods_called(), [])
+
+    def test_unreadable_response_does_not_create_group(self):
+        """Ответ непонятного вида — не повод создавать: если совпадение там
+        было, в Задачах навсегда останется дубль проекта."""
+        client = _FakeClient({"sonet_group.get": {"result": {"unexpected": "shape"}}})
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("sonet_group.create", client.methods_called())
+
+    def test_empty_result_list_still_creates(self):
+        """Пустой список — честный ответ «не нашлось», а не ошибка разбора."""
+        client = _FakeClient({
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": {"result": 44},
+        })
+        result = self.service(client).ensure_group("Портал АО Ромашка")
+
+        self.assertEqual(result.status, "created")
 ```
 
 - [ ] **Step 2: Убедиться, что тест падает**
@@ -804,9 +839,19 @@ cd backends/python/api && python manage.py test main.tests_project_creation_serv
             logger.warning("ensure_group: sonet_group.get failed: %s", exc)
             return StepResult(status="error", error=f"Не удалось найти проект: {exc}")
 
+        # _extract_rows, а не response.get("result") напрямую: разбор ответа
+        # обязан быть таким же защищённым, как сам вызов. Шаг оркестратора не
+        # имеет права бросить исключение — иначе следующие шаги не выполнятся
+        # и вызывающий код не соберёт частичный результат (заведено в Task 2).
+        rows, parsed_ok = _extract_rows(response)
+        if not parsed_ok:
+            # Ответ непонятен. Создавать нельзя: если совпадение там было, в
+            # Задачах навсегда останется дубль проекта — мы ничего не удаляем.
+            return StepResult(status="error", error="Битрикс вернул ответ неожиданного вида при поиске проекта.")
+
         matches = [
             {"id": _clean_str(row.get("ID")), "name": _clean_str(row.get("NAME"))}
-            for row in (response.get("result") or [])
+            for row in rows
             if _clean_str(row.get("ID")) and _clean_str(row.get("NAME")) == group_name
         ]
 
@@ -824,7 +869,10 @@ cd backends/python/api && python manage.py test main.tests_project_creation_serv
             logger.warning("ensure_group: sonet_group.create failed: %s", exc)
             return StepResult(status="error", error=f"Не удалось создать проект: {exc}")
 
-        created_id = _clean_str(created.get("result"))
+        # _extract_scalar_id (заведён в Task 2) переживает created=None и
+        # result, оказавшийся словарём или списком: без него _clean_str тихо
+        # положил бы в id строку вида "{'ID': 44}" со статусом "created".
+        created_id = _clean_str(_extract_scalar_id(created))
         if not created_id:
             return StepResult(status="error", error="Битрикс не вернул идентификатор проекта.")
 
@@ -837,7 +885,7 @@ cd backends/python/api && python manage.py test main.tests_project_creation_serv
 cd backends/python/api && python manage.py test main.tests_project_creation_service --settings=test_settings -v 2
 ```
 
-Ожидаемо: 12 тестов PASS.
+Ожидаемо: 8 тестов в EnsureGroupTest, все PASS.
 
 - [ ] **Step 5: Коммит**
 
@@ -1115,7 +1163,9 @@ from .tenant_scoping import scope_to_tenant
                 logger.warning("ensure_card: crm.item.list failed: %s", exc)
                 return StepResult(status="error", error=f"Не удалось найти карточку: {exc}")
 
-            existing = self._extract_items(response)
+            existing, parsed_ok = _extract_rows(response)
+            if not parsed_ok:
+                return StepResult(status="error", error="Битрикс вернул ответ неожиданного вида при поиске карточки.")
             if existing:
                 return StepResult(
                     status="found",
@@ -1135,24 +1185,16 @@ from .tenant_scoping import scope_to_tenant
             logger.warning("ensure_card: crm.item.add failed: %s", exc)
             return StepResult(status="error", error=f"Не удалось создать карточку: {exc}")
 
-        result = created.get("result") or {}
-        item = result.get("item") if isinstance(result, dict) else None
-        created_id = _clean_str((item or {}).get("id") if isinstance(item, dict) else result)
+        # crm.item.add отдаёт созданную запись как result.item — достаём id
+        # через тот же защищённый разбор, что и везде (заведён в Task 2).
+        created_rows, _ = _extract_rows(created)
+        created_id = _clean_str(created_rows[0].get("id") or created_rows[0].get("ID")) if created_rows else ""
+        if not created_id:
+            created_id = _clean_str(_extract_scalar_id(created))
         if not created_id:
             return StepResult(status="error", error="Битрикс не вернул идентификатор карточки.")
 
         return StepResult(status="created", id=created_id, name=fields.project_name)
-
-    @staticmethod
-    def _extract_items(response: Dict[str, Any]) -> List[Dict[str, Any]]:
-        result = response.get("result") or {}
-        if isinstance(result, dict):
-            items = result.get("items") or result.get("item") or []
-        else:
-            items = result
-        if isinstance(items, dict):
-            items = [items]
-        return [row for row in items if isinstance(row, dict)]
 
     def write_through(
         self, fields: ResolvedProjectFields, group_id: str, item_id: Optional[str]
