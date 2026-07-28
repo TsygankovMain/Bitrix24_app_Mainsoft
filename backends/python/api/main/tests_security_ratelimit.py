@@ -17,6 +17,7 @@ from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
 
 from .models import Bitrix24Account
+from .project_board_service import ProjectCardService
 
 
 # ---------------------------------------------------------------------------
@@ -581,3 +582,88 @@ class RateLimitGetTokenBeforeAuthTest(TestCase):
             "",
             f"_get_domain_from_request must return empty string on malformed body, got {domain!r}",
         )
+
+
+# ---------------------------------------------------------------------------
+# (ж) get_project_board_meta: ?refresh=1 бьёт в Битрикс живьём (app.option.get +
+#     crm.company.list, см. project_board_service.get_meta/get_legal_entities и
+#     company_search_service.list_my_companies) и поэтому лимитируется — но
+#     ТОЛЬКО эта ветка. Обычные запросы без ?refresh=1 отдаются из серверного
+#     кэша (project-board-meta, TTL 6 часов) и вызываются с доски часто и
+#     штатно — общий лимит на весь эндпоинт сломал бы обычную работу.
+# ---------------------------------------------------------------------------
+
+@override_settings(CACHES=RATELIMIT_CACHE)
+class RateLimitProjectBoardMetaRefreshTest(TestCase):
+    """get_project_board_meta: лимит применяется только к ?refresh=1."""
+
+    REFRESH_LIMIT = 6
+
+    def setUp(self):
+        cache.clear()
+        self.client = Client()
+        self.account = _make_account(is_admin=True, b24_user_id=70, domain_url="portal-meta-refresh.bitrix24.ru")
+
+    def _get(self, query_suffix: str = ""):
+        url = "/api/project-board/meta"
+        if query_suffix:
+            url = f"{url}?{query_suffix}"
+        return self.client.get(url, HTTP_AUTHORIZATION=_auth_header(self.account))
+
+    def test_refresh_requests_pass_within_limit_and_block_on_overflow(self):
+        """get_project_board_meta?refresh=1: 6 запросов разрешены, 7-й → 429."""
+        with patch.object(ProjectCardService, "get_meta", return_value={"filters": {}, "directories": {}}):
+            for i in range(self.REFRESH_LIMIT):
+                resp = self._get("refresh=1")
+                self.assertNotEqual(
+                    resp.status_code,
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    f"refresh request {i + 1}/{self.REFRESH_LIMIT} must pass, got {resp.status_code}",
+                )
+
+            resp = self._get("refresh=1")
+            self.assertEqual(
+                resp.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                f"refresh request {self.REFRESH_LIMIT + 1} must be blocked with 429, got {resp.status_code}",
+            )
+            body = resp.json()
+            self.assertIn("error", body, "429 response must contain 'error' key")
+
+    def test_plain_requests_are_never_rate_limited(self):
+        """Обычные запросы (без ?refresh=1, из кэша) не лимитируются вовсе —
+
+        доска перечитывает meta часто и штатно, и это не тот дорогой путь,
+        который ходит в Битрикс.
+        """
+        with patch.object(ProjectCardService, "get_meta", return_value={"filters": {}, "directories": {}}):
+            for i in range(self.REFRESH_LIMIT + 5):
+                resp = self._get()
+                self.assertNotEqual(
+                    resp.status_code,
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    f"plain request {i + 1} must not be rate-limited, got {resp.status_code}",
+                )
+
+    def test_plain_requests_unaffected_by_exhausted_refresh_limit(self):
+        """Исчерпанный лимит ?refresh=1 не блокирует обычные запросы того же
+
+        аккаунта — лимит не общий на весь эндпоинт, а только на дорогую ветку.
+        """
+        with patch.object(ProjectCardService, "get_meta", return_value={"filters": {}, "directories": {}}):
+            for _ in range(self.REFRESH_LIMIT + 1):
+                self._get("refresh=1")
+
+            resp_refresh = self._get("refresh=1")
+            self.assertEqual(
+                resp_refresh.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                "refresh bucket must be exhausted by this point in the test",
+            )
+
+            resp_plain = self._get()
+            self.assertNotEqual(
+                resp_plain.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                f"plain request must not be blocked by exhausted refresh limit, got {resp_plain.status_code}",
+            )

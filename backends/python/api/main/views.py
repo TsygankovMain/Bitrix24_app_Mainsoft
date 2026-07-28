@@ -748,6 +748,30 @@ def get_project_board(request: AuthorizedRequest):
     return JsonResponse(service.get_board_data())
 
 
+@rate_limit("board_meta_refresh", 6, 60, key="account")
+def _get_project_board_meta_refresh(request: AuthorizedRequest, service: ProjectCardService) -> JsonResponse:
+    """Лимитированная ветка ?refresh=1 — вынесена отдельно, чтобы @rate_limit
+
+    покрывал только её. Только при bypass_cache=True get_meta реально ходит в
+    Битрикс живьём: app.option.get в _load_config (кэш ConfigurationService —
+    на объекте, новый объект создаётся на каждый вызов, поэтому не переживает
+    его) и crm.company.list в get_legal_entities/list_my_companies. Обычные
+    запросы (ветка ниже, в get_project_board_meta) отдаются из серверного
+    кэша project-board-meta (TTL 6 часов) и Битрикс не трогают вовсе — им
+    лимит не нужен и он их не касается.
+
+    Порог 6/60 — тот же класс риска и то же число, что у соседнего
+    sync_project_board (@rate_limit("sync", 6, 60, key="account")): там же
+    ровно 1-2 живых вызова к Bitrix за запрос. Отдельный scope
+    ("board_meta_refresh", а не "sync") — иначе один клик «Синхронизировать»
+    (фронт бьёт и /project-board/sync, и /project-board/meta?refresh=1 одним
+    действием, см. frontend/app/pages/projects/index.client.vue:syncBoard)
+    тратил бы бюджет обоих эндпоинтов из одного и того же ведра и не давал
+    бы затем ещё и нажать «Обновить справочники» отдельно.
+    """
+    return JsonResponse(service.get_meta(bypass_cache=True))
+
+
 @xframe_options_exempt
 @require_GET
 @log_errors("get_project_board_meta")
@@ -761,7 +785,13 @@ def get_project_board_meta(request: AuthorizedRequest):
     # try/except (Task 1, fix rounds 1-2).
     bypass_cache = str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "y", "yes"}
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
-    return JsonResponse(service.get_meta(bypass_cache=bypass_cache))
+    if bypass_cache:
+        # Только эта ветка бьёт в Битрикс живьём — см. docstring
+        # _get_project_board_meta_refresh. Обычные запросы (ниже) читаются
+        # из кэша и вызываются с доски часто и штатно; лимитировать их вместе
+        # с refresh сломало бы обычную работу доски.
+        return _get_project_board_meta_refresh(request, service)
+    return JsonResponse(service.get_meta(bypass_cache=False))
 
 
 @xframe_options_exempt
