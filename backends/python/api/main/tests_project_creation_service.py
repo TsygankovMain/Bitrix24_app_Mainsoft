@@ -38,10 +38,8 @@ class _FakeClient:
 
 class _ServiceTestCase(TestCase):
     def setUp(self):
-        # ProjectCardService кэширует справочники (компании, юрлица, стадии) в
-        # LocMemCache по ключу аккаунта. Ключ строится из member_id, который у
-        # всех тестов здесь одинаковый, — без сброса результаты первого теста
-        # протекут в остальные и тесты станут зависеть от порядка запуска.
+        # Очищаем кеш для изоляции тестов. Каждый тест работает с новым аккаунтом
+        # и не должен видеть результаты других тестов.
         from django.core.cache import cache
         cache.clear()
 
@@ -116,3 +114,97 @@ class EnsureCompanyTest(_ServiceTestCase):
 
         self.assertEqual(result.status, "error")
         self.assertEqual(client.methods_called(), [])
+
+    def test_search_uses_exact_match_filter(self):
+        """Проверяем что поиск использует точное совпадение =TITLE."""
+        client = _FakeClient({
+            "crm.company.list": {"result": [{"ID": "15", "TITLE": "АО Ромашка"}]},
+        })
+        self.service(client).ensure_company(None, "АО Ромашка")
+
+        # Первый вызов должен быть crm.company.list с оператором =TITLE
+        method, params = client.calls[0]
+        self.assertEqual(method, "crm.company.list")
+        self.assertIn("=TITLE", params["filter"])
+        self.assertEqual(params["filter"]["=TITLE"], "АО Ромашка")
+
+    def test_step_result_as_dict_method(self):
+        """Проверяем что as_dict() возвращает все поля."""
+        client = _FakeClient({
+            "crm.company.list": {"result": [{"ID": "15", "TITLE": "АО Ромашка"}]},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        result_dict = result.as_dict()
+        self.assertIsInstance(result_dict, dict)
+        self.assertEqual(result_dict["status"], "found")
+        self.assertEqual(result_dict["id"], "15")
+        self.assertEqual(result_dict["name"], "АО Ромашка")
+        self.assertEqual(result_dict["candidates"], [])
+        self.assertIsNone(result_dict["error"])
+
+    def test_malformed_list_response_dict_instead_of_list(self):
+        """crm.company.list вернул result как словарь вместо списка."""
+        client = _FakeClient({
+            "crm.company.list": {"result": {"unexpected": "shape"}},
+            "crm.company.add": {"result": 77},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        # Должны обработать как пустой результат, попытаться создать
+        self.assertEqual(result.status, "created")
+
+    def test_malformed_list_response_strings_instead_of_dicts(self):
+        """crm.company.list вернул result как список строк."""
+        client = _FakeClient({
+            "crm.company.list": {"result": ["15", "16"]},
+            "crm.company.add": {"result": 77},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        # Список строк не может быть распарсен, должны создать
+        self.assertEqual(result.status, "created")
+
+    def test_malformed_add_response_none(self):
+        """crm.company.add вернул None вместо словаря."""
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.company.add": None,
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("валидный идентификатор", result.error)
+
+    def test_malformed_add_response_result_is_dict(self):
+        """crm.company.add вернул result как словарь вместо скалярного ID."""
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": {"ID": 77}},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("валидный идентификатор", result.error)
+
+    def test_add_throws_exception(self):
+        """crm.company.add бросает исключение."""
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.company.add": RuntimeError("Ошибка при создании компании"),
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("Ошибка при создании компании", result.error)
+
+    def test_add_returns_empty_id(self):
+        """crm.company.add вернул пустой result."""
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": ""},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("валидный идентификатор", result.error)
