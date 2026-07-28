@@ -24,7 +24,7 @@ get_board_data/get_homepage_snapshot пересчитывают ответ из 
 (ProjectCard/TimesheetItem) — тот же путь, что уже происходит на каждый
 органический холодный кэш (PROJECT_BOARD_CACHE_TTL/HOMEPAGE_CACHE_TTL — 2
 минуты, project_board_shared.py) без всякого force-параметра. Поэтому
-рейт-лимит здесь не заведён — см. докстрings get_project_board/
+рейт-лимит здесь не заведён — см. докстринги get_project_board/
 get_homepage_portfolio в views.py.
 """
 from unittest.mock import patch
