@@ -10,6 +10,7 @@ from django.db.models import Case, F, FloatField, Max, Sum, Value, When
 from django.utils import timezone
 
 from .bitrix_data_access import BitrixDataService
+from .company_search_service import CompanySearchService
 from .configuration_service import ConfigurationService
 from .models import Bitrix24Account, ProjectCard, SystemLog, TimesheetItem
 from .project_board_shared import (
@@ -584,9 +585,27 @@ class ProjectCardService:
         )
 
     def get_legal_entities(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Свои юрлица через CompanySearchService.list_my_companies() — один
+        запрос crm.company.list с фильтром IS_MY_COMPANY=Y на стороне Битрикса.
+
+        НЕ возвращай это на _fetch_companies_live(only_my_company=True):
+        тот обходит справочник компаний целиком, страницами по 50
+        (crm.item.list, затем crm.company.list), и только потом отбирает
+        "мои" уже в Python. На боевом портале это 23 252 компании — 465
+        последовательных запросов ради обычно нескольких строк. Именно такие
+        обходы (хары и логи прода 2026-07-28) держали обработчики (их всего
+        восемь) минутами в ожидании сети — CPU при этом было ~15%, потоки не
+        считали, а ждали, — и из-за очереди даже статический файл на 10 КБ
+        отдавался пять секунд; сам Битрикс к концу обхода отваливался по
+        таймауту.
+        """
+        def _fetch_my_companies() -> List[Dict[str, Any]]:
+            result = CompanySearchService(self.client, self.account).list_my_companies()
+            return result.get("companies") or []
+
         return self._fetch_references_with_cache(
             "project-board-legal-entities",
-            lambda: self._fetch_companies_live(only_my_company=True),
+            _fetch_my_companies,
             fallback=self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name"),
         )
 
