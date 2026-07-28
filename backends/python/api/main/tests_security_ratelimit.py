@@ -19,6 +19,7 @@ from django.test import Client, TestCase, override_settings
 from .models import Bitrix24Account
 from .project_board_service import ProjectCardService
 from .company_search_service import CompanySearchService
+from .project_creation_service import ProjectCreationService
 from .project_sync_service import ProjectSyncService
 
 
@@ -942,3 +943,136 @@ class RateLimitSaveConfigurationProjectSyncTest(TestCase):
                 HTTPStatus.TOO_MANY_REQUESTS,
                 f"save_configuration must not be blocked by exhausted sync_project_board limit, got {resp_save.status_code}",
             )
+
+
+# ---------------------------------------------------------------------------
+# (к) create_project_board: у поиска компаний (см. выше) дешёвой ветки нет
+#     вовсе, но там хотя бы только чтение. Здесь ещё дороже: эндпоинт пишет
+#     сущности в CRM клиента (компания, группа в Задачах, карточка
+#     смарт-процесса) — до нескольких живых мутирующих вызовов Bitrix за один
+#     запрос, не только поисковых. Порог и его обоснование — в докстринге
+#     create_project_board (views.py); коротко: это редкое осознанное
+#     действие (единицы в день), а не автокомплит, поэтому порог заметно
+#     ниже, чем у company_search, и даже ниже, чем у ручных кнопок sync/
+#     board_meta_refresh (6/60) — риск и стоимость запроса здесь выше их.
+#
+#     Отдельный scope "project_create" — не общий со "sync"/"company_search"/
+#     остальными. Имя совпадает со scope="project_create" у
+#     account_sync_lock в project_creation_service.py (тот же логический
+#     ярлык для одного и того же действия), но это независимые механизмы —
+#     Django-кэш с префиксом "rl:" здесь, Postgres advisory-lock там, общего
+#     пространства ключей нет.
+# ---------------------------------------------------------------------------
+
+@override_settings(CACHES=RATELIMIT_CACHE)
+class RateLimitCreateProjectTest(TestCase):
+    """create_project_board: 5 запросов/60 секунд на аккаунт, отдельный
+    счётчик от sync/export/board_meta_refresh/company_search."""
+
+    CREATE_LIMIT = 5
+
+    def setUp(self):
+        cache.clear()
+        self.client = Client()
+        self.account = _make_account(is_admin=True, b24_user_id=100, domain_url="portal-create-project.bitrix24.ru")
+
+    def _fake_result(self):
+        skipped = {"status": "skipped", "id": None, "name": "", "candidates": [], "error": None}
+        return {"company": skipped, "group": skipped, "card": skipped, "done": False, "missing_fields": []}
+
+    def _create(self):
+        return self.client.post(
+            "/api/project-board/create",
+            data=json.dumps({"project_name": "Портал Ромашка", "company_name": "АО Ромашка"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=_auth_header(self.account),
+        )
+
+    def _sync(self):
+        # Тот же приём, что и в RateLimitCompanySearchTest._sync(): timesheet_sync
+        # (не project-board/sync) — тоже scope="sync", но при пустой конфигурации
+        # аккуратно завершается сам, без похода в ProjectSyncService.get_legal_entities
+        # и, соответственно, без шума от MagicMock-клиента в логе теста.
+        return self.client.post(
+            "/api/sync-timesheets",
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=_auth_header(self.account),
+        )
+
+    def test_requests_pass_within_limit_and_block_on_overflow(self):
+        """5 запросов создания проекта разрешены, 6-й -> 429."""
+        with patch.object(ProjectCreationService, "create", return_value=self._fake_result()):
+            for i in range(self.CREATE_LIMIT):
+                resp = self._create()
+                self.assertNotEqual(
+                    resp.status_code,
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    f"create request {i + 1}/{self.CREATE_LIMIT} must pass, got {resp.status_code}",
+                )
+
+            resp = self._create()
+            self.assertEqual(
+                resp.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                f"create request {self.CREATE_LIMIT + 1} must be blocked with 429, got {resp.status_code}",
+            )
+            body = resp.json()
+            self.assertIn("error", body, "429 response must contain 'error' key")
+            self.assertIsInstance(body["error"], str, "'error' value must be a string")
+
+    def test_single_request_not_blocked(self):
+        """Один запрос создания (обычное нажатие кнопки) не блокируется."""
+        with patch.object(ProjectCreationService, "create", return_value=self._fake_result()):
+            resp = self._create()
+        self.assertNotEqual(
+            resp.status_code,
+            HTTPStatus.TOO_MANY_REQUESTS,
+            f"Single create request must not be rate-limited, got {resp.status_code}",
+        )
+
+    def test_exhausted_sync_scope_does_not_block_create_project(self):
+        """Исчерпание бюджета "sync" тем же аккаунтом не блокирует создание
+        проекта — разные scope ("sync" vs "project_create"), разные счётчики,
+        хотя ключ (account) один и тот же."""
+        bitrix_client = _bitrix_mock()
+        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
+            for _ in range(6 + 1):
+                self._sync()
+
+            resp_sync = self._sync()
+            self.assertEqual(
+                resp_sync.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                "sync bucket must be exhausted by this point in the test",
+            )
+
+        with patch.object(ProjectCreationService, "create", return_value=self._fake_result()):
+            resp_create = self._create()
+        self.assertNotEqual(
+            resp_create.status_code,
+            HTTPStatus.TOO_MANY_REQUESTS,
+            f"project_create must not be blocked by an exhausted sync limit, got {resp_create.status_code}",
+        )
+
+    def test_exhausted_create_project_scope_does_not_block_sync(self):
+        """Обратное направление той же изоляции: исчерпание создания проекта не блокирует sync."""
+        with patch.object(ProjectCreationService, "create", return_value=self._fake_result()):
+            for _ in range(self.CREATE_LIMIT + 1):
+                self._create()
+
+            resp_create = self._create()
+            self.assertEqual(
+                resp_create.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                "project_create bucket must be exhausted by this point in the test",
+            )
+
+        bitrix_client = _bitrix_mock()
+        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
+            resp_sync = self._sync()
+        self.assertNotEqual(
+            resp_sync.status_code,
+            HTTPStatus.TOO_MANY_REQUESTS,
+            f"sync must not be blocked by an exhausted project_create limit, got {resp_sync.status_code}",
+        )
