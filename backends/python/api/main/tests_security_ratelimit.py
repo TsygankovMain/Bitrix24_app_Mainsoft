@@ -19,6 +19,7 @@ from django.test import Client, TestCase, override_settings
 from .models import Bitrix24Account
 from .project_board_service import ProjectCardService
 from .company_search_service import CompanySearchService
+from .project_sync_service import ProjectSyncService
 
 
 # ---------------------------------------------------------------------------
@@ -801,3 +802,143 @@ class RateLimitCompanySearchTest(TestCase):
             HTTPStatus.TOO_MANY_REQUESTS,
             f"sync must not be blocked by an exhausted company_search limit, got {resp_sync.status_code}",
         )
+
+
+# ---------------------------------------------------------------------------
+# (и) save_configuration: сама по себе не запускает синхронизацию, но если в
+#     присланной конфигурации задан project_sp_entity_type_id > 0 (значение
+#     из тела запроса клиента, не секрет — оно же возвращается
+#     get_configuration), ветка запускает ProjectSyncService.sync() — ту же
+#     полную синхронизацию, что и sync_project_board, с безусловным живым
+#     crm.company.list внутри. account_sync_lock (contextmanager вокруг
+#     .sync()) — это Postgres advisory-lock, взаимное исключение, а НЕ
+#     ограничитель: не мешает слать сохранения подряд без остановки —
+#     захватил, отработал, отпустил, снова захватил. Поэтому нужен отдельный
+#     rate_limit именно на эту ветку — см. docstring
+#     _save_configuration_with_project_sync в views.py.
+# ---------------------------------------------------------------------------
+
+@override_settings(CACHES=RATELIMIT_CACHE)
+class RateLimitSaveConfigurationProjectSyncTest(TestCase):
+    """save_configuration: лимит применяется только к сохранениям, которые
+
+    реально запускают синхронизацию Project SPA (config.project_sp_entity_type_id > 0),
+    отдельным счётчиком от кнопки «Синхронизировать» (sync_project_board)."""
+
+    SYNC_LIMIT = 6
+
+    def setUp(self):
+        cache.clear()
+        self.client = Client()
+        self.account = _make_account(is_admin=True, b24_user_id=90, domain_url="portal-config-save.bitrix24.ru")
+
+    def _save(self, *, with_project_spa: bool):
+        config = {"project_sp_entity_type_id": 1032} if with_project_spa else {"hourly_rate": 100}
+        return self.client.post(
+            "/api/configuration/save",
+            data=json.dumps({"config": config}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=_auth_header(self.account),
+        )
+
+    def _sync_button(self):
+        return self.client.post(
+            "/api/project-board/sync",
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=_auth_header(self.account),
+        )
+
+    def test_sync_triggering_saves_pass_within_limit_and_block_on_overflow(self):
+        """С project_sp_entity_type_id > 0: 6 сохранений разрешены, 7-е -> 429.
+
+        ProjectSyncService.sync и _build_project_spa_validation_payload замокань,
+        чтобы не тянуть весь стек Битрикса (валидация SPA сама по себе делает
+        несколько живых вызовов) — тест проверяет только ограничитель частоты.
+        """
+        bitrix_client = _bitrix_mock()
+        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client), \
+             patch("main.views._build_project_spa_validation_payload", return_value={"is_valid": True}), \
+             patch.object(ProjectSyncService, "sync", return_value={"status": "success", "synced": 0}):
+
+            for i in range(self.SYNC_LIMIT):
+                resp = self._save(with_project_spa=True)
+                self.assertNotEqual(
+                    resp.status_code,
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    f"save (with project SPA) {i + 1}/{self.SYNC_LIMIT} must pass, got {resp.status_code}",
+                )
+
+            resp = self._save(with_project_spa=True)
+            self.assertEqual(
+                resp.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                f"save (with project SPA) {self.SYNC_LIMIT + 1} must be blocked with 429, got {resp.status_code}",
+            )
+            body = resp.json()
+            self.assertIn("error", body, "429 response must contain 'error' key")
+
+    def test_plain_saves_without_project_spa_are_never_rate_limited(self):
+        """Без project_sp_entity_type_id синк не запускается — лимит не применяется
+
+        вовсе, сколько угодно сохранений подряд (обычная работа формы настроек)."""
+        bitrix_client = _bitrix_mock()
+        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
+            for i in range(self.SYNC_LIMIT + 5):
+                resp = self._save(with_project_spa=False)
+                self.assertNotEqual(
+                    resp.status_code,
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    f"plain save {i + 1} must not be rate-limited, got {resp.status_code}",
+                )
+
+    def test_exhausted_scope_isolation_with_sync_project_board_button(self):
+        """save_configuration-синк и кнопка «Синхронизировать» — разные scope,
+
+        хотя оба вызывают ProjectSyncService.sync() и ключ (account) один и тот же:
+        исчерпание одного бюджета не блокирует другой, в обе стороны."""
+        bitrix_client = _bitrix_mock()
+        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client), \
+             patch("main.views._build_project_spa_validation_payload", return_value={"is_valid": True}), \
+             patch.object(ProjectSyncService, "sync", return_value={"status": "success", "synced": 0}):
+
+            # Exhaust save_configuration's project-sync bucket.
+            for _ in range(self.SYNC_LIMIT + 1):
+                self._save(with_project_spa=True)
+            resp_save = self._save(with_project_spa=True)
+            self.assertEqual(
+                resp_save.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                "save_configuration project-sync bucket must be exhausted by this point in the test",
+            )
+
+            # The manual "Sync" button on the project board must be unaffected.
+            resp_button = self._sync_button()
+            self.assertNotEqual(
+                resp_button.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                f"sync_project_board must not be blocked by exhausted save_configuration limit, got {resp_button.status_code}",
+            )
+
+        cache.clear()
+        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client), \
+             patch("main.views._build_project_spa_validation_payload", return_value={"is_valid": True}), \
+             patch.object(ProjectSyncService, "sync", return_value={"status": "success", "synced": 0}):
+
+            # Reverse direction: exhaust sync_project_board's own bucket instead.
+            for _ in range(6 + 1):
+                self._sync_button()
+            resp_button = self._sync_button()
+            self.assertEqual(
+                resp_button.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                "sync_project_board bucket must be exhausted by this point in the test",
+            )
+
+            # save_configuration (with project SPA) must be unaffected.
+            resp_save = self._save(with_project_spa=True)
+            self.assertNotEqual(
+                resp_save.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                f"save_configuration must not be blocked by exhausted sync_project_board limit, got {resp_save.status_code}",
+            )

@@ -1789,6 +1789,121 @@ def get_configuration(request: AuthorizedRequest):
     return JsonResponse(service.get_configuration_sync())
 
 
+@rate_limit("config_save_sync", 6, 60, key="account")
+def _save_configuration_with_project_sync(
+    request: AuthorizedRequest, service: ConfigurationService, config: dict
+) -> JsonResponse:
+    """Ветка save_configuration при заданном (> 0) project_sp_entity_type_id —
+
+    вынесена отдельно, чтобы @rate_limit покрывал только её, тем же приёмом,
+    что и _get_project_board_meta_refresh. Технически иначе: там флаг
+    (?refresh=1) читается из query string и декоратор мог сработать сразу,
+    до разбора тела. Здесь флаг зависит от тела POST-запроса, которое нужно
+    сначала разобрать и нормализовать — этим занимается save_configuration
+    (там же отрабатывает обработка кривого JSON/конфигурации, до всякого
+    лимита), и только когда известно, что эта ветка будет выполняться,
+    управление передаётся сюда.
+
+    Внутри — _build_project_spa_validation_payload (несколько живых вызовов:
+    crm.item.list x2, no-op crm.item.update для проверки прав на запись) и,
+    если валидация не отклонила конфигурацию, ProjectSyncService.sync() — та
+    же полная синхронизация, что и у sync_project_board, с безусловным живым
+    crm.company.list внутри, — плюс backfill_timesheet_project_items().
+    account_sync_lock здесь — Postgres advisory-lock (взаимное исключение),
+    а не ограничитель: не даёт двум синкам идти параллельно, но никак не
+    мешает слать сохранения подряд без остановки — захватил, отработал,
+    отпустил, снова захватил. Поэтому нужен отдельный rate_limit.
+
+    project_sp_entity_type_id приходит из тела запроса клиента и не является
+    секретом (то же значение возвращает get_configuration) — значит любой
+    запрос с валидным токеном может выставить его и звать эту ветку в цикле.
+
+    Порог 6/60 — тот же класс риска и то же число, что у соседнего
+    sync_project_board (@rate_limit("sync", 6, 60, key="account")): внутри
+    вызывается тот же ProjectSyncService.sync(). Привязка Project SPA в
+    настройках — операция первичной настройки, которую выполняют редко и
+    осознанно (в отличие, например, от автокомплита company_search — 60/60):
+    6 запросов в минуту с запасом покрывают ручной цикл «поправил
+    маппинг -> сохранил -> проверил ошибку валидации -> сохранил снова».
+
+    Отдельный scope ("config_save_sync", а не "sync") — общий бюджет с
+    кнопкой «Синхронизировать» на доске проектов означал бы, что
+    администратор, сохраняющий настройки при первичной привязке Project SPA,
+    отбирает лимит у сотрудников, которые в этот момент работают с доской
+    (и наоборот — серия ручных синков не должна мешать сохранить настройки).
+    Разные сценарии с разной частотой — счётчики разные.
+
+    Обычные сохранения без project_sp_entity_type_id в конфигурации вообще
+    не доходят до этой функции (см. save_configuration) и не расходуют её
+    бюджет — сколько угодно подряд.
+    """
+    warnings = []
+    project_validation = None
+    try:
+        project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
+    except Exception as validation_exc:
+        logger.exception("Configuration save validation failed: %s", validation_exc)
+        warnings.append(
+            "Проверка Project SPA временно недоступна. Настройки сохранены, "
+            "но валидацию рекомендуется повторить позже."
+        )
+
+    if project_validation and not project_validation.get("is_valid"):
+        return JsonResponse(
+            {
+                "status": "validation_error",
+                "error": "Конфигурация Project SPA невалидна. Исправьте ошибки и повторите сохранение.",
+                "validation": project_validation,
+            },
+            status=400,
+        )
+
+    service.save_configuration_sync(config)
+    invalidate_project_runtime_caches(request.bitrix24_account)
+
+    response_payload = {"status": "success"}
+    project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        with account_sync_lock(request.bitrix24_account, scope="project"):
+            sync_result = project_sync_service.sync()
+        response_payload["project_sync"] = sync_result
+    except SyncLockBusy:
+        warnings.append(
+            "Синхронизация проектов уже выполняется, повторите позже."
+        )
+        response_payload["project_sync"] = {
+            "status": "warning",
+            "warning": "Синхронизация проектов уже выполняется, повторите позже.",
+        }
+    except Exception as sync_exc:
+        logger.exception("Configuration save project sync failed: %s", sync_exc)
+        warnings.append(
+            "Настройки сохранены, но автосинхронизация проектов завершилась ошибкой."
+        )
+        response_payload["project_sync"] = {
+            "status": "warning",
+            "warning": "Автосинхронизация проектов завершилась ошибкой.",
+        }
+
+    try:
+        backfill_result = project_sync_service.backfill_timesheet_project_items()
+        response_payload["timesheet_backfill"] = backfill_result
+    except Exception as backfill_exc:
+        logger.exception("Configuration save timesheet backfill failed: %s", backfill_exc)
+        warnings.append(
+            "Настройки сохранены, но backfill связей меток времени завершился ошибкой."
+        )
+        response_payload["timesheet_backfill"] = {
+            "status": "warning",
+            "warning": "Backfill связей меток времени завершился ошибкой.",
+        }
+
+    if warnings:
+        response_payload["warning"] = " ".join(warnings)
+
+    return JsonResponse(response_payload)
+
+
 @xframe_options_exempt
 @csrf_exempt
 @require_POST
@@ -1804,78 +1919,22 @@ def save_configuration(request: AuthorizedRequest):
 
         config = service.normalize_configuration_sync(config)
 
-        warnings = []
-        project_validation = None
         try:
             should_validate_project_spa = int(config.get("project_sp_entity_type_id") or 0) > 0
         except (TypeError, ValueError):
             should_validate_project_spa = False
 
         if should_validate_project_spa:
-            try:
-                project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
-            except Exception as validation_exc:
-                logger.exception("Configuration save validation failed: %s", validation_exc)
-                warnings.append(
-                    "Проверка Project SPA временно недоступна. Настройки сохранены, "
-                    "но валидацию рекомендуется повторить позже."
-                )
-
-        if should_validate_project_spa and project_validation and not project_validation.get("is_valid"):
-            return JsonResponse(
-                {
-                    "status": "validation_error",
-                    "error": "Конфигурация Project SPA невалидна. Исправьте ошибки и повторите сохранение.",
-                    "validation": project_validation,
-                },
-                status=400,
-            )
+            # project_sp_entity_type_id > 0 -> эта ветка попытается запустить
+            # ProjectSyncService.sync() (полную синхронизацию с Битрикс) и
+            # поэтому лимитируется отдельно — см. docstring
+            # _save_configuration_with_project_sync. Ветка ниже (без Project
+            # SPA в конфигурации) синк не запускает и не лимитируется вовсе.
+            return _save_configuration_with_project_sync(request, service, config)
 
         service.save_configuration_sync(config)
         invalidate_project_runtime_caches(request.bitrix24_account)
-
-        response_payload = {"status": "success"}
-        if should_validate_project_spa:
-            project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
-            try:
-                with account_sync_lock(request.bitrix24_account, scope="project"):
-                    sync_result = project_sync_service.sync()
-                response_payload["project_sync"] = sync_result
-            except SyncLockBusy:
-                warnings.append(
-                    "Синхронизация проектов уже выполняется, повторите позже."
-                )
-                response_payload["project_sync"] = {
-                    "status": "warning",
-                    "warning": "Синхронизация проектов уже выполняется, повторите позже.",
-                }
-            except Exception as sync_exc:
-                logger.exception("Configuration save project sync failed: %s", sync_exc)
-                warnings.append(
-                    "Настройки сохранены, но автосинхронизация проектов завершилась ошибкой."
-                )
-                response_payload["project_sync"] = {
-                    "status": "warning",
-                    "warning": "Автосинхронизация проектов завершилась ошибкой.",
-                }
-
-            try:
-                backfill_result = project_sync_service.backfill_timesheet_project_items()
-                response_payload["timesheet_backfill"] = backfill_result
-            except Exception as backfill_exc:
-                logger.exception("Configuration save timesheet backfill failed: %s", backfill_exc)
-                warnings.append(
-                    "Настройки сохранены, но backfill связей меток времени завершился ошибкой."
-                )
-                response_payload["timesheet_backfill"] = {
-                    "status": "warning",
-                    "warning": "Backfill связей меток времени завершился ошибкой.",
-                }
-
-        if warnings:
-            response_payload["warning"] = " ".join(warnings)
-
-        return JsonResponse(response_payload)
+        return JsonResponse({"status": "success"})
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
     except Exception:
