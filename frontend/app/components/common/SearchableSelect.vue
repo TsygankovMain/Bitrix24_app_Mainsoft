@@ -294,10 +294,36 @@ function handlePointerDown(event: MouseEvent | TouchEvent) {
   }
 }
 
+/**
+ * Д3 хотфикса 2026-07-29 (см. .superpowers/sdd/2026-07-28-create-project-button/
+ * hotfix-new-company-brief.md): раньше этот обработчик гасил список, но не
+ * останавливал всплытие — то же keydown следом ловил B24Modal (Reka UI
+ * DismissableLayer: onKeyStroke('Escape', ...) из @vueuse/core, см.
+ * node_modules/reka-ui/dist/DismissableLayer/DismissableLayer.js). У
+ * onKeyStroke нет своего target/capture в вызове — действуют дефолты самой
+ * функции (node_modules/@vueuse/core/dist/index.js): target=window,
+ * capture не задан, то есть слушатель на window в фазе ВСПЛЫТИЯ. Итог —
+ * Escape в поле поиска закрывал сразу всё модальное окно вместо одного
+ * списка (пользователь: «всё блюрится и форма пропадает»).
+ *
+ * Приём: этот обработчик регистрируется на document с { capture: true }
+ * (см. onMounted ниже) — фаза ПОГРУЖЕНИЯ на document идёт раньше и фазы
+ * погружения к самой цели события, и уж тем более раньше фазы всплытия до
+ * window, где сидит Reka UI. При открытом списке — stopPropagation()
+ * обрывает событию весь дальнейший путь, оно физически не доходит до
+ * window — диалог остаётся открытым, закрывается только список.
+ *
+ * При ЗАКРЫТОМ списке — выходим ДО stopPropagation/closeDropdown: событию
+ * ничто не мешает пройти весь путь и дойти до window, поэтому Escape
+ * по-прежнему закрывает всё окно штатным механизмом диалога — это поведение
+ * этот компонент не трогает и трогать не должен.
+ */
 function handleEscape(event: KeyboardEvent) {
-  if (event.key === 'Escape') {
-    closeDropdown()
+  if (event.key !== 'Escape' || !isOpen.value) {
+    return
   }
+  event.stopPropagation()
+  closeDropdown()
 }
 
 watch(() => props.options, () => {
@@ -309,13 +335,14 @@ watch(() => props.options, () => {
 onMounted(() => {
   document.addEventListener('mousedown', handlePointerDown)
   document.addEventListener('touchstart', handlePointerDown, { passive: true })
-  document.addEventListener('keydown', handleEscape)
+  // capture: true — обязателен для Д3, см. докстринг handleEscape выше.
+  document.addEventListener('keydown', handleEscape, { capture: true })
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', handlePointerDown)
   document.removeEventListener('touchstart', handlePointerDown)
-  document.removeEventListener('keydown', handleEscape)
+  document.removeEventListener('keydown', handleEscape, { capture: true })
   if (debounceTimer) {
     clearTimeout(debounceTimer)
   }
