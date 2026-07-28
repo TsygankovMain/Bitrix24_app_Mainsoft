@@ -9,7 +9,7 @@
 """
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from b24pysdk import Client
 
@@ -42,36 +42,54 @@ def _clean_str(value: Any) -> str:
     return str(value).strip()
 
 
-def _extract_rows(response: Any) -> List[Dict[str, Any]]:
-    """Достаёт список записей из ответа Битрикса, не доверяя его форме.
+def _extract_rows(response: Any) -> Tuple[List[Dict[str, Any]], bool]:
+    """Достаёт список записей из ответа Битрикса, различая ноль найденных от ошибки разбора.
+
+    Возвращает кортеж (rows, parsed_ok):
+    - rows: список распарсенных записей (может быть пусто)
+    - parsed_ok: True если результат в ожидаемой форме (список), False если форма
+      неожиданна или результат содержал записи, но они не выглядят как словари
 
     Битрикс отдаёт result то списком, то словарём с items, а при нештатных
-    ситуациях — чем угодно. Разбор ответа обязан быть таким же защищённым,
-    как сам вызов: шаг оркестратора не имеет права бросить исключение, иначе
-    следующие шаги не выполнятся и вызывающий код не соберёт частичный
-    результат.
+    ситуациях — чем угодно. Нужно различать:
+    - result=[] → ноль найденных, можем создавать (parsed_ok=True)
+    - result={...} без items → подозрительно, ошибка разбора (parsed_ok=False)
+    - result=[{...}] со словарями → нормально (parsed_ok=True)
+    - result=["str"] списком строк → ошибка разбора (parsed_ok=False)
+
+    Это нужно для следующих шагов (группа, карточка), где та же дилемма.
     """
     if not isinstance(response, dict):
-        return []
+        return [], False
 
     result = response.get("result")
     if result is None:
-        return []
+        return [], False
 
     # Если result — словарь, пытаемся достать items или вложенный result
     if isinstance(result, dict):
         items = result.get("items")
         if items is None:
             items = result.get("result")
+        # Если items всё равно не найден, это подозрительный ответ
+        if items is None:
+            return [], False
     else:
         items = result
 
-    # Если items не список — пустой результат
+    # Если items не список — ошибка разбора
     if not isinstance(items, list):
-        return []
+        return [], False
 
-    # Фильтруем элементы, которые не словари
-    return [item for item in items if isinstance(item, dict)]
+    # Фильтруем элементы, которые не словари, но запоминаем если были потери
+    valid_items = [item for item in items if isinstance(item, dict)]
+    had_invalid_items = len(items) > 0 and len(valid_items) < len(items)
+
+    # Если исходный список был не пусто, но все элементы отвергнуты — ошибка
+    if len(items) > 0 and len(valid_items) == 0:
+        return [], False
+
+    return valid_items, True
 
 
 def _extract_scalar_id(response: Any) -> Optional[str]:
@@ -121,7 +139,13 @@ class ProjectCreationService:
                 "crm.company.list",
                 {"filter": {"=TITLE": company_name}, "select": ["ID", "TITLE"]},
             )
-            rows = _extract_rows(response)
+            rows, parsed_ok = _extract_rows(response)
+            if not parsed_ok:
+                logger.warning("ensure_company: crm.company.list returned unexpected format")
+                return StepResult(
+                    status="error",
+                    error="Битрикс вернул ответ в неожиданном формате.",
+                )
         except Exception as exc:
             logger.warning("ensure_company: crm.company.list failed: %s", exc)
             return StepResult(status="error", error=f"Не удалось найти компанию: {exc}")

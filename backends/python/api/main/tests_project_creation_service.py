@@ -38,11 +38,6 @@ class _FakeClient:
 
 class _ServiceTestCase(TestCase):
     def setUp(self):
-        # Очищаем кеш для изоляции тестов. Каждый тест работает с новым аккаунтом
-        # и не должен видеть результаты других тестов.
-        from django.core.cache import cache
-        cache.clear()
-
         self.account = Bitrix24Account.objects.create(
             b24_user_id=1, is_b24_user_admin=True, member_id="m-create-1",
             is_master_account=True, domain_url="example.bitrix24.ru",
@@ -147,23 +142,37 @@ class EnsureCompanyTest(_ServiceTestCase):
         """crm.company.list вернул result как словарь вместо списка."""
         client = _FakeClient({
             "crm.company.list": {"result": {"unexpected": "shape"}},
-            "crm.company.add": {"result": 77},
         })
         result = self.service(client).ensure_company(None, "АО Ромашка")
 
-        # Должны обработать как пустой результат, попытаться создать
-        self.assertEqual(result.status, "created")
+        # Непонятный ответ — не создаём, возвращаем ошибку
+        self.assertEqual(result.status, "error")
+        self.assertIn("неожиданном формате", result.error)
+        self.assertNotIn("crm.company.add", client.methods_called())
 
     def test_malformed_list_response_strings_instead_of_dicts(self):
         """crm.company.list вернул result как список строк."""
         client = _FakeClient({
             "crm.company.list": {"result": ["15", "16"]},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        # Список строк не может быть распарсен, ошибка разбора
+        self.assertEqual(result.status, "error")
+        self.assertIn("неожиданном формате", result.error)
+        self.assertNotIn("crm.company.add", client.methods_called())
+
+    def test_empty_list_result_creates_company(self):
+        """crm.company.list вернул пустой список — это нормально, создаём."""
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
             "crm.company.add": {"result": 77},
         })
         result = self.service(client).ensure_company(None, "АО Ромашка")
 
-        # Список строк не может быть распарсен, должны создать
+        # Пустой результат означает ноль совпадений, создаём компанию
         self.assertEqual(result.status, "created")
+        self.assertEqual(result.id, "77")
 
     def test_malformed_add_response_none(self):
         """crm.company.add вернул None вместо словаря."""
