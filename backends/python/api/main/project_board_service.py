@@ -764,6 +764,29 @@ class ProjectCardService:
                 card.company_id,
                 card.company_name,
             )
+            # Предупреждаем только здесь, на одиночном пути (companies=None).
+            # Тут ИНН тянется точечным crm.requisite.list за конкретную
+            # компанию (_fetch_single_reference_inn) — если его всё равно нет,
+            # это реальная аномалия, стоит посмотреть.
+            #
+            # На пути доски (companies передан явно, см. get_board_data)
+            # предупреждать не о чем: get_companies() отдаёт справочник из
+            # локальной проекции project_card, а в этой таблице колонки ИНН
+            # нет вообще — там company_inn отсутствует ВСЕГДА и у ВСЕХ
+            # карточек, по построению источника, а не из-за сбоя. До
+            # хотфикса 2026-07-28 get_companies() обходил Битрикс целиком и
+            # ИНН в справочнике был; с переводом на локальную базу это
+            # предупреждение на пути доски превратилось в чистый шум —
+            # ~400 срабатываний на 200 карточек при каждой пересборке доски
+            # (раз в 2 минуты на каждом воркере).
+            if company_id and not company_inn:
+                logger.warning(
+                    "[ProjectBoard][INN] Missing client INN for domain=%s project_id=%s company_id=%s company_name=%s",
+                    self.account.domain_url,
+                    card.project_id,
+                    company_id,
+                    company_name,
+                )
         if legal_entities is not None:
             legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details(
                 card.our_legal_entity_id,
@@ -775,23 +798,22 @@ class ProjectCardService:
                 card.our_legal_entity_id,
                 card.our_legal_entity_name,
             )
-
-        if company_id and not company_inn:
-            logger.warning(
-                "[ProjectBoard][INN] Missing client INN for domain=%s project_id=%s company_id=%s company_name=%s",
-                self.account.domain_url,
-                card.project_id,
-                company_id,
-                company_name,
-            )
-        if legal_entity_id and not legal_entity_inn:
-            logger.warning(
-                "[ProjectBoard][INN] Missing legal entity INN for domain=%s project_id=%s legal_entity_id=%s legal_entity_name=%s",
-                self.account.domain_url,
-                card.project_id,
-                legal_entity_id,
-                legal_entity_name,
-            )
+            # Симметрично company_inn выше. На пути доски legal_entities
+            # приходит из get_legal_entities() -> CompanySearchService.
+            # list_my_companies(), а тот запрашивает select=["ID", "TITLE"] и
+            # никогда не ходит за RQ_INN — legal_entity_inn отсутствует на
+            # пути доски ВСЕГДА и у ВСЕХ карточек, по построению, а не из-за
+            # сбоя. Предупреждаем только на одиночном пути, где ИНН тянется
+            # точечно (_fetch_single_reference_inn) и его отсутствие —
+            # реальная аномалия.
+            if legal_entity_id and not legal_entity_inn:
+                logger.warning(
+                    "[ProjectBoard][INN] Missing legal entity INN for domain=%s project_id=%s legal_entity_id=%s legal_entity_name=%s",
+                    self.account.domain_url,
+                    card.project_id,
+                    legal_entity_id,
+                    legal_entity_name,
+                )
 
         return {
             "id": str(card.id),
