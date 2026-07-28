@@ -12,6 +12,7 @@ import { upsertProjectBoardCard, buildProjectBoardSummary, formatProjectDate, ge
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from '~/utils/apiErrors'
+import { CREATE_PROJECT_BUTTON_ENABLED } from '~/utils/featureFlags'
 
 const router = useRouter()
 const route = useRoute()
@@ -676,7 +677,7 @@ onMounted(async () => {
             </div>
 
             <div class="flex flex-wrap gap-2">
-              <B24Button label="Создать проект" color="primary" @click="createProjectOpen = true" />
+              <B24Button v-if="CREATE_PROJECT_BUTTON_ENABLED" label="Создать проект" color="primary" @click="createProjectOpen = true" />
               <B24Button label="Синхронизировать проекты" color="success" :loading="isSyncing" @click="syncBoard()" />
               <B24Button label="Обновить справочники" color="default" :loading="isRefreshingMeta" @click="refreshReferenceOptions()" />
               <B24Button label="Проверить статусы" color="default" :loading="isSyncing" @click="runDailyCheck" />
@@ -885,7 +886,7 @@ onMounted(async () => {
         @open-spa="openSpa"
       />
 
-      <CreateProjectModal v-model:open="createProjectOpen" @created="onProjectCreated" />
+      <CreateProjectModal v-if="CREATE_PROJECT_BUTTON_ENABLED" v-model:open="createProjectOpen" @created="onProjectCreated" />
     </div>
   </div>
 </template>

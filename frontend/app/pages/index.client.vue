@@ -7,6 +7,7 @@ import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import CreateProjectModal from '~/components/projects/CreateProjectModal.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
+import { CREATE_PROJECT_BUTTON_ENABLED } from '~/utils/featureFlags'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -453,7 +454,7 @@ onMounted(async () => {
         <B24Button label="Настройки" color="default" @click="openSettings" />
         <B24Button label="Юзергайд" color="default" @click="openGuide" />
         <B24Button label="Канбан проектов" color="primary" @click="router.push('/projects')" />
-        <B24Button label="Создать проект" color="primary" @click="createProjectOpen = true" />
+        <B24Button v-if="CREATE_PROJECT_BUTTON_ENABLED" label="Создать проект" color="primary" @click="createProjectOpen = true" />
       </template>
     </B24PageHeader>
 
@@ -638,6 +639,6 @@ onMounted(async () => {
       @open-spa="openSpa"
     />
 
-    <CreateProjectModal v-model:open="createProjectOpen" @created="onProjectCreated" />
+    <CreateProjectModal v-if="CREATE_PROJECT_BUTTON_ENABLED" v-model:open="createProjectOpen" @created="onProjectCreated" />
   </B24Container>
 </template>
