@@ -149,6 +149,21 @@ def _parse_page_size(request, default: int = 50, max_value: int = 200) -> int:
         return default
 
 
+def _parse_refresh_flag(request) -> bool:
+    """`?refresh=...` из query string -> bool "принудительно обойти кэш".
+
+    Общий разбор для всех эндпоинтов с форс-рефрешем (get_project_board_meta,
+    get_project_board, get_homepage_portfolio) — сравнение с множеством
+    "истинных" строк, а не int()/bool(): не бросает исключений ни при каком
+    значении параметра (пустая строка, слово, что угодно). План уже дважды
+    ловил падения на "голом" int()/list() парсинге вне try/except (Task 1,
+    fix rounds 1-2) — оба раза именно из-за того, что один и тот же параметр
+    парсился по-разному в разных местах. Один разбор на все три места, а не
+    копия в каждом, — чтобы не завести третий такой дефект.
+    """
+    return str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "y", "yes"}
+
+
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
     return build_filtered_timesheet_queryset(
         request.bitrix24_account,
@@ -775,8 +790,31 @@ def connect_support_line(request: AuthorizedRequest):
 @log_errors("get_project_board")
 @auth_required
 def get_project_board(request: AuthorizedRequest):
+    """?refresh=1 — принудительный обход серверного кэша доски (2 минуты,
+
+    PROJECT_BOARD_CACHE_TTL). Тот же приём, что и у get_project_board_meta
+    (см. её докстринг про разбор параметра): нужен, потому что кэш —
+    LocMemCache, свой у каждого воркера gunicorn. invalidate_project_runtime_caches,
+    которую create() зовёт после write_through, чистит кэш только того
+    воркера, который обработал запрос на создание; следующий GET доски может
+    уйти на другой воркер и получить кэш, прогретый до создания проекта, —
+    см. докстринг ProjectCardService.get_board_data.
+
+    БЕЗ @rate_limit, в отличие от board_meta_refresh: там форс-рефреш бьёт
+    живьём в Битрикс (app.option.get + crm.company.list), а тут — нет.
+    get_board_data(bypass_cache=True) пропускает ТОЛЬКО чтение кэша
+    "project-board" и пересчитывает ответ из локальной базы; единственный
+    живой вызов Битрикса на этом пути (app.option.get в _load_config)
+    происходит и без всякого refresh — на любой органический холодный кэш,
+    то есть и так не реже раза в 2 минуты на аккаунт без всякого лимита
+    сегодня. refresh=1 просто просит совершить этот же пересчёт по запросу
+    клиента, а не по истечении TTL — лимитировать только эту ветку, оставляя
+    безлимитным обычный путь с тем же наихудшим темпом, не защитило бы
+    бюджет Битрикса и сломало бы легитимный сценарий (перечитать доску сразу
+    после нажатия «Создать проект»).
+    """
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
-    return JsonResponse(service.get_board_data())
+    return JsonResponse(service.get_board_data(bypass_cache=_parse_refresh_flag(request)))
 
 
 @rate_limit("board_meta_refresh", 6, 60, key="account")
@@ -809,12 +847,10 @@ def _get_project_board_meta_refresh(request: AuthorizedRequest, service: Project
 @auth_required
 def get_project_board_meta(request: AuthorizedRequest):
     # ?refresh=1 — кнопка «Обновить справочники» (принудительный обход
-    # серверного кэша project-board-meta, живущего 6 часов). Разбор — сверка
-    # с множеством "истинных" строк, а не int()/bool(): не бросает исключений
-    # ни при каком значении параметра (пустая строка, слово, что угодно) —
-    # план уже дважды ловил падения на "голом" int()/list() парсинге вне
-    # try/except (Task 1, fix rounds 1-2).
-    bypass_cache = str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "y", "yes"}
+    # серверного кэша project-board-meta, живущего 6 часов). Разбор параметра
+    # вынесен в _parse_refresh_flag — общий для этого эндпоинта и его соседей
+    # get_project_board/get_homepage_portfolio (см. её докстринг).
+    bypass_cache = _parse_refresh_flag(request)
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
     if bypass_cache:
         # Только эта ветка бьёт в Битрикс живьём — см. docstring
@@ -923,8 +959,15 @@ def list_my_companies(request: AuthorizedRequest):
 @log_errors("get_homepage_portfolio")
 @auth_required
 def get_homepage_portfolio(request: AuthorizedRequest):
+    """?refresh=1 — принудительный обход серверного кэша главного экрана (2
+
+    минуты, HOMEPAGE_CACHE_TTL). Тот же приём и то же обоснование отсутствия
+    @rate_limit, что и у get_project_board — см. её докстринг и докстринг
+    ProjectCardService.get_homepage_snapshot (bypass_cache пробрасывается и
+    во вложенный кэш доски, не только в свой собственный).
+    """
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
-    return JsonResponse(service.get_homepage_snapshot())
+    return JsonResponse(service.get_homepage_snapshot(bypass_cache=_parse_refresh_flag(request)))
 
 
 @xframe_options_exempt
