@@ -1,6 +1,9 @@
 """Тесты поиска компаний: один запрос с фильтром вместо обхода справочника портала."""
+from unittest.mock import patch
+
 from django.core.cache import cache
-from django.test import SimpleTestCase, TestCase
+from django.test import Client as HttpClient, SimpleTestCase, TestCase
+from django.urls import reverse
 
 from .models import Bitrix24Account
 from .company_search_service import CompanySearchService, _safe_int
@@ -387,3 +390,125 @@ class NoneResultIsNotCachedAsSuccessTest(TestCase):
         client.calls.clear()
         service.list_my_companies()
         self.assertEqual(client.methods_called(), ["crm.company.list"])
+
+
+class CompanySearchEndpointRoutingTest(TestCase):
+    """Task 5, шаг 1: маршруты существуют и оба отклоняют POST."""
+
+    def test_search_route_resolves_to_expected_path(self):
+        self.assertEqual(
+            reverse("search_project_board_companies"),
+            "/api/project-board/companies/search",
+        )
+
+    def test_my_companies_route_resolves_to_expected_path(self):
+        self.assertEqual(reverse("list_my_companies"), "/api/project-board/my-companies")
+
+    def test_search_endpoint_rejects_post(self):
+        response = HttpClient().post("/api/project-board/companies/search")
+        self.assertEqual(response.status_code, 405)
+
+    def test_my_companies_endpoint_rejects_post(self):
+        response = HttpClient().post("/api/project-board/my-companies")
+        self.assertEqual(response.status_code, 405)
+
+
+class SearchEndpointHttpTest(TestCase):
+    """Разбор ?limit= обязан пережить любой мусор — проверено прогоном через
+    реальный HTTP-запрос (Django test client), а не только вызовом
+    CompanySearchService.search() напрямую в сервисных тестах выше.
+    request.GET.get("limit") на "?limit=" без значения отдаёт пустую строку,
+    а не None — план уже дважды ловил дефекты именно в разборе входных
+    значений на границе HTTP, поэтому это отдельно зафиксировано здесь."""
+
+    def setUp(self):
+        cache.clear()
+        self.http = HttpClient()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-search-http-1",
+            is_master_account=True, domain_url="search-http.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        self.auth_header = f"Bearer {self.account.create_jwt_token()}"
+
+    def _get(self, query_suffix=""):
+        url = "/api/project-board/companies/search"
+        if query_suffix:
+            url = f"{url}?{query_suffix}"
+        return self.http.get(url, HTTP_AUTHORIZATION=self.auth_header)
+
+    def test_no_params_returns_200_without_touching_bitrix(self):
+        # Пустой q короче MIN_QUERY_LENGTH -> честный сквозной прогон без
+        # моков: URL -> view -> request.GET.get -> CompanySearchService.search
+        # -> _parse_limit, короткое замыкание случается уже ПОСЛЕ разбора limit.
+        response = self._get()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"companies": [], "truncated": False, "failed": False})
+
+    def test_garbage_limit_values_never_crash_the_endpoint(self):
+        # q="a" короче MIN_QUERY_LENGTH -> короткое замыкание после разбора
+        # limit и до обращения к Битриксу, поэтому и это без моков.
+        garbage_values = ("", "0", "-5", "abc", "1.5", "99999999999999999999", "%%%", "[]", "inf")
+        for garbage in garbage_values:
+            response = self._get(f"q=a&limit={garbage}")
+            self.assertEqual(
+                response.status_code, 200,
+                f"limit={garbage!r} не должен ронять эндпоинт, получили {response.status_code}",
+            )
+
+    def test_empty_limit_value_reaches_service_as_empty_string_not_none(self):
+        with patch.object(
+            CompanySearchService, "search",
+            return_value={"companies": [], "truncated": False, "failed": False},
+        ) as mocked:
+            response = self._get("q=Ромашка&limit=")
+
+        self.assertEqual(response.status_code, 200)
+        # Критичный момент задачи: request.GET.get("limit") на "?limit=" без
+        # значения отдаёт "" (пустую строку), а не None — сюда это доходит
+        # без изменений, разбирает уже сервис (_parse_limit).
+        mocked.assert_called_once_with("Ромашка", limit="")
+
+    def test_missing_limit_param_reaches_service_as_none(self):
+        with patch.object(
+            CompanySearchService, "search",
+            return_value={"companies": [], "truncated": False, "failed": False},
+        ) as mocked:
+            response = self._get("q=Ромашка")
+
+        self.assertEqual(response.status_code, 200)
+        mocked.assert_called_once_with("Ромашка", limit=None)
+
+    def test_missing_q_param_reaches_service_as_empty_string(self):
+        with patch.object(
+            CompanySearchService, "search",
+            return_value={"companies": [], "truncated": False, "failed": False},
+        ) as mocked:
+            response = self._get("limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        mocked.assert_called_once_with("", limit="10")
+
+
+class MyCompaniesEndpointHttpTest(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.http = HttpClient()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-mycomp-http-1",
+            is_master_account=True, domain_url="mycomp-http.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        self.auth_header = f"Bearer {self.account.create_jwt_token()}"
+
+    def test_returns_service_payload_as_json(self):
+        payload = {"companies": [{"id": "7", "name": "ООО Мейнсофт"}], "failed": False}
+        with patch.object(CompanySearchService, "list_my_companies", return_value=payload) as mocked:
+            response = self.http.get(
+                "/api/project-board/my-companies", HTTP_AUTHORIZATION=self.auth_header
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), payload)
+        mocked.assert_called_once_with()

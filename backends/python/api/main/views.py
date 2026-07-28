@@ -51,6 +51,7 @@ from .report_excel import (
     _safe_cell_text,
 )
 from .inn_backfill_service import InnBackfillService
+from .company_search_service import CompanySearchService
 
 __all__ = [
     "root",
@@ -75,6 +76,8 @@ __all__ = [
     "archive_project_board",
     "run_project_board_daily_check",
     "get_project_board_companies",
+    "search_project_board_companies",
+    "list_my_companies",
     "get_homepage_portfolio",
     "get_internal_lists",
     "report_employee_project",
@@ -791,6 +794,39 @@ def get_project_board_card(request: AuthorizedRequest):
 def get_project_board_companies(request: AuthorizedRequest):
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
     return JsonResponse({"companies": service.get_companies()})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("search_project_board_companies")
+@auth_required
+def search_project_board_companies(request: AuthorizedRequest):
+    """Поиск компаний по мере ввода. Полный справочник портала (десятки тысяч
+    записей на боевом) сюда не выгружается — см. company_search_service.py.
+
+    `limit` передаётся в CompanySearchService.search как есть, без разбора на
+    уровне view: `_parse_limit` внутри сервиса уже переживает любой мусор —
+    пустую строку («?limit=» без значения — request.GET.get отдаёт "", а не
+    None), нечисловые значения, отсутствие параметра вовсе. Дублировать эту
+    логику здесь не стоит: в этом плане уже дважды ловили дефекты именно
+    из-за разъехавшегося разбора одного и того же параметра в двух местах.
+    """
+    service = CompanySearchService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(
+        service.search(request.GET.get("q") or "", limit=request.GET.get("limit"))
+    )
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("list_my_companies")
+@auth_required
+def list_my_companies(request: AuthorizedRequest):
+    """Свои юрлица (серверный фильтр IS_MY_COMPANY вместо обхода всего
+    справочника портала) — для форм, которым нужен список без полного
+    справочника компаний. См. company_search_service.py."""
+    service = CompanySearchService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(service.list_my_companies())
 
 
 @xframe_options_exempt
