@@ -6,9 +6,11 @@
 from datetime import date
 from unittest.mock import MagicMock, patch
 
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 from .models import Bitrix24Account, Portal, ProjectCard
+from .project_board_service import ProjectCardService
 from .project_creation_defaults import resolve_project_fields
 from .project_creation_service import ProjectCreationService, StepResult
 from .tenant_scoping import scope_to_tenant
@@ -923,3 +925,139 @@ class CreateEndpointRoutingTest(_ServiceTestCase):
         from django.test import Client as HttpClient
         response = HttpClient().get("/api/project-board/create")
         self.assertEqual(response.status_code, 405)
+
+
+class CreateCacheInvalidationTest(_ServiceTestCase):
+    """Находка ревью, блокирующая выкатку кнопки (task-9-cache-fix-report.md):
+    create() не сбрасывал серверный кэш доски после write_through.
+
+    get_board_data/get_homepage_snapshot (project_board_service.py) читают
+    свой кэш первым делом и отдают его как есть, пока не истёк
+    PROJECT_BOARD_CACHE_TTL/HOMEPAGE_CACHE_TTL (2 минуты,
+    project_board_shared.py). Кэш прогревается уже тем, что человек находится
+    на доске — значит «создал -> кнопка отчиталась успехом -> на доске пусто
+    -> нажал ещё раз» типичный случай, а не редкий крайний. Все остальные
+    изменяющие пути (update_card/update_stage/archive_project/
+    ProjectSyncService.sync/StageAutomationService/сохранение настроек/синк
+    таймшитов — см. grep по invalidate_project_runtime_caches) зовут
+    invalidate_project_runtime_caches сразу после своей записи; create() была
+    единственным исключением.
+
+    Тест воспроизводит ровно последовательность ревьюера: прогреть кэш чтением
+    доски (как это происходит само собой при открытии доски), создать проект
+    тем же путём, что и кнопка, перечитать доску — и увидеть проект без
+    ожидания TTL."""
+
+    def _client(self, **overrides):
+        responses = {
+            "app.option.get": {"result": {"timestamp_config": (
+                '{"hourly_rate": 1500, "project_sp_entity_type_id": 180,'
+                ' "project_fields_mapping": {"title": "title",'
+                ' "bitrix_group_id": "ufCrm7Group", "stage_id": "stageId"}}'
+            )}},
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": 77},
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": {"result": 44},
+            "crm.item.list": {"result": {"items": []}},
+            "crm.item.add": {"result": {"item": {"id": 901}}},
+        }
+        responses.update(overrides)
+        return _FakeClient(responses)
+
+    def _form(self, **overrides):
+        form = {"project_name": "Портал АО Ромашка", "company_name": "АО Ромашка"}
+        form.update(overrides)
+        return form
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+
+    def test_new_project_appears_on_board_right_after_create(self):
+        client = self._client()
+        board_service = ProjectCardService(client, self.account)
+
+        # 1. Прогреваем серверный кэш доски — происходит само собой, когда
+        # человек открывает доску, ещё до создания проекта.
+        warm = board_service.get_board_data()
+        self.assertEqual(warm["cards"], [])
+
+        # 2. Создаём проект тем же путём, что и кнопка «Создать проект».
+        result = self.service(client).create(
+            self._form(), current_user_id="42", current_user_name="Петров Иван",
+            today=date(2026, 7, 28),
+        )
+        self.assertTrue(result["done"])
+        self.assertEqual(ProjectCard.objects.filter(project_id="44").count(), 1)
+
+        # 3. Доска обязана показать проект немедленно — не через 2 минуты
+        # (PROJECT_BOARD_CACHE_TTL, project_board_shared.py).
+        board = board_service.get_board_data()
+        project_ids = [card["project_id"] for card in board["cards"]]
+        self.assertIn(
+            "44", project_ids,
+            "Кэш доски не сброшен после create() — новый проект не виден без ожидания TTL.",
+        )
+
+    def test_homepage_snapshot_also_reflects_new_project(self):
+        """get_homepage_snapshot кэшируется ОТДЕЛЬНЫМ ключом
+        ("project-board-homepage", HOMEPAGE_CACHE_TTL) и, если он уже тёплый,
+        не перечитывает даже свежий get_board_data — invalidate_project_
+        runtime_caches обязана сбросить оба ключа, не только "project-board"."""
+        client = self._client()
+        board_service = ProjectCardService(client, self.account)
+
+        board_service.get_board_data()  # прогрев "project-board"
+        board_service.get_homepage_snapshot()  # прогрев "project-board-homepage"
+
+        result = self.service(client).create(
+            self._form(), current_user_id="42", current_user_name="Петров Иван",
+            today=date(2026, 7, 28),
+        )
+        self.assertTrue(result["done"])
+
+        homepage = board_service.get_homepage_snapshot()
+        project_ids = [card["project_id"] for card in homepage["cards"]]
+        self.assertIn(
+            "44", project_ids,
+            "Кэш главного экрана не сброшен после create() — новый проект не виден без ожидания TTL.",
+        )
+
+    def test_repeat_found_found_found_call_still_invalidates(self):
+        """Первый вызов create() создаёт всё с нуля и уже покрыт тестом выше.
+        Этот тест — повторное нажатие: company/group/card все "found" (ничего
+        не создано в Битриксе), а write_through всё равно безусловно
+        перезаписывает локальную строку (update_or_create). Кэш обязан
+        сброситься и здесь: "всё найдено" на уровне Битрикса не означает
+        "локальная строка не изменилась" — это может быть первое появление
+        строки для проекта, заведённого в Битриксе до этого приложения."""
+        client = self._client()
+        board_service = ProjectCardService(client, self.account)
+
+        self.service(client).create(
+            self._form(), current_user_id="42", current_user_name="Петров Иван",
+            today=date(2026, 7, 28),
+        )
+        board_service.get_board_data()  # прогреваем кэш свежесозданным проектом
+
+        client_repeat = self._client(**{
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+            "sonet_group.get": {"result": [{"ID": "44", "NAME": "Портал АО Ромашка"}]},
+            "crm.item.list": {"result": {"items": [{"id": 901}]}},
+        })
+        result = self.service(client_repeat).create(
+            self._form(project_hours_budget="25"), current_user_id="42", current_user_name="Петров Иван",
+            today=date(2026, 7, 28),
+        )
+        self.assertEqual(result["company"]["status"], "found")
+        self.assertEqual(result["group"]["status"], "found")
+        self.assertEqual(result["card"]["status"], "found")
+        self.assertTrue(result["done"])
+
+        board = board_service.get_board_data()
+        budgets = {card["project_id"]: card["project_hours_budget"] for card in board["cards"]}
+        self.assertEqual(
+            budgets.get("44"), 25.0,
+            "Кэш доски не сброшен после повторного create() (found/found/found) — правка не видна.",
+        )

@@ -18,6 +18,7 @@ from django.utils import timezone
 from .configuration_service import ConfigurationService
 from .models import Bitrix24Account, ProjectCard
 from .project_board_service import ProjectCardService
+from .project_board_shared import invalidate_project_runtime_caches
 from .project_creation_defaults import ResolvedProjectFields, resolve_project_fields
 from .tenant_scoping import scope_to_tenant
 from .utils.decorators.sync_lock import SyncLockBusy, account_sync_lock
@@ -590,6 +591,28 @@ class ProjectCreationService:
                 )
             else:
                 self.write_through(fields, group.id, card.id)
+                # Доска и главный экран кэшируют локальную таблицу на 2 минуты
+                # (PROJECT_BOARD_CACHE_TTL/HOMEPAGE_CACHE_TTL,
+                # project_board_shared.py), а кэш прогревается уже тем, что
+                # человек находится на доске — без сброса свежесозданный
+                # проект пропадал с доски до истечения TTL (находка ревью,
+                # заблокировавшая выкатку кнопки; воспроизведено тестами в
+                # CreateCacheInvalidationTest, tests_project_creation_service.py).
+                # Сбрасываем ТОЛЬКО после успешного write_through — как и все
+                # остальные изменяющие пути (update_card/update_stage/
+                # archive_project/ProjectSyncService.sync/
+                # StageAutomationService/сохранение настроек/синк таймшитов,
+                # см. invalidate_project_runtime_caches) — единообразно с
+                # ними и без попытки отличить "запись реально что-то
+                # поменяла" от "переписала тем же самым": write_through делает
+                # update_or_create безусловно, и даже "все три шага нашлись"
+                # (company/group/card status="found") может быть первым
+                # появлением локальной строки для проекта, заведённого в
+                # Битриксе до этого приложения — пропуск сброса в этом случае
+                # воспроизвёл бы тот же баг для более редкого пути. Если
+                # запись не удалась (except ниже) — кэш не трогаем: показать
+                # всё равно нечего, локальная строка не появилась.
+                invalidate_project_runtime_caches(self.account)
         except Exception as exc:
             logger.warning("create: write_through failed for group %s: %s", group.id, exc)
 
