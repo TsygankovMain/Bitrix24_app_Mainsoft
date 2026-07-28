@@ -889,3 +889,14 @@ class CreateOrchestrationConcurrencyTest(_ServiceTestCase):
         cards = ProjectCard.objects.filter(bitrix24_account=self.account, project_id="44")
         self.assertEqual(cards.count(), 1)
         self.assertEqual(cards.first().project_hours_budget, 20.0)
+
+
+class CreateEndpointRoutingTest(_ServiceTestCase):
+    def test_route_is_registered(self):
+        from django.urls import reverse
+        self.assertEqual(reverse("create_project_board"), "/api/project-board/create")
+
+    def test_view_rejects_get(self):
+        from django.test import Client as HttpClient
+        response = HttpClient().get("/api/project-board/create")
+        self.assertEqual(response.status_code, 405)

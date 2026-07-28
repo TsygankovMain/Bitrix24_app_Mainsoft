@@ -52,6 +52,7 @@ from .report_excel import (
 )
 from .inn_backfill_service import InnBackfillService
 from .company_search_service import CompanySearchService
+from .project_creation_service import ProjectCreationService
 
 __all__ = [
     "root",
@@ -220,6 +221,20 @@ def _get_user_map(request: AuthorizedRequest, user_ids):
         )
 
     return user_map
+
+
+def _current_user_display_name(request: AuthorizedRequest) -> str:
+    """Имя текущего сотрудника для поля «куратор». Берём из локального
+    справочника (PortalUser) — он же питает user_map отчётов; если сотрудника
+    там ещё нет, куратор останется с пустым именем, но с корректным id."""
+    account = request.bitrix24_account
+    row = PortalUser.objects.filter(
+        **scope_to_tenant(account),
+        bitrix_id=str(account.b24_user_id or ""),
+    ).values("name", "last_name").first()
+    if not row:
+        return ""
+    return f"{row['last_name']} {row['name']}".strip()
 
 
 def _get_data_service(request: AuthorizedRequest):
@@ -941,6 +956,71 @@ def sync_project_board(request: AuthorizedRequest):
 def run_project_spa_backfill(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     return JsonResponse(service.backfill_timesheet_project_items())
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("create_project_board")
+@auth_required
+@rate_limit("project_create", 5, 60, key="account")
+def create_project_board(request: AuthorizedRequest):
+    """Создаёт связку «компания + группа в Задачах + карточка смарт-процесса».
+
+    Шаги идемпотентны, поэтому повтор того же запроса досоздаёт только
+    недостающее — фронт этим и пользуется в кнопке «Повторить».
+
+    Исключения из service.create() наружу не протекают — оркестратор сам
+    ловит все свои ошибки и возвращает частичный результат (status="error"
+    по нужному шагу, done=False), поэтому здесь нет try/except: любая обёртка
+    превратила бы такой частичный результат в пятисотую, а он должен доехать
+    до фронта как есть, один в один.
+
+    Порог @rate_limit — 5 запросов/60 секунд, а НЕ 6/60, как у соседних
+    ручных кнопок sync/board_meta_refresh, и тем более не 60/60, как у
+    company_search. Число выбрано осознанно ниже, а не переиспользовано:
+
+    - Стоимость запроса выше, чем у sync (1-2 живых вызова, см. докстринг
+      _get_project_board_meta_refresh). Здесь три последовательных шага
+      (компания, группа, карточка) в service.create(), и каждый — сначала
+      поиск, затем, если не нашёл, создание: до двух живых вызовов на шаг,
+      то есть до шести только на сами шаги, плюс ещё до трёх чтений на
+      общие для аккаунта справочники (конфигурация, свои юрлица, стадии
+      проекта) — те обычно уже тёплые в кэше от обычной работы доски, но
+      гарантии на это нет (напрямую в create() не передаются, читаются
+      внутри с нуля).
+    - Риск выше, чем у sync и чем у company_search: это не чтение, а запись
+      в CRM клиента. У company_search (60/60) — это автокомплит, и его
+      результат ни на что не влияет, кроме самой формы; здесь неудачный
+      повтор — это реальная сущность на портале клиента (идемпотентность
+      ensure_company/ensure_group спасает от дублей по имени при штатном
+      повторе, но не отменяет того, что каждое нажатие — это живая мутация
+      чужого CRM, а не безобидный лишний GET).
+    - Профиль использования — противоположность автокомплиту: по продукту
+      это осознанное редкое действие, счёт идёт на единицы в день, а не на
+      десятки в минуту (в отличие от печати запроса в поиске компаний).
+      5/60 с большим запасом покрывает легитимный всплеск — первую попытку
+      плюс несколько ручных нажатий кнопки «Повторить» после временного
+      сбоя (лок занят, сетевая заминка) — и при этом останавливает скрипт,
+      бьющий по эндпоинту в цикле, уже в первую минуту.
+
+    Отдельный scope "project_create" (см. tests_security_ratelimit.py) — не
+    общий со sync/company_search/остальными. Имя совпадает со
+    scope="project_create" у account_sync_lock в ProjectCreationService.create()
+    (тот же логический ярлык для одного и того же действия), но механизмы
+    независимы: Django-кэш с префиксом "rl:" здесь, Postgres advisory-lock
+    там, — общего пространства ключей нет.
+    """
+    payload = _load_request_json(request)
+    account = request.bitrix24_account
+
+    service = ProjectCreationService(account.client, account)
+    result = service.create(
+        payload,
+        current_user_id=str(account.b24_user_id or ""),
+        current_user_name=_current_user_display_name(request),
+    )
+    return JsonResponse(result)
 
 
 @xframe_options_exempt
