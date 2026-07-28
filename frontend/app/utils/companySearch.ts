@@ -116,3 +116,30 @@ const COMPANY_SEARCH_NOTICE_TEXT: Record<CompanySearchNotice, string> = {
 export function companySearchNoticeText(notice: CompanySearchNotice | null | undefined): string {
   return notice ? COMPANY_SEARCH_NOTICE_TEXT[notice] : ''
 }
+
+/**
+ * Важное 3 финального ревью: company_id и company_name формы создания
+ * проекта обязаны описывать одну и ту же компанию. До этой правки
+ * CreateProjectModal.vue::searchCompanyOptions писал введённый текст в
+ * company_name на КАЖДЫЙ поисковый запрос, а company_id трогал только выбор
+ * варианта из списка (SearchableSelect selectOption/clearValue) — если
+ * человек выбрал компанию, передумал, набрал другое название и закрыл
+ * список НЕ выбирая, на отправку уходила пара из id старой компании и имени
+ * нового текста. На сервере company_id имеет приоритет — он верит id и
+ * подписывает карточку/доску чужим именем, а это имя ещё и расползается в
+ * справочник (CompanySearchService дописывает company_name туда, где
+ * находит company_id).
+ *
+ * Фикс: company_id и company_name пишутся ОДНОЙ операцией в момент, когда
+ * стартует новый поисковый запрос (см. createCompanySearchGate — вызывается
+ * только на реально новый, достаточно длинный запрос, не на каждый keydown).
+ * До первого клика по варианту это пара (null, <введённый текст>) — то же
+ * значение, которое сегодня и означает "создать новую компанию с этим
+ * именем" (§5 спеки), а не рассинхрон. Если человек всё же кликнет вариант,
+ * SearchableSelect эмитит modelValue и selected синхронно в одном тике
+ * (selectOption), а handleCompanySelected восстановит каноничное имя поверх
+ * этой пары — расхождению взяться неоткуда ни в одном из двух путей.
+ */
+export function companyFieldsForQuery(query: string): { company_id: null, company_name: string } {
+  return { company_id: null, company_name: normalizeCompanyQuery(query) }
+}

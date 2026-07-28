@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import SearchableSelect from '~/components/common/SearchableSelect.vue'
 import { useApiStore } from '~/stores/api'
 import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from '~/utils/apiErrors'
+import { companyFieldsForQuery } from '~/utils/companySearch'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { formatProjectCurrency } from '~/utils/projectBoard'
@@ -191,8 +192,18 @@ async function loadReferences() {
 // использовать введённый, но ничему не сопоставленный текст как имя НОВОЙ
 // компании (§5 спеки) — form.company_name синхронизируется с каждым запросом
 // поиска, а update:selected перекрывает его каноничным именем найденной.
+//
+// Важное 3 финального ревью: company_id обнуляется той же операцией
+// (companyFieldsForQuery, frontend/app/utils/companySearch.ts) — раньше
+// оставался от прошлого выбора, пока company_name уже перезаписывался новым
+// текстом, и на отправку могла уехать пара id одной компании и имени
+// другой (выбрал «АО Ромашка», передумал, набрал «Лютик», закрыл список не
+// выбирая, нажал «Создать»). handleCompanySelected ниже восстанавливает
+// согласованную пару, если пользователь всё же выберет вариант из списка.
 async function searchCompanyOptions(query: string) {
-  form.value.company_name = query.trim()
+  const fields = companyFieldsForQuery(query)
+  form.value.company_id = fields.company_id
+  form.value.company_name = fields.company_name
   const found = await apiStore.searchCompanies(query)
   return { options: found.companies, truncated: found.truncated, failed: found.failed }
 }
