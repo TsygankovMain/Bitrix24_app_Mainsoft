@@ -101,6 +101,66 @@ class CompanySearchTest(TestCase):
 
         self.assertEqual(client.methods_called().count("crm.company.list"), 1)
 
+    def test_twelve_digit_query_also_searches_by_inn(self):
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.requisite.list": {"result": [{"ENTITY_ID": "22", "RQ_INN": "770123456789"}]},
+        })
+        result = self.service(client).search("770123456789")
+
+        self.assertIn("crm.requisite.list", client.methods_called())
+
+    def test_zero_limit_is_clamped_to_one_not_defaulted_to_fifty(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 4)]
+        client = _FakeClient({"crm.company.list": {"result": rows}})
+        result = self.service(client).search("Компания", limit=0)
+
+        self.assertEqual(len(result["companies"]), 1)
+        self.assertTrue(result["truncated"])
+
+    def test_truncated_true_when_bitrix_reports_more_pages_even_at_page_size(self):
+        rows = [{"ID": str(i), "TITLE": f"Компания {i}"} for i in range(1, 51)]
+        client = _FakeClient({
+            "crm.company.list": {"result": rows, "next": 50, "total": 4000},
+        })
+        result = self.service(client).search("Компания", limit=50)
+
+        self.assertEqual(len(result["companies"]), 50)
+        self.assertTrue(result["truncated"])
+
+    def test_dict_result_shape_does_not_crash_and_marks_failed(self):
+        client = _FakeClient({"crm.company.list": {"result": {"unexpected": "shape"}}})
+        result = self.service(client).search("Ромашка")
+        result_again = self.service(client).search("Ромашка")
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+        self.assertEqual(result_again["companies"], [])
+        self.assertTrue(result_again["failed"])
+        # Сбой формы ответа тоже не должен кэшироваться.
+        self.assertEqual(client.methods_called().count("crm.company.list"), 2)
+
+    def test_string_result_shape_does_not_crash_and_marks_failed(self):
+        client = _FakeClient({"crm.company.list": {"result": "abc"}})
+        result = self.service(client).search("Ромашка")
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+
+    def test_list_of_strings_result_does_not_crash_and_marks_failed(self):
+        client = _FakeClient({"crm.company.list": {"result": ["a", "b", "c"]}})
+        result = self.service(client).search("Ромашка")
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+
+    def test_mixed_type_list_result_does_not_crash_and_marks_failed(self):
+        client = _FakeClient({"crm.company.list": {"result": ["a", 42, None, {"nested": True}]}})
+        result = self.service(client).search("Ромашка")
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+
 
 class MyCompaniesTest(TestCase):
     def setUp(self):
@@ -132,6 +192,39 @@ class MyCompaniesTest(TestCase):
 
     def test_bitrix_failure_returns_empty_list_not_exception(self):
         client = _FakeClient({"crm.company.list": RuntimeError("нет прав")})
+        result = CompanySearchService(client, self.account).list_my_companies()
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+
+    def test_dict_result_shape_does_not_crash_and_marks_failed(self):
+        client = _FakeClient({"crm.company.list": {"result": {"unexpected": "shape"}}})
+        result = CompanySearchService(client, self.account).list_my_companies()
+        result_again = CompanySearchService(client, self.account).list_my_companies()
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+        self.assertEqual(result_again["companies"], [])
+        self.assertTrue(result_again["failed"])
+        # Сбой формы ответа тоже не должен кэшироваться.
+        self.assertEqual(client.methods_called().count("crm.company.list"), 2)
+
+    def test_string_result_shape_does_not_crash_and_marks_failed(self):
+        client = _FakeClient({"crm.company.list": {"result": "abc"}})
+        result = CompanySearchService(client, self.account).list_my_companies()
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+
+    def test_list_of_strings_result_does_not_crash_and_marks_failed(self):
+        client = _FakeClient({"crm.company.list": {"result": ["a", "b", "c"]}})
+        result = CompanySearchService(client, self.account).list_my_companies()
+
+        self.assertEqual(result["companies"], [])
+        self.assertTrue(result["failed"])
+
+    def test_mixed_type_list_result_does_not_crash_and_marks_failed(self):
+        client = _FakeClient({"crm.company.list": {"result": ["a", 42, None, {"nested": True}]}})
         result = CompanySearchService(client, self.account).list_my_companies()
 
         self.assertEqual(result["companies"], [])

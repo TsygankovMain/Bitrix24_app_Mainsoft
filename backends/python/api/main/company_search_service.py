@@ -6,7 +6,7 @@
 """
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from b24pysdk import Client
 from django.core.cache import cache
@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 MIN_QUERY_LENGTH = 2
 DEFAULT_LIMIT = 50
+# Верхняя отсечка на размер ответа вызывающему, а не обещание. Один вызов
+# crm.company.list физически не возвращает больше своей страницы (на практике
+# 50 записей) — сервис намеренно не обходит страницы (см. докстринг модуля),
+# так что при limit > размера страницы Битрикса компаний всё равно придёт не
+# больше, чем страница отдала.
 MAX_LIMIT = 100
 SEARCH_CACHE_TTL = 60 * 5
 MY_COMPANIES_CACHE_TTL = 60 * 60 * 6
@@ -28,6 +33,27 @@ def _clean_str(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _normalize_rows(response: Dict[str, Any], method_name: str) -> Tuple[List[Dict[str, Any]], bool]:
+    """Приводит response["result"] к списку словарей, не доверяя форме ответа.
+
+    `list(response.get("result") or [])` не бросает исключение ни на словаре
+    (`list({"a": 1})` -> `["a"]`), ни на строке (`list("abc")` -> `["a", "b", "c"]`)
+    — а следующий код вызывает `.get()` на элементах результата, что уже роняет
+    запрос необработанным `AttributeError`. Поэтому форму проверяем сразу здесь:
+    всё, что не список словарей, — признак сбоя, а не повод положить в компании
+    мусорные записи вроде отдельных букв или ключей словаря.
+    """
+    raw_result = response.get("result")
+    if raw_result is None:
+        return [], False
+    if isinstance(raw_result, list):
+        rows = [row for row in raw_result if isinstance(row, dict)]
+        failed = len(rows) < len(raw_result)
+        return rows, failed
+    logger.warning("Неожиданная форма result от %s: %s", method_name, type(raw_result).__name__)
+    return [], True
+
+
 class CompanySearchService:
     def __init__(self, client: Optional[Client], account: Bitrix24Account):
         self.client = client or account.client
@@ -35,7 +61,8 @@ class CompanySearchService:
 
     def search(self, query: str, limit: int = DEFAULT_LIMIT) -> Dict[str, Any]:
         query = _clean_str(query)
-        limit = max(1, min(int(limit or DEFAULT_LIMIT), MAX_LIMIT))
+        limit = DEFAULT_LIMIT if limit is None else int(limit)
+        limit = max(1, min(limit, MAX_LIMIT))
 
         if len(query) < MIN_QUERY_LENGTH:
             return {"companies": [], "truncated": False, "failed": False}
@@ -48,15 +75,24 @@ class CompanySearchService:
 
         rows: List[Dict[str, Any]] = []
         failed = False
+        response: Dict[str, Any] = {}
         try:
             response = self.client._bitrix_token.call_method(
                 "crm.company.list",
                 {"filter": {"%TITLE": query}, "select": ["ID", "TITLE"], "order": {"TITLE": "ASC"}},
             )
-            rows = list(response.get("result") or [])
+            rows, shape_failed = _normalize_rows(response, "crm.company.list")
+            if shape_failed:
+                failed = True
         except Exception as exc:
             failed = True
             logger.warning("Company search by title failed for %s: %s", query, exc)
+
+        # Снимок «сколько строк реально вернул поиск по названию» — до того,
+        # как ниже в rows допишутся синтетические записи из поиска по ИНН.
+        # total/next в ответе Битрикса относятся к TITLE-фильтру, а не к
+        # объединённому набору, поэтому сравнивать их нужно с этим числом.
+        title_rows_count = len(rows)
 
         inn_by_company: Dict[str, str] = {}
         if query.isdigit() and len(query) in INN_LENGTHS:
@@ -94,7 +130,16 @@ class CompanySearchService:
                 "inn": inn_by_company.get(company_id) or _clean_str(row.get("RQ_INN")) or None,
             })
 
-        truncated = len(companies) > limit
+        # truncated — не только «набралось больше limit», но и «сам Битрикс
+        # говорит, что подходящих компаний больше, чем прислал за один вызов»
+        # (next — есть следующая страница, total — общее число совпадений
+        # больше, чем пришло строк). Без этого при limit=50 и ровно 50
+        # пришедших строках пользователь не узнаёт, что запрос надо уточнить.
+        truncated = (
+            len(companies) > limit
+            or bool(response.get("next"))
+            or int(response.get("total") or 0) > title_rows_count
+        )
         payload = {"companies": companies[:limit], "truncated": truncated, "failed": failed}
 
         # Неудачный поиск не кэшируем: сбой Битрикса может быть временным, и
@@ -124,9 +169,11 @@ class CompanySearchService:
             logger.warning("My companies fetch failed: %s", exc)
             return {"companies": [], "failed": True}
 
+        rows, shape_failed = _normalize_rows(response, "crm.company.list")
+
         companies = []
         seen = set()
-        for row in response.get("result") or []:
+        for row in rows:
             company_id = _clean_str(row.get("ID") or row.get("id"))
             if not company_id or company_id in seen:
                 continue
@@ -136,6 +183,10 @@ class CompanySearchService:
                 "name": _clean_str(row.get("TITLE") or row.get("title")) or company_id,
             })
 
-        payload = {"companies": companies, "failed": False}
-        cache.set(cache_key, payload, MY_COMPANIES_CACHE_TTL)
+        payload = {"companies": companies, "failed": shape_failed}
+        # Та же логика, что и в search(): сбой (в т.ч. по форме ответа) не
+        # кэшируем, чтобы временная кривая отдача Битрикса не заперла
+        # пользователя на MY_COMPANIES_CACHE_TTL с пустым списком юрлиц.
+        if not shape_failed:
+            cache.set(cache_key, payload, MY_COMPANIES_CACHE_TTL)
         return payload
