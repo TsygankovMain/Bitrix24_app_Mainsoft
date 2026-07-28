@@ -3,7 +3,7 @@
 
 Цепочка: карточка списания (элемент СП) → проект (ProjectCard по project_item_id/project_id)
 → company_id (клиент) / our_legal_entity_id (наше юрлицо) → ИНН (резолв из реквизитов,
-кэш ProjectCardService.get_companies()/get_legal_entities()) → запись в поля
+полный обход ProjectCardService.get_full_company_directory()) → запись в поля
 OUR_INN/CLIENT_INN элемента СП через crm.item.update.
 
 Поля OUR_INN/CLIENT_INN существуют в СП, но не заполняются автоматически — этот сервис
@@ -45,6 +45,19 @@ def is_blank(value: Any) -> bool:
     if isinstance(value, (list, tuple, dict)):
         return len(value) == 0
     return _clean(value) == ""
+
+
+def has_resolved_inn(mapping: Dict[str, str]) -> bool:
+    """Есть ли в карте id -> ИНН хотя бы один реально резолвившийся ИНН.
+
+    Отличие от простого `bool(mapping)`/пустоты словаря: словарь может быть
+    непустым (ключи компаний/юрлиц из карточек проектов есть), но каждое
+    значение — пустая строка, если источник карты не отдаёт ИНН вовсе.
+    Именно так выглядит `_inn_maps()` после перехода ProjectCardService на
+    локальную базу (Task 3 плана "справочники из локальной базы"), пока сам
+    `_inn_maps()` явно не запросит полный обход портала: `bool({"C1": ""})`
+    — `True`, поэтому проверка "словарь пуст" такую деградацию не ловит."""
+    return any(_clean(v) for v in mapping.values())
 
 
 def build_project_lookup(cards) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -148,9 +161,35 @@ class InnBackfillService:
         return items
 
     def _inn_maps(self) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """Карта company_id/legal_entity_id -> ИНН для дозаполнения.
+
+        Единственное место во всём приложении, которому оправдан явный
+        полный постраничный обход справочника компаний Битрикса
+        (ProjectCardService.get_full_company_directory) вместо быстрого
+        get_companies() (локальная база, без ИНН — см. Task 3 плана
+        "справочники из локальной базы"): это админское действие
+        (Scan/Apply с экрана настроек дозаполнения ИНН), запускается
+        вручную самим администратором, а не при открытии приложения и не
+        на пользовательском пути (доска/meta/главный экран/резолверы
+        имён — им обход запрещён, см. project_board_service.py), и ему
+        по сути нужны ИНН всех компаний портала разом, а не только тех,
+        что уже встречались в карточках проектов.
+
+        "Свои" юрлица за тем же обходом — get_legal_entities() тоже не
+        отдаёт ИНН (свой быстрый серверный фильтр IS_MY_COMPANY=Y, без
+        обхода и без реквизитов), поэтому вместо отдельного вызова
+        отбираем их из ТОГО ЖЕ полного справочника по признаку
+        is_my_company: это поле есть только в результате обхода Битрикса
+        (_fetch_companies_live), в локальной проекции карточек его нет.
+        """
         board = ProjectCardService(self.client, self.account)
-        companies = {_clean(c.get("id")): _clean(c.get("inn")) for c in board.get_companies() if c.get("id")}
-        legal = {_clean(c.get("id")): _clean(c.get("inn")) for c in board.get_legal_entities() if c.get("id")}
+        directory = board.get_full_company_directory()
+        companies = {_clean(c.get("id")): _clean(c.get("inn")) for c in directory if c.get("id")}
+        legal = {
+            _clean(c.get("id")): _clean(c.get("inn"))
+            for c in directory
+            if c.get("id") and c.get("is_my_company")
+        }
         return companies, legal
 
     def _resolve_employee_names(self, ids: List[str]) -> Dict[str, str]:
@@ -250,9 +289,12 @@ class InnBackfillService:
             grp["client_inn"] = grp["client_inn"] or r["suggest_client_inn"]
             grp["rows"].append(r)
 
-        # деградация резолва: карточки с проектами есть, но ни одного ИНН из реквизитов не получено
+        # деградация резолва: карточки с проектами есть, но ни одного ИНН из реквизитов не получено.
+        # has_resolved_inn(), а не "словарь непуст": после Task 3 плана companies_inn/legal_inn
+        # всегда содержат ключи компаний из карточек, даже когда ИНН для них не резолвился
+        # (значения — пустые строки) — простая проверка bool(mapping) такую деградацию не ловит.
         warning = None
-        if with_project > 0 and not (companies_inn or legal_inn):
+        if with_project > 0 and not (has_resolved_inn(companies_inn) or has_resolved_inn(legal_inn)):
             warning = ("Не удалось получить ИНН из реквизитов Bitrix (crm.requisite.list). "
                        "Проверьте реквизиты компаний/юрлиц или повторите позже.")
 

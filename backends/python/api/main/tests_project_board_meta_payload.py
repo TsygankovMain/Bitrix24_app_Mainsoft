@@ -11,8 +11,13 @@ GET /api/project-board/meta весил 37.9 МБ. Причина — meta кла
 
 Двойник клиента — по образцу tests_user_sync_service.py (_FakeClient с
 call_method и _bitrix_token = self). get_meta() дёргает ConfigurationService,
-BitrixDataService.fetch_active_users и get_companies/get_legal_entities —
-здесь они замоканы на уровне методов сервиса, а не через фейковый REST.
+get_companies/get_legal_entities — они замоканы на уровне методов сервиса, а
+не через фейковый REST.
+
+Сотрудники — отдельно (Task 4 плана "справочники из локальной базы"):
+get_meta() с этой задачи читает их из локальной таблицы portal_user
+(PortalUser, active=True), а не через BitrixDataService.fetch_active_users —
+поэтому здесь заводится настоящая строка PortalUser, а не мок метода.
 """
 import json
 from unittest.mock import patch
@@ -20,7 +25,7 @@ from unittest.mock import patch
 from django.core.cache import cache
 from django.test import TestCase
 
-from .models import Bitrix24Account
+from .models import Bitrix24Account, PortalUser
 from .project_board_service import ProjectCardService
 
 
@@ -50,7 +55,10 @@ class GetMetaPayloadHygieneTest(TestCase):
         )
         self.service = ProjectCardService(_FakeClient(), self.account)
 
-        self.employees = [{"id": "1", "name": "Иван Петров"}]
+        PortalUser.objects.create(
+            bitrix24_account=self.account, bitrix_id="1",
+            name="Иван", last_name="Петров", active=True,
+        )
         self.companies = [
             {
                 "id": "100",
@@ -69,10 +77,6 @@ class GetMetaPayloadHygieneTest(TestCase):
         ]
 
         self._patch(ProjectCardService, "_load_config", return_value={})
-        self._patch(
-            "main.project_board_service.BitrixDataService.fetch_active_users",
-            return_value=self.employees,
-        )
         self._patch(ProjectCardService, "get_companies", return_value=self.companies)
         self._patch(ProjectCardService, "get_legal_entities", return_value=self.legal_entities)
 

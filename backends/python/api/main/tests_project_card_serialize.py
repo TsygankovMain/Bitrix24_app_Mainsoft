@@ -8,13 +8,25 @@
 имя уже лежит в card.company_name. См.
 backends/python/api/main/project_board_service.py:serialize_card.
 
-Путь доски (get_board_data, много карточек в цикле) обязан сохранить старое
-поведение: справочник компаний/юрлиц загружается один раз на всю доску и
+Путь доски (get_board_data, много карточек в цикле) обязан сохранить старую
+ФОРМУ вызова: справочник компаний/юрлиц загружается один раз на всю доску и
 передаётся в serialize_card явно через именованные параметры
 companies=/legal_entities=. Одиночный путь (get_card_data,
 update_project_card, update_stage, archive_project) эти параметры не
 передаёт — тогда serialize_card идёт по точечному пути через новый метод
 _resolve_reference_details_single (без общего обхода справочника).
+
+По ИНН старое поведение пути доски больше НЕ сохраняется — и это ожидаемо,
+не регресс. get_companies() с хотфикса 2026-07-28 читает локальную проекцию
+project_card (см. project_board_service.py:get_companies), где колонки ИНН
+нет вообще, а get_legal_entities() берёт список из CompanySearchService.
+list_my_companies(), который запрашивает только ID/TITLE и никогда не ходит
+за RQ_INN. Значит на пути доски company_inn/our_legal_entity_inn отсутствуют
+ВСЕГДА и у ВСЕХ карточек, по построению источника, а не из-за сбоя — поэтому
+serialize_card на этом пути больше не пишет предупреждение
+[ProjectBoard][INN] (см. ProjectCardServiceSerializeCardBoardPathTest ниже).
+На одиночном пути ИНН по-прежнему тянется точечно и отсутствие там —
+настоящая аномалия, warning остаётся.
 
 Паттерн _FakeClient — как в tests_user_sync_service.py (call_method +
 _bitrix_token = self), с добавленным журналом вызовов по методам.
@@ -198,6 +210,49 @@ class ProjectCardServiceSerializeCardSingleTest(TestCase):
         self.assertIsNone(second["company_inn"])
         self.assertEqual(client.call_count("crm.requisite.list"), 1)
 
+    # Хотфикс "шумных логов": на одиночном пути отсутствие ИНН у компании —
+    # настоящая аномалия (точечный crm.requisite.list отработал и всё равно
+    # ничего не нашёл), поэтому serialize_card обязан предупредить.
+    def test_single_card_missing_company_inn_logs_warning(self):
+        client = _FakeClient({"crm.requisite.list": {"result": []}})
+        service = ProjectCardService(client, self.account)
+        card = self._make_card()  # our_legal_entity_id не задан -> второе предупреждение не сработает.
+
+        with self.assertLogs("main.project_board_service", level="WARNING") as logs:
+            result = service.serialize_card(card)
+
+        self.assertIsNone(result["company_inn"])
+        self.assertTrue(
+            any("[ProjectBoard][INN] Missing client INN" in message for message in logs.output),
+            logs.output,
+        )
+        self.assertFalse(
+            any("Missing legal entity INN" in message for message in logs.output),
+            logs.output,
+        )
+
+    # Симметрично для юрлица: компания резолвится с ИНН (не должна предупреждать),
+    # юрлицо 777 — без ИНН (обязано предупредить). Показывает, что оба
+    # предупреждения независимы друг от друга.
+    def test_single_card_missing_legal_entity_inn_logs_warning(self):
+        client = _FakeClientByEntityId({555: "7701234567"})  # для 777 ИНН не настроен -> {"result": []}
+        service = ProjectCardService(client, self.account)
+        card = self._make_card(our_legal_entity_id="777", our_legal_entity_name="ООО Наша Компания")
+
+        with self.assertLogs("main.project_board_service", level="WARNING") as logs:
+            result = service.serialize_card(card)
+
+        self.assertEqual(result["company_inn"], "7701234567")
+        self.assertIsNone(result["our_legal_entity_inn"])
+        self.assertTrue(
+            any("[ProjectBoard][INN] Missing legal entity INN" in message for message in logs.output),
+            logs.output,
+        )
+        self.assertFalse(
+            any("Missing client INN" in message for message in logs.output),
+            logs.output,
+        )
+
     # Доп: тот же точечный путь применяется и к своему юрлицу (our_legal_entity_*),
     # каждая ссылка резолвится независимым вызовом с СВОИМ ENTITY_ID в фильтре.
     def test_legal_entity_resolved_via_single_lookup_independently(self):
@@ -342,6 +397,28 @@ class ProjectCardServiceSerializeCardBoardPathTest(TestCase):
         result = service.serialize_card(card, companies=companies, legal_entities=[])
 
         self.assertEqual(result["company_inn"], "9998887766")
+        self.assertEqual(client.call_count("crm.requisite.list"), 0)
+
+    # Хотфикс "шумных логов" (2026-07-28): на пути доски company_id/
+    # legal_entity_id у карточки заполнены, но переданные справочники — без
+    # ключа "inn" вообще, в точности как отдают реальные get_companies()
+    # (локальная проекция project_card без колонки ИНН) и get_legal_entities()
+    # (list_my_companies() выбирает только ID/TITLE). Это НЕ аномалия, а
+    # ожидаемое свойство источника на пути доски — [ProjectBoard][INN]
+    # предупреждать здесь не должен, иначе ~400 записей в лог на 200 карточек
+    # при каждой пересборке доски (см. докстринг модуля).
+    def test_board_path_missing_inn_does_not_log_warning(self):
+        client = _FakeClient()
+        service = ProjectCardService(client, self.account)
+        card = self._make_card(our_legal_entity_id="777", our_legal_entity_name="ООО Наша Компания")
+        companies = [{"id": "555", "name": "ООО Клиент из справочника"}]
+        legal_entities = [{"id": "777", "name": "ООО Наша Компания"}]
+
+        with self.assertNoLogs("main.project_board_service", level="WARNING"):
+            result = service.serialize_card(card, companies=companies, legal_entities=legal_entities)
+
+        self.assertIsNone(result["company_inn"])
+        self.assertIsNone(result["our_legal_entity_inn"])
         self.assertEqual(client.call_count("crm.requisite.list"), 0)
 
     # Fix-round: путь доски резолвит имя из переданного справочника даже при

@@ -51,6 +51,7 @@ from .report_excel import (
     _safe_cell_text,
 )
 from .inn_backfill_service import InnBackfillService
+from .company_search_service import CompanySearchService
 
 __all__ = [
     "root",
@@ -75,6 +76,8 @@ __all__ = [
     "archive_project_board",
     "run_project_board_daily_check",
     "get_project_board_companies",
+    "search_project_board_companies",
+    "list_my_companies",
     "get_homepage_portfolio",
     "get_internal_lists",
     "report_employee_project",
@@ -745,13 +748,50 @@ def get_project_board(request: AuthorizedRequest):
     return JsonResponse(service.get_board_data())
 
 
+@rate_limit("board_meta_refresh", 6, 60, key="account")
+def _get_project_board_meta_refresh(request: AuthorizedRequest, service: ProjectCardService) -> JsonResponse:
+    """Лимитированная ветка ?refresh=1 — вынесена отдельно, чтобы @rate_limit
+
+    покрывал только её. Только при bypass_cache=True get_meta реально ходит в
+    Битрикс живьём: app.option.get в _load_config (кэш ConfigurationService —
+    на объекте, новый объект создаётся на каждый вызов, поэтому не переживает
+    его) и crm.company.list в get_legal_entities/list_my_companies. Обычные
+    запросы (ветка ниже, в get_project_board_meta) отдаются из серверного
+    кэша project-board-meta (TTL 6 часов) и Битрикс не трогают вовсе — им
+    лимит не нужен и он их не касается.
+
+    Порог 6/60 — тот же класс риска и то же число, что у соседнего
+    sync_project_board (@rate_limit("sync", 6, 60, key="account")): там же
+    ровно 1-2 живых вызова к Bitrix за запрос. Отдельный scope
+    ("board_meta_refresh", а не "sync") — иначе один клик «Синхронизировать»
+    (фронт бьёт и /project-board/sync, и /project-board/meta?refresh=1 одним
+    действием, см. frontend/app/pages/projects/index.client.vue:syncBoard)
+    тратил бы бюджет обоих эндпоинтов из одного и того же ведра и не давал
+    бы затем ещё и нажать «Обновить справочники» отдельно.
+    """
+    return JsonResponse(service.get_meta(bypass_cache=True))
+
+
 @xframe_options_exempt
 @require_GET
 @log_errors("get_project_board_meta")
 @auth_required
 def get_project_board_meta(request: AuthorizedRequest):
+    # ?refresh=1 — кнопка «Обновить справочники» (принудительный обход
+    # серверного кэша project-board-meta, живущего 6 часов). Разбор — сверка
+    # с множеством "истинных" строк, а не int()/bool(): не бросает исключений
+    # ни при каком значении параметра (пустая строка, слово, что угодно) —
+    # план уже дважды ловил падения на "голом" int()/list() парсинге вне
+    # try/except (Task 1, fix rounds 1-2).
+    bypass_cache = str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "y", "yes"}
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
-    return JsonResponse(service.get_meta())
+    if bypass_cache:
+        # Только эта ветка бьёт в Битрикс живьём — см. docstring
+        # _get_project_board_meta_refresh. Обычные запросы (ниже) читаются
+        # из кэша и вызываются с доски часто и штатно; лимитировать их вместе
+        # с refresh сломало бы обычную работу доски.
+        return _get_project_board_meta_refresh(request, service)
+    return JsonResponse(service.get_meta(bypass_cache=False))
 
 
 @xframe_options_exempt
@@ -784,6 +824,67 @@ def get_project_board_card(request: AuthorizedRequest):
 def get_project_board_companies(request: AuthorizedRequest):
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
     return JsonResponse({"companies": service.get_companies()})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("search_project_board_companies")
+@auth_required
+@rate_limit("company_search", 60, 60, key="account")
+def search_project_board_companies(request: AuthorizedRequest):
+    """Поиск компаний по мере ввода. Полный справочник портала (десятки тысяч
+    записей на боевом) сюда не выгружается — см. company_search_service.py.
+
+    `limit` передаётся в CompanySearchService.search как есть, без разбора на
+    уровне view: `_parse_limit` внутри сервиса уже переживает любой мусор —
+    пустую строку («?limit=» без значения — request.GET.get отдаёт "", а не
+    None), нечисловые значения, отсутствие параметра вовсе. Дублировать эту
+    логику здесь не стоит: в этом плане уже дважды ловили дефекты именно
+    из-за разъехавшегося разбора одного и того же параметра в двух местах.
+
+    В отличие от ?refresh=1 у get_project_board_meta, здесь дешёвой ветки нет:
+    CompanySearchService.search всегда бьёт crm.company.list живьём, а для
+    похожих на ИНН запросов — ещё и crm.requisite.list (см. company_search_service.py).
+    Кэш сервиса (5 минут) ключуется по точной паре «запрос+limit», так что при
+    посимвольном вводе почти каждое нажатие клавиши даёт новый ключ кэша и
+    новый живой вызов — задержка на фронте перед отправкой запроса лишь
+    вежливость клиента, не гарантия сервера: с валидным токеном её обходит
+    любой скрипт в цикле. Поэтому лимитирован весь эндпоинт, а не его часть.
+
+    Порог — 60 запросов/60 секунд, а НЕ 6/60, как у sync/export/
+    board_meta_refresh. Это не опечатка и не небрежность: у соседей другой
+    профиль использования — одна ручная кнопка, нажимаемая нечасто, 6/60 для
+    неё щедрый запас. У поиска профиль принципиально другой — это автокомплит:
+    человек, печатающий «Ромашка» с фронтовой задержкой ~300 мс между
+    запросами, легитимно порождает 2-3 живых вызова на одно слово, а заполняя
+    форму, ищет подряд несколько контрагентов — десятки запросов в минуту
+    совершенно законной работы. Порог 6/60 сломал бы её уже секунд через
+    двадцать. 60/60 — это около одного запроса в секунду при непрерывном
+    опросе: заведомо выше темпа ручного набора (даже без учёта фронтового
+    debounce) и заведомо ниже того, что даст скрипт, отправляющий запросы
+    подряд без пауз.
+
+    Счётчик — свой, scope "company_search", не общий с соседями: у sync/
+    export/board_meta_refresh другой профиль и другой бюджет (6/60), делить
+    его было бы неверно в обе стороны — всплеск легитимного поиска не должен
+    съедать чужой бюджет, и наоборот.
+    """
+    service = CompanySearchService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(
+        service.search(request.GET.get("q") or "", limit=request.GET.get("limit"))
+    )
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("list_my_companies")
+@auth_required
+def list_my_companies(request: AuthorizedRequest):
+    """Свои юрлица (серверный фильтр IS_MY_COMPANY вместо обхода всего
+    справочника портала) — для форм, которым нужен список без полного
+    справочника компаний. См. company_search_service.py."""
+    service = CompanySearchService(request.bitrix24_account.client, request.bitrix24_account)
+    return JsonResponse(service.list_my_companies())
 
 
 @xframe_options_exempt
@@ -1688,6 +1789,121 @@ def get_configuration(request: AuthorizedRequest):
     return JsonResponse(service.get_configuration_sync())
 
 
+@rate_limit("config_save_sync", 6, 60, key="account")
+def _save_configuration_with_project_sync(
+    request: AuthorizedRequest, service: ConfigurationService, config: dict
+) -> JsonResponse:
+    """Ветка save_configuration при заданном (> 0) project_sp_entity_type_id —
+
+    вынесена отдельно, чтобы @rate_limit покрывал только её, тем же приёмом,
+    что и _get_project_board_meta_refresh. Технически иначе: там флаг
+    (?refresh=1) читается из query string и декоратор мог сработать сразу,
+    до разбора тела. Здесь флаг зависит от тела POST-запроса, которое нужно
+    сначала разобрать и нормализовать — этим занимается save_configuration
+    (там же отрабатывает обработка кривого JSON/конфигурации, до всякого
+    лимита), и только когда известно, что эта ветка будет выполняться,
+    управление передаётся сюда.
+
+    Внутри — _build_project_spa_validation_payload (несколько живых вызовов:
+    crm.item.list x2, no-op crm.item.update для проверки прав на запись) и,
+    если валидация не отклонила конфигурацию, ProjectSyncService.sync() — та
+    же полная синхронизация, что и у sync_project_board, с безусловным живым
+    crm.company.list внутри, — плюс backfill_timesheet_project_items().
+    account_sync_lock здесь — Postgres advisory-lock (взаимное исключение),
+    а не ограничитель: не даёт двум синкам идти параллельно, но никак не
+    мешает слать сохранения подряд без остановки — захватил, отработал,
+    отпустил, снова захватил. Поэтому нужен отдельный rate_limit.
+
+    project_sp_entity_type_id приходит из тела запроса клиента и не является
+    секретом (то же значение возвращает get_configuration) — значит любой
+    запрос с валидным токеном может выставить его и звать эту ветку в цикле.
+
+    Порог 6/60 — тот же класс риска и то же число, что у соседнего
+    sync_project_board (@rate_limit("sync", 6, 60, key="account")): внутри
+    вызывается тот же ProjectSyncService.sync(). Привязка Project SPA в
+    настройках — операция первичной настройки, которую выполняют редко и
+    осознанно (в отличие, например, от автокомплита company_search — 60/60):
+    6 запросов в минуту с запасом покрывают ручной цикл «поправил
+    маппинг -> сохранил -> проверил ошибку валидации -> сохранил снова».
+
+    Отдельный scope ("config_save_sync", а не "sync") — общий бюджет с
+    кнопкой «Синхронизировать» на доске проектов означал бы, что
+    администратор, сохраняющий настройки при первичной привязке Project SPA,
+    отбирает лимит у сотрудников, которые в этот момент работают с доской
+    (и наоборот — серия ручных синков не должна мешать сохранить настройки).
+    Разные сценарии с разной частотой — счётчики разные.
+
+    Обычные сохранения без project_sp_entity_type_id в конфигурации вообще
+    не доходят до этой функции (см. save_configuration) и не расходуют её
+    бюджет — сколько угодно подряд.
+    """
+    warnings = []
+    project_validation = None
+    try:
+        project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
+    except Exception as validation_exc:
+        logger.exception("Configuration save validation failed: %s", validation_exc)
+        warnings.append(
+            "Проверка Project SPA временно недоступна. Настройки сохранены, "
+            "но валидацию рекомендуется повторить позже."
+        )
+
+    if project_validation and not project_validation.get("is_valid"):
+        return JsonResponse(
+            {
+                "status": "validation_error",
+                "error": "Конфигурация Project SPA невалидна. Исправьте ошибки и повторите сохранение.",
+                "validation": project_validation,
+            },
+            status=400,
+        )
+
+    service.save_configuration_sync(config)
+    invalidate_project_runtime_caches(request.bitrix24_account)
+
+    response_payload = {"status": "success"}
+    project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        with account_sync_lock(request.bitrix24_account, scope="project"):
+            sync_result = project_sync_service.sync()
+        response_payload["project_sync"] = sync_result
+    except SyncLockBusy:
+        warnings.append(
+            "Синхронизация проектов уже выполняется, повторите позже."
+        )
+        response_payload["project_sync"] = {
+            "status": "warning",
+            "warning": "Синхронизация проектов уже выполняется, повторите позже.",
+        }
+    except Exception as sync_exc:
+        logger.exception("Configuration save project sync failed: %s", sync_exc)
+        warnings.append(
+            "Настройки сохранены, но автосинхронизация проектов завершилась ошибкой."
+        )
+        response_payload["project_sync"] = {
+            "status": "warning",
+            "warning": "Автосинхронизация проектов завершилась ошибкой.",
+        }
+
+    try:
+        backfill_result = project_sync_service.backfill_timesheet_project_items()
+        response_payload["timesheet_backfill"] = backfill_result
+    except Exception as backfill_exc:
+        logger.exception("Configuration save timesheet backfill failed: %s", backfill_exc)
+        warnings.append(
+            "Настройки сохранены, но backfill связей меток времени завершился ошибкой."
+        )
+        response_payload["timesheet_backfill"] = {
+            "status": "warning",
+            "warning": "Backfill связей меток времени завершился ошибкой.",
+        }
+
+    if warnings:
+        response_payload["warning"] = " ".join(warnings)
+
+    return JsonResponse(response_payload)
+
+
 @xframe_options_exempt
 @csrf_exempt
 @require_POST
@@ -1703,78 +1919,22 @@ def save_configuration(request: AuthorizedRequest):
 
         config = service.normalize_configuration_sync(config)
 
-        warnings = []
-        project_validation = None
         try:
             should_validate_project_spa = int(config.get("project_sp_entity_type_id") or 0) > 0
         except (TypeError, ValueError):
             should_validate_project_spa = False
 
         if should_validate_project_spa:
-            try:
-                project_validation = _build_project_spa_validation_payload(service, request.bitrix24_account, config)
-            except Exception as validation_exc:
-                logger.exception("Configuration save validation failed: %s", validation_exc)
-                warnings.append(
-                    "Проверка Project SPA временно недоступна. Настройки сохранены, "
-                    "но валидацию рекомендуется повторить позже."
-                )
-
-        if should_validate_project_spa and project_validation and not project_validation.get("is_valid"):
-            return JsonResponse(
-                {
-                    "status": "validation_error",
-                    "error": "Конфигурация Project SPA невалидна. Исправьте ошибки и повторите сохранение.",
-                    "validation": project_validation,
-                },
-                status=400,
-            )
+            # project_sp_entity_type_id > 0 -> эта ветка попытается запустить
+            # ProjectSyncService.sync() (полную синхронизацию с Битрикс) и
+            # поэтому лимитируется отдельно — см. docstring
+            # _save_configuration_with_project_sync. Ветка ниже (без Project
+            # SPA в конфигурации) синк не запускает и не лимитируется вовсе.
+            return _save_configuration_with_project_sync(request, service, config)
 
         service.save_configuration_sync(config)
         invalidate_project_runtime_caches(request.bitrix24_account)
-
-        response_payload = {"status": "success"}
-        if should_validate_project_spa:
-            project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
-            try:
-                with account_sync_lock(request.bitrix24_account, scope="project"):
-                    sync_result = project_sync_service.sync()
-                response_payload["project_sync"] = sync_result
-            except SyncLockBusy:
-                warnings.append(
-                    "Синхронизация проектов уже выполняется, повторите позже."
-                )
-                response_payload["project_sync"] = {
-                    "status": "warning",
-                    "warning": "Синхронизация проектов уже выполняется, повторите позже.",
-                }
-            except Exception as sync_exc:
-                logger.exception("Configuration save project sync failed: %s", sync_exc)
-                warnings.append(
-                    "Настройки сохранены, но автосинхронизация проектов завершилась ошибкой."
-                )
-                response_payload["project_sync"] = {
-                    "status": "warning",
-                    "warning": "Автосинхронизация проектов завершилась ошибкой.",
-                }
-
-            try:
-                backfill_result = project_sync_service.backfill_timesheet_project_items()
-                response_payload["timesheet_backfill"] = backfill_result
-            except Exception as backfill_exc:
-                logger.exception("Configuration save timesheet backfill failed: %s", backfill_exc)
-                warnings.append(
-                    "Настройки сохранены, но backfill связей меток времени завершился ошибкой."
-                )
-                response_payload["timesheet_backfill"] = {
-                    "status": "warning",
-                    "warning": "Backfill связей меток времени завершился ошибкой.",
-                }
-
-        if warnings:
-            response_payload["warning"] = " ".join(warnings)
-
-        return JsonResponse(response_payload)
+        return JsonResponse({"status": "success"})
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
     except Exception:

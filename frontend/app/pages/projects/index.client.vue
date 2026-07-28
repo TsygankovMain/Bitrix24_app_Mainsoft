@@ -10,6 +10,7 @@ import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption, ProjectBoardR
 import { upsertProjectBoardCard, buildProjectBoardSummary, formatProjectDate, getTimelineAnchor, parseProjectDateValue } from '~/utils/projectBoard'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
+import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from '~/utils/apiErrors'
 
 const router = useRouter()
 const route = useRoute()
@@ -178,6 +179,15 @@ const companyFilterOptions = computed(() =>
     )
   )
 )
+
+// Серверный поиск компаний по мере ввода — то же самое, чем заведена
+// SearchableSelect в ProjectBoardDrawer.vue (см. frontend/app/utils/companySearch.ts).
+// companyFilterOptions выше — только компании, уже встречавшиеся в карточках
+// на доске; полный справочник портала (23 252 записи) больше не выгружается.
+async function searchCompanyOptions(query: string) {
+  const result = await apiStore.searchCompanies(query)
+  return { options: result.companies, truncated: result.truncated, failed: result.failed }
+}
 
 const legalEntityFilterOptions = computed(() =>
   mergeSelectOptions(
@@ -387,10 +397,44 @@ async function refreshReferenceOptions(showToast = true) {
       }
     }
   } catch (error) {
-    if (showToast) {
-      showStatus('error', 'Не удалось обновить справочники компаний и кураторов.')
+    // HTTP 429 от board_meta_refresh (6 запросов/60 секунд на аккаунт, см.
+    // backends/python/api/main/utils/decorators/rate_limit.py) — это ожидаемая,
+    // самовосстанавливающаяся ситуация «подождите минуту», а не сбой
+    // приложения.
+    //
+    // После централизации (см. shouldTreatAsFatalError в
+    // frontend/app/utils/apiErrors.ts и processErrorGlobal в
+    // frontend/app/composables/useAppInit.ts) простой вызов
+    // processErrorGlobal(error) для 429 САМ ПО СЕБЕ уже не уронит страницу —
+    // он покажет глобальный тост и вернётся. Эта ветка тем не менее
+    // осталась не как дубль, а потому что даёт то, чего у централизованного
+    // пути нет:
+    //  1. Уважает контракт параметра showToast: при showToast === false
+    //     здесь нужна полная тишина. Сегодня ни один вызывающий код не
+    //     передаёт false (это исторический параметр — раньше так тихо
+    //     дёргался автовызов refreshReferenceOptions(false) в onMounted; сам
+    //     автовызов убран коммитом 7c0f58f, сигнатура осталась ради обратной
+    //     совместимости), и processErrorGlobal об этом параметре знать не
+    //     может — показал бы тост безусловно, даже если бы такой вызов
+    //     появился вновь.
+    //  2. Текст и место контекстные — тот же showStatus-баннер (~строка 327),
+    //     что и у success/warning этой же кнопки «Обновить справочники»,
+    //     а не общий плавающий тост в отрыве от места клика.
+    //  3. Без этой ветки else-путь ниже показал бы вводящее в заблуждение
+    //     showStatus('error', 'Не удалось обновить...') ПЕРЕД тем, как
+    //     processErrorGlobal(error) покажет верный текст отдельным тостом —
+    //     то есть заменил бы один дубль на другой, а не убрал его.
+    // Остальные ошибки (не 429) — как раньше, без изменений.
+    if (isRateLimitError(error)) {
+      if (showToast) {
+        showStatus('warning', RATE_LIMIT_NOTICE_TEXT)
+      }
+    } else {
+      if (showToast) {
+        showStatus('error', 'Не удалось обновить справочники компаний и кураторов.')
+      }
+      processErrorGlobal(error)
     }
-    processErrorGlobal(error)
   } finally {
     isRefreshingMeta.value = false
   }
@@ -420,8 +464,20 @@ async function syncBoard(showToast = true) {
     } catch {
       // keep original sync error for global handler
     }
-    showStatus('error', 'Не удалось синхронизировать проекты. Попробуйте еще раз или проверьте права приложения в Битрикс24.')
-    processErrorGlobal(error)
+
+    // См. пояснение в catch у refreshReferenceOptions выше (включая то, почему
+    // эта ветка не дубль централизованного processErrorGlobal, а нужна
+    // отдельно): HTTP 429 от лимитера "sync" (или от board_meta_refresh —
+    // один клик «Синхронизировать» тратит бюджет обоих, см.
+    // Promise.all([loadMeta(true), loadBoard(true)]) выше) не должен уводить
+    // на фатальный экран и должен остаться в контекстном showStatus-баннере
+    // этой кнопки, а не в общем тосте.
+    if (isRateLimitError(error)) {
+      showStatus('warning', RATE_LIMIT_NOTICE_TEXT)
+    } else {
+      showStatus('error', 'Не удалось синхронизировать проекты. Попробуйте еще раз или проверьте права приложения в Битрикс24.')
+      processErrorGlobal(error)
+    }
   } finally {
     isSyncing.value = false
     progress.end()
@@ -565,14 +621,26 @@ onMounted(async () => {
     await $b24.parent.setTitle('Управление проектами')
     isInit.value = true
 
-    const [meta] = await Promise.all([
+    // Раньше здесь при скудном справочнике (isMetaSparse) автоматически
+    // запускался refreshReferenceOptions(false) — тихий форс-рефреш без ведома
+    // человека. Убрано намеренно: на портале, где в CRM действительно мало
+    // компаний, isMetaSparse истинна ПОСТОЯННО, а не изредка, — значит каждое
+    // открытие страницы, каждая вкладка и каждая перезагрузка молча тратили
+    // единицу общего бюджета лимитера board_meta_refresh (6 запросов/60 секунд
+    // на аккаунт, см. backends/python/api/main/utils/decorators/rate_limit.py),
+    // конкурируя за тот же бюджет с сознательными кликами по кнопкам
+    // «Синхронизировать проекты» и «Обновить справочники». Именно это превращало
+    // «пару лишних кликов» в исчерпанный лимит без единого сознательного действия
+    // человека — например, у того, кто просто открыл приложение в трёх вкладках.
+    // Автоматическое действие, которое молча тратит ограниченный бюджет без
+    // ведома человека, — плохая идея сама по себе, независимо от лимита.
+    // Справочник и так подтягивается обычным путём (loadMeta() выше, из
+    // серверного или браузерного кэша); сознательное обновление остаётся за
+    // кнопкой «Обновить справочники».
+    await Promise.all([
       loadMeta(),
       loadBoard()
     ])
-
-    if (isMetaSparse(meta)) {
-      void refreshReferenceOptions(false)
-    }
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -697,6 +765,7 @@ onMounted(async () => {
               empty-label="Все"
               search-placeholder="Поиск по названию или ИНН"
               :options="companyFilterOptions"
+              :search-fn="searchCompanyOptions"
             />
 
             <SearchableSelect
