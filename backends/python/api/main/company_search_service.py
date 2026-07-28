@@ -94,8 +94,17 @@ class CompanySearchService:
         self.client = client or account.client
         self.account = account
 
-    def search(self, query: str, limit: int = DEFAULT_LIMIT) -> Dict[str, Any]:
+    def search(self, query: str, limit: Any = DEFAULT_LIMIT) -> Dict[str, Any]:
         """Ищет компании по названию, а для похожих на ИНН запросов — ещё и по ИНН.
+
+        `limit` типизирован как `Any`, а не `int`, — это честное отражение
+        контракта, а не небрежность: единственный вызывающий
+        (search_project_board_companies в views.py) намеренно передаёт сюда
+        сырое значение из HTTP-запроса как есть — строку, пустую строку или
+        `None` (`request.GET.get("limit")`), без разбора на своей стороне.
+        Весь разбор и вся валидация — в `_parse_limit` ниже; дублировать её
+        здесь — значит повторить дефект, который этот план уже дважды ловил
+        (разъехавшийся разбор одного параметра в двух местах).
 
         `failed=True` означает «не доверяй полноте списка», а НЕ «список
         пуст»: при сбое по форме ответа Битрикса (см. `_normalize_rows`) уже

@@ -18,6 +18,7 @@ from django.test import Client, TestCase, override_settings
 
 from .models import Bitrix24Account
 from .project_board_service import ProjectCardService
+from .company_search_service import CompanySearchService
 
 
 # ---------------------------------------------------------------------------
@@ -667,3 +668,136 @@ class RateLimitProjectBoardMetaRefreshTest(TestCase):
                 HTTPStatus.TOO_MANY_REQUESTS,
                 f"plain request must not be blocked by exhausted refresh limit, got {resp_plain.status_code}",
             )
+
+
+# ---------------------------------------------------------------------------
+# (з) search_project_board_companies: в отличие от ?refresh=1 у meta, здесь
+#     ДЕШЁВОЙ ветки нет вовсе — crm.company.list бьётся в Битрикс на КАЖДЫЙ
+#     запрос (плюс crm.requisite.list для похожих на ИНН), а сервисный кэш
+#     ключуется по точной паре "запрос+limit", так что поиск по мере ввода
+#     почти на каждое нажатие клавиши даёт новый ключ и новый живой вызов
+#     (см. company_search_service.py). Лимитируется весь эндпоинт.
+#
+#     Порог 60/60, а НЕ 6/60, как у sync/export/board_meta_refresh — это
+#     сознательный выбор, не опечатка. Обоснование числа — в докстринге
+#     search_project_board_companies (views.py): те эндпоинты нажимаются
+#     руками и редко, поиск — это автокомплит, у которого легитимных
+#     запросов в минуту на порядок больше.
+# ---------------------------------------------------------------------------
+
+@override_settings(CACHES=RATELIMIT_CACHE)
+class RateLimitCompanySearchTest(TestCase):
+    """search_project_board_companies: 60 запросов/60 секунд на аккаунт,
+    отдельный счётчик от sync/export/board_meta_refresh."""
+
+    SEARCH_LIMIT = 60
+
+    def setUp(self):
+        cache.clear()
+        self.client = Client()
+        self.account = _make_account(is_admin=True, b24_user_id=80, domain_url="portal-company-search.bitrix24.ru")
+
+    def _search(self, query_suffix: str = "q=Ромашка"):
+        url = "/api/project-board/companies/search"
+        if query_suffix:
+            url = f"{url}?{query_suffix}"
+        return self.client.get(url, HTTP_AUTHORIZATION=_auth_header(self.account))
+
+    def _sync(self):
+        return self.client.post(
+            "/api/sync-timesheets",
+            data=json.dumps({}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=_auth_header(self.account),
+        )
+
+    def test_requests_pass_within_limit_and_block_on_overflow(self):
+        """60 запросов поиска разрешены, 61-й -> 429."""
+        with patch.object(
+            CompanySearchService, "search",
+            return_value={"companies": [], "truncated": False, "failed": False},
+        ):
+            for i in range(self.SEARCH_LIMIT):
+                resp = self._search()
+                self.assertNotEqual(
+                    resp.status_code,
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    f"search request {i + 1}/{self.SEARCH_LIMIT} must pass, got {resp.status_code}",
+                )
+
+            resp = self._search()
+            self.assertEqual(
+                resp.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                f"search request {self.SEARCH_LIMIT + 1} must be blocked with 429, got {resp.status_code}",
+            )
+            body = resp.json()
+            self.assertIn("error", body, "429 response must contain 'error' key")
+            self.assertIsInstance(body["error"], str, "'error' value must be a string")
+
+    def test_single_request_not_blocked(self):
+        """Один запрос поиска (обычная работа автокомплита) не блокируется."""
+        with patch.object(
+            CompanySearchService, "search",
+            return_value={"companies": [], "truncated": False, "failed": False},
+        ):
+            resp = self._search()
+        self.assertNotEqual(
+            resp.status_code,
+            HTTPStatus.TOO_MANY_REQUESTS,
+            f"Single search request must not be rate-limited, got {resp.status_code}",
+        )
+
+    def test_exhausted_sync_scope_does_not_block_company_search(self):
+        """Исчерпание бюджета "sync" тем же аккаунтом не блокирует поиск —
+
+        разные scope ("sync" vs "company_search"), разные счётчики, хотя
+        ключ (account) один и тот же.
+        """
+        bitrix_client = _bitrix_mock()
+        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
+            for _ in range(6 + 1):
+                self._sync()
+
+            resp_sync = self._sync()
+            self.assertEqual(
+                resp_sync.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                "sync bucket must be exhausted by this point in the test",
+            )
+
+        with patch.object(
+            CompanySearchService, "search",
+            return_value={"companies": [], "truncated": False, "failed": False},
+        ):
+            resp_search = self._search()
+        self.assertNotEqual(
+            resp_search.status_code,
+            HTTPStatus.TOO_MANY_REQUESTS,
+            f"company_search must not be blocked by an exhausted sync limit, got {resp_search.status_code}",
+        )
+
+    def test_exhausted_company_search_scope_does_not_block_sync(self):
+        """Обратное направление той же изоляции: исчерпание поиска не блокирует sync."""
+        with patch.object(
+            CompanySearchService, "search",
+            return_value={"companies": [], "truncated": False, "failed": False},
+        ):
+            for _ in range(self.SEARCH_LIMIT + 1):
+                self._search()
+
+            resp_search = self._search()
+            self.assertEqual(
+                resp_search.status_code,
+                HTTPStatus.TOO_MANY_REQUESTS,
+                "company_search bucket must be exhausted by this point in the test",
+            )
+
+        bitrix_client = _bitrix_mock()
+        with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
+            resp_sync = self._sync()
+        self.assertNotEqual(
+            resp_sync.status_code,
+            HTTPStatus.TOO_MANY_REQUESTS,
+            f"sync must not be blocked by an exhausted company_search limit, got {resp_sync.status_code}",
+        )
