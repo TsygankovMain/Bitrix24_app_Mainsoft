@@ -294,20 +294,19 @@ class ProjectCardService:
         directory_companies = self._merge_reference_options(self.get_companies(), fallback_companies)
         directory_legal_entities = self._merge_reference_options(self.get_legal_entities(config), fallback_legal_entities)
 
+        # Раньше тут лежали ещё employees/companies/legal_entities в корне и в
+        # filters — те же самые списки продублированные трижды. На портале с
+        # 23к компаний это давало лишние ~25 МБ в каждом ответе meta (боевые
+        # логи 2026-07-28: 37.9 МБ на ответ). Данные живут только в
+        # directories; filters остаётся пустым словарём ради формы фронта и
+        # _meta_has_required_shape, которые проверяют только его тип.
         meta = {
-            "filters": {
-                "curators": directory_employees,
-                "companies": directory_companies,
-                "legal_entities": directory_legal_entities,
-            },
+            "filters": {},
             "directories": {
                 "employees": directory_employees,
                 "companies": directory_companies,
                 "legal_entities": directory_legal_entities,
             },
-            "employees": directory_employees,
-            "companies": directory_companies,
-            "legal_entities": directory_legal_entities,
         }
         if self._meta_has_options(meta):
             cache.set(cache_key, meta, BITRIX_REFERENCE_CACHE_TTL)
@@ -1014,6 +1013,19 @@ class ProjectCardService:
                         "is_my_company": is_my_company,
                         "search_text": " ".join(part for part in [company_name, company_inn] if part).strip(),
                     }
+                )
+
+            if not normalized and companies:
+                # Разведка для инцидента с двойным проходом (боевые логи 2026-07-28:
+                # crm.item.list отработал 67 раз, crm.company.list — 34, то есть
+                # примерно в половине случаев первый метод вернул непустой сырой
+                # список, но после нормализации не осталось ни одной записи, и мы
+                # шли вторым кругом ещё на ~465 страниц). Причина пока неизвестна —
+                # логика перебора здесь намеренно не тронута, нужны данные с прода.
+                logger.warning(
+                    "Company fetch: %s вернул %d записей, но после нормализации не осталось ни одной. "
+                    "Ключи первой записи: %s",
+                    method, len(companies), sorted(companies[0].keys())[:15],
                 )
 
             if normalized:
