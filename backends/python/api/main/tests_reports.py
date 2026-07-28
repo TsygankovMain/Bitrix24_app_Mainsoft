@@ -647,7 +647,13 @@ class ProjectBoardEndpointStabilityTest(TestCase):
             is_archived=False,
         )
 
-        def serialize_side_effect(service, card):
+        def serialize_side_effect(service, card, *, companies=None, legal_entities=None):
+            # Сигнатура serialize_card расширена хотфиксом perf/card-inn-lookup
+            # (2026-07-28) необязательными companies=/legal_entities= — путь
+            # доски (get_board_data) теперь передаёт их явно, справочник
+            # загружается один раз на весь борд. Мок здесь их не использует:
+            # тест проверяет отказоустойчивость борда к падению одной
+            # карточки, а не резолв компании/юрлица.
             if card.project_id == "p-broken":
                 raise RuntimeError("broken card")
             return {

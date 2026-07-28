@@ -3,6 +3,7 @@ import { LoggerBrowser, AjaxError, LoadDataType, useB24Helper } from '@bitrix24/
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import type { Locale } from 'vue-i18n'
 import type { LocaleObject } from '@nuxtjs/i18n'
+import { markRateLimitFatal, RATE_LIMIT_NOTICE_TEXT, shouldTreatAsFatalError } from '~/utils/apiErrors'
 
 export interface ProcessErrorData {
   description?: string
@@ -117,7 +118,24 @@ export const useAppInit = (loggerTitle?: string) => {
       configSettings: (data.userSettings?.data ?? new Map()).get('configSettings')
     })
 
-    await api.init($b24)
+    try {
+      await api.init($b24)
+    } catch (error) {
+      // api.init() -> reinitToken() -> getToken() — единственный $api-вызов
+      // здесь, за ним get_token (@rate_limit("get_token", 10, 60,
+      // key="ip_domain") — backends/python/api/main/views.py). initApp()
+      // вызывается из onMounted буквально каждой страницы (не только из
+      // /install — там свой бутстрап через apiStore.postInstall, get_token
+      // не использует), так что это тоже подпадает под общий инвариант
+      // «429 не фатален по умолчанию» (processErrorGlobal ниже). Но здесь
+      // особый случай: без валидного JWT ни один другой $api-запрос в
+      // приложении не пройдёт, так что лёгкое уведомление оставило бы
+      // человека на пустом/сломанном экране без объяснения — фатальный
+      // экран тут осознанно лучше. Явный, видимый в коде опт-ин обратно в
+      // старое поведение (см. markRateLimitFatal/shouldTreatAsFatalError в
+      // apiErrors.ts), а не забытая точка.
+      throw markRateLimitFatal(error)
+    }
 
     $logger.info('InitApp stop')
   }
@@ -183,6 +201,21 @@ export const useAppInit = (loggerTitle?: string) => {
     processErrorData?: ProcessErrorData
   ) {
     $logger.error(error)
+
+    if (!shouldTreatAsFatalError(error)) {
+      // Централизованная безопасная реакция на HTTP 429 (см.
+      // shouldTreatAsFatalError в apiErrors.ts — единственный источник этого
+      // решения, и .superpowers/sdd/2026-07-28-project-references-from-db/critical-429-central-report.md).
+      // Лёгкое самоочищающееся уведомление вместо showError({fatal:true})
+      // (frontend/app/error.vue, :clear="false", без пути лёгкого возврата)
+      // покрывает ЛЮБОЙ вызывающий код, который просто зовёт
+      // processErrorGlobal(e) в catch, ничего специально не делая, — то
+      // есть все текущие и будущие экраны с лимитером «по построению», а не
+      // только те, что чинили точечно (frontend/app/pages/projects/index.client.vue).
+      const toast = useToast()
+      toast.add({ title: RATE_LIMIT_NOTICE_TEXT, color: 'air-primary-warning' })
+      return
+    }
 
     let statusMessage = 'Error'
     let message = ''

@@ -10,8 +10,9 @@ from django.db.models import Case, F, FloatField, Max, Sum, Value, When
 from django.utils import timezone
 
 from .bitrix_data_access import BitrixDataService
+from .company_search_service import CompanySearchService
 from .configuration_service import ConfigurationService
-from .models import Bitrix24Account, ProjectCard, SystemLog, TimesheetItem
+from .models import Bitrix24Account, PortalUser, ProjectCard, SystemLog, TimesheetItem
 from .project_board_shared import (
     BITRIX_REFERENCE_CACHE_TTL,
     HOMEPAGE_CACHE_TTL,
@@ -33,6 +34,12 @@ from .tenant_scoping import scope_to_tenant
 
 
 logger = logging.getLogger(__name__)
+
+# Точечный лукап ИНН одной компании/юрлица (serialize_card в одиночном режиме,
+# см. _resolve_reference_details_single). ИНН компании не меняется -> кэш
+# долгий (сутки). Отдельная константа от BITRIX_REFERENCE_CACHE_TTL (общий
+# справочник компаний целиком, project_board_shared.py) — её здесь не трогаем.
+COMPANY_INN_CACHE_TTL = 60 * 60 * 24
 
 
 def _extract_items_from_response(response: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[int]]:
@@ -141,11 +148,20 @@ class ProjectCardService:
             cache.set(cache_key, payload, PROJECT_BOARD_CACHE_TTL)
             return payload
 
+        # Справочники компаний/юрлиц грузим ОДИН раз на всю доску (амортизация
+        # на сотнях карточек) и передаём в каждый serialize_card явно — так
+        # одиночный путь (get_card_data и др.) ниже может отличить "иду по
+        # доске" от "сериализую одну карточку" по наличию этих аргументов.
+        board_companies = self.get_companies()
+        board_legal_entities = self.get_legal_entities()
+
         serialized_cards: List[Dict[str, Any]] = []
         failed_cards = 0
         for card in cards:
             try:
-                serialized_cards.append(self.serialize_card(card))
+                serialized_cards.append(
+                    self.serialize_card(card, companies=board_companies, legal_entities=board_legal_entities)
+                )
             except Exception as exc:
                 failed_cards += 1
                 self._log_board_exception(
@@ -274,13 +290,30 @@ class ProjectCardService:
         cache.set(build_account_cache_key(self.account, "project-board"), payload, PROJECT_BOARD_CACHE_TTL)
         return payload
 
-    def get_meta(self) -> Dict[str, Any]:
+    def get_meta(self, bypass_cache: bool = False) -> Dict[str, Any]:
+        """bypass_cache=True — форс-рефреш кнопки «Обновить справочники»
+
+        (GET /api/project-board/meta?refresh=1): пропускает ЧТЕНИЕ кэша
+        "project-board-meta" и безусловно перечитывает источники, а в конце
+        всё равно перезаписывает кэш свежим значением (тот же приём, что
+        _fetch_references_with_cache/get_legal_entities). Пробрасывается в
+        get_legal_entities — иначе её собственный внешний и внутренний
+        (list_my_companies) кэш остались бы непробитыми и юрлица не
+        обновились бы до истечения BITRIX_REFERENCE_CACHE_TTL (6 часов).
+
+        ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ: кэш — LocMemCache, свой у каждого воркера
+        gunicorn. Форс-рефреш прогревает кэш только того воркера, который
+        принял этот запрос; следующий запрос может уйти на другой и снова
+        увидеть старое значение до истечения TTL. Полное решение — общий
+        кэш на всех воркеров, отдельная задача.
+        """
         cache_key = build_account_cache_key(self.account, "project-board-meta")
-        cached = cache.get(cache_key)
-        if cached and self._meta_has_required_shape(cached) and self._meta_has_options(cached):
-            return cached
-        if cached is not None:
-            cache.delete(cache_key)
+        if not bypass_cache:
+            cached = cache.get(cache_key)
+            if cached and self._meta_has_required_shape(cached) and self._meta_has_options(cached):
+                return cached
+            if cached is not None:
+                cache.delete(cache_key)
 
         config = self._load_config()
         fallback_employees = self._get_project_card_fallback_options("curator_user_id", "curator_name")
@@ -288,32 +321,64 @@ class ProjectCardService:
         fallback_legal_entities = self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name")
 
         directory_employees = self._merge_reference_options(
-            BitrixDataService(self.client, config, self.account).fetch_active_users(),
+            self._get_active_employee_options(),
             fallback_employees,
         )
         directory_companies = self._merge_reference_options(self.get_companies(), fallback_companies)
-        directory_legal_entities = self._merge_reference_options(self.get_legal_entities(config), fallback_legal_entities)
+        directory_legal_entities = self._merge_reference_options(
+            self.get_legal_entities(config, bypass_cache=bypass_cache), fallback_legal_entities
+        )
 
+        # Раньше тут лежали ещё employees/companies/legal_entities в корне и в
+        # filters — те же самые списки продублированные трижды. На портале с
+        # 23к компаний это давало лишние ~25 МБ в каждом ответе meta (боевые
+        # логи 2026-07-28: 37.9 МБ на ответ). Данные живут только в
+        # directories; filters остаётся пустым словарём ради формы фронта и
+        # _meta_has_required_shape, которые проверяют только его тип.
         meta = {
-            "filters": {
-                "curators": directory_employees,
-                "companies": directory_companies,
-                "legal_entities": directory_legal_entities,
-            },
+            "filters": {},
             "directories": {
                 "employees": directory_employees,
                 "companies": directory_companies,
                 "legal_entities": directory_legal_entities,
             },
-            "employees": directory_employees,
-            "companies": directory_companies,
-            "legal_entities": directory_legal_entities,
         }
         if self._meta_has_options(meta):
             cache.set(cache_key, meta, BITRIX_REFERENCE_CACHE_TTL)
         else:
             cache.delete(cache_key)
         return meta
+
+    def _get_active_employee_options(self) -> List[Dict[str, Any]]:
+        """Сотрудники для meta (выпадающий список кураторов проекта) — из
+
+        локальной таблицы portal_user (Фаза 2 sync-offload), без единого
+        обращения к Битриксу. Таблицу раз в час наполняет фоновый синк
+        (UserSyncService) — та же таблица уже питает имена в отчётах
+        (_get_user_map, views.py).
+
+        Только active=True — и это НЕ то же самое, что _get_user_map:
+        _get_user_map обязан резолвить имена и уволенных сотрудников,
+        потому что резолвит историчные списания (уволенный мог списывать
+        часы, пока работал). Здесь же список уходит в выпадающий список
+        кураторов проекта — назначать куратором уволенного сотрудника
+        нельзя, поэтому фильтр active=True — часть требования, а не
+        оптимизация.
+        """
+        rows = (
+            PortalUser.objects.filter(**scope_to_tenant(self.account), active=True)
+            .order_by("last_name", "name", "bitrix_id")
+            .values("bitrix_id", "name", "last_name")
+        )
+
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            user_id = self._clean_str(row.get("bitrix_id"))
+            if not user_id:
+                continue
+            full_name = f"{row.get('last_name') or ''} {row.get('name') or ''}".strip()
+            result.append({"id": user_id, "name": full_name or user_id})
+        return result
 
     def get_homepage_snapshot(self) -> Dict[str, Any]:
         cached = cache.get(build_account_cache_key(self.account, "project-board-homepage"))
@@ -563,48 +628,192 @@ class ProjectCardService:
         return by_project_item_id, by_project_id, by_project_title
 
     def get_companies(self) -> List[Dict[str, Any]]:
+        """Компании для выпадающих списков — из локальной проекции карточек
+        проектов (ProjectCard.company_id/company_name), без единого обращения
+        к Битриксу.
+
+        До этой правки метод обходил справочник компаний Битрикса целиком
+        (см. get_full_company_directory) на КАЖДОЕ обращение любой из пяти
+        пользовательских точек (доска, meta, главный экран, оба резолвера
+        имён): на боевом портале это 23 252 компании, 465 последовательных
+        страниц. Логи и хары прода 2026-07-28: /api/project-board/meta весил
+        37.9 МБ, у пользователя из 24.3с ожидания 23.5с уходило на скачивание,
+        восемь обработчиков (2 воркера × 4 потока) минутами держались в
+        ожидании сети при CPU ~15%, статика на 10 КБ ждала в очереди 5с, а
+        сам Битрикс к концу обхода отваливался по таймауту на crm.item.list.
+
+        Компания, которую хоть раз указали в карточке проекта, немедленно
+        появляется в этом списке для всех остальных карточек — источник тот
+        же _get_project_card_fallback_options, которым до сих пор пользовался
+        только аварийный фолбэк при сбое Битрикса, а теперь он основной путь.
+        Компании, которых ещё нет ни в одной карточке, ищутся отдельно —
+        подстрочным поиском через /api/project-board/companies/search
+        (CompanySearchService, серверный фильтр в самом Битриксе) — и
+        появляются здесь сами, как только карточку с такой компанией сохранят
+        первый раз.
+
+        Полный постраничный обход справочника компаний никуда не делся — он
+        живёт в get_full_company_directory() и нужен только админскому
+        дозаполнению ИНН.
+        """
+        return self._get_project_card_fallback_options("company_id", "company_name")
+
+    def get_full_company_directory(self) -> List[Dict[str, Any]]:
+        """Полный постраничный обход справочника компаний Битрикса (прежнее
+        тело get_companies() до перевода пользовательских путей на локальную
+        базу).
+
+        МЕДЛЕННО: на боевом портале это 23 252 компании — 465 последовательных
+        страниц (crm.item.list/crm.company.list), плюс ровно такой же по
+        размеру обход реквизитов (crm.requisite.list) за ИНН. Каждая страница —
+        сетевой запрос к Битриксу; поток обработчика ждёт сеть минутами, а не
+        считает (CPU при этом ~15%). Именно этот обход держали пять
+        пользовательских точек вызова (доска/meta/главный экран/оба резолвера
+        имён) до хотфикса 2026-07-28: /api/project-board/meta весил 37.9 МБ,
+        у пользователя 23.5 из 24.3с уходило на скачивание, статика на 10 КБ
+        ждала в очереди 5с из-за забитых обработчиков (их всего восемь), а сам
+        Битрикс под конец обхода отваливался по таймауту.
+
+        ПРЕДНАЗНАЧЕН ТОЛЬКО ДЛЯ АДМИНСКОГО ПУТИ дозаполнения ИНН
+        (inn_backfill_service.py) — разового административного действия,
+        которому действительно нужен весь справочник компаний с реквизитами,
+        а не только то, что уже встречалось в карточках проектов. Звать с
+        пользовательского пути (доска, meta, главный экран, резолверы имён)
+        НЕЛЬЗЯ — для них есть быстрый get_companies() (локальная база, без
+        обращений к Битриксу).
+
+        inn_backfill_service._inn_maps() зовёт именно этот метод явно (Task 6
+        плана) — свой собственный кэш-суффикс ("admin-company-directory", не
+        "project-board-companies") отражает это: имя больше не про общий
+        список компаний "для пользовательских списков", а именно про
+        админский полный справочник с ИНН.
+        """
         return self._fetch_references_with_cache(
-            "project-board-companies",
+            "admin-company-directory",
             self._fetch_companies_live,
             fallback=self._get_project_card_fallback_options("company_id", "company_name"),
         )
 
-    def get_legal_entities(self, config: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def get_legal_entities(self, config: Optional[Dict[str, Any]] = None, *, bypass_cache: bool = False) -> List[Dict[str, Any]]:
+        """Свои юрлица через CompanySearchService.list_my_companies() — один
+        запрос crm.company.list с фильтром IS_MY_COMPANY=Y на стороне Битрикса.
+
+        НЕ возвращай это на _fetch_companies_live(only_my_company=True):
+        тот обходит справочник компаний целиком, страницами по 50
+        (crm.item.list, затем crm.company.list), и только потом отбирает
+        "мои" уже в Python. На боевом портале это 23 252 компании — 465
+        последовательных запросов ради обычно нескольких строк. Именно такие
+        обходы (хары и логи прода 2026-07-28) держали обработчики (их всего
+        восемь) минутами в ожидании сети — CPU при этом было ~15%, потоки не
+        считали, а ждали, — и из-за очереди даже статический файл на 10 КБ
+        отдавался пять секунд; сам Битрикс к концу обхода отваливался по
+        таймауту.
+
+        bypass_cache=True — форс-рефреш: пропускает и внешний кэш
+        "project-board-legal-entities" (см. _fetch_references_with_cache), и
+        внутренний кэш list_my_companies ("my-companies", свой собственный
+        TTL). Нужен, потому что invalidate_project_runtime_caches чистит
+        ТОЛЬКО первый — про второй, вложенный в CompanySearchService, она не
+        знает и знать не должна (список суффиксов для инвалидации — это
+        связь по имени, которую легко забыть при следующем таком кэше).
+        Вызывай сразу после invalidate_project_runtime_caches в месте,
+        которое выполняет принудительное обновление (ProjectSyncService.sync) —
+        иначе админ жмёт «Обновить», получает 200, а новое юрлицо не
+        появится в справочнике до истечения MY_COMPANIES_CACHE_TTL (6 часов).
+        """
+        def _fetch_my_companies() -> List[Dict[str, Any]]:
+            result = CompanySearchService(self.client, self.account).list_my_companies(bypass_cache=bypass_cache)
+            return result.get("companies") or []
+
         return self._fetch_references_with_cache(
             "project-board-legal-entities",
-            lambda: self._fetch_companies_live(only_my_company=True),
+            _fetch_my_companies,
             fallback=self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name"),
+            bypass_cache=bypass_cache,
         )
 
-    def serialize_card(self, card: ProjectCard) -> Dict[str, Any]:
+    def serialize_card(
+        self,
+        card: ProjectCard,
+        *,
+        companies: Optional[List[Dict[str, Any]]] = None,
+        legal_entities: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Сериализует одну карточку проекта.
+
+        Два режима, по наличию companies=/legal_entities=:
+        - Переданы (путь доски, get_board_data): справочник уже загружен один
+          раз на всю доску — резолвим по нему, как раньше, без похода в Битрикс
+          на карточку.
+        - Не переданы (одиночный путь: get_card_data, update_project_card,
+          update_stage, archive_project): НЕ тянем справочник целиком, а
+          резолвим ИНН точечно через _resolve_reference_details_single. До
+          хотфикса 2026-07-28 одиночная карточка обходила все 23 252 компании
+          и 16 382 реквизита ради одной строки — /api/project-board/card висел
+          218с и отдавал 502 (HAR с прода).
+        """
         stage_lookup = self.get_project_stage_lookup()
-        company_id, company_name, company_inn = self._resolve_reference_details(
-            card.company_id,
-            card.company_name,
-            self.get_companies(),
-        )
-        legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details(
-            card.our_legal_entity_id,
-            card.our_legal_entity_name,
-            self.get_legal_entities(),
-        )
-
-        if company_id and not company_inn:
-            logger.warning(
-                "[ProjectBoard][INN] Missing client INN for domain=%s project_id=%s company_id=%s company_name=%s",
-                self.account.domain_url,
-                card.project_id,
-                company_id,
-                company_name,
+        if companies is not None:
+            company_id, company_name, company_inn = self._resolve_reference_details(
+                card.company_id,
+                card.company_name,
+                companies,
             )
-        if legal_entity_id and not legal_entity_inn:
-            logger.warning(
-                "[ProjectBoard][INN] Missing legal entity INN for domain=%s project_id=%s legal_entity_id=%s legal_entity_name=%s",
-                self.account.domain_url,
-                card.project_id,
-                legal_entity_id,
-                legal_entity_name,
+        else:
+            company_id, company_name, company_inn = self._resolve_reference_details_single(
+                card.company_id,
+                card.company_name,
             )
+            # Предупреждаем только здесь, на одиночном пути (companies=None).
+            # Тут ИНН тянется точечным crm.requisite.list за конкретную
+            # компанию (_fetch_single_reference_inn) — если его всё равно нет,
+            # это реальная аномалия, стоит посмотреть.
+            #
+            # На пути доски (companies передан явно, см. get_board_data)
+            # предупреждать не о чем: get_companies() отдаёт справочник из
+            # локальной проекции project_card, а в этой таблице колонки ИНН
+            # нет вообще — там company_inn отсутствует ВСЕГДА и у ВСЕХ
+            # карточек, по построению источника, а не из-за сбоя. До
+            # хотфикса 2026-07-28 get_companies() обходил Битрикс целиком и
+            # ИНН в справочнике был; с переводом на локальную базу это
+            # предупреждение на пути доски превратилось в чистый шум —
+            # ~400 срабатываний на 200 карточек при каждой пересборке доски
+            # (раз в 2 минуты на каждом воркере).
+            if company_id and not company_inn:
+                logger.warning(
+                    "[ProjectBoard][INN] Missing client INN for domain=%s project_id=%s company_id=%s company_name=%s",
+                    self.account.domain_url,
+                    card.project_id,
+                    company_id,
+                    company_name,
+                )
+        if legal_entities is not None:
+            legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details(
+                card.our_legal_entity_id,
+                card.our_legal_entity_name,
+                legal_entities,
+            )
+        else:
+            legal_entity_id, legal_entity_name, legal_entity_inn = self._resolve_reference_details_single(
+                card.our_legal_entity_id,
+                card.our_legal_entity_name,
+            )
+            # Симметрично company_inn выше. На пути доски legal_entities
+            # приходит из get_legal_entities() -> CompanySearchService.
+            # list_my_companies(), а тот запрашивает select=["ID", "TITLE"] и
+            # никогда не ходит за RQ_INN — legal_entity_inn отсутствует на
+            # пути доски ВСЕГДА и у ВСЕХ карточек, по построению, а не из-за
+            # сбоя. Предупреждаем только на одиночном пути, где ИНН тянется
+            # точечно (_fetch_single_reference_inn) и его отсутствие —
+            # реальная аномалия.
+            if legal_entity_id and not legal_entity_inn:
+                logger.warning(
+                    "[ProjectBoard][INN] Missing legal entity INN for domain=%s project_id=%s legal_entity_id=%s legal_entity_name=%s",
+                    self.account.domain_url,
+                    card.project_id,
+                    legal_entity_id,
+                    legal_entity_name,
+                )
 
         return {
             "id": str(card.id),
@@ -662,6 +871,108 @@ class ProjectCardService:
             resolved_name = lookup_name or resolved_name or resolved_id
 
         return resolved_id, resolved_name, resolved_inn
+
+    def _resolve_reference_details_single(
+        self, reference_id: Any, reference_name: Any
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Название берём из самой карточки (оно там уже есть) — а если его там
+        нет, точечным crm.company.list по ID, а не обходом справочника. ИНН —
+        одним запросом по конкретной компании вместо обхода всего справочника
+        портала.
+
+        До этого одиночная карточка тянула все 23 252 компании и 16 382 реквизита:
+        /api/project-board/card висел 218 секунд и отдавал 502 (HAR 2026-07-28).
+        """
+        resolved_id = self._clean_str(reference_id)
+        resolved_name = self._clean_str(reference_name)
+
+        if not resolved_id:
+            return resolved_id, resolved_name, None
+
+        # Имя, как правило, уже лежит в карточке (фоновый синк) — в Битрикс не
+        # ходим. Но если синк почему-то не заполнил company_name (маппинг полей
+        # не настроен и т.п.), точечно спрашиваем название одной компании —
+        # вместо того чтобы сразу показывать пользователю голый идентификатор.
+        if not resolved_name or resolved_name == resolved_id:
+            resolved_name = self._fetch_single_reference_name(resolved_id) or resolved_id
+
+        return resolved_id, resolved_name, self._fetch_single_reference_inn(resolved_id)
+
+    def _fetch_single_reference_name(self, reference_id: str) -> Optional[str]:
+        cache_key = build_account_cache_key(self.account, f"company-name:{reference_id}")
+        cached_name = cache.get(cache_key)
+        if cached_name is not None:
+            # "" — закэшированный отрицательный результат (компания не найдена).
+            return cached_name or None
+
+        resolved_name: Optional[str] = None
+        try:
+            response = self.client._bitrix_token.call_method(
+                "crm.company.list",
+                {
+                    "filter": {"ID": self._to_bitrix_id(reference_id)},
+                    "select": ["ID", "TITLE"],
+                },
+            )
+            rows, _ = _extract_items_from_response(response)
+            for row in rows:
+                candidate = self._clean_str(row.get("TITLE") or row.get("title"))
+                if candidate:
+                    resolved_name = candidate
+                    break
+        except Exception as exc:
+            # Сбой Битрикса здесь не должен ронять карточку: вызывающий код и
+            # так деградирует до идентификатора при пустом имени. Отрицательный
+            # результат из-за ОШИБКИ не кэшируем — может быть временный сбой,
+            # при следующем показе карточки стоит повторить попытку.
+            logger.warning(
+                "[ProjectBoard][NAME] Single-lookup crm.company.list failed for domain=%s reference_id=%s: %s",
+                self.account.domain_url,
+                reference_id,
+                exc,
+            )
+            return None
+
+        cache.set(cache_key, resolved_name or "", COMPANY_INN_CACHE_TTL)
+        return resolved_name
+
+    def _fetch_single_reference_inn(self, reference_id: str) -> Optional[str]:
+        cache_key = build_account_cache_key(self.account, f"company-inn:{reference_id}")
+        cached_inn = cache.get(cache_key)
+        if cached_inn is not None:
+            # "" — закэшированный отрицательный результат (у компании нет ИНН).
+            return cached_inn or None
+
+        resolved_inn: Optional[str] = None
+        try:
+            response = self.client._bitrix_token.call_method(
+                "crm.requisite.list",
+                {
+                    "filter": {"ENTITY_TYPE_ID": 4, "ENTITY_ID": self._to_bitrix_id(reference_id)},
+                    "select": ["ENTITY_ID", "RQ_INN"],
+                },
+            )
+            rows, _ = _extract_items_from_response(response)
+            for row in rows:
+                candidate = self._clean_str(row.get("RQ_INN") or row.get("rqInn"))
+                if candidate:
+                    resolved_inn = candidate
+                    break
+        except Exception as exc:
+            # Сбой Битрикса здесь не должен ронять карточку: карточка без ИНН —
+            # рабочее состояние (см. предупреждение [ProjectBoard][INN] ниже по
+            # коду). Отрицательный результат из-за ОШИБКИ не кэшируем — это
+            # может быть временный сбой, при следующем запросе стоит повторить.
+            logger.warning(
+                "[ProjectBoard][INN] Single-lookup crm.requisite.list failed for domain=%s reference_id=%s: %s",
+                self.account.domain_url,
+                reference_id,
+                exc,
+            )
+            return None
+
+        cache.set(cache_key, resolved_inn or "", COMPANY_INN_CACHE_TTL)
+        return resolved_inn
 
     def _load_config(self) -> Dict[str, Any]:
         return ConfigurationService(self.client, self.account).get_configuration_sync()
@@ -952,13 +1263,19 @@ class ProjectCardService:
         fetcher,
         fallback: Optional[List[Dict[str, Any]]] = None,
         ttl: int = BITRIX_REFERENCE_CACHE_TTL,
+        bypass_cache: bool = False,
     ) -> List[Dict[str, Any]]:
+        """bypass_cache=True пропускает ЧТЕНИЕ кэша по cache_suffix (для
+        принудительного тёплого обновления сразу после инвалидации — см.
+        get_legal_entities). Успешный результат всё равно перезаписывает
+        кэш, так что последующие обычные вызовы получают уже свежие данные."""
         cache_key = build_account_cache_key(self.account, cache_suffix)
-        cached = cache.get(cache_key)
-        if self._has_reference_options(cached):
-            return cached
-        if cached == []:
-            cache.delete(cache_key)
+        if not bypass_cache:
+            cached = cache.get(cache_key)
+            if self._has_reference_options(cached):
+                return cached
+            if cached == []:
+                cache.delete(cache_key)
 
         live_result: List[Dict[str, Any]] = []
         try:
@@ -1014,6 +1331,19 @@ class ProjectCardService:
                         "is_my_company": is_my_company,
                         "search_text": " ".join(part for part in [company_name, company_inn] if part).strip(),
                     }
+                )
+
+            if not normalized and companies:
+                # Разведка для инцидента с двойным проходом (боевые логи 2026-07-28:
+                # crm.item.list отработал 67 раз, crm.company.list — 34, то есть
+                # примерно в половине случаев первый метод вернул непустой сырой
+                # список, но после нормализации не осталось ни одной записи, и мы
+                # шли вторым кругом ещё на ~465 страниц). Причина пока неизвестна —
+                # логика перебора здесь намеренно не тронута, нужны данные с прода.
+                logger.warning(
+                    "Company fetch: %s вернул %d записей, но после нормализации не осталось ни одной. "
+                    "Ключи первой записи: %s",
+                    method, len(companies), sorted(companies[0].keys())[:15],
                 )
 
             if normalized:

@@ -83,6 +83,7 @@ for _dep in (
     dep_mod.BitrixDataService = MagicMock()
     dep_mod.ConfigurationService = MagicMock()
     dep_mod.Bitrix24Account = MagicMock()
+    dep_mod.PortalUser = MagicMock()
     dep_mod.ProjectCard = MagicMock()
     dep_mod.SystemLog = MagicMock()
     dep_mod.TimesheetItem = MagicMock()

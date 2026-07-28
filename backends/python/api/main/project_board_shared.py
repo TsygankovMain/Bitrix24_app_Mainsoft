@@ -45,7 +45,19 @@ PROJECT_CARD_TABLE_NAME = ProjectCard._meta.db_table
 TIMESHEET_ITEM_TABLE_NAME = TimesheetItem._meta.db_table
 PROJECT_CARD_SCHEMA_CACHE_KEY = "mainsoft:v2:project-card-schema-ready"
 PROJECT_CARD_SCHEMA_TTL = 60
-BITRIX_REFERENCE_CACHE_TTL = 60 * 30
+# Справочники (сотрудники/компании/юрлица) меняются редко, кэш — LocMemCache
+# (CACHES не задан в settings.py -> дефолт Django), т.е. свой у каждого
+# воркера gunicorn и полностью теряется при рестарте контейнера. Долгий TTL
+# безопасен: у пользователя есть кнопка принудительного обновления
+# (refreshReferenceOptions на фронте -> GET /api/project-board/meta?refresh=1
+# -> ProjectCardService.get_meta(bypass_cache=True), см. views.py и задачу 4
+# плана "справочники из локальной базы").
+#
+# Честная оговорка: кэш живёт в памяти процесса, а воркеров gunicorn
+# несколько — форс-рефреш гарантированно пробивает кэш только того воркера,
+# который принял именно этот запрос. Остальные воркеры продолжают отдавать
+# старое значение до истечения TTL либо до собственного форс-рефреша.
+BITRIX_REFERENCE_CACHE_TTL = 60 * 60 * 6
 PROJECT_BOARD_CACHE_TTL = 60 * 2
 HOMEPAGE_CACHE_TTL = 60 * 2
 FILTER_EMPLOYEES_CACHE_SUFFIX = "filter-employees-v3"
@@ -73,7 +85,7 @@ def invalidate_project_runtime_caches(account: Bitrix24Account) -> None:
             "filter-projects",
             "project-board",
             "project-board-meta",
-            "project-board-companies",
+            "admin-company-directory",
             "project-board-legal-entities",
             "project-board-homepage",
         ],

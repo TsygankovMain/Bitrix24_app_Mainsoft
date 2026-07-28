@@ -16,11 +16,11 @@ echo "DB Config: HOST=$DB_HOST, PORT=$DB_PORT, NAME=$DB_NAME, USER=$DB_USER"
 echo -e "${GREEN}Applying database migrations...${NC}"
 python manage.py migrate --noinput
 
-# Предсжатие ассетов фронта: WhiteNoise отдаёт .br/.gz рядом с файлом, если он есть.
-# collectstatic сжимает только STATIC_ROOT, а фронт лежит в WHITENOISE_ROOT (frontend_build),
-# поэтому бандлы уезжали в браузер несжатыми.
-echo -e "${GREEN}Compressing frontend assets...${NC}"
-python -m whitenoise.compress frontend_build || echo "WARN: compress failed, serving uncompressed."
+# Предсжатие ассетов фронта (.br/.gz) теперь выполняется в Dockerfile при сборке
+# образа (Stage 2, сразу после COPY frontend_build), а не здесь. Здесь оно раньше
+# падало молча: start.sh выполняется уже от appuser, а /app/frontend_build скопирован
+# в образ от root — прав на запись рядом с файлами нет. Ошибка пряталась за `|| echo`,
+# и бандлы месяц уезжали в браузер несжатыми незамеченными.
 
 echo -e "${GREEN}Collecting static files...${NC}"
 python manage.py collectstatic --noinput || echo "ERROR: collectstatic failed. Continuing..."

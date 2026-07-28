@@ -19,7 +19,7 @@ import type {
   SmartProcessFieldOption,
   SmartProcessOption,
 } from '~/types/config'
-import type { ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
+import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 
 type SaveConfigurationResponse = {
@@ -132,6 +132,34 @@ export const useApiStore = defineStore(
           const data = ctx.response._data as { error?: string } | undefined
           ctx.error = new Error(data?.error || FORBIDDEN_MESSAGE)
         }
+
+        // HTTP 429 (лимитеры — backends/python/api/main/utils/decorators/rate_limit.py)
+        // сознательно НЕ обрабатывается здесь, хотя это тот же обработчик,
+        // что закрывает 403 выше, и первое, за что цеплялся взгляд при
+        // централизации. Две причины:
+        //  1. Бласт-радиус: этот $api — общий клиент, им же пользуется
+        //     searchCompanies (см. frontend/app/utils/companySearch.ts),
+        //     у которого уже есть своя протестированная, отдельная от
+        //     общего пути классификация 429 (свой текст уведомления,
+        //     осознанно отличается от RATE_LIMIT_NOTICE_TEXT — см.
+        //     apiErrors.ts). Правка здесь звучит безопасно (просто заменить
+        //     .message, как для 403), но приём 403 выше подменяет ctx.error
+        //     на голый `new Error(...)` без .status/.response — сделать так
+        //     же для 429 незаметно сломало бы isRateLimitError на подменённой
+        //     ошибке везде, где её сегодня проверяют, если не перенести
+        //     статус на новый объект вручную. Решаемо, но лишняя связанность
+        //     между независимыми фичами ради нулевой выгоды (см. п.2).
+        //  2. Явного выигрыша нет: этот клиент всё равно не может сам решить
+        //     «фатальный экран или лёгкое уведомление» — здесь нет доступа
+        //     ни к состоянию страницы, ни к решению "это get_token, тут
+        //     фатально можно". Настоящая точка, где это решение принимается
+        //     (звать showError({fatal:true}) или нет), — processErrorGlobal
+        //     в frontend/app/composables/useAppInit.ts: единственное место
+        //     всего приложения, которое вызывает showError. Централизация
+        //     сделана там (shouldTreatAsFatalError/markRateLimitFatal в
+        //     frontend/app/utils/apiErrors.ts) — она закрывает тот же класс
+        //     мест (весь код, который зовёт processErrorGlobal(e) в catch),
+        //     не трогая этот файл и не рискуя поиском компаний.
       }
     })
 
@@ -640,7 +668,12 @@ export const useApiStore = defineStore(
         clearCache(scope)
       }
 
-      const value = await $api<ProjectBoardMetaPayload>('/api/project-board/meta', {
+      // forceRefresh раньше управлял только этим браузерным кэшем — сам
+      // запрос уходил без параметров, и бэкенд отдавал свой серверный кэш
+      // (6 часов) независимо от кнопки «Обновить справочники». ?refresh=1
+      // сообщает бэкенду, что нужно принудительно перечитать источники.
+      const url = forceRefresh ? '/api/project-board/meta?refresh=1' : '/api/project-board/meta'
+      const value = await $api<ProjectBoardMetaPayload>(url, {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }
@@ -668,6 +701,38 @@ export const useApiStore = defineStore(
       })
 
       return response.card || null
+    }
+
+    // Поиск компаний по мере ввода (CompanySearchService на бэкенде, живой
+    // серверный фильтр в Битриксе — не локальный обход). НЕ кэшируем на
+    // клиенте: кэш по строке запроса уже живёт на бэкенде (5 минут), а тут
+    // запрос меняется на каждый ввод — локальный кэш только раздувал бы
+    // память браузера записями, которые почти никогда не переиспользуются.
+    // Эндпоинт лимитирован (@rate_limit("company_search", 60, 60) —
+    // 60 запросов/минуту на сотрудника): при превышении бросает обычную
+    // ofetch-ошибку HTTP 429, а не эту форму ответа — вызывающий код
+    // (SearchableSelect) обязан ловить её отдельно от success-ответа с
+    // failed=true, см. frontend/app/utils/companySearch.ts.
+    const searchCompanies = async (query: string, limit = 50): Promise<CompanySearchResult> => {
+      const params = new URLSearchParams({ q: query, limit: String(limit) })
+      return await $api<CompanySearchResult>(`/api/project-board/companies/search?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    // Свои юрлица — маленький список (серверный фильтр IS_MY_COMPANY),
+    // кэшируется на бэкенде на 6 часов. Намеренно НЕ берём его из
+    // getProjectBoardMeta(): там общий справочник компаний доски (уже не
+    // полный справочник портала, но другого назначения — компании-клиенты,
+    // встречавшиеся в карточках проектов), а не список собственных юрлиц.
+    const getMyCompanies = async (): Promise<MyCompaniesResult> => {
+      return await $api<MyCompaniesResult>('/api/project-board/my-companies', {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
     }
 
     // --- Финансовый функционал (в планах) изолирован ---
@@ -1094,6 +1159,8 @@ export const useApiStore = defineStore(
       getProjectBoard,
       getProjectBoardMeta,
       getProjectBoardCard,
+      searchCompanies,
+      getMyCompanies,
       getFinanceOperations,
       createFinanceOperation,
       getHomepagePortfolio,
