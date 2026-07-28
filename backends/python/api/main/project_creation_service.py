@@ -327,29 +327,37 @@ class ProjectCreationService:
             )
 
         group_field = _clean_str((mapping or {}).get("bitrix_group_id"))
-        if group_field:
-            try:
-                response = self._call(
-                    "crm.item.list",
-                    {
-                        "entityTypeId": entity_type_id,
-                        "filter": {group_field: self._to_bitrix_id(group_id)},
-                        "select": ["id"],
-                    },
-                )
-            except Exception as exc:
-                logger.warning("ensure_card: crm.item.list failed: %s", exc)
-                return StepResult(status="error", error=f"Не удалось найти карточку: {exc}")
+        if not group_field:
+            # mapping непуст, но без связи с группой найти существующую
+            # карточку нечем: молчаливый переход к созданию плодил бы дубль
+            # на каждое повторное нажатие (приложение ничего не удаляет).
+            return StepResult(
+                status="skipped",
+                error="В маппинге не настроена связь карточки с группой (bitrix_group_id) — карточка не создана.",
+            )
 
-            existing, parsed_ok = _extract_rows(response)
-            if not parsed_ok:
-                return StepResult(status="error", error="Битрикс вернул ответ неожиданного вида при поиске карточки.")
-            if existing:
-                return StepResult(
-                    status="found",
-                    id=_clean_str(existing[0].get("id") or existing[0].get("ID")),
-                    name=fields.project_name,
-                )
+        try:
+            response = self._call(
+                "crm.item.list",
+                {
+                    "entityTypeId": entity_type_id,
+                    "filter": {group_field: self._to_bitrix_id(group_id)},
+                    "select": ["id"],
+                },
+            )
+        except Exception as exc:
+            logger.warning("ensure_card: crm.item.list failed: %s", exc)
+            return StepResult(status="error", error=f"Не удалось найти карточку: {exc}")
+
+        existing, parsed_ok = _extract_rows(response)
+        if not parsed_ok:
+            return StepResult(status="error", error="Битрикс вернул ответ неожиданного вида при поиске карточки.")
+        if existing:
+            return StepResult(
+                status="found",
+                id=_clean_str(existing[0].get("id") or existing[0].get("ID")),
+                name=fields.project_name,
+            )
 
         try:
             created = self._call(
@@ -363,10 +371,10 @@ class ProjectCreationService:
             logger.warning("ensure_card: crm.item.add failed: %s", exc)
             return StepResult(status="error", error=f"Не удалось создать карточку: {exc}")
 
-        # crm.item.add отдаёт созданную запись как result.item — достаём id
-        # через тот же защищённый разбор, что и везде (заведён в Task 2).
-        # crm.item.add отдаёт созданную запись как result.item — _extract_rows
-        # здесь не годится, он не знает ключа в единственном числе.
+        # crm.item.add отдаёт созданную запись как result.item — id достаём
+        # через тот же защищённый разбор, что и везде (_extract_created_id,
+        # заведён в Task 2); _extract_rows здесь не годится — он не знает
+        # ключа в единственном числе.
         created_id = _clean_str(_extract_created_id(created))
         if not created_id:
             return StepResult(status="error", error="Битрикс не вернул идентификатор карточки.")

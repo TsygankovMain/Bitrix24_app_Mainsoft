@@ -5,11 +5,12 @@
 """
 from datetime import date
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
-from .models import Bitrix24Account, ProjectCard
+from .models import Bitrix24Account, Portal, ProjectCard
 from .project_creation_defaults import resolve_project_fields
 from .project_creation_service import ProjectCreationService
+from .tenant_scoping import scope_to_tenant
 
 
 class _FakeClient:
@@ -506,6 +507,36 @@ class EnsureCardTest(_ServiceTestCase):
         self.assertEqual(result.status, "error")
         self.assertIn("идентификатор", result.error)
 
+    def test_mapping_without_group_link_is_skipped_not_duplicated(self):
+        """mapping непуст, но без bitrix_group_id найти существующую карточку
+        нечем: код не должен молча прыгать на создание — иначе два нажатия
+        подряд дают две карточки, а приложение их не удаляет."""
+        client = _FakeClient({"crm.item.add": {"result": {"item": {"id": 901}}}})
+        mapping = dict(_MAPPING)
+        del mapping["bitrix_group_id"]
+
+        result = self.service(client).ensure_card(
+            _resolved_fields(), "44", entity_type_id=180, mapping=mapping
+        )
+
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(client.methods_called(), [])
+
+
+def _account_with_portal(member_id, *, b24_user_id):
+    """Аккаунт с проставленным Portal — прод-конфигурация под
+    USE_PORTAL_SCOPING=True. `_ServiceTestCase.setUp` создаёт account без
+    portal (см. tests_tenant_scoping.py::_account для того же паттерна)."""
+    portal = Portal.objects.create(
+        member_id=member_id, domain_url=f"{member_id}.bitrix24.ru", status="active"
+    )
+    account = Bitrix24Account.objects.create(
+        b24_user_id=b24_user_id, is_b24_user_admin=True, member_id=member_id,
+        is_master_account=True, domain_url=f"{member_id}.bitrix24.ru",
+        status="active", application_version=1, portal=portal,
+    )
+    return account, portal
+
 
 class WriteThroughTest(_ServiceTestCase):
     def test_creates_local_row_so_board_shows_project_immediately(self):
@@ -538,8 +569,6 @@ class WriteThroughTest(_ServiceTestCase):
     def test_other_portal_does_not_see_the_row(self):
         """Изоляция между порталами (§9 спеки): чужой аккаунт не должен видеть
         созданный проект ни при account-, ни при portal-скоупинге."""
-        from .tenant_scoping import scope_to_tenant
-
         other = Bitrix24Account.objects.create(
             b24_user_id=2, is_b24_user_admin=True, member_id="m-create-2",
             is_master_account=True, domain_url="other.bitrix24.ru",
@@ -549,5 +578,45 @@ class WriteThroughTest(_ServiceTestCase):
 
         visible_here = ProjectCard.objects.filter(**scope_to_tenant(self.account), project_id="44")
         visible_there = ProjectCard.objects.filter(**scope_to_tenant(other), project_id="44")
+        self.assertEqual(visible_here.count(), 1)
+        self.assertEqual(visible_there.count(), 0)
+
+    # Три теста ниже гоняют реальную прод-конфигурацию: USE_PORTAL_SCOPING=True
+    # и account с проставленным Portal. Без них проверялась только запасная
+    # ветка scope_to_tenant ({"bitrix24_account": account}) — тесты выше не
+    # переопределяют флаг, а test_settings наследует боевой дефолт False.
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    def test_portal_scoping_on_write_sets_both_portal_and_account(self):
+        """Прод: без portal строка не попадёт в скоуп компании и доска её не
+        покажет (§9 спеки) — двойная запись обязана проставить оба ключа."""
+        account, portal = _account_with_portal("m-create-portal-1", b24_user_id=3)
+        ProjectCreationService(_FakeClient(), account).write_through(_resolved_fields(), "44", "901")
+
+        card = ProjectCard.objects.get(bitrix24_account=account, project_id="44")
+        self.assertEqual(card.portal_id, portal.id)
+        self.assertEqual(card.bitrix24_account_id, account.id)
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    def test_portal_scoping_on_second_call_updates_instead_of_duplicating(self):
+        account, portal = _account_with_portal("m-create-portal-2", b24_user_id=3)
+        service = ProjectCreationService(_FakeClient(), account)
+        service.write_through(_resolved_fields(), "44", "901")
+        service.write_through(_resolved_fields(project_name="Переименован"), "44", "901")
+
+        cards = ProjectCard.objects.filter(bitrix24_account=account, project_id="44")
+        self.assertEqual(cards.count(), 1)
+        self.assertEqual(cards.first().project_name, "Переименован")
+        self.assertEqual(cards.first().portal_id, portal.id)
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    def test_portal_scoping_on_other_portal_does_not_see_the_row(self):
+        account, _ = _account_with_portal("m-create-portal-3a", b24_user_id=3)
+        other_account, _ = _account_with_portal("m-create-portal-3b", b24_user_id=4)
+
+        ProjectCreationService(_FakeClient(), account).write_through(_resolved_fields(), "44", "901")
+
+        visible_here = ProjectCard.objects.filter(**scope_to_tenant(account), project_id="44")
+        visible_there = ProjectCard.objects.filter(**scope_to_tenant(other_account), project_id="44")
         self.assertEqual(visible_here.count(), 1)
         self.assertEqual(visible_there.count(), 0)
