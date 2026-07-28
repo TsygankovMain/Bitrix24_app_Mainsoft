@@ -7,6 +7,13 @@ import { openCrmItemCard } from '~/utils/openCrmItem'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { formatProjectCurrency } from '~/utils/projectBoard'
 import { stepBadgeClass, stepLabel } from '~/utils/projectCreationLabels'
+import {
+  missingFieldLabel,
+  shouldRefetchLegalEntities,
+  shouldResetFormOnOpen,
+  shouldShowLegalEntityBlock,
+  unslottedMissingFields
+} from '~/utils/projectCreationModalState'
 import { addOneYear, plannedAmount } from '~/types/project-creation'
 import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
 import type { ProjectBoardDirectoryOption } from '~/types/project-board'
@@ -49,6 +56,10 @@ const loadError = ref('')
 const selectedCandidateId = ref('')
 // Ручная правка даты окончания не должна затираться пересчётом от даты начала.
 const endDateTouched = ref(false)
+// true, когда текущее открытие вернуло сотрудника к незавершённой попытке
+// прошлого раза (фикс-раунд ревью задачи 8, находка 1), а не начало новую —
+// используется только для баннера-подсказки в разметке.
+const resumedNotice = ref(false)
 
 function blankForm(): ProjectCreationForm {
   const today = new Date().toISOString().slice(0, 10)
@@ -84,6 +95,22 @@ const needsLegalEntityChoice = computed(() => legalEntities.value.length > 1)
 const curatorName = computed(() => userStore.login?.trim() || 'вы')
 
 const missing = computed(() => result.value?.missing_fields ?? [])
+
+// Находка 2 фикс-раунда ревью задачи 8: needsLegalEntityChoice — клиентская
+// оценка (по факту загрузки своих юрлиц), а бэкенд решает необходимость
+// поля независимо на каждой отправке. Если клиентский список не догрузился
+// на портале, где юрлиц на самом деле несколько, needsLegalEntityChoice
+// молчит, а бэкенд вернёт missing_fields с our_legal_entity_id — блок обязан
+// появиться в любом из двух случаев, иначе сотрудник не увидит ни поля, ни
+// объяснения (см. shouldShowLegalEntityBlock).
+const showLegalEntityBlock = computed(() => shouldShowLegalEntityBlock(needsLegalEntityChoice.value, missing.value))
+
+// Запасной путь на случай, если когда-нибудь появится ещё одно поле формы
+// без своего слота на экране — тот же класс бага, что и находка 2, просто
+// для другого поля (см. unslottedMissingFields). Сегодня список всегда
+// пуст: у всех четырёх известных полей есть собственная подсказка.
+const unslottedMissing = computed(() => unslottedMissingFields(missing.value))
+
 const canSubmit = computed(() =>
   Boolean(form.value.project_name.trim())
   && Boolean(form.value.company_id || form.value.company_name.trim())
@@ -105,16 +132,32 @@ const companyCandidateItems = computed(() =>
 // портала — на боевом 23 252 записи и около 12,6 МБ даже после хотфикса
 // 2026-07-28. Форма грузит только то, что ей нужно: свои юрлица отдельным
 // маленьким эндпоинтом, компании — поиском по мере ввода.
+//
+// Функция вызывается повторно не только на свежее открытие, но и при
+// возврате к незавершённой попытке (находка 1) и при самовосстановлении
+// после расхождения по юрлицу (находка 2, shouldRefetchLegalEntities) — оба
+// раза форма уже может содержать введённые сотрудником значения. Поэтому
+// hourly_rate и our_legal_entity_id подставляются, только если поле ещё
+// пусто: иначе повторный вызов молча затирал бы переопределённую сотрудником
+// ставку значением из настроек портала.
 async function loadReferences() {
   try {
     const my = await apiStore.getMyCompanies()
     legalEntities.value = my.companies
-    if (legalEntities.value.length === 1) {
+    if (my.failed) {
+      // MyCompaniesResult.failed=true — Битрикс не ответил (или ответил не в
+      // ожидаемой форме); companies при этом обычно пуст, но доверять его
+      // полноте нельзя. Предупреждаем заранее: это тот самый разрыв, из-за
+      // которого needsLegalEntityChoice может молчать, даже когда юрлиц на
+      // портале на самом деле несколько (находка 2).
+      loadError.value = 'Не удалось проверить список ваших юрлиц. Если их несколько, форма подскажет об этом при отправке.'
+    }
+    if (legalEntities.value.length === 1 && !form.value.our_legal_entity_id) {
       form.value.our_legal_entity_id = String(legalEntities.value[0]!.id)
     }
     const config = await apiStore.getConfiguration()
     const rate = Number(config?.hourly_rate ?? 0)
-    if (rate > 0) form.value.hourly_rate = String(rate)
+    if (rate > 0 && !form.value.hourly_rate) form.value.hourly_rate = String(rate)
   } catch (error) {
     // Справочники не догрузились — форму всё равно показываем: названия
     // компании и проекта можно ввести руками, бэкенд их найдёт или создаст.
@@ -149,15 +192,29 @@ function resetForm() {
   result.value = null
   loadError.value = ''
   selectedCandidateId.value = ''
+  resumedNotice.value = false
 }
 
 // Компонент, вероятнее всего, остаётся смонтированным между открытиями
-// (v-model:open переключает видимость, а не пересоздаёт SFC) — без сброса
-// здесь второе открытие показало бы результат и статусы от предыдущего,
-// уже закрытого создания проекта.
+// (v-model:open переключает видимость, а не пересоздаёт SFC) — полный сброс
+// здесь оправдан только когда предыдущая попытка ЗАВЕРШЕНА (результата не
+// было или он успешен, см. shouldResetFormOnOpen). Если предыдущая попытка
+// оборвалась на частичном результате (например, компания создалась, группа —
+// нет), второе открытие обязано вернуть сотрудника туда же: форма
+// закрываема сразу после ответа (:close="!submitting" в разметке ниже), и
+// случайное закрытие мимо/по крестику не должно требовать заново вводить
+// уже введённое (фикс-раунд ревью задачи 8, находка 1).
 watch(open, (isOpen) => {
   if (isOpen) {
-    resetForm()
+    if (shouldResetFormOnOpen(result.value)) {
+      resetForm()
+    } else {
+      // loadError относится к ПОСЛЕДНЕЙ попытке (транспортный сбой/лимитер),
+      // а не к сохраняемому result — переносить его на новое открытие не
+      // нужно, loadReferences() ниже расставит актуальный при необходимости.
+      loadError.value = ''
+      resumedNotice.value = true
+    }
     loadReferences()
   }
 }, { immediate: true })
@@ -166,10 +223,20 @@ async function submit() {
   if (submitting.value) return
   submitting.value = true
   loadError.value = ''
+  resumedNotice.value = false
   try {
     result.value = await apiStore.createProject(form.value)
     selectedCandidateId.value = ''
-    if (result.value.done) emit('created', result.value)
+    if (result.value.done) {
+      emit('created', result.value)
+    } else if (shouldRefetchLegalEntities(result.value.missing_fields, legalEntities.value.length)) {
+      // Находка 2: бэкенд посчитал юрлицо обязательным, хотя клиент так не
+      // решил — список на клиенте, скорее всего, не догрузился или устарел.
+      // Пробуем перезагрузить его молча: если получится, needsLegalEntityChoice
+      // сам станет true и поле окажется заполнимым без того, чтобы сотрудник
+      // закрывал и открывал окно заново.
+      await loadReferences()
+    }
   } catch (error) {
     // Эндпоинт создания лимитирован (5 запросов/минуту, см. бриф задачи 8).
     // 429 — ожидаемая, самовосстанавливающаяся ситуация "подождите минуту",
@@ -206,7 +273,13 @@ function closeModal() {
   <B24Modal v-model:open="open" title="Создать проект" :close="!submitting">
     <template #body>
       <div class="space-y-4">
+        <div v-if="resumedNotice" class="ms-note ms-note-info">
+          Это незавершённая попытка с прошлого раза, не новая форма — данные и статус шагов ниже сохранены.
+        </div>
         <div v-if="loadError" class="ms-panel-warning">{{ loadError }}</div>
+        <div v-if="unslottedMissing.length" class="ms-panel-warning">
+          Не хватает данных для отправки: {{ unslottedMissing.map(missingFieldLabel).join(', ') }}.
+        </div>
 
         <label class="grid gap-1 text-sm">
           <span class="font-medium text-slate-700">Название проекта <span class="text-rose-500">*</span></span>
@@ -233,7 +306,7 @@ function closeModal() {
           <span v-if="missing.includes('company')" class="text-xs text-rose-600">Выберите компанию или впишите название новой.</span>
         </div>
 
-        <div v-if="needsLegalEntityChoice" class="grid gap-1 text-sm">
+        <div v-if="showLegalEntityBlock" class="grid gap-1 text-sm">
           <span class="font-medium text-slate-700">Наше юрлицо <span class="text-rose-500">*</span></span>
           <SearchableSelect
             v-model="form.our_legal_entity_id"
@@ -289,7 +362,7 @@ function closeModal() {
               step="100"
               class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             >
-            <span v-if="missing.includes('hourly_rate')" class="text-xs text-rose-600">В настройках портала ставка не задана — укажите вручную.</span>
+            <span v-if="missing.includes('hourly_rate')" class="text-xs text-rose-600">Ставка не задана — введите значение больше нуля.</span>
           </label>
           <label class="grid gap-1 text-sm">
             <span class="font-medium text-slate-700">Плановая сумма</span>

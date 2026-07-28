@@ -2,6 +2,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { addOneYear, plannedAmount } from '../app/types/project-creation'
 import { stepBadgeClass, stepLabel } from '../app/utils/projectCreationLabels'
+import {
+  missingFieldLabel,
+  shouldRefetchLegalEntities,
+  shouldResetFormOnOpen,
+  shouldShowLegalEntityBlock,
+  unslottedMissingFields
+} from '../app/utils/projectCreationModalState'
 
 test('addOneYear: обычная дата', () => {
   assert.equal(addOneYear('2026-07-28'), '2027-07-28')
@@ -56,4 +63,88 @@ test('stepBadgeClass: успех — зелёный, пропущено — не
 
 test('stepBadgeClass: неизвестный статус не роняет интерфейс', () => {
   assert.equal(stepBadgeClass({ status: 'xxx' } as never), 'bg-slate-100 text-slate-500')
+})
+
+// Фикс-раунд ревью задачи 8, находка 1: безусловный сброс формы при каждом
+// открытии терял данные при частичном сбое (компания создалась, группа —
+// нет, сотрудник случайно закрыл окно — оно закрываемо сразу после ответа,
+// см. :close="!submitting"). Сброс допустим только когда предыдущая попытка
+// завершена: результата не было (свежее открытие) либо он успешен.
+test('shouldResetFormOnOpen: результата ещё не было — сбрасываем (свежее открытие)', () => {
+  assert.equal(shouldResetFormOnOpen(null), true)
+})
+
+test('shouldResetFormOnOpen: предыдущая попытка успешна (done=true) — сбрасываем', () => {
+  assert.equal(shouldResetFormOnOpen({ done: true } as never), true)
+})
+
+test('shouldResetFormOnOpen: предыдущая попытка оборвалась частичным результатом (done=false) — сохраняем форму и прогресс', () => {
+  assert.equal(shouldResetFormOnOpen({ done: false } as never), false)
+})
+
+// Находка 2: поле выбора юрлица и подсказка о его нехватке лежали за одним
+// клиентским условием (legalEntities.length > 1), а бэкенд решает
+// необходимость поля независимо на каждой отправке. Блок обязан появляться
+// по любой из двух оценок, иначе сотрудник видит три "пропущено" без
+// единого объяснения (см. фикс-раунд ревью задачи 8, находка 2).
+test('shouldShowLegalEntityBlock: клиент сам видит несколько юрлиц', () => {
+  assert.equal(shouldShowLegalEntityBlock(true, []), true)
+})
+
+test('shouldShowLegalEntityBlock: бэкенд явно сообщил о нехватке юрлица, хотя клиент так не считает', () => {
+  assert.equal(shouldShowLegalEntityBlock(false, ['our_legal_entity_id']), true)
+})
+
+test('shouldShowLegalEntityBlock: ни клиент, ни бэкенд не считают юрлицо нужным', () => {
+  assert.equal(shouldShowLegalEntityBlock(false, ['hourly_rate']), false)
+})
+
+test('shouldShowLegalEntityBlock: пустой missing_fields не роняет интерфейс', () => {
+  assert.equal(shouldShowLegalEntityBlock(false, []), false)
+})
+
+// Показать блок мало — если список юрлиц на клиенте не догрузился, поле
+// выбора будет пустым и сотрудник всё равно застрянет. Пробуем перезагрузить
+// список молча, когда расхождение обнаружено.
+test('shouldRefetchLegalEntities: бэкенд требует юрлицо, у клиента список пуст', () => {
+  assert.equal(shouldRefetchLegalEntities(['our_legal_entity_id'], 0), true)
+})
+
+test('shouldRefetchLegalEntities: бэкенд требует юрлицо, у клиента ровно одна запись (тоже расхождение)', () => {
+  assert.equal(shouldRefetchLegalEntities(['our_legal_entity_id'], 1), true)
+})
+
+test('shouldRefetchLegalEntities: бэкенд требует юрлицо, у клиента уже несколько — перезагружать незачем', () => {
+  assert.equal(shouldRefetchLegalEntities(['our_legal_entity_id'], 3), false)
+})
+
+test('shouldRefetchLegalEntities: юрлицо не упомянуто среди недостающих полей', () => {
+  assert.equal(shouldRefetchLegalEntities(['hourly_rate'], 0), false)
+})
+
+// Более широкий вопрос из находки 2: то же расхождение может случиться с
+// любым другим полем из missing_fields, для которого на форме нет
+// отдельного слота. Запасной путь — общее сообщение обо всём необъяснённом.
+test('unslottedMissingFields: все четыре известных сегодня поля уже имеют слот на форме', () => {
+  assert.deepEqual(
+    unslottedMissingFields(['project_name', 'company', 'our_legal_entity_id', 'hourly_rate']),
+    []
+  )
+})
+
+test('unslottedMissingFields: неизвестное поле остаётся для общего сообщения', () => {
+  assert.deepEqual(unslottedMissingFields(['hourly_rate', 'stage']), ['stage'])
+})
+
+test('unslottedMissingFields: пустой список ничего не роняет', () => {
+  assert.deepEqual(unslottedMissingFields([]), [])
+})
+
+test('missingFieldLabel: известное поле — человеческий текст', () => {
+  assert.equal(missingFieldLabel('our_legal_entity_id'), 'юрлицо')
+  assert.equal(missingFieldLabel('hourly_rate'), 'ставка')
+})
+
+test('missingFieldLabel: неизвестное поле — сырой код как есть, а не пусто', () => {
+  assert.equal(missingFieldLabel('stage'), 'stage')
 })
