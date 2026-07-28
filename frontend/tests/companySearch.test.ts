@@ -5,6 +5,7 @@ import {
   classifyCompanySearchError,
   companyCreationActionLabel,
   companyFieldsForQuery,
+  companyNameMatchesQuery,
   companySearchNoticeText,
   createCompanySearchGate,
   isRateLimitError,
@@ -193,6 +194,49 @@ test('pendingCompanyDisplayLabel: пустая строка выбранного
   assert.match(label, /Лютик/)
 })
 
+// --- companyNameMatchesQuery ---
+//
+// Ре-ревью хотфикса 2026-07-29: граница "точное совпадение" для
+// shouldOfferCompanyCreation ниже. Без учёта регистра, с обрезкой пробелов
+// по краям; внутренние пробелы НЕ схлопываются — см. докстринг функции
+// (зеркалирует _clean_str/ensure_company на бэкенде).
+
+test('companyNameMatchesQuery: совпадение символ в символ — true', () => {
+  assert.equal(companyNameMatchesQuery('Ромашка', 'Ромашка'), true)
+})
+
+test('companyNameMatchesQuery: регистр не учитывается', () => {
+  assert.equal(companyNameMatchesQuery('РОМАШКА', 'ромашка'), true)
+  assert.equal(companyNameMatchesQuery('ооо ромашка', 'ООО РОМАШКА'), true)
+})
+
+test('companyNameMatchesQuery: пробелы по краям обрезаются с обеих сторон', () => {
+  assert.equal(companyNameMatchesQuery('  Ромашка  ', 'Ромашка'), true)
+  assert.equal(companyNameMatchesQuery('Ромашка', '  Ромашка  '), true)
+  assert.equal(companyNameMatchesQuery('  РОМАШКА  ', '  ромашка  '), true)
+})
+
+test('companyNameMatchesQuery: внутренние пробелы НЕ схлопываются', () => {
+  // Осознанное решение — см. докстринг функции: бэкенд (_clean_str в
+  // project_creation_service.py) тоже только .strip(), без схлопывания
+  // внутренних пробелов, а ensure_company ищет ТОЧНО этой строкой через
+  // {"=TITLE": company_name}. Если бы фронт был снисходительнее бэкенда,
+  // кнопка "создать" могла бы пропасть именно тогда, когда ensure_company
+  // всё равно завёл бы дубль (сам не найдя "нестрогого" совпадения).
+  assert.equal(companyNameMatchesQuery('Ромашка  Плюс', 'Ромашка Плюс'), false)
+})
+
+test('companyNameMatchesQuery: разные названия — false', () => {
+  assert.equal(companyNameMatchesQuery('Ромашка-Плюс', 'Ромашка'), false)
+  assert.equal(companyNameMatchesQuery('Ромашка', 'Ромашка-Плюс'), false)
+})
+
+test('companyNameMatchesQuery: пустое имя или запрос — не совпадение, а не "оба пустых равны"', () => {
+  assert.equal(companyNameMatchesQuery('', ''), false)
+  assert.equal(companyNameMatchesQuery('   ', 'Ромашка'), false)
+  assert.equal(companyNameMatchesQuery('Ромашка', '   '), false)
+})
+
 // --- shouldOfferCompanyCreation ---
 //
 // Д2 хотфикса 2026-07-29 (см. .superpowers/sdd/2026-07-28-create-project-button/
@@ -200,34 +244,53 @@ test('pendingCompanyDisplayLabel: пустая строка выбранного
 // неактивная надпись "Ничего не найдено", хотя подсказка под полем обещала
 // действие "создать компанию с этим названием". Обещание было, механизма —
 // не было.
+//
+// Граница «точное совпадение» (а не «есть хоть какой-то результат») —
+// поправка ре-ревью того же дня: первая версия прятала действие при ЛЮБЫХ
+// непустых результатах поиска. Сценарий тупика: в CRM есть "Ромашка-Плюс",
+// нужна новая "Ромашка" — человек вводит "Ромашка", видит один
+// нерелевантный вариант, кнопки "создать" нет, и никак не понять, что делать,
+// чтобы она появилась. Та же жалоба, из-за которой форму сняли с прода.
 
-test('shouldOfferCompanyCreation: запрос валиден, поиск завершён, вариантов ноль — true', () => {
-  assert.equal(shouldOfferCompanyCreation({ query: 'Лютик', isSearching: false, optionCount: 0 }), true)
+test('shouldOfferCompanyCreation: пустой список, запрос валиден, поиск завершён — true', () => {
+  assert.equal(shouldOfferCompanyCreation({ query: 'Лютик', isSearching: false, optionNames: [] }), true)
 })
 
-test('shouldOfferCompanyCreation: поиск ещё идёт — false, даже при нуле вариантов на экране', () => {
+test('shouldOfferCompanyCreation: непустой список БЕЗ точного совпадения — true (это и есть фикс ре-ревью)', () => {
+  assert.equal(
+    shouldOfferCompanyCreation({ query: 'Ромашка', isSearching: false, optionNames: ['Ромашка-Плюс', 'Ромашка Сервис'] }),
+    true,
+  )
+})
+
+test('shouldOfferCompanyCreation: точное совпадение среди вариантов — false, компанию надо выбрать из списка', () => {
+  assert.equal(
+    shouldOfferCompanyCreation({ query: 'Ромашка', isSearching: false, optionNames: ['Ромашка-Плюс', 'Ромашка'] }),
+    false,
+  )
+})
+
+test('shouldOfferCompanyCreation: точное совпадение в другом регистре и с лишними пробелами по краям — тоже false', () => {
+  assert.equal(
+    shouldOfferCompanyCreation({ query: '  ромашка  ', isSearching: false, optionNames: ['РОМАШКА'] }),
+    false,
+  )
+})
+
+test('shouldOfferCompanyCreation: поиск ещё идёт — false, даже если среди уже показанных вариантов нет совпадения', () => {
   // serverResults на старте нового запроса не очищаются (см. SearchableSelect.vue::
-  // runServerSearch) — 0 в этот момент может значить "ещё не пришёл ответ", а не
-  // "точно ничего нет". Предлагать создание в этот момент — обгонять сервер.
-  assert.equal(shouldOfferCompanyCreation({ query: 'Лютик', isSearching: true, optionCount: 0 }), false)
+  // runServerSearch) — то, что видно на экране в момент isSearching===true,
+  // относится к ПРЕДЫДУЩЕМУ запросу, сравнивать его с текущим query нельзя.
+  assert.equal(shouldOfferCompanyCreation({ query: 'Лютик', isSearching: true, optionNames: [] }), false)
 })
 
 test('shouldOfferCompanyCreation: запрос короче двух символов — false', () => {
-  assert.equal(shouldOfferCompanyCreation({ query: 'р', isSearching: false, optionCount: 0 }), false)
+  assert.equal(shouldOfferCompanyCreation({ query: 'р', isSearching: false, optionNames: [] }), false)
 })
 
 test('shouldOfferCompanyCreation: пустой и пробельный запрос — false', () => {
-  assert.equal(shouldOfferCompanyCreation({ query: '', isSearching: false, optionCount: 0 }), false)
-  assert.equal(shouldOfferCompanyCreation({ query: '   ', isSearching: false, optionCount: 0 }), false)
-})
-
-test('shouldOfferCompanyCreation: сервер вернул варианты — действие не предлагаем, даже без точного совпадения', () => {
-  // Осознанное решение (см. докстринг функции): сигнатура получает только
-  // optionCount, не сами варианты, поэтому "есть похожие, но ни один не
-  // совпадает дословно" неотличимо здесь от "есть точное совпадение" — и то,
-  // и другое трактуется как "варианты есть", действие не показываем.
-  assert.equal(shouldOfferCompanyCreation({ query: 'Ромашка Казань', isSearching: false, optionCount: 3 }), false)
-  assert.equal(shouldOfferCompanyCreation({ query: 'Ромашка Казань', isSearching: false, optionCount: 1 }), false)
+  assert.equal(shouldOfferCompanyCreation({ query: '', isSearching: false, optionNames: [] }), false)
+  assert.equal(shouldOfferCompanyCreation({ query: '   ', isSearching: false, optionNames: [] }), false)
 })
 
 // --- companyCreationActionLabel ---

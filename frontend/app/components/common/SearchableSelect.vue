@@ -232,10 +232,13 @@ const visibleOptions = computed(() => (isServerSearchMode.value ? serverResults.
 // searchFn есть, а смысла создавать компанию из фильтра — нет).
 const canOfferCompanyCreation = computed(() => isServerSearchMode.value && props.pendingCompanyName !== undefined)
 
+// Ре-ревью хотфикса 2026-07-29: shouldOfferCompanyCreation сравнивает query с
+// каждым названием (не считает штуки) — граница "точное совпадение", а не
+// "список непуст", см. её докстринг в companySearch.ts.
 const showCreateAction = computed(() => canOfferCompanyCreation.value && shouldOfferCompanyCreation({
   query: query.value,
   isSearching: isSearching.value,
-  optionCount: visibleOptions.value.length,
+  optionNames: visibleOptions.value.map(option => String(option.name)),
 }))
 
 function closeDropdown() {
