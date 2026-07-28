@@ -400,12 +400,31 @@ async function refreshReferenceOptions(showToast = true) {
     // HTTP 429 от board_meta_refresh (6 запросов/60 секунд на аккаунт, см.
     // backends/python/api/main/utils/decorators/rate_limit.py) — это ожидаемая,
     // самовосстанавливающаяся ситуация «подождите минуту», а не сбой
-    // приложения. processErrorGlobal зовёт showError({..., fatal: true}), а
-    // frontend/app/error.vue рендерит фатальную ошибку без пути лёгкого
-    // возврата (:clear="false") — единственный выход тогда: перезагрузка
-    // страницы. Непропорциональная реакция на превышение лимита, поэтому для
-    // 429 показываем только лёгкое самоочищающееся уведомление (showStatus)
-    // и НЕ эскалируем. Остальные ошибки — как раньше, без изменений.
+    // приложения.
+    //
+    // После централизации (см. shouldTreatAsFatalError в
+    // frontend/app/utils/apiErrors.ts и processErrorGlobal в
+    // frontend/app/composables/useAppInit.ts) простой вызов
+    // processErrorGlobal(error) для 429 САМ ПО СЕБЕ уже не уронит страницу —
+    // он покажет глобальный тост и вернётся. Эта ветка тем не менее
+    // осталась не как дубль, а потому что даёт то, чего у централизованного
+    // пути нет:
+    //  1. Уважает контракт параметра showToast: при showToast === false
+    //     здесь нужна полная тишина. Сегодня ни один вызывающий код не
+    //     передаёт false (это исторический параметр — раньше так тихо
+    //     дёргался автовызов refreshReferenceOptions(false) в onMounted; сам
+    //     автовызов убран коммитом 7c0f58f, сигнатура осталась ради обратной
+    //     совместимости), и processErrorGlobal об этом параметре знать не
+    //     может — показал бы тост безусловно, даже если бы такой вызов
+    //     появился вновь.
+    //  2. Текст и место контекстные — тот же showStatus-баннер (~строка 327),
+    //     что и у success/warning этой же кнопки «Обновить справочники»,
+    //     а не общий плавающий тост в отрыве от места клика.
+    //  3. Без этой ветки else-путь ниже показал бы вводящее в заблуждение
+    //     showStatus('error', 'Не удалось обновить...') ПЕРЕД тем, как
+    //     processErrorGlobal(error) покажет верный текст отдельным тостом —
+    //     то есть заменил бы один дубль на другой, а не убрал его.
+    // Остальные ошибки (не 429) — как раньше, без изменений.
     if (isRateLimitError(error)) {
       if (showToast) {
         showStatus('warning', RATE_LIMIT_NOTICE_TEXT)
@@ -446,10 +465,13 @@ async function syncBoard(showToast = true) {
       // keep original sync error for global handler
     }
 
-    // См. пояснение в catch у refreshReferenceOptions выше: HTTP 429 от
-    // лимитера "sync" (или от board_meta_refresh — один клик «Синхронизировать»
-    // тратит бюджет обоих, см. Promise.all([loadMeta(true), loadBoard(true)])
-    // выше) не должен уводить на фатальный экран.
+    // См. пояснение в catch у refreshReferenceOptions выше (включая то, почему
+    // эта ветка не дубль централизованного processErrorGlobal, а нужна
+    // отдельно): HTTP 429 от лимитера "sync" (или от board_meta_refresh —
+    // один клик «Синхронизировать» тратит бюджет обоих, см.
+    // Promise.all([loadMeta(true), loadBoard(true)]) выше) не должен уводить
+    // на фатальный экран и должен остаться в контекстном showStatus-баннере
+    // этой кнопки, а не в общем тосте.
     if (isRateLimitError(error)) {
       showStatus('warning', RATE_LIMIT_NOTICE_TEXT)
     } else {

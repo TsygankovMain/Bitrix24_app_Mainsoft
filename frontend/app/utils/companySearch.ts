@@ -9,6 +9,21 @@
  * поиск", разметка) — в самом компоненте, проверяется сборкой и вручную.
  */
 
+import { isRateLimitError } from './apiErrors'
+
+/** Реэкспорт: SearchableSelect.vue и tests/companySearch.test.ts продолжают
+ * импортировать isRateLimitError отсюда. Канонический источник —
+ * frontend/app/utils/apiErrors.ts (см. докстринг там же про сведение
+ * дубля): раньше здесь была независимая копия с той же логикой — не
+ * переиспользовалась осознанно, а совпала случайно, потому что писалась в
+ * спешке отдельным патчем, не глядя на apiErrors.ts. Собственная копия НЕ
+ * имела дополнительного смысла (проверка тривиальна и одинакова для любого
+ * потребителя $api), так что это был тот самый дубль, а не оправданное
+ * расхождение — в отличие от classifyCompanySearchError/
+ * companySearchNoticeText ниже, у которых причина отличаться от
+ * RATE_LIMIT_NOTICE_TEXT реальная (см. их комментарии). */
+export { isRateLimitError }
+
 /** Бэкенд (CompanySearchService.search, MIN_QUERY_LENGTH) не обрабатывает
  * запрос короче двух символов вообще — та же граница здесь, чтобы не тратить
  * сетевой запрос впустую и не приближать лимитер (60 запросов/60 секунд на
@@ -69,28 +84,17 @@ export function createCompanySearchGate(): CompanySearchGate {
 }
 
 /**
- * true — ошибка вызвана серверным ограничителем частоты
- * (backends/python/api/main/utils/decorators/rate_limit.py,
+ * isRateLimitError (реэкспортирована выше из apiErrors.ts) отличает HTTP 429
+ * от серверного ограничителя частоты (backends/python/api/main/utils/decorators/rate_limit.py,
  * @rate_limit("company_search", 60, 60, key="account") на
- * search_project_board_companies): HTTP 429 с телом {"error": "..."}, а НЕ
- * обычным {companies, truncated, failed}. ofetch на не-2xx бросает
- * исключение — в зависимости от версии статус лежит в `.response.status`,
- * `.status` или `.statusCode`, поэтому проверяем все три.
+ * search_project_board_companies — тело ответа {"error": "..."}) от обычного
+ * успешного ответа {companies, truncated, failed}.
  *
  * Это отдельный случай от `failed: true` в успешном ответе. `failed` значит
  * «Битрикс не ответил, но запрос до него дошёл»; 429 значит «до Битрикса
  * вообще не дошло, лимитер отказал раньше» — экрану нужно показать разные
- * подсказки для этих случаев (см. classifyCompanySearchError).
+ * подсказки для этих случаев (см. classifyCompanySearchError ниже).
  */
-export function isRateLimitError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') {
-    return false
-  }
-
-  const candidate = error as { response?: { status?: number }, status?: number, statusCode?: number }
-  const status = candidate.response?.status ?? candidate.status ?? candidate.statusCode
-  return status === 429
-}
 
 /** Причина, по которой найденный список компаний не стоит считать надёжным
  * (но и прятать его не стоит — см. companySearchNoticeText). */
