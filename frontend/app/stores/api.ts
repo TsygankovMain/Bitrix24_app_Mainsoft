@@ -640,7 +640,12 @@ export const useApiStore = defineStore(
         clearCache(scope)
       }
 
-      const value = await $api<ProjectBoardMetaPayload>('/api/project-board/meta', {
+      // forceRefresh раньше управлял только этим браузерным кэшем — сам
+      // запрос уходил без параметров, и бэкенд отдавал свой серверный кэш
+      // (6 часов) независимо от кнопки «Обновить справочники». ?refresh=1
+      // сообщает бэкенду, что нужно принудительно перечитать источники.
+      const url = forceRefresh ? '/api/project-board/meta?refresh=1' : '/api/project-board/meta'
+      const value = await $api<ProjectBoardMetaPayload>(url, {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         }

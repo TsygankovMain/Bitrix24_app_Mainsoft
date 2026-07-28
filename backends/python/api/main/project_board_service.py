@@ -290,13 +290,30 @@ class ProjectCardService:
         cache.set(build_account_cache_key(self.account, "project-board"), payload, PROJECT_BOARD_CACHE_TTL)
         return payload
 
-    def get_meta(self) -> Dict[str, Any]:
+    def get_meta(self, bypass_cache: bool = False) -> Dict[str, Any]:
+        """bypass_cache=True — форс-рефреш кнопки «Обновить справочники»
+
+        (GET /api/project-board/meta?refresh=1): пропускает ЧТЕНИЕ кэша
+        "project-board-meta" и безусловно перечитывает источники, а в конце
+        всё равно перезаписывает кэш свежим значением (тот же приём, что
+        _fetch_references_with_cache/get_legal_entities). Пробрасывается в
+        get_legal_entities — иначе её собственный внешний и внутренний
+        (list_my_companies) кэш остались бы непробитыми и юрлица не
+        обновились бы до истечения BITRIX_REFERENCE_CACHE_TTL (6 часов).
+
+        ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ: кэш — LocMemCache, свой у каждого воркера
+        gunicorn. Форс-рефреш прогревает кэш только того воркера, который
+        принял этот запрос; следующий запрос может уйти на другой и снова
+        увидеть старое значение до истечения TTL. Полное решение — общий
+        кэш на всех воркеров, отдельная задача.
+        """
         cache_key = build_account_cache_key(self.account, "project-board-meta")
-        cached = cache.get(cache_key)
-        if cached and self._meta_has_required_shape(cached) and self._meta_has_options(cached):
-            return cached
-        if cached is not None:
-            cache.delete(cache_key)
+        if not bypass_cache:
+            cached = cache.get(cache_key)
+            if cached and self._meta_has_required_shape(cached) and self._meta_has_options(cached):
+                return cached
+            if cached is not None:
+                cache.delete(cache_key)
 
         config = self._load_config()
         fallback_employees = self._get_project_card_fallback_options("curator_user_id", "curator_name")
@@ -308,7 +325,9 @@ class ProjectCardService:
             fallback_employees,
         )
         directory_companies = self._merge_reference_options(self.get_companies(), fallback_companies)
-        directory_legal_entities = self._merge_reference_options(self.get_legal_entities(config), fallback_legal_entities)
+        directory_legal_entities = self._merge_reference_options(
+            self.get_legal_entities(config, bypass_cache=bypass_cache), fallback_legal_entities
+        )
 
         # Раньше тут лежали ещё employees/companies/legal_entities в корне и в
         # filters — те же самые списки продублированные трижды. На портале с

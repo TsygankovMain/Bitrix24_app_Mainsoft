@@ -750,8 +750,15 @@ def get_project_board(request: AuthorizedRequest):
 @log_errors("get_project_board_meta")
 @auth_required
 def get_project_board_meta(request: AuthorizedRequest):
+    # ?refresh=1 — кнопка «Обновить справочники» (принудительный обход
+    # серверного кэша project-board-meta, живущего 6 часов). Разбор — сверка
+    # с множеством "истинных" строк, а не int()/bool(): не бросает исключений
+    # ни при каком значении параметра (пустая строка, слово, что угодно) —
+    # план уже дважды ловил падения на "голом" int()/list() парсинге вне
+    # try/except (Task 1, fix rounds 1-2).
+    bypass_cache = str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "y", "yes"}
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
-    return JsonResponse(service.get_meta())
+    return JsonResponse(service.get_meta(bypass_cache=bypass_cache))
 
 
 @xframe_options_exempt

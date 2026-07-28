@@ -1,6 +1,8 @@
 """Тесты источников справочников: пользовательские пути не обходят портал."""
+from unittest.mock import patch
+
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import Client, TestCase
 
 from .inn_backfill_service import InnBackfillService
 from .models import Bitrix24Account, PortalUser, ProjectCard
@@ -371,4 +373,122 @@ class EmployeesFromDbTest(TestCase):
         self.assertNotIn("99", own_ids)
         self.assertIn("99", other_ids)
         self.assertNotIn("10", other_ids)
+
+
+class MetaCacheBypassTest(TestCase):
+    """Task 4, шаги 6-7: кнопка «Обновить справочники» должна реально
+
+    обновлять данные на сервере. До этой правки forceRefresh на фронте
+    управлял только браузерным кэшем — HTTP-запрос уходил без параметров, и
+    бэкенд всегда отдавал свой project-board-meta кэш (6 часов), даже когда
+    пользователь явно жал «Обновить».
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-refs-meta-bypass-1",
+            is_master_account=True, domain_url="meta-bypass.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        # _meta_has_options() (существующая логика, не в скоупе этой задачи)
+        # смотрит только на employees/companies — без хотя бы одного
+        # непустого справочника meta вообще не попадёт в кэш ни при каком
+        # bypass_cache, и тест будет проверять не то, что заявлено.
+        PortalUser.objects.create(
+            bitrix24_account=self.account, bitrix_id="1",
+            name="Иван", last_name="Петров", active=True,
+        )
+
+    def test_default_call_serves_cached_meta_without_rereading_sources(self):
+        client = _FakeClient({
+            "crm.company.list": {"result": [{"ID": "1", "TITLE": "ООО Старое"}]},
+        })
+        service = ProjectCardService(client, self.account)
+
+        first = service.get_meta()
+        self.assertEqual([e["id"] for e in first["directories"]["legal_entities"]], ["1"])
+
+        # В Битриксе завели новое юрлицо, но без bypass_cache это не должно
+        # быть видно — кэш ещё живой.
+        client._responses["crm.company.list"] = {"result": [{"ID": "2", "TITLE": "ООО Новое"}]}
+        client.calls.clear()
+
+        second = service.get_meta()
+        self.assertEqual([e["id"] for e in second["directories"]["legal_entities"]], ["1"])
+        self.assertEqual(client.methods_called(), [])
+
+    def test_bypass_cache_rereads_sources_and_warms_cache_for_next_call(self):
+        client = _FakeClient({
+            "crm.company.list": {"result": [{"ID": "1", "TITLE": "ООО Старое"}]},
+        })
+        service = ProjectCardService(client, self.account)
+
+        first = service.get_meta()
+        self.assertEqual([e["id"] for e in first["directories"]["legal_entities"]], ["1"])
+
+        client._responses["crm.company.list"] = {"result": [{"ID": "2", "TITLE": "ООО Новое"}]}
+
+        second = service.get_meta(bypass_cache=True)
+        self.assertEqual([e["id"] for e in second["directories"]["legal_entities"]], ["2"])
+
+        # Форс-рефреш обязан прогреть кэш свежим значением — следующий
+        # обычный вызов (как на следующей загрузке доски) видит уже "2", а
+        # не бьёт Битрикс повторно и не откатывается к старому "1".
+        client.calls.clear()
+        third = service.get_meta()
+        self.assertEqual([e["id"] for e in third["directories"]["legal_entities"]], ["2"])
+        self.assertEqual(client.methods_called(), [])
+
+
+class GetProjectBoardMetaViewRefreshParamTest(TestCase):
+    """View get_project_board_meta: ?refresh=... транслируется в
+
+    bypass_cache сервиса. Разбор обязан быть устойчив к любому мусору в
+    значении параметра — план уже дважды ловил падения на "голом"
+    int()/list() парсинге вне try/except (Task 1, fix rounds 1-2 —
+    см. progress.md). Здесь парсинг — сравнение множества строк, которое не
+    бросает исключений ни при каком входе, в отличие от int()/list().
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.http = Client()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-refs-meta-view-1",
+            is_master_account=True, domain_url="meta-view.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        self.auth_header = f"Bearer {self.account.create_jwt_token()}"
+
+    def _get(self, query_suffix=""):
+        url = "/api/project-board/meta"
+        if query_suffix:
+            url = f"{url}?{query_suffix}"
+        return self.http.get(url, HTTP_AUTHORIZATION=self.auth_header)
+
+    def test_no_param_passes_bypass_cache_false(self):
+        with patch.object(ProjectCardService, "get_meta", return_value={"filters": {}, "directories": {}}) as mocked:
+            resp = self._get()
+
+        self.assertEqual(resp.status_code, 200)
+        mocked.assert_called_once_with(bypass_cache=False)
+
+    def test_refresh_1_passes_bypass_cache_true(self):
+        with patch.object(ProjectCardService, "get_meta", return_value={"filters": {}, "directories": {}}) as mocked:
+            resp = self._get("refresh=1")
+
+        self.assertEqual(resp.status_code, 200)
+        mocked.assert_called_once_with(bypass_cache=True)
+
+    def test_garbage_refresh_value_does_not_crash_endpoint(self):
+        garbage_values = ("", "мусор", "0", "null", "NaN", "%%%", "false", "[]")
+        for garbage in garbage_values:
+            with patch.object(ProjectCardService, "get_meta", return_value={"filters": {}, "directories": {}}):
+                resp = self._get(f"refresh={garbage}")
+
+            self.assertEqual(
+                resp.status_code, 200,
+                f"refresh={garbage!r} не должен ронять эндпоинт, получили {resp.status_code}",
+            )
 
