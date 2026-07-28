@@ -55,7 +55,7 @@ WORKDIR /app
 # Install Python dependencies
 COPY backends/python/api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir uvicorn whitenoise
+    pip install --no-cache-dir uvicorn whitenoise brotli
 
 # Copy backend code
 COPY backends/python/api/ /app/
@@ -63,6 +63,15 @@ COPY backends/python/api/ /app/
 # Copy built frontend assets from Stage 1
 # We place them in static/frontend so whitenoise can find them (setup needed in settings.py)
 COPY --from=frontend-builder /app/frontend/.output/public /app/frontend_build
+
+# Precompress frontend assets (.gz/.br) here, while we're still root and own the
+# files just COPYed above. This used to run in start.sh at container startup, but
+# by then USER has switched to appuser (below) while /app/frontend_build was copied
+# in as root -> no write permission -> it silently failed behind `|| echo` for a
+# month with nobody noticing (bundles kept shipping uncompressed). No `|| true`
+# here on purpose: if compression breaks, the build must fail loudly instead of
+# hiding it again. brotli package (installed above) makes WhiteNoise also emit .br.
+RUN python -m whitenoise.compress /app/frontend_build
 
 # Copy and setup start script
 RUN chmod +x /app/start.sh
