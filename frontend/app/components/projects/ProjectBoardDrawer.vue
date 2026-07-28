@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import SearchableSelect from '~/components/common/SearchableSelect.vue'
+import { useApiStore } from '~/stores/api'
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
 import {
   formatProjectDate,
@@ -26,6 +27,8 @@ const emit = defineEmits<{
   (event: 'save', payload: Record<string, unknown>): void
   (event: 'open-project' | 'open-spa', card: ProjectBoardCardRecord): void
 }>()
+
+const apiStore = useApiStore()
 
 const draft = ref<Record<string, unknown>>({})
 
@@ -75,6 +78,17 @@ function closeDrawer() {
 
 function handleCompanyChange(selected: ProjectBoardDirectoryOption | null) {
   draft.value.company_name = selected ? String(selected.name) : ''
+}
+
+// Серверный поиск компаний по мере ввода (см. frontend/app/utils/companySearch.ts
+// и Task 7 плана "справочники из локальной базы"): `companies` в props — это
+// компании, уже встречавшиеся в карточках проектов (локальная, небольшая
+// проекция), её недостаточно, чтобы назначить проекту компанию, которую
+// заводят впервые. Полный справочник портала (23 252 записи на боевом) сюда
+// больше не выгружается — только то, что нашлось по конкретному запросу.
+async function searchCompanyOptions(query: string) {
+  const result = await apiStore.searchCompanies(query)
+  return { options: result.companies, truncated: result.truncated, failed: result.failed }
 }
 
 function handleCuratorChange(selected: ProjectBoardDirectoryOption | null) {
@@ -276,6 +290,7 @@ function getOperationTypeLabel(value?: string | null) {
             empty-label="Не выбрана"
             search-placeholder="Поиск по названию или ИНН"
             :options="companies"
+            :search-fn="searchCompanyOptions"
             @update:selected="handleCompanyChange"
           />
 

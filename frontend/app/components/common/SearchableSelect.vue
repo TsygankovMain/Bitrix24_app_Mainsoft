@@ -1,6 +1,23 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { ProjectBoardDirectoryOption } from '~/utils/projectBoard'
+import {
+  classifyCompanySearchError,
+  companySearchNoticeText,
+  createCompanySearchGate,
+  shouldSearchCompanies,
+  type CompanySearchNotice,
+} from '~/utils/companySearch'
+
+/** Задержка перед обращением к серверу после того, как человек перестал печатать. */
+const SERVER_SEARCH_DEBOUNCE_MS = 300
+
+/** Результат, который обязана вернуть функция серверного поиска (searchFn). */
+type SearchableSelectSearchOutcome = {
+  options: ProjectBoardDirectoryOption[]
+  truncated?: boolean
+  failed?: boolean
+}
 
 const props = withDefaults(defineProps<{
   modelValue?: string | number | null
@@ -9,6 +26,14 @@ const props = withDefaults(defineProps<{
   emptyLabel?: string
   searchPlaceholder?: string
   disabled?: boolean
+  /**
+   * Необязательный режим серверного поиска (сегодня — только для компаний,
+   * см. frontend/app/utils/companySearch.ts). Без этого пропа компонент
+   * работает ровно как раньше: локальная фильтрация переданного options.
+   * С ним — options по-прежнему источник для отображения уже выбранного
+   * значения (кнопка), а содержимое открытого списка приходит из searchFn.
+   */
+  searchFn?: (query: string) => Promise<SearchableSelectSearchOutcome>
 }>(), {
   label: '',
   emptyLabel: 'Не выбрано',
@@ -25,10 +50,113 @@ const rootRef = ref<HTMLElement | null>(null)
 const isOpen = ref(false)
 const query = ref('')
 
+const isServerSearchMode = computed(() => typeof props.searchFn === 'function')
+const hasMinQueryLength = computed(() => shouldSearchCompanies(query.value))
+
+// --- Серверный поиск: состояние, актуальное только когда передан searchFn ---
+const searchGate = createCompanySearchGate()
+let debounceTimer: ReturnType<typeof setTimeout> | undefined
+let searchRequestId = 0
+
+const isSearching = ref(false)
+const serverResults = ref<ProjectBoardDirectoryOption[]>([])
+const serverTruncated = ref(false)
+const serverNotice = ref<CompanySearchNotice | null>(null)
+// Опция, выбранную через серверный поиск, запоминаем отдельно от options и
+// serverResults: оба могут не содержать её на следующий же рендер (options —
+// пока форму не сохранили, serverResults — как только запрос в поле поиска
+// сменится на другой). Без этого поле выглядело бы пустым сразу после выбора.
+const pinnedOption = ref<ProjectBoardDirectoryOption | null>(null)
+
+const serverNoticeText = computed(() => companySearchNoticeText(serverNotice.value))
+
+function resetServerSearchState() {
+  serverResults.value = []
+  serverTruncated.value = false
+  serverNotice.value = null
+  isSearching.value = false
+  searchGate.reset()
+}
+
+async function runServerSearch(rawQuery: string) {
+  const searchFn = props.searchFn
+  if (!searchFn) {
+    return
+  }
+
+  const requestId = ++searchRequestId
+  isSearching.value = true
+
+  try {
+    const outcome = await searchFn(rawQuery)
+    if (requestId !== searchRequestId) {
+      return // устарело — пока ждали ответ, в поле ввели что-то ещё
+    }
+    serverResults.value = outcome.options
+    serverTruncated.value = Boolean(outcome.truncated)
+    serverNotice.value = outcome.failed ? 'unavailable' : null
+  } catch (error) {
+    if (requestId !== searchRequestId) {
+      return
+    }
+    // serverResults намеренно не трогаем: то, что уже нашли, остаётся на
+    // экране — иначе временный сбой (лимитер 429 или сеть) выглядел бы как
+    // "компаний нет" и подтолкнул бы создать дубль уже существующей.
+    serverNotice.value = classifyCompanySearchError(error)
+    console.error('SearchableSelect: server search failed', error)
+  } finally {
+    if (requestId === searchRequestId) {
+      isSearching.value = false
+    }
+  }
+}
+
+function scheduleServerSearch(rawQuery: string) {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = undefined
+  }
+
+  if (!shouldSearchCompanies(rawQuery)) {
+    resetServerSearchState()
+    return
+  }
+
+  debounceTimer = setTimeout(() => {
+    debounceTimer = undefined
+    if (!searchGate.shouldTrigger(rawQuery)) {
+      return
+    }
+    void runServerSearch(rawQuery)
+  }, SERVER_SEARCH_DEBOUNCE_MS)
+}
+
+watch(query, (nextQuery) => {
+  if (!isServerSearchMode.value) {
+    return
+  }
+  scheduleServerSearch(nextQuery)
+})
+
 const normalizedModelValue = computed(() => String(props.modelValue || ''))
-const selectedOption = computed(() =>
-  props.options.find(option => String(option.id) === normalizedModelValue.value) || null
-)
+
+const selectedOption = computed(() => {
+  const fromOptions = props.options.find(option => String(option.id) === normalizedModelValue.value) || null
+  if (fromOptions || !isServerSearchMode.value) {
+    return fromOptions
+  }
+
+  const fromServerResults = serverResults.value.find(option => String(option.id) === normalizedModelValue.value) || null
+  if (fromServerResults) {
+    return fromServerResults
+  }
+
+  if (pinnedOption.value && String(pinnedOption.value.id) === normalizedModelValue.value) {
+    return pinnedOption.value
+  }
+
+  return null
+})
 
 const displayLabel = computed(() => {
   if (!selectedOption.value) {
@@ -62,9 +190,19 @@ const filteredOptions = computed(() => {
   })
 })
 
+/** Список, который реально показывается в открытом выпадающем окне. */
+const visibleOptions = computed(() => (isServerSearchMode.value ? serverResults.value : filteredOptions.value))
+
 function closeDropdown() {
   isOpen.value = false
   query.value = ''
+  if (isServerSearchMode.value) {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer)
+      debounceTimer = undefined
+    }
+    resetServerSearchState()
+  }
 }
 
 function toggleDropdown() {
@@ -79,12 +217,14 @@ function toggleDropdown() {
 }
 
 function selectOption(option: ProjectBoardDirectoryOption) {
+  pinnedOption.value = option
   emit('update:modelValue', String(option.id))
   emit('update:selected', option)
   closeDropdown()
 }
 
 function clearValue() {
+  pinnedOption.value = null
   emit('update:modelValue', '')
   emit('update:selected', null)
   closeDropdown()
@@ -123,6 +263,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('mousedown', handlePointerDown)
   document.removeEventListener('touchstart', handlePointerDown)
   document.removeEventListener('keydown', handleEscape)
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+  }
 })
 </script>
 
@@ -157,13 +300,39 @@ onBeforeUnmount(() => {
           <button type="button" class="text-slate-500 transition hover:text-slate-700" @click="clearValue">
             Сбросить
           </button>
-          <span class="text-slate-400">{{ filteredOptions.length }} знач.</span>
+          <span class="text-slate-400">
+            <template v-if="isServerSearchMode">
+              <span v-if="isSearching">Идёт поиск…</span>
+              <span v-else-if="hasMinQueryLength">{{ visibleOptions.length }} знач.</span>
+            </template>
+            <template v-else>{{ visibleOptions.length }} знач.</template>
+          </span>
+        </div>
+
+        <div
+          v-if="isServerSearchMode && hasMinQueryLength && serverNotice"
+          class="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700"
+        >
+          {{ serverNoticeText }}
+        </div>
+        <div
+          v-if="isServerSearchMode && hasMinQueryLength && serverTruncated"
+          class="mt-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs text-slate-500"
+        >
+          Показаны первые 50, уточните запрос
         </div>
       </div>
 
       <div class="max-h-72 overflow-y-auto p-2">
+        <div
+          v-if="isServerSearchMode && !hasMinQueryLength"
+          class="px-3 py-3 text-left text-sm text-slate-400"
+        >
+          Начните вводить название или ИНН
+        </div>
+
         <button
-          v-if="!filteredOptions.length"
+          v-else-if="!visibleOptions.length && !(isServerSearchMode && isSearching)"
           type="button"
           class="w-full rounded-xl px-3 py-3 text-left text-sm text-slate-400"
           @click="closeDropdown"
@@ -172,7 +341,7 @@ onBeforeUnmount(() => {
         </button>
 
         <button
-          v-for="option in filteredOptions"
+          v-for="option in visibleOptions"
           :key="option.id"
           type="button"
           :class="[

@@ -179,6 +179,15 @@ const companyFilterOptions = computed(() =>
   )
 )
 
+// Серверный поиск компаний по мере ввода — то же самое, чем заведена
+// SearchableSelect в ProjectBoardDrawer.vue (см. frontend/app/utils/companySearch.ts).
+// companyFilterOptions выше — только компании, уже встречавшиеся в карточках
+// на доске; полный справочник портала (23 252 записи) больше не выгружается.
+async function searchCompanyOptions(query: string) {
+  const result = await apiStore.searchCompanies(query)
+  return { options: result.companies, truncated: result.truncated, failed: result.failed }
+}
+
 const legalEntityFilterOptions = computed(() =>
   mergeSelectOptions(
     legalEntityFilters.value,
@@ -697,6 +706,7 @@ onMounted(async () => {
               empty-label="Все"
               search-placeholder="Поиск по названию или ИНН"
               :options="companyFilterOptions"
+              :search-fn="searchCompanyOptions"
             />
 
             <SearchableSelect

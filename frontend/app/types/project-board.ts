@@ -146,3 +146,23 @@ export interface ProjectBoardMetaPayload {
   legal_entities?: ProjectBoardDirectoryOption[]
   warning?: string
 }
+
+/** Ответ GET /api/project-board/companies/search (CompanySearchService.search). */
+export interface CompanySearchResult {
+  companies: Array<{ id: string, name: string, inn: string | null }>
+  /** true — совпадений больше, чем показано (лимит по умолчанию 50): список
+   * не полный, стоит уточнить запрос. */
+  truncated: boolean
+  /** true — Битрикс не ответил (или ответил в неожиданной форме). Это НЕ
+   * означает «список пуст»: companies может быть непустым одновременно с
+   * failed=true — тогда доверять его полноте нельзя, но и прятать найденное
+   * не стоит. */
+  failed: boolean
+}
+
+/** Ответ GET /api/project-board/my-companies (CompanySearchService.list_my_companies). */
+export interface MyCompaniesResult {
+  companies: Array<{ id: string, name: string }>
+  /** Та же семантика, что у CompanySearchResult.failed. */
+  failed: boolean
+}

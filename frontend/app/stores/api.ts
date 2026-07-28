@@ -19,7 +19,7 @@ import type {
   SmartProcessFieldOption,
   SmartProcessOption,
 } from '~/types/config'
-import type { ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
+import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 
 type SaveConfigurationResponse = {
@@ -675,6 +675,38 @@ export const useApiStore = defineStore(
       return response.card || null
     }
 
+    // Поиск компаний по мере ввода (CompanySearchService на бэкенде, живой
+    // серверный фильтр в Битриксе — не локальный обход). НЕ кэшируем на
+    // клиенте: кэш по строке запроса уже живёт на бэкенде (5 минут), а тут
+    // запрос меняется на каждый ввод — локальный кэш только раздувал бы
+    // память браузера записями, которые почти никогда не переиспользуются.
+    // Эндпоинт лимитирован (@rate_limit("company_search", 60, 60) —
+    // 60 запросов/минуту на сотрудника): при превышении бросает обычную
+    // ofetch-ошибку HTTP 429, а не эту форму ответа — вызывающий код
+    // (SearchableSelect) обязан ловить её отдельно от success-ответа с
+    // failed=true, см. frontend/app/utils/companySearch.ts.
+    const searchCompanies = async (query: string, limit = 50): Promise<CompanySearchResult> => {
+      const params = new URLSearchParams({ q: query, limit: String(limit) })
+      return await $api<CompanySearchResult>(`/api/project-board/companies/search?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
+    // Свои юрлица — маленький список (серверный фильтр IS_MY_COMPANY),
+    // кэшируется на бэкенде на 6 часов. Намеренно НЕ берём его из
+    // getProjectBoardMeta(): там общий справочник компаний доски (уже не
+    // полный справочник портала, но другого назначения — компании-клиенты,
+    // встречавшиеся в карточках проектов), а не список собственных юрлиц.
+    const getMyCompanies = async (): Promise<MyCompaniesResult> => {
+      return await $api<MyCompaniesResult>('/api/project-board/my-companies', {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        }
+      })
+    }
+
     // --- Финансовый функционал (в планах) изолирован ---
     // Бэкенд-endpoint `/api/finance-operations` отключён (см. backends/python/api/main/urls.py).
     // Заглушка не выполняет сетевой вызов, чтобы не было битых запросов.
@@ -1099,6 +1131,8 @@ export const useApiStore = defineStore(
       getProjectBoard,
       getProjectBoardMeta,
       getProjectBoardCard,
+      searchCompanies,
+      getMyCompanies,
       getFinanceOperations,
       createFinanceOperation,
       getHomepagePortfolio,
