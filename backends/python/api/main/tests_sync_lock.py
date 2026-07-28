@@ -31,6 +31,21 @@ class AdvisoryKeyTest(TestCase):
         self.assertNotEqual(k_us, k_ts)
         self.assertNotEqual(k_us, k_pr)
 
+    def test_project_create_scope_produces_distinct_key(self):
+        """scope="project_create" — кнопка «Создать проект»
+        (main.project_creation_service), намеренно отдельный от
+        scope="project" (фоновая ProjectSyncService.sync()); см. докстринг
+        модуля. sqlite в тестовом окружении не доходит до _advisory_key при
+        реальном вызове account_sync_lock (no-op раньше), поэтому ключ
+        отдельно проверяем здесь напрямую."""
+        k_pr = _advisory_key(account_pk=10, scope="project")
+        k_pc = _advisory_key(account_pk=10, scope="project_create")
+        k_ts = _advisory_key(account_pk=10, scope="timesheet")
+        k_us = _advisory_key(account_pk=10, scope="users")
+        self.assertNotEqual(k_pc, k_pr)
+        self.assertNotEqual(k_pc, k_ts)
+        self.assertNotEqual(k_pc, k_us)
+
 
 class AdvisoryKeyBigintRangeTest(TestCase):
     """PK аккаунта — UUID (128 бит). Наивный int(pk) << 4 переполняет bigint:

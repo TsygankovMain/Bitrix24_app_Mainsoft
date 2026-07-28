@@ -3,6 +3,7 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref } from 'vue'
 import SearchableSelect from '~/components/common/SearchableSelect.vue'
 import { useProgress } from '~/composables/useProgress'
+import CreateProjectModal from '~/components/projects/CreateProjectModal.vue'
 import ProjectBoardColumn from '~/components/projects/ProjectBoardColumn.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import ProjectTimelineLane from '~/components/projects/ProjectTimelineLane.vue'
@@ -56,6 +57,7 @@ const legalEntityFilter = ref('')
 
 const selectedCard = ref<ProjectBoardCardRecord | null>(null)
 const isDrawerOpen = ref(false)
+const createProjectOpen = ref(false)
 const draggedProjectId = ref<string | null>(null)
 const statusMessage = ref<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null)
 
@@ -357,6 +359,12 @@ async function loadBoard(forceRefresh = false) {
   if (boardData.value?.warning) {
     showStatus('warning', boardData.value.warning)
   }
+}
+
+async function onProjectCreated() {
+  // Локальная строка уже записана write-through'ом на бэкенде,
+  // поэтому доске достаточно перечитать себя — фоновый синк ждать не нужно.
+  await loadBoard(true)
 }
 
 async function loadMeta(forceRefresh = false) {
@@ -668,6 +676,7 @@ onMounted(async () => {
             </div>
 
             <div class="flex flex-wrap gap-2">
+              <B24Button label="Создать проект" color="primary" @click="createProjectOpen = true" />
               <B24Button label="Синхронизировать проекты" color="success" :loading="isSyncing" @click="syncBoard()" />
               <B24Button label="Обновить справочники" color="default" :loading="isRefreshingMeta" @click="refreshReferenceOptions()" />
               <B24Button label="Проверить статусы" color="default" :loading="isSyncing" @click="runDailyCheck" />
@@ -875,6 +884,8 @@ onMounted(async () => {
         @open-project="openProject"
         @open-spa="openSpa"
       />
+
+      <CreateProjectModal v-model:open="createProjectOpen" @created="onProjectCreated" />
     </div>
   </div>
 </template>

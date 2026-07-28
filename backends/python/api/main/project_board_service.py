@@ -85,9 +85,32 @@ class ProjectCardService:
             raise RuntimeError("Локальная таблица проектов пока недоступна. Повторите позже после завершения миграции.")
         return self.serialize_card(self._get_card(project_id))
 
-    def get_board_data(self) -> Dict[str, Any]:
+    def get_board_data(self, bypass_cache: bool = False) -> Dict[str, Any]:
+        """bypass_cache=True — форс-рефреш доски (GET /api/project-board?refresh=1).
+
+        Многоворкерный урок get_meta/get_legal_entities (см. их докстринги)
+        применён и здесь: invalidate_project_runtime_caches, которую create()
+        зовёт после write_through, чистит кэш "project-board" ТОЛЬКО того
+        воркера gunicorn, который обработал запрос на создание (LocMemCache —
+        память процесса, общего хранилища между воркерами нет). Следующий GET
+        доски может уйти на другой воркер и получить кэш, прогретый ДО
+        создания — bypass_cache=True пропускает ЧТЕНИЕ этого кэша и честно
+        пересчитывает ответ; запись в конце метода (cache.set) не меняется и
+        прогревает кэш ЭТОГО воркера свежим значением для следующих обычных
+        запросов.
+
+        В отличие от get_meta, пересчёт здесь НЕ форсирует новые обращения к
+        Битриксу сверх одного (_load_config -> app.option.get), который и так
+        происходит на любой органический холодный кэш ниже по этому же
+        методу — bypass_cache не пробрасывается во вложенные ссылочные кэши
+        (get_project_stage_options/get_companies/get_legal_entities: у них
+        свой TTL в 6 часов, project_board_shared.BITRIX_REFERENCE_CACHE_TTL, и
+        свой explicit bypass у get_project_board_meta). Поэтому у этой ветки
+        нет отдельного @rate_limit — обоснование в докстринге
+        views.get_project_board.
+        """
         cache_key = build_account_cache_key(self.account, "project-board")
-        cached = cache.get(cache_key)
+        cached = None if bypass_cache else cache.get(cache_key)
         if cached is not None:
             return cached
 
@@ -380,14 +403,26 @@ class ProjectCardService:
             result.append({"id": user_id, "name": full_name or user_id})
         return result
 
-    def get_homepage_snapshot(self) -> Dict[str, Any]:
-        cached = cache.get(build_account_cache_key(self.account, "project-board-homepage"))
+    def get_homepage_snapshot(self, bypass_cache: bool = False) -> Dict[str, Any]:
+        """bypass_cache=True — форс-рефреш главного экрана (GET /api/homepage/portfolio?refresh=1).
+
+        Та же многоворкерная проблема и то же решение, что у get_board_data
+        (см. её докстринг) — этот метод кэшируется ОТДЕЛЬНЫМ ключом
+        ("project-board-homepage", HOMEPAGE_CACHE_TTL), но внутри вызывает
+        get_board_data(), у которого свой собственный кэш ("project-board").
+        bypass_cache обязан пробить ОБА: пропустить чтение СВОЕГО кэша ниже И
+        пробросить bypass_cache во вложенный self.get_board_data(...) —
+        иначе форс-рефреш главного экрана мог бы подставить свежий верхний
+        слой поверх протухшего вложенного (тот же приём, что get_meta ->
+        get_legal_entities(bypass_cache=...), см. project_board_service.py).
+        """
+        cached = None if bypass_cache else cache.get(build_account_cache_key(self.account, "project-board-homepage"))
         if cached is not None:
             return cached
 
         board_warning: Optional[str] = None
         try:
-            board = self.get_board_data()
+            board = self.get_board_data(bypass_cache=bypass_cache)
         except Exception as exc:
             logger.exception("Homepage board fetch failed for %s: %s", self.account.domain_url, exc)
             board_warning = "Некоторые данные главной временно недоступны."
@@ -1151,12 +1186,33 @@ class ProjectCardService:
                 continue
             seen_ids.add(status_id)
             semantics = self._clean_str(status.get("SEMANTICS") or status.get("semantics"))
+            # PROJECT_AUTO_STAGES хранит стадии как ЧЕЛОВЕЧЕСКИЕ названия
+            # (project_board_shared.py), а живой crm.status.list отдаёт
+            # каждой стадии ещё и Bitrix STATUS_ID (например
+            # "DT180_7:UC_NOWRITE30"). Совпасть с PROJECT_AUTO_STAGES может
+            # любое из двух полей — сверяем оба, как и де-дуп синтетических
+            # заглушек чуть ниже (сверка по title). Без этого настоящая
+            # автостадия, которую Битрикс вернул как обычную живую запись,
+            # получала бы kind="manual" наравне с ручными стадиями — именно
+            # так и было до фикса.
+            is_auto_stage = status_id in PROJECT_AUTO_STAGES or title in PROJECT_AUTO_STAGES
             options.append(
                 {
                     "id": status_id,
                     "title": title,
-                    "kind": "manual",
-                    "can_drop": semantics not in {"S", "F"},
+                    "kind": "auto" if is_auto_stage else "manual",
+                    # semantics ("S"/"F" — терминальные won/lost стадии
+                    # Bitrix) остаётся источником истины для can_drop у
+                    # настоящих ручных стадий — это не в скоупе этого фикса.
+                    # Для распознанной автостадии can_drop всегда False,
+                    # тем же образом, что и у синтетических заглушек ниже:
+                    # единственный потребитель can_drop — ProjectBoardColumn
+                    # на фронте, где False одновременно запрещает
+                    # drag-and-drop на колонку и меняет подпись на «Статус
+                    # назначается автоматически» — то же самое требование
+                    # «в автостадию нельзя писать руками», что и у формы
+                    # создания проекта.
+                    "can_drop": False if is_auto_stage else semantics not in {"S", "F"},
                     "semantics": semantics,
                     "sort": status.get("SORT"),
                 }

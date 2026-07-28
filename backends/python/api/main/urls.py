@@ -31,6 +31,7 @@ urlpatterns = [
     path('api/homepage/portfolio', views.get_homepage_portfolio, name='get_homepage_portfolio'),
     path('api/project-board/sync', views.sync_project_board, name='sync_project_board'),
     path('api/project-spa/backfill-timesheet', views.run_project_spa_backfill, name='run_project_spa_backfill'),
+    path('api/project-board/create', views.create_project_board, name='create_project_board'),
     path('api/project-board/update', views.update_project_board, name='update_project_board'),
     path('api/project-board/update-stage', views.update_project_board_stage, name='update_project_board_stage'),
     path('api/project-board/archive', views.archive_project_board, name='archive_project_board'),

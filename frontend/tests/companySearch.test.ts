@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   classifyCompanySearchError,
+  companyFieldsForQuery,
   companySearchNoticeText,
   createCompanySearchGate,
   isRateLimitError,
@@ -121,4 +122,27 @@ test('companySearchNoticeText: у лимитера и недоступности
 test('companySearchNoticeText: без причины — пустая строка (нет повода что-то показывать)', () => {
   assert.equal(companySearchNoticeText(null), '')
   assert.equal(companySearchNoticeText(undefined), '')
+})
+
+// --- companyFieldsForQuery ---
+//
+// Важное 3 финального ревью: company_id и company_name обязаны описывать
+// одну и ту же компанию. Сценарий бага — выбрал «АО Ромашка» (company_id
+// заполнен), передумал, набрал «Лютик», закрыл список не выбирая, нажал
+// «Создать»: раньше company_name перезаписывался сырым текстом на каждый
+// поисковый запрос (CreateProjectModal.vue::searchCompanyOptions), а
+// company_id оставался от прошлого выбора — на сервер уезжала пара из id
+// Ромашки и имени «Лютик». companyFieldsForQuery — та единственная операция,
+// которая теперь пишет оба поля формы: как только запрос меняется, id
+// обнуляется В ТОТ ЖЕ момент, что и имя — разойтись им негде. Если человек
+// всё же выберет вариант из списка, SearchableSelect/handleCompanySelected
+// восстановят согласованную пару поверх этого.
+
+test('companyFieldsForQuery: обнуляет company_id и подставляет обрезанный текст в company_name', () => {
+  assert.deepEqual(companyFieldsForQuery('Лютик'), { company_id: null, company_name: 'Лютик' })
+  assert.deepEqual(companyFieldsForQuery('  Лютик  '), { company_id: null, company_name: 'Лютик' })
+})
+
+test('companyFieldsForQuery: пустой запрос — тоже обнуляет id, имя пустое', () => {
+  assert.deepEqual(companyFieldsForQuery(''), { company_id: null, company_name: '' })
 })

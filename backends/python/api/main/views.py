@@ -52,6 +52,7 @@ from .report_excel import (
 )
 from .inn_backfill_service import InnBackfillService
 from .company_search_service import CompanySearchService
+from .project_creation_service import ProjectCreationService
 
 __all__ = [
     "root",
@@ -71,6 +72,7 @@ __all__ = [
     "get_project_board_meta",
     "get_project_board_card",
     "sync_project_board",
+    "create_project_board",
     "update_project_board",
     "update_project_board_stage",
     "archive_project_board",
@@ -147,6 +149,21 @@ def _parse_page_size(request, default: int = 50, max_value: int = 200) -> int:
         return default
 
 
+def _parse_refresh_flag(request) -> bool:
+    """`?refresh=...` из query string -> bool "принудительно обойти кэш".
+
+    Общий разбор для всех эндпоинтов с форс-рефрешем (get_project_board_meta,
+    get_project_board, get_homepage_portfolio) — сравнение с множеством
+    "истинных" строк, а не int()/bool(): не бросает исключений ни при каком
+    значении параметра (пустая строка, слово, что угодно). План уже дважды
+    ловил падения на "голом" int()/list() парсинге вне try/except (Task 1,
+    fix rounds 1-2) — оба раза именно из-за того, что один и тот же параметр
+    парсился по-разному в разных местах. Один разбор на все три места, а не
+    копия в каждом, — чтобы не завести третий такой дефект.
+    """
+    return str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "y", "yes"}
+
+
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
     return build_filtered_timesheet_queryset(
         request.bitrix24_account,
@@ -220,6 +237,20 @@ def _get_user_map(request: AuthorizedRequest, user_ids):
         )
 
     return user_map
+
+
+def _current_user_display_name(request: AuthorizedRequest) -> str:
+    """Имя текущего сотрудника для поля «куратор». Берём из локального
+    справочника (PortalUser) — он же питает user_map отчётов; если сотрудника
+    там ещё нет, куратор останется с пустым именем, но с корректным id."""
+    account = request.bitrix24_account
+    row = PortalUser.objects.filter(
+        **scope_to_tenant(account),
+        bitrix_id=str(account.b24_user_id or ""),
+    ).values("name", "last_name").first()
+    if not row:
+        return ""
+    return f"{row['last_name']} {row['name']}".strip()
 
 
 def _get_data_service(request: AuthorizedRequest):
@@ -509,11 +540,20 @@ def _build_project_spa_validation_payload(
 
 
 def _load_request_json(request: AuthorizedRequest):
-    # json.loads может успешно разобрать НЕ-объект (список/число/строку/true/
-    # null/[]) — все вызывающие в этой ветке (update_project_board,
-    # update_project_board_stage, archive_project_board) сразу зовут
-    # .get(...) на результате без проверки типа. Тот же приём, что и в
-    # остальных восьми местах этой правки: после разбора гарантируем dict.
+    """Разбирает JSON-тело запроса и ГАРАНТИРУЕТ словарь на выходе.
+
+    Все вызывающие (create_project_board, update_project_board,
+    update_project_board_stage, archive_project_board) обращаются к
+    результату как к dict — сразу .get(...), без проверки типа. Раньше сюда
+    пропускалось любое успешно разобранное JSON-значение как есть: null и []
+    случайно гасились чужой конструкцией `x or {}` ниже по стеку (например,
+    resolve_project_fields), а вот непустой список/число/строка/true —
+    истинны, "x or {}" их не трогает, и они долетали до первого чужого
+    payload.get(...) с 500 "'list'/'int'/'str'/'bool' object has no
+    attribute 'get'". Проверка типа здесь, а не у каждого вызывающего:
+    у хелпера один контракт на всех, а не N мест, которые обязаны помнить
+    о нём сами.
+    """
     try:
         parsed = json.loads(request.body or "{}")
     except (TypeError, ValueError, json.JSONDecodeError):
@@ -750,8 +790,31 @@ def connect_support_line(request: AuthorizedRequest):
 @log_errors("get_project_board")
 @auth_required
 def get_project_board(request: AuthorizedRequest):
+    """?refresh=1 — принудительный обход серверного кэша доски (2 минуты,
+
+    PROJECT_BOARD_CACHE_TTL). Тот же приём, что и у get_project_board_meta
+    (см. её докстринг про разбор параметра): нужен, потому что кэш —
+    LocMemCache, свой у каждого воркера gunicorn. invalidate_project_runtime_caches,
+    которую create() зовёт после write_through, чистит кэш только того
+    воркера, который обработал запрос на создание; следующий GET доски может
+    уйти на другой воркер и получить кэш, прогретый до создания проекта, —
+    см. докстринг ProjectCardService.get_board_data.
+
+    БЕЗ @rate_limit, в отличие от board_meta_refresh: там форс-рефреш бьёт
+    живьём в Битрикс (app.option.get + crm.company.list), а тут — нет.
+    get_board_data(bypass_cache=True) пропускает ТОЛЬКО чтение кэша
+    "project-board" и пересчитывает ответ из локальной базы; единственный
+    живой вызов Битрикса на этом пути (app.option.get в _load_config)
+    происходит и без всякого refresh — на любой органический холодный кэш,
+    то есть и так не реже раза в 2 минуты на аккаунт без всякого лимита
+    сегодня. refresh=1 просто просит совершить этот же пересчёт по запросу
+    клиента, а не по истечении TTL — лимитировать только эту ветку, оставляя
+    безлимитным обычный путь с тем же наихудшим темпом, не защитило бы
+    бюджет Битрикса и сломало бы легитимный сценарий (перечитать доску сразу
+    после нажатия «Создать проект»).
+    """
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
-    return JsonResponse(service.get_board_data())
+    return JsonResponse(service.get_board_data(bypass_cache=_parse_refresh_flag(request)))
 
 
 @rate_limit("board_meta_refresh", 6, 60, key="account")
@@ -784,12 +847,10 @@ def _get_project_board_meta_refresh(request: AuthorizedRequest, service: Project
 @auth_required
 def get_project_board_meta(request: AuthorizedRequest):
     # ?refresh=1 — кнопка «Обновить справочники» (принудительный обход
-    # серверного кэша project-board-meta, живущего 6 часов). Разбор — сверка
-    # с множеством "истинных" строк, а не int()/bool(): не бросает исключений
-    # ни при каком значении параметра (пустая строка, слово, что угодно) —
-    # план уже дважды ловил падения на "голом" int()/list() парсинге вне
-    # try/except (Task 1, fix rounds 1-2).
-    bypass_cache = str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "y", "yes"}
+    # серверного кэша project-board-meta, живущего 6 часов). Разбор параметра
+    # вынесен в _parse_refresh_flag — общий для этого эндпоинта и его соседей
+    # get_project_board/get_homepage_portfolio (см. её докстринг).
+    bypass_cache = _parse_refresh_flag(request)
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
     if bypass_cache:
         # Только эта ветка бьёт в Битрикс живьём — см. docstring
@@ -898,8 +959,15 @@ def list_my_companies(request: AuthorizedRequest):
 @log_errors("get_homepage_portfolio")
 @auth_required
 def get_homepage_portfolio(request: AuthorizedRequest):
+    """?refresh=1 — принудительный обход серверного кэша главного экрана (2
+
+    минуты, HOMEPAGE_CACHE_TTL). Тот же приём и то же обоснование отсутствия
+    @rate_limit, что и у get_project_board — см. её докстринг и докстринг
+    ProjectCardService.get_homepage_snapshot (bypass_cache пробрасывается и
+    во вложенный кэш доски, не только в свой собственный).
+    """
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
-    return JsonResponse(service.get_homepage_snapshot())
+    return JsonResponse(service.get_homepage_snapshot(bypass_cache=_parse_refresh_flag(request)))
 
 
 @xframe_options_exempt
@@ -947,6 +1015,71 @@ def sync_project_board(request: AuthorizedRequest):
 def run_project_spa_backfill(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     return JsonResponse(service.backfill_timesheet_project_items())
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("create_project_board")
+@auth_required
+@rate_limit("project_create", 5, 60, key="account")
+def create_project_board(request: AuthorizedRequest):
+    """Создаёт связку «компания + группа в Задачах + карточка смарт-процесса».
+
+    Шаги идемпотентны, поэтому повтор того же запроса досоздаёт только
+    недостающее — фронт этим и пользуется в кнопке «Повторить».
+
+    Исключения из service.create() наружу не протекают — оркестратор сам
+    ловит все свои ошибки и возвращает частичный результат (status="error"
+    по нужному шагу, done=False), поэтому здесь нет try/except: любая обёртка
+    превратила бы такой частичный результат в пятисотую, а он должен доехать
+    до фронта как есть, один в один.
+
+    Порог @rate_limit — 5 запросов/60 секунд, а НЕ 6/60, как у соседних
+    ручных кнопок sync/board_meta_refresh, и тем более не 60/60, как у
+    company_search. Число выбрано осознанно ниже, а не переиспользовано:
+
+    - Стоимость запроса выше, чем у sync (1-2 живых вызова, см. докстринг
+      _get_project_board_meta_refresh). Здесь три последовательных шага
+      (компания, группа, карточка) в service.create(), и каждый — сначала
+      поиск, затем, если не нашёл, создание: до двух живых вызовов на шаг,
+      то есть до шести только на сами шаги, плюс ещё до трёх чтений на
+      общие для аккаунта справочники (конфигурация, свои юрлица, стадии
+      проекта) — те обычно уже тёплые в кэше от обычной работы доски, но
+      гарантии на это нет (напрямую в create() не передаются, читаются
+      внутри с нуля).
+    - Риск выше, чем у sync и чем у company_search: это не чтение, а запись
+      в CRM клиента. У company_search (60/60) — это автокомплит, и его
+      результат ни на что не влияет, кроме самой формы; здесь неудачный
+      повтор — это реальная сущность на портале клиента (идемпотентность
+      ensure_company/ensure_group спасает от дублей по имени при штатном
+      повторе, но не отменяет того, что каждое нажатие — это живая мутация
+      чужого CRM, а не безобидный лишний GET).
+    - Профиль использования — противоположность автокомплиту: по продукту
+      это осознанное редкое действие, счёт идёт на единицы в день, а не на
+      десятки в минуту (в отличие от печати запроса в поиске компаний).
+      5/60 с большим запасом покрывает легитимный всплеск — первую попытку
+      плюс несколько ручных нажатий кнопки «Повторить» после временного
+      сбоя (лок занят, сетевая заминка) — и при этом останавливает скрипт,
+      бьющий по эндпоинту в цикле, уже в первую минуту.
+
+    Отдельный scope "project_create" (см. tests_security_ratelimit.py) — не
+    общий со sync/company_search/остальными. Имя совпадает со
+    scope="project_create" у account_sync_lock в ProjectCreationService.create()
+    (тот же логический ярлык для одного и того же действия), но механизмы
+    независимы: Django-кэш с префиксом "rl:" здесь, Postgres advisory-lock
+    там, — общего пространства ключей нет.
+    """
+    payload = _load_request_json(request)
+    account = request.bitrix24_account
+
+    service = ProjectCreationService(account.client, account)
+    result = service.create(
+        payload,
+        current_user_id=str(account.b24_user_id or ""),
+        current_user_name=_current_user_display_name(request),
+    )
+    return JsonResponse(result)
 
 
 @xframe_options_exempt
