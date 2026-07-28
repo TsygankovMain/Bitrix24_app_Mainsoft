@@ -3,7 +3,7 @@ from django.core.cache import cache
 from django.test import TestCase
 
 from .inn_backfill_service import InnBackfillService
-from .models import Bitrix24Account, ProjectCard
+from .models import Bitrix24Account, PortalUser, ProjectCard
 from .project_board_service import ProjectCardService
 from .project_board_shared import invalidate_project_runtime_caches
 from .tenant_scoping import scope_to_tenant
@@ -289,3 +289,86 @@ class InnBackfillUsesFullDirectoryTest(TestCase):
         methods_called = client.methods_called()
         self.assertIn("crm.item.list", methods_called)
         self.assertIn("crm.requisite.list", methods_called)
+
+
+class EmployeesFromDbTest(TestCase):
+    """Task 4 плана: сотрудники в meta — из локальной portal_user (Фаза 2
+
+    sync-offload, наполняется фоновым синком раз в час), без постраничного
+    обхода user.get (BitrixDataService.fetch_active_users). Та же таблица уже
+    питает имена в отчётах (_get_user_map, views.py), но там ЛОГИКА ДРУГАЯ:
+    _get_user_map обязан резолвить и уволенных — списания историчны. Здесь
+    список идёт в выпадающий список кураторов проекта, а назначать куратором
+    уволенного сотрудника нельзя, поэтому active=True — часть фильтра, а не
+    только оптимизация.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-refs-empl-1",
+            is_master_account=True, domain_url="example-empl.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        PortalUser.objects.create(
+            bitrix24_account=self.account, bitrix_id="10",
+            name="Иван", last_name="Петров", active=True,
+        )
+        PortalUser.objects.create(
+            bitrix24_account=self.account, bitrix_id="11",
+            name="Анна", last_name="Уволенная", active=False,
+        )
+
+    def test_meta_employees_come_from_portal_user_without_calling_user_get(self):
+        client = _FakeClient()
+        meta = ProjectCardService(client, self.account).get_meta()
+
+        employee_ids = [e["id"] for e in meta["directories"]["employees"]]
+        self.assertIn("10", employee_ids)
+        # Единственный обязательный негатив брифа: user.get не вызывался.
+        # crm.company.list легитимен (get_legal_entities, Task 2) — его не
+        # запрещаем, иначе тест был бы шире, чем требование.
+        self.assertNotIn("user.get", client.methods_called())
+
+    def test_fired_employee_is_excluded_from_curator_dropdown(self):
+        # Обе половины важны в одном тесте: одинокий assertNotIn("11", ...)
+        # остаётся зелёным и на пустом списке (например если фильтр active
+        # выкинул вообще всех) — тест должен требовать активного "10" в
+        # списке ОДНОВРЕМЕННО с отсутствием уволенного "11", иначе он не
+        # ловит регресс отката на старую реализацию (см. соседний тест выше:
+        # там employees вообще пуст на старом коде).
+        client = _FakeClient()
+        meta = ProjectCardService(client, self.account).get_meta()
+
+        employee_ids = [e["id"] for e in meta["directories"]["employees"]]
+        self.assertIn("10", employee_ids)
+        self.assertNotIn("11", employee_ids)
+
+    def test_employee_name_is_last_name_then_first_name(self):
+        client = _FakeClient()
+        meta = ProjectCardService(client, self.account).get_meta()
+
+        by_id = {e["id"]: e["name"] for e in meta["directories"]["employees"]}
+        self.assertEqual(by_id.get("10"), "Петров Иван")
+
+    def test_other_portal_employees_are_not_visible(self):
+        other = Bitrix24Account.objects.create(
+            b24_user_id=2, is_b24_user_admin=True, member_id="m-refs-empl-2",
+            is_master_account=True, domain_url="other-empl.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        PortalUser.objects.create(
+            bitrix24_account=other, bitrix_id="99",
+            name="Чужой", last_name="Сотрудник", active=True,
+        )
+
+        own_meta = ProjectCardService(_FakeClient(), self.account).get_meta()
+        other_meta = ProjectCardService(_FakeClient(), other).get_meta()
+
+        own_ids = [e["id"] for e in own_meta["directories"]["employees"]]
+        other_ids = [e["id"] for e in other_meta["directories"]["employees"]]
+        self.assertIn("10", own_ids)
+        self.assertNotIn("99", own_ids)
+        self.assertIn("99", other_ids)
+        self.assertNotIn("10", other_ids)
+

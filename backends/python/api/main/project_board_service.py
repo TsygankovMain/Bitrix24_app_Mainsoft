@@ -12,7 +12,7 @@ from django.utils import timezone
 from .bitrix_data_access import BitrixDataService
 from .company_search_service import CompanySearchService
 from .configuration_service import ConfigurationService
-from .models import Bitrix24Account, ProjectCard, SystemLog, TimesheetItem
+from .models import Bitrix24Account, PortalUser, ProjectCard, SystemLog, TimesheetItem
 from .project_board_shared import (
     BITRIX_REFERENCE_CACHE_TTL,
     HOMEPAGE_CACHE_TTL,
@@ -304,7 +304,7 @@ class ProjectCardService:
         fallback_legal_entities = self._get_project_card_fallback_options("our_legal_entity_id", "our_legal_entity_name")
 
         directory_employees = self._merge_reference_options(
-            BitrixDataService(self.client, config, self.account).fetch_active_users(),
+            self._get_active_employee_options(),
             fallback_employees,
         )
         directory_companies = self._merge_reference_options(self.get_companies(), fallback_companies)
@@ -329,6 +329,37 @@ class ProjectCardService:
         else:
             cache.delete(cache_key)
         return meta
+
+    def _get_active_employee_options(self) -> List[Dict[str, Any]]:
+        """Сотрудники для meta (выпадающий список кураторов проекта) — из
+
+        локальной таблицы portal_user (Фаза 2 sync-offload), без единого
+        обращения к Битриксу. Таблицу раз в час наполняет фоновый синк
+        (UserSyncService) — та же таблица уже питает имена в отчётах
+        (_get_user_map, views.py).
+
+        Только active=True — и это НЕ то же самое, что _get_user_map:
+        _get_user_map обязан резолвить имена и уволенных сотрудников,
+        потому что резолвит историчные списания (уволенный мог списывать
+        часы, пока работал). Здесь же список уходит в выпадающий список
+        кураторов проекта — назначать куратором уволенного сотрудника
+        нельзя, поэтому фильтр active=True — часть требования, а не
+        оптимизация.
+        """
+        rows = (
+            PortalUser.objects.filter(**scope_to_tenant(self.account), active=True)
+            .order_by("last_name", "name", "bitrix_id")
+            .values("bitrix_id", "name", "last_name")
+        )
+
+        result: List[Dict[str, Any]] = []
+        for row in rows:
+            user_id = self._clean_str(row.get("bitrix_id"))
+            if not user_id:
+                continue
+            full_name = f"{row.get('last_name') or ''} {row.get('name') or ''}".strip()
+            result.append({"id": user_id, "name": full_name or user_id})
+        return result
 
     def get_homepage_snapshot(self) -> Dict[str, Any]:
         cached = cache.get(build_account_cache_key(self.account, "project-board-homepage"))
