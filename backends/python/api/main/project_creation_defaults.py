@@ -79,6 +79,56 @@ def _parse_bool(value: Any) -> bool:
     return _clean_str(value).upper() in {"Y", "YES", "TRUE", "1"}
 
 
+def _is_automatic_stage_option(option: Dict[str, Any]) -> bool:
+    """True, если элемент stage_options — одна из автоматических стадий
+
+    (PROJECT_AUTO_STAGES в project_board_shared.py: «Нет списаний 1/3
+    месяца» — их выставляет фоновая автоматика, а не человек, и на них
+    нельзя завести новый проект). Модуль намеренно не импортирует
+    PROJECT_AUTO_STAGES оттуда — тот файл тянет Django ORM/кэш, а этот
+    модуль обязан остаться проверяемым без Django (см. докстринг модуля).
+    Вместо списка литералов — признаки, которые ставят ОБА поставщика
+    stage_options (_fetch_project_stage_options и _build_legacy_stage_options
+    в project_board_service.py) на каждый элемент без исключения:
+    kind="auto" — основной сигнал; can_drop=False — запасной, на случай
+    структуры без "kind" вовсе.
+
+    Ровно эта пара атрибутов (kind="auto", can_drop=False) стоит у
+    деградировавшего списка, который _fetch_project_stage_options отдаёт при
+    сбое живого запроса статусов воронки (сеть/лимиты/рестарт воркера) —
+    исключение проглатывается, а список остаётся непустым. Это и есть
+    первопричина бага, который закрывает _first_manual_stage_id ниже.
+    """
+    kind = _clean_str(option.get("kind")).lower()
+    if kind:
+        return kind == "auto"
+    return option.get("can_drop") is False
+
+
+def _first_manual_stage_id(stage_options: List[Dict[str, Any]]) -> str:
+    """Первая РУЧНАЯ стадия из stage_options — не первый элемент списка.
+
+    stage_options может быть непустым и при этом не содержать НИ ОДНОЙ
+    стадии, на которую можно поставить новый проект: _fetch_project_stage_options
+    вправе вернуть список только из автоматических стадий (см. докстринг
+    _is_automatic_stage_option). Взять stage_options[0] "в лоб" в этом
+    случае значит подставить проекту автостадию — а она уйдёт и в
+    локальную таблицу, и (build_card_fields в project_creation_service.py)
+    в карточку CRM клиента, откуда её не вытащить мышью: карточка падает в
+    автоколонку воронки.
+
+    Ручной стадии нет вовсе (воронка не настроена, stage_options пуст, или
+    отдала только автостадии) — возвращаем "": build_card_fields пустые
+    значения не пишет, и Битрикс сам поставит стартовую стадию своей
+    воронки при создании карточки. Это и есть требование спеки («стадия
+    проставляется автоматически»), а не костыль в обход неё.
+    """
+    for option in stage_options or []:
+        if not _is_automatic_stage_option(option):
+            return _clean_str(option.get("id"))
+    return ""
+
+
 def resolve_project_fields(
     form: Dict[str, Any],
     *,
@@ -103,8 +153,12 @@ def resolve_project_fields(
     - our_legal_entity_id — остаётся None без записи в missing, если на
       портале нет ни одного своего юрлица (legal_entities пуст): выбирать
       физически не из чего, поэтому поле не блокирует создание проекта;
-    - stage — остаётся пустой строкой, если воронка смарт-процесса ещё не
-      настроена (stage_options пуст), чтобы не падать на пустом портале.
+    - stage — остаётся пустой строкой, если среди stage_options нет ни
+      одной РУЧНОЙ стадии: воронка смарт-процесса ещё не настроена
+      (stage_options пуст) либо живой запрос статусов воронки к Битриксу
+      сбоил и вернул только автоматические стадии (см. докстринг
+      _first_manual_stage_id) — в обоих случаях подставлять первый попавшийся
+      элемент нельзя, а падать на пустом/деградировавшем портале нельзя тоже.
     """
     form = form or {}
     missing: List[str] = []
@@ -156,8 +210,8 @@ def resolve_project_fields(
         planned_amount = round(hours_budget * hourly_rate, 2)
 
     stage = _clean_str(form.get("stage"))
-    if not stage and stage_options:
-        stage = _clean_str(stage_options[0].get("id"))
+    if not stage:
+        stage = _first_manual_stage_id(stage_options)
 
     fields = ResolvedProjectFields(
         project_name=project_name,

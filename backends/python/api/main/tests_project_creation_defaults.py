@@ -148,6 +148,63 @@ class ResolveProjectFieldsTest(SimpleTestCase):
         self.assertEqual(fields.stage, "")
         self.assertEqual(missing, [])
 
+    def test_only_automatic_stage_options_leave_stage_blank(self):
+        # Точное репро находки ревью (блокер 1): _fetch_project_stage_options
+        # (project_board_service.py) при сбое живого запроса к статусам
+        # воронки глотает исключение и всё равно отдаёт НЕПУСТОЙ список — обе
+        # автостадии PROJECT_AUTO_STAGES с kind="auto"/can_drop=False. Взятие
+        # stage_options[0] "в лоб" подставило бы проекту стадию вида
+        # "Нет списаний 1 месяц" — она пишется и в локальную таблицу, и (через
+        # build_card_fields) в карточку CRM клиента, откуда её не вытащить
+        # мышью. Правильный исход — пустая стадия: Битрикс сам поставит
+        # стартовую стадию своей воронки при создании карточки.
+        degenerate_stage_options = [
+            {
+                "id": "Нет списаний 1 месяц",
+                "title": "Нет списаний 1 месяц",
+                "kind": "auto",
+                "can_drop": False,
+            },
+            {
+                "id": "Нет списаний 3 месяца",
+                "title": "Нет списаний 3 месяца",
+                "kind": "auto",
+                "can_drop": False,
+            },
+        ]
+        fields, missing = _resolve(
+            {"project_name": "П", "company_id": "15"}, stage_options=degenerate_stage_options
+        )
+        self.assertEqual(fields.stage, "")
+        self.assertEqual(missing, [])
+
+    def test_first_manual_stage_is_preferred_over_leading_automatic_stage(self):
+        # Автостадия может оказаться ПЕРВОЙ в списке (порядок из Битрикса не
+        # гарантирован) — резолвер обязан пропустить её и найти следующую
+        # ручную, а не слепо брать stage_options[0].
+        mixed_stage_options = [
+            {"id": "Нет списаний 1 месяц", "title": "Нет списаний 1 месяц", "kind": "auto", "can_drop": False},
+            {"id": "DT180_7:NEW", "title": "Новый", "kind": "manual", "can_drop": True},
+        ]
+        fields, _ = _resolve(
+            {"project_name": "П", "company_id": "15"}, stage_options=mixed_stage_options
+        )
+        self.assertEqual(fields.stage, "DT180_7:NEW")
+
+    def test_kind_missing_falls_back_to_can_drop_flag(self):
+        # Не всякий источник stage_options обязан класть "kind" (сама функция
+        # намеренно не требует конкретной формы структуры сверх этих двух
+        # необязательных атрибутов) — can_drop=False работает как запасной
+        # признак автостадии и без "kind".
+        stage_options = [
+            {"id": "Нет списаний 1 месяц", "can_drop": False},
+            {"id": "DT180_7:NEW", "title": "Новый", "can_drop": True},
+        ]
+        fields, _ = _resolve(
+            {"project_name": "П", "company_id": "15"}, stage_options=stage_options
+        )
+        self.assertEqual(fields.stage, "DT180_7:NEW")
+
     def test_is_support_y_is_parsed_as_true(self):
         fields, _ = _resolve({"project_name": "П", "company_id": "15", "is_support": "Y"})
         self.assertTrue(fields.is_support)

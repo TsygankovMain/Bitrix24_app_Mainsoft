@@ -407,7 +407,7 @@ class EnsureGroupTest(_ServiceTestCase):
         self.assertIn("идентификатор", result.error)
 
 
-def _resolved_fields(**overrides):
+def _resolved_fields(*, stage_options=None, **overrides):
     form = {
         "project_name": "Портал АО Ромашка",
         "company_id": "15",
@@ -422,7 +422,7 @@ def _resolved_fields(**overrides):
         current_user_name="Петров Иван",
         today=date(2026, 7, 28),
         legal_entities=[{"id": "7", "name": "ООО Мейнсофт"}],
-        stage_options=[{"id": "DT180_7:NEW", "title": "Новый"}],
+        stage_options=stage_options if stage_options is not None else [{"id": "DT180_7:NEW", "title": "Новый"}],
     )
     return fields
 
@@ -471,6 +471,27 @@ class BuildCardFieldsTest(_ServiceTestCase):
         built = service.build_card_fields(fields, "44", _MAPPING)
 
         self.assertNotIn("ufCrm7Hours", built)
+
+    def test_automatic_only_stage_options_do_not_reach_the_crm_card(self):
+        """Блокер 1 финального ревью (полная цепочка, а не только
+
+        resolve_project_fields): если stage_options на момент создания
+        проекта деградировали до одних автостадий (сбой живого запроса
+        статусов воронки к Битриксу — см. докстринг _first_manual_stage_id в
+        project_creation_defaults.py), карточка CRM клиента не должна
+        получить stage_id вовсе. Автостадия в поле карточки роняла бы её в
+        автоколонку воронки, откуда её не вытащить мышью.
+        """
+        service = self.service(_FakeClient())
+        degenerate_stage_options = [
+            {"id": "Нет списаний 1 месяц", "title": "Нет списаний 1 месяц", "kind": "auto", "can_drop": False},
+            {"id": "Нет списаний 3 месяца", "title": "Нет списаний 3 месяца", "kind": "auto", "can_drop": False},
+        ]
+        fields = _resolved_fields(stage_options=degenerate_stage_options)
+        self.assertEqual(fields.stage, "")
+
+        built = service.build_card_fields(fields, "44", _MAPPING)
+        self.assertNotIn("stageId", built)
 
 
 class EnsureCardTest(_ServiceTestCase):
