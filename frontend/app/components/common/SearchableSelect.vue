@@ -5,6 +5,7 @@ import {
   classifyCompanySearchError,
   companySearchNoticeText,
   createCompanySearchGate,
+  pendingCompanyDisplayLabel,
   shouldSearchCompanies,
   type CompanySearchNotice,
 } from '~/utils/companySearch'
@@ -34,11 +35,27 @@ const props = withDefaults(defineProps<{
    * значения (кнопка), а содержимое открытого списка приходит из searchFn.
    */
   searchFn?: (query: string) => Promise<SearchableSelectSearchOutcome>
+  /**
+   * Название компании, ожидающее создания (form.company_name формы
+   * создания проекта, пока company_id ещё не выбран — см.
+   * frontend/app/utils/companySearch.ts::companyFieldsForQuery). Проп
+   * одновременно и данные для pendingCompanyDisplayLabel (что показать на
+   * закрытой кнопке поля), и включатель режима "создать компанию с этим
+   * названием" в открытом списке (см. showCreateAction/shouldOfferCompanyCreation
+   * ниже) — оба поведения нужны только форме создания проекта
+   * (CreateProjectModal.vue). Остальные потребители компонента (фильтр
+   * "Компания" в ProjectBoardDrawer.vue/pages/projects/index.client.vue,
+   * поле "Наше юрлицо", "Куратор") проп не передают — для них компонент
+   * ведёт себя ровно как раньше: `undefined` означает "режим создания
+   * выключен".
+   */
+  pendingCompanyName?: string | null
 }>(), {
   label: '',
   emptyLabel: 'Не выбрано',
   searchPlaceholder: 'Поиск по названию или ИНН',
   disabled: false,
+  pendingCompanyName: undefined,
 })
 
 const emit = defineEmits<{
@@ -158,16 +175,23 @@ const selectedOption = computed(() => {
   return null
 })
 
+// Д1 хотфикса 2026-07-29: раньше здесь было "нет selectedOption -> emptyLabel",
+// без исключений. Теперь решение вынесено в pendingCompanyDisplayLabel — ей
+// среди прочего известно и промежуточное состояние "ничего не выбрано, но
+// есть текст, ожидающий создания компании" (см. докстринг пропа
+// pendingCompanyName выше). Формат "имя + ИНН" для УЖЕ выбранной компании —
+// деталь отображения, не относящаяся к тому решению, поэтому считается
+// здесь и передаётся уже готовой строкой.
 const displayLabel = computed(() => {
-  if (!selectedOption.value) {
-    return props.emptyLabel
-  }
+  const selectedName = selectedOption.value
+    ? (selectedOption.value.inn ? `${selectedOption.value.name} · ИНН ${selectedOption.value.inn}` : String(selectedOption.value.name))
+    : null
 
-  if (selectedOption.value.inn) {
-    return `${selectedOption.value.name} · ИНН ${selectedOption.value.inn}`
-  }
-
-  return String(selectedOption.value.name)
+  return pendingCompanyDisplayLabel({
+    selectedName,
+    pendingName: props.pendingCompanyName,
+    emptyLabel: props.emptyLabel,
+  })
 })
 
 const filteredOptions = computed(() => {

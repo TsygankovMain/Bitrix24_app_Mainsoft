@@ -143,3 +143,54 @@ export function companySearchNoticeText(notice: CompanySearchNotice | null | und
 export function companyFieldsForQuery(query: string): { company_id: null, company_name: string } {
   return { company_id: null, company_name: normalizeCompanyQuery(query) }
 }
+
+export interface PendingCompanyDisplayLabelInput {
+  /** Каноничное имя УЖЕ ВЫБРАННОЙ из списка компании (готовая строка —
+   * SearchableSelect сам решает, добавлять ли к ней "· ИНН ...", это не
+   * забота этой функции). null/пусто/пробелы — компания не выбрана. */
+  selectedName?: string | null
+  /** Название, введённое для компании, которой в CRM ещё нет — то же
+   * значение, что уходит в company_name через companyFieldsForQuery, пока
+   * company_id остаётся null. null/пусто/пробелы — ждать нечего. */
+  pendingName?: string | null
+  emptyLabel: string
+}
+
+/**
+ * Д1 хотфикса 2026-07-29 (см. .superpowers/sdd/2026-07-28-create-project-button/
+ * hotfix-new-company-brief.md): что показывает кнопка поля компании
+ * (SearchableSelect.vue::displayLabel) на ТРИ возможных состояния поля, а не
+ * на два, как было. Раньше displayLabel знал только "выбрано" (есть
+ * selectedOption) и "не выбрано" (emptyLabel) — а состояние "человек ввёл
+ * название новой компании, из списка ничего не выбрал" молча схлопывалось
+ * во второе. Текст казался потерянным, хотя form.company_name его хранил.
+ *
+ * Приоритет:
+ *  1. selectedName — компания выбрана ИЗ СПИСКА (id указывает на реальную
+ *     запись CRM). Показываем как раньше, без изменений.
+ *  2. pendingName — записи в CRM ещё нет, но человек ввёл текст и не выбрал
+ *     вариант (companyFieldsForQuery в этот момент уже держит пару
+ *     (company_id: null, company_name: pendingName) — то же самое состояние,
+ *     которое форма трактует как "создать новую компанию с этим именем").
+ *     Возвращается С ПОМЕТКОЙ "новая": человек обязан на глаз отличать
+ *     "выбрана существующая" от "создастся новая" — одинаковый на вид текст
+ *     в обоих случаях воспроизвёл бы ту же путаницу на шаг дальше (решил бы,
+ *     что уже выбрал существующую компанию, хотя её ещё нет в CRM).
+ *  3. emptyLabel — ни то, ни другое: поле действительно пустое. Ровно
+ *     прежнее поведение для всех потребителей, которые pendingName не знают
+ *     (SearchableSelect без пропа pendingCompanyName — "Наше юрлицо",
+ *     "Куратор", фильтры на доске проектов).
+ */
+export function pendingCompanyDisplayLabel({ selectedName, pendingName, emptyLabel }: PendingCompanyDisplayLabelInput): string {
+  const selected = String(selectedName ?? '').trim()
+  if (selected) {
+    return selected
+  }
+
+  const pending = normalizeCompanyQuery(pendingName ?? '')
+  if (pending) {
+    return `Новая компания: «${pending}»`
+  }
+
+  return emptyLabel
+}

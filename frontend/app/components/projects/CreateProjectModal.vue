@@ -331,6 +331,7 @@ function closeModal() {
             search-placeholder="Поиск по названию или ИНН"
             :options="EMPTY_OPTIONS"
             :search-fn="searchCompanyOptions"
+            :pending-company-name="form.company_name"
             @update:selected="handleCompanySelected"
           />
           <span class="text-xs text-slate-400">Не нашли в поиске — введённое название станет именем новой компании.</span>

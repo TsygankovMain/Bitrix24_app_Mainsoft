@@ -8,6 +8,7 @@ import {
   createCompanySearchGate,
   isRateLimitError,
   normalizeCompanyQuery,
+  pendingCompanyDisplayLabel,
   shouldSearchCompanies,
 } from '../app/utils/companySearch'
 
@@ -145,4 +146,47 @@ test('companyFieldsForQuery: обнуляет company_id и подставляе
 
 test('companyFieldsForQuery: пустой запрос — тоже обнуляет id, имя пустое', () => {
   assert.deepEqual(companyFieldsForQuery(''), { company_id: null, company_name: '' })
+})
+
+// --- pendingCompanyDisplayLabel ---
+//
+// Д1 хотфикса 2026-07-29 (см. .superpowers/sdd/2026-07-28-create-project-button/
+// hotfix-new-company-brief.md): SearchableSelect.vue::displayLabel возвращал
+// props.emptyLabel всегда, когда selectedOption===null — в том числе когда
+// человек уже ввёл название НОВОЙ компании (нечего выбирать из списка) и
+// закрыл его. Поле показывало "Компания не выбрана", хотя form.company_name
+// уже хранил введённый текст — человек считал ввод потерянным.
+
+test('pendingCompanyDisplayLabel: выбранная компания в приоритете над ожидающим названием', () => {
+  assert.equal(
+    pendingCompanyDisplayLabel({ selectedName: 'АО Ромашка', pendingName: 'Лютик', emptyLabel: 'Не выбрано' }),
+    'АО Ромашка',
+  )
+})
+
+test('pendingCompanyDisplayLabel: компания не выбрана, но есть ожидающее название — оно видно и помечено как новое', () => {
+  const label = pendingCompanyDisplayLabel({ selectedName: null, pendingName: 'Лютик', emptyLabel: 'Не выбрано' })
+  assert.match(label, /Лютик/, 'введённое название обязано остаться видимым')
+  assert.notEqual(label, 'Лютик', 'голое имя неотличимо от выбранной существующей компании — нужна пометка "новая"')
+})
+
+test('pendingCompanyDisplayLabel: ожидающее название обрезается по краям так же, как в companyFieldsForQuery', () => {
+  assert.equal(
+    pendingCompanyDisplayLabel({ selectedName: null, pendingName: '  Лютик  ', emptyLabel: 'Не выбрано' }),
+    pendingCompanyDisplayLabel({ selectedName: null, pendingName: 'Лютик', emptyLabel: 'Не выбрано' }),
+  )
+})
+
+test('pendingCompanyDisplayLabel: ни выбора, ни ожидающего названия — emptyLabel, как и раньше', () => {
+  assert.equal(pendingCompanyDisplayLabel({ selectedName: null, pendingName: null, emptyLabel: 'Не выбрано' }), 'Не выбрано')
+  assert.equal(pendingCompanyDisplayLabel({ selectedName: '', pendingName: '', emptyLabel: 'Не выбрано' }), 'Не выбрано')
+  assert.equal(pendingCompanyDisplayLabel({ selectedName: '   ', pendingName: undefined, emptyLabel: 'Не выбрано' }), 'Не выбрано')
+})
+
+test('pendingCompanyDisplayLabel: пустая строка выбранного имени не маскирует ожидающее название', () => {
+  // selectedOption у SearchableSelect — либо реальный объект (name непустой
+  // по построению), либо null. Пустая строка сюда прийти не должна, но
+  // функция обязана трактовать её как "не выбрано", а не как выбор с именем "".
+  const label = pendingCompanyDisplayLabel({ selectedName: '', pendingName: 'Лютик', emptyLabel: 'Не выбрано' })
+  assert.match(label, /Лютик/)
 })
