@@ -9,13 +9,18 @@
 """
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 from b24pysdk import Client
+from django.utils import timezone
 
+from .configuration_service import ConfigurationService
 from .models import Bitrix24Account, ProjectCard
-from .project_creation_defaults import ResolvedProjectFields
+from .project_board_service import ProjectCardService
+from .project_creation_defaults import ResolvedProjectFields, resolve_project_fields
 from .tenant_scoping import scope_to_tenant
+from .utils.decorators.sync_lock import SyncLockBusy, account_sync_lock
 
 logger = logging.getLogger(__name__)
 
@@ -413,3 +418,180 @@ class ProjectCreationService:
             project_id=_clean_str(group_id),
             defaults=defaults,
         )
+
+    def create(
+        self,
+        form: Dict[str, Any],
+        *,
+        current_user_id: str,
+        current_user_name: str,
+        today: Optional[date] = None,
+    ) -> Dict[str, Any]:
+        """Оркестратор: компания -> группа -> карточка, строго по порядку —
+        карточка ссылается на первые две сущности. Сбой шага не откатывает уже
+        созданное: возвращаем частичный результат, повторный вызов досоздаёт
+        недостающее (каждый шаг идемпотентен сам по себе).
+
+        Конкурентность (поднято ревью Task 2/4, см. progress.md):
+
+        1. Гонка двух почти одновременных вызовов create(). Каждый шаг
+           идемпотентен по принципу "сначала ищу, потом создаю", но два
+           запроса могут пройти поиск параллельно и оба ничего не найти — на
+           уровне шага это не лечится. Мутирующую часть (ensure_company ..
+           write_through) оборачиваем в account_sync_lock с ОТДЕЛЬНЫМ
+           scope="project_create", а не переиспользуем существующий
+           scope="project": тот занят фоновой ProjectSyncService.sync()
+           (sync_scheduler_service, _save_configuration_with_project_sync) —
+           общий бюджет привязал бы кнопку к длительности чужой синхронизации
+           портала (секунды-минуты на крупном портале) и наоборот, синк
+           пропускал бы цикл из-за чужого нажатия кнопки. Подробности — в
+           utils/decorators/sync_lock.py. Лок non-blocking
+           (pg_try_advisory_lock) — при занятости не ждём и не бросаем
+           исключение наружу, а честно возвращаем частичный результат с
+           понятной ошибкой и предложением повторить.
+        2. Дубль строки ProjectCard в скоупе портала. unique_together стоит
+           на паре (bitrix24_account, project_id), а не (portal, project_id)
+           — наследие ранней миграции. Значит write_through, который ищет и
+           пишет строго СВОИМ аккаунтом (scope_to_tenant(.., write=True)), не
+           видит строку, которую для того же project_id уже мог завести
+           другой сотрудник ЭТОГО ЖЕ портала, — и создаёт вторую. Перед
+           вызовом write_through проверяем СКОУП ЧТЕНИЯ (по порталу, без
+           write=True) и, если строка там уже есть, не дублируем её.
+        """
+        today = today or timezone.localdate()
+        config_service = ConfigurationService(self.client, self.account)
+        config = config_service.get_configuration_sync()
+
+        card_service = ProjectCardService(self.client, self.account)
+        try:
+            legal_entities = card_service.get_legal_entities(config)
+        except Exception as exc:
+            logger.warning("create: get_legal_entities failed: %s", exc)
+            legal_entities = []
+        try:
+            stage_options = card_service.get_project_stage_options(config)
+        except Exception as exc:
+            logger.warning("create: get_project_stage_options failed: %s", exc)
+            stage_options = []
+
+        fields, missing = resolve_project_fields(
+            form,
+            config=config,
+            current_user_id=current_user_id,
+            current_user_name=current_user_name,
+            today=today,
+            legal_entities=legal_entities,
+            stage_options=stage_options,
+        )
+
+        skipped = StepResult(status="skipped")
+        if missing:
+            return {
+                "company": skipped.as_dict(),
+                "group": skipped.as_dict(),
+                "card": skipped.as_dict(),
+                "done": False,
+                "missing_fields": missing,
+            }
+
+        try:
+            with account_sync_lock(self.account, scope="project_create"):
+                return self._create_under_lock(fields, config, skipped)
+        except SyncLockBusy:
+            busy = StepResult(
+                status="error",
+                error="Кто-то уже создаёт проект на этом портале. Повторите через несколько секунд.",
+            )
+            return {
+                "company": busy.as_dict(),
+                "group": skipped.as_dict(),
+                "card": skipped.as_dict(),
+                "done": False,
+                "missing_fields": [],
+            }
+
+    def _create_under_lock(
+        self, fields: ResolvedProjectFields, config: Dict[str, Any], skipped: StepResult
+    ) -> Dict[str, Any]:
+        """Тело create() внутри account_sync_lock: сами три шага плюс
+        write-through. Вынесено отдельным методом только ради читаемости
+        create() — самостоятельного смысла вне лока не имеет."""
+        company = self.ensure_company(fields.company_id, fields.company_name)
+        if not company.id:
+            return {
+                "company": company.as_dict(),
+                "group": skipped.as_dict(),
+                "card": skipped.as_dict(),
+                "done": False,
+                "missing_fields": [],
+            }
+        fields.company_id = company.id
+        fields.company_name = fields.company_name or company.name
+
+        group = self.ensure_group(fields.project_name)
+        if not group.id:
+            return {
+                "company": company.as_dict(),
+                "group": group.as_dict(),
+                "card": skipped.as_dict(),
+                "done": False,
+                "missing_fields": [],
+            }
+
+        try:
+            entity_type_id = int(config.get("project_sp_entity_type_id") or 0)
+        except (TypeError, ValueError):
+            entity_type_id = 0
+        mapping = config.get("project_fields_mapping") or {}
+
+        card = self.ensure_card(
+            fields, group.id, entity_type_id=entity_type_id, mapping=mapping
+        )
+
+        # write_through пишем при ЛЮБОМ статусе card, включая "error". Строка
+        # в локальной таблице отражает ГРУППУ (доска ключуется по
+        # project_id=group.id), а не карточку смарт-процесса, а группа к этому
+        # моменту уже гарантированно существует в Битриксе (иначе был бы ранний
+        # return выше). Если не показать её на доске из-за отдельного сбоя
+        # карточки, сотрудник решит, что ничего не сработало, и нажмёт кнопку
+        # снова — а повторный ensure_group для точного совпадения имени найдёт
+        # ту же группу и ничего не сломает, а вот ensure_card при живой ошибке
+        # (например, временная недоступность смарт-процесса) будет пытаться
+        # досоздать карточку на КАЖДОЕ такое повторное нажатие без всякой
+        # пользы, пока проект молча не отображается на доске.
+        #
+        # Дубль строки в скоупе портала (см. докстринг create() и progress.md,
+        # ревью Task 4): unique_together у ProjectCard — пара
+        # (bitrix24_account, project_id), не (portal, project_id). write_through
+        # ищет и пишет строго своим аккаунтом и не увидит строку, которую для
+        # этого же project_id мог уже завести другой сотрудник того же
+        # портала, — и создаст вторую. Поэтому сначала смотрим в СКОУПЕ ЧТЕНИЯ
+        # (по порталу, exclude по своему аккаунту исключает штатный повторный
+        # вызов СВОИМ же аккаунтом — тот обязан обновлять свою строку как и
+        # раньше) и, если строка уже есть, не пишем повторно.
+        try:
+            already_on_board = (
+                ProjectCard.objects.filter(
+                    **scope_to_tenant(self.account), project_id=_clean_str(group.id)
+                )
+                .exclude(bitrix24_account=self.account)
+                .exists()
+            )
+            if already_on_board:
+                logger.info(
+                    "create: project %s already has a local row from another account "
+                    "on this portal; skip write_through to avoid a duplicate.",
+                    group.id,
+                )
+            else:
+                self.write_through(fields, group.id, card.id)
+        except Exception as exc:
+            logger.warning("create: write_through failed for group %s: %s", group.id, exc)
+
+        return {
+            "company": company.as_dict(),
+            "group": group.as_dict(),
+            "card": card.as_dict(),
+            "done": card.status != "error",
+            "missing_fields": [],
+        }

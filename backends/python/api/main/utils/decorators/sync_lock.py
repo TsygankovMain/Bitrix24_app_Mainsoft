@@ -13,6 +13,15 @@ Session-lock держится поверх этих транзакций; при
 
 Ключи раздельные per-account по scope: timesheet-синк и project-синк трогают
 разные таблицы и могут идти параллельно друг другу, но не сами с собой.
+
+scope="project_create" (кнопка «Создать проект», main.project_creation_service.
+ProjectCreationService.create) — намеренно ОТДЕЛЬНЫЙ от scope="project"
+(фоновая ProjectSyncService.sync() из sync_scheduler_service и
+_save_configuration_with_project_sync). Создание одного проекта — короткая
+операция по нажатию кнопки, а полный синк на крупном портале может идти
+секундами и дольше; общий scope означал бы, что кнопка ждёт чужую
+синхронизацию портала, а синхронизация пропускает цикл из-за чужого нажатия
+кнопки. Обе накладки не нужны, когда данные реально не пересекаются в моменте.
 """
 
 import hashlib
@@ -27,7 +36,7 @@ from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
 
-SCOPE_BITS = {"timesheet": 1, "project": 2, "users": 3}
+SCOPE_BITS = {"timesheet": 1, "project": 2, "users": 3, "project_create": 4}
 
 
 class SyncLockBusy(Exception):

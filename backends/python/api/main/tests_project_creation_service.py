@@ -4,6 +4,7 @@
 записываем вызовы, чтобы проверять идемпотентность без сети.
 """
 from datetime import date
+from unittest.mock import MagicMock, patch
 
 from django.test import TestCase, override_settings
 
@@ -11,6 +12,7 @@ from .models import Bitrix24Account, Portal, ProjectCard
 from .project_creation_defaults import resolve_project_fields
 from .project_creation_service import ProjectCreationService
 from .tenant_scoping import scope_to_tenant
+from .utils.decorators.sync_lock import SyncLockBusy
 
 
 class _FakeClient:
@@ -620,3 +622,270 @@ class WriteThroughTest(_ServiceTestCase):
         visible_there = ProjectCard.objects.filter(**scope_to_tenant(other_account), project_id="44")
         self.assertEqual(visible_here.count(), 1)
         self.assertEqual(visible_there.count(), 0)
+
+
+class CreateOrchestrationTest(_ServiceTestCase):
+    def _client(self, **overrides):
+        responses = {
+            "app.option.get": {"result": {"timestamp_config": (
+                '{"hourly_rate": 1500, "project_sp_entity_type_id": 180,'
+                ' "project_fields_mapping": {"title": "title",'
+                ' "bitrix_group_id": "ufCrm7Group", "stage_id": "stageId"}}'
+            )}},
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": 77},
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": {"result": 44},
+            "crm.item.list": {"result": {"items": []}},
+            "crm.item.add": {"result": {"item": {"id": 901}}},
+        }
+        responses.update(overrides)
+        return _FakeClient(responses)
+
+    def _form(self, **overrides):
+        form = {"project_name": "Портал АО Ромашка", "company_name": "АО Ромашка"}
+        form.update(overrides)
+        return form
+
+    def _create(self, client, form=None):
+        return self.service(client).create(
+            form or self._form(), current_user_id="42", current_user_name="Петров Иван",
+            today=date(2026, 7, 28),
+        )
+
+    def test_happy_path_creates_all_three(self):
+        result = self._create(self._client())
+
+        self.assertEqual(result["company"]["status"], "created")
+        self.assertEqual(result["group"]["status"], "created")
+        self.assertEqual(result["card"]["status"], "created")
+        self.assertTrue(result["done"])
+        self.assertEqual(ProjectCard.objects.filter(project_id="44").count(), 1)
+
+    def test_repeat_call_does_not_create_second_entities(self):
+        client = self._client(
+            **{
+                "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+                "sonet_group.get": {"result": [{"ID": "44", "NAME": "Портал АО Ромашка"}]},
+                "crm.item.list": {"result": {"items": [{"id": 901}]}},
+            }
+        )
+        result = self._create(client)
+
+        self.assertEqual(result["company"]["status"], "found")
+        self.assertEqual(result["group"]["status"], "found")
+        self.assertEqual(result["card"]["status"], "found")
+        self.assertTrue(result["done"])
+        for method in ("crm.company.add", "sonet_group.create", "crm.item.add"):
+            self.assertNotIn(method, client.methods_called())
+
+    def test_group_failure_keeps_company_and_skips_card(self):
+        client = self._client(**{"sonet_group.create": RuntimeError("нет прав на создание групп")})
+        result = self._create(client)
+
+        self.assertEqual(result["company"]["status"], "created")
+        self.assertEqual(result["group"]["status"], "error")
+        self.assertEqual(result["card"]["status"], "skipped")
+        self.assertFalse(result["done"])
+        self.assertNotIn("crm.item.add", client.methods_called())
+
+    def test_ambiguous_company_stops_before_group(self):
+        # crm.company.list звучит внутри create() дважды с разными фильтрами:
+        # сперва get_legal_entities (IS_MY_COMPANY=Y), потом поиск компании в
+        # ensure_company (=TITLE). _FakeClient различает вызовы одного метода
+        # только по порядку (см. его докстринг про список ответов), поэтому
+        # первый ответ — пусто (своих юрлиц с таким именем нет), второй —
+        # два совпадения по названию, которые и должны дать ambiguous.
+        # Один и тот же статичный ответ на оба вызова здесь не годится: тогда
+        # ambiguous-пара «протекла» бы и в юрлица, our_legal_entity_id попал
+        # бы в missing, и create() вышел бы раньше ensure_company вообще не
+        # по той причине, которую проверяет этот тест.
+        client = self._client(
+            **{"crm.company.list": [
+                {"result": []},
+                {"result": [
+                    {"ID": "77", "TITLE": "АО Ромашка"},
+                    {"ID": "78", "TITLE": "АО Ромашка"},
+                ]},
+            ]}
+        )
+        result = self._create(client)
+
+        self.assertEqual(result["company"]["status"], "ambiguous")
+        self.assertEqual(result["group"]["status"], "skipped")
+        self.assertEqual(result["card"]["status"], "skipped")
+        self.assertFalse(result["done"])
+        self.assertNotIn("sonet_group.create", client.methods_called())
+
+    def test_missing_required_fields_stop_before_any_bitrix_call(self):
+        client = self._client()
+        result = self._create(client, form={"company_name": "АО Ромашка"})
+
+        self.assertIn("project_name", result["missing_fields"])
+        self.assertFalse(result["done"])
+        self.assertNotIn("crm.company.add", client.methods_called())
+
+    def test_card_error_still_reports_created_company_and_group(self):
+        client = self._client(**{"crm.item.add": RuntimeError("поле не найдено")})
+        result = self._create(client)
+
+        self.assertEqual(result["company"]["status"], "created")
+        self.assertEqual(result["group"]["status"], "created")
+        self.assertEqual(result["card"]["status"], "error")
+        self.assertFalse(result["done"])
+        # Группа создана — локальную строку всё равно пишем, иначе доска её не покажет.
+        self.assertEqual(ProjectCard.objects.filter(project_id="44").count(), 1)
+
+
+class CreateOrchestrationConcurrencyTest(_ServiceTestCase):
+    """Сверх брифа Task 5 — пункты, поднятые ревью Task 2/4 (см. progress.md):
+
+    1. Гонка двух почти одновременных вызовов create(): лок должен закрыть
+       окно гонки, а при занятости — вернуть частичный результат без
+       исключения наружу и без единого мутирующего вызова Битрикса.
+    2. Дубль строки ProjectCard в скоупе портала: unique_together стоит на
+       паре (bitrix24_account, project_id), а не (portal, project_id) —
+       второй сотрудник того же портала не должен получить вторую строку.
+
+    _client/_form дублируют одноимённые методы CreateOrchestrationTest
+    намеренно: тот класс воспроизведён из брифа дословно, трогать его не
+    стоит, а тут нужен ещё и параметр account в _create."""
+
+    def _client(self, **overrides):
+        responses = {
+            "app.option.get": {"result": {"timestamp_config": (
+                '{"hourly_rate": 1500, "project_sp_entity_type_id": 180,'
+                ' "project_fields_mapping": {"title": "title",'
+                ' "bitrix_group_id": "ufCrm7Group", "stage_id": "stageId"}}'
+            )}},
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": 77},
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": {"result": 44},
+            "crm.item.list": {"result": {"items": []}},
+            "crm.item.add": {"result": {"item": {"id": 901}}},
+        }
+        responses.update(overrides)
+        return _FakeClient(responses)
+
+    def _form(self, **overrides):
+        form = {"project_name": "Портал АО Ромашка", "company_name": "АО Ромашка"}
+        form.update(overrides)
+        return form
+
+    def _create(self, client, account=None, form=None):
+        service = ProjectCreationService(client, account or self.account)
+        return service.create(
+            form or self._form(), current_user_id="42", current_user_name="Петров Иван",
+            today=date(2026, 7, 28),
+        )
+
+    def test_lock_busy_returns_graceful_error_without_bitrix_mutation(self):
+        client = self._client()
+        with patch("main.project_creation_service.account_sync_lock", side_effect=SyncLockBusy):
+            result = self._create(client)
+
+        self.assertEqual(result["company"]["status"], "error")
+        self.assertEqual(result["group"]["status"], "skipped")
+        self.assertEqual(result["card"]["status"], "skipped")
+        self.assertFalse(result["done"])
+        self.assertEqual(result["missing_fields"], [])
+        # Лок берётся до первого шага, а не после — ни один мутирующий или
+        # поисковый вызов ensure_* не должен был случиться.
+        for method in (
+            "crm.company.add", "sonet_group.get", "sonet_group.create",
+            "crm.item.list", "crm.item.add",
+        ):
+            self.assertNotIn(method, client.methods_called())
+        self.assertEqual(ProjectCard.objects.count(), 0)
+
+    def test_lock_uses_dedicated_scope_not_shared_with_background_sync(self):
+        """scope="project_create", а не "project": тот занят фоновой
+        ProjectSyncService.sync() (sync_scheduler_service,
+        _save_configuration_with_project_sync). Общий scope привязал бы
+        кнопку к длительности чужой синхронизации портала и наоборот —
+        см. комментарий в utils/decorators/sync_lock.py."""
+        client = self._client()
+        with patch("main.project_creation_service.account_sync_lock") as mock_lock:
+            mock_lock.return_value.__enter__ = MagicMock(return_value=None)
+            mock_lock.return_value.__exit__ = MagicMock(return_value=False)
+            self._create(client)
+
+        mock_lock.assert_called_once()
+        args, kwargs = mock_lock.call_args
+        self.assertEqual(args[0], self.account)
+        self.assertEqual(kwargs.get("scope"), "project_create")
+
+    def test_missing_fields_do_not_touch_the_lock(self):
+        """Проверка обязательных полей идёт раньше лока: блокировать нечего,
+        Битрикс ещё не тронут (симметрично test_missing_required_fields_stop_
+        before_any_bitrix_call в CreateOrchestrationTest)."""
+        client = self._client()
+        with patch("main.project_creation_service.account_sync_lock") as mock_lock:
+            self._create(client, form={"company_name": "АО Ромашка"})
+
+        mock_lock.assert_not_called()
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    def test_second_account_same_portal_does_not_duplicate_local_row(self):
+        """Ревью Task 4 (progress.md): unique_together у ProjectCard стоит на
+        паре (bitrix24_account, project_id), а не (portal, project_id) — два
+        сотрудника ОДНОГО портала, создав тот же проект, получали две строки
+        в скоупе портала и дубль на доске. Первый сотрудник создаёт с нуля,
+        второй попадает на уже существующие компанию/группу/карточку — но
+        локальная запись должна остаться одна на весь портал."""
+        portal = Portal.objects.create(
+            member_id="m-create-portal-race", domain_url="race.bitrix24.ru", status="active",
+        )
+        account_a = Bitrix24Account.objects.create(
+            b24_user_id=10, is_b24_user_admin=True, member_id="m-create-portal-race",
+            is_master_account=True, domain_url="race.bitrix24.ru",
+            status="active", application_version=1, portal=portal,
+        )
+        account_b = Bitrix24Account.objects.create(
+            b24_user_id=11, is_b24_user_admin=False, member_id="m-create-portal-race",
+            is_master_account=False, domain_url="race.bitrix24.ru",
+            status="active", application_version=1, portal=portal,
+        )
+
+        result_a = self._create(self._client(), account=account_a)
+        self.assertEqual(result_a["company"]["status"], "created")
+        self.assertEqual(result_a["group"]["status"], "created")
+        self.assertTrue(result_a["done"])
+
+        client_b = self._client(**{
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+            "sonet_group.get": {"result": [{"ID": "44", "NAME": "Портал АО Ромашка"}]},
+            "crm.item.list": {"result": {"items": [{"id": 901}]}},
+        })
+        result_b = self._create(client_b, account=account_b)
+
+        self.assertEqual(result_b["company"]["status"], "found")
+        self.assertEqual(result_b["group"]["status"], "found")
+        self.assertEqual(result_b["card"]["status"], "found")
+        self.assertTrue(result_b["done"])
+        for method in ("crm.company.add", "sonet_group.create", "crm.item.add"):
+            self.assertNotIn(method, client_b.methods_called())
+
+        # Один сотрудник портала уже написал строку — вторая запись не появилась.
+        visible_on_portal = ProjectCard.objects.filter(portal=portal, project_id="44")
+        self.assertEqual(visible_on_portal.count(), 1)
+        self.assertEqual(visible_on_portal.first().bitrix24_account_id, account_a.id)
+
+    def test_same_account_repeat_call_still_updates_local_row(self):
+        """Дедуп по чужому аккаунту не должен помешать штатному апдейту СВОЕЙ
+        же строки при повторном вызове (см. WriteThroughTest в Task 4) —
+        exclude(bitrix24_account=self.account) обязан оставаться в фильтре."""
+        client = self._client()
+        self._create(client)
+
+        client_again = self._client(**{
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+            "sonet_group.get": {"result": [{"ID": "44", "NAME": "Портал АО Ромашка"}]},
+            "crm.item.list": {"result": {"items": [{"id": 901}]}},
+        })
+        self._create(client_again, form=self._form(project_hours_budget="20"))
+
+        cards = ProjectCard.objects.filter(bitrix24_account=self.account, project_id="44")
+        self.assertEqual(cards.count(), 1)
+        self.assertEqual(cards.first().project_hours_budget, 20.0)
