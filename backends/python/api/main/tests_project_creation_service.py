@@ -217,3 +217,48 @@ class EnsureCompanyTest(_ServiceTestCase):
 
         self.assertEqual(result.status, "error")
         self.assertIn("валидный идентификатор", result.error)
+
+    def test_created_id_scalar_form(self):
+        """_extract_created_id: скалярный ID как число."""
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": 77},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        self.assertEqual(result.status, "created")
+        self.assertEqual(result.id, "77")
+
+    def test_created_id_item_form(self):
+        """_extract_created_id: ID в форме crm.item.add — вложенный объект."""
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": {"item": {"id": 501}}},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        self.assertEqual(result.status, "created")
+        self.assertEqual(result.id, "501")
+
+    def test_created_id_nested_direct_form(self):
+        """_extract_created_id: ID в форме с прямым вложением {"id": 501}."""
+        client = _FakeClient({
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": {"id": 501}},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        self.assertEqual(result.status, "created")
+        self.assertEqual(result.id, "501")
+
+    def test_mixed_list_with_garbage_is_error(self):
+        """crm.company.list вернул смешанный список — некоторые элементы не словари."""
+        client = _FakeClient({
+            "crm.company.list": {"result": [{"ID": "15", "TITLE": "АО Ромашка"}, "garbage"]},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        # Примесь не-словарей — ошибка разбора, не создаём (мусор может быть испорченным совпадением)
+        self.assertEqual(result.status, "error")
+        self.assertIn("неожиданном формате", result.error)
+        self.assertNotIn("crm.company.add", client.methods_called())

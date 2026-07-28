@@ -47,15 +47,16 @@ def _extract_rows(response: Any) -> Tuple[List[Dict[str, Any]], bool]:
 
     Возвращает кортеж (rows, parsed_ok):
     - rows: список распарсенных записей (может быть пусто)
-    - parsed_ok: True если результат в ожидаемой форме (список), False если форма
-      неожиданна или результат содержал записи, но они не выглядят как словари
+    - parsed_ok: True если результат в ожидаемой форме (список, полностью состоящий из словарей
+      или пустой), False если форма неожиданна или список содержит примесь не-словарей
 
     Битрикс отдаёт result то списком, то словарём с items, а при нештатных
     ситуациях — чем угодно. Нужно различать:
-    - result=[] → ноль найденных, можем создавать (parsed_ok=True)
+    - result=[] → ноль найденных (честный ответ), можем создавать (parsed_ok=True)
     - result={...} без items → подозрительно, ошибка разбора (parsed_ok=False)
-    - result=[{...}] со словарями → нормально (parsed_ok=True)
-    - result=["str"] списком строк → ошибка разбора (parsed_ok=False)
+    - result=[{...}, {...}] все словари → нормально (parsed_ok=True)
+    - result=[{...}, "garbage"] смешанный список → примесь (parsed_ok=False), мусор может быть испорченным совпадением
+    - result=["str"] список строк → ошибка разбора (parsed_ok=False)
 
     Это нужно для следующих шагов (группа, карточка), где та же дилемма.
     """
@@ -81,22 +82,31 @@ def _extract_rows(response: Any) -> Tuple[List[Dict[str, Any]], bool]:
     if not isinstance(items, list):
         return [], False
 
-    # Фильтруем элементы, которые не словари, но запоминаем если были потери
-    valid_items = [item for item in items if isinstance(item, dict)]
-    had_invalid_items = len(items) > 0 and len(valid_items) < len(items)
+    # Если список пуст — это честный ответ «ничего не найдено»
+    if len(items) == 0:
+        return [], True
 
-    # Если исходный список был не пусто, но все элементы отвергнуты — ошибка
-    if len(items) > 0 and len(valid_items) == 0:
+    # Фильтруем элементы, которые не словари
+    valid_items = [item for item in items if isinstance(item, dict)]
+
+    # Если были потери (примесь не-словарей в исходном списке) — это ошибка
+    # Мусор может быть испорченным совпадением, не можем молча его выбросить
+    if len(valid_items) < len(items):
         return [], False
 
     return valid_items, True
 
 
-def _extract_scalar_id(response: Any) -> Optional[str]:
-    """Извлекает скалярный идентификатор из ответа Битрикса на crm.company.add.
+def _extract_created_id(response: Any) -> Optional[str]:
+    """Извлекает идентификатор созданной записи из ответа метода *.add.
 
-    Возвращает None если ответ не содержит валидного идентификатора (не
-    целое число и не строку с цифрами).
+    Битрикс отвечает по-разному в зависимости от метода:
+    - crm.company.add, sonet_group.create -> {"result": 77}
+    - crm.item.add (смарт-процесс)        -> {"result": {"item": {"id": 501}}}
+    - встречается и                          {"result": {"id": 501}}
+
+    Возвращает None если ответ не содержит идентификатора в валидной форме.
+    Вызывающий код превращает None в status="error".
     """
     if not isinstance(response, dict):
         return None
@@ -105,11 +115,30 @@ def _extract_scalar_id(response: Any) -> Optional[str]:
     if result is None:
         return None
 
-    # Если result — целое число или строка с цифрами, это валидный ID
+    # Форма 1: скалярный ID (целое число или строка с цифрами)
     if isinstance(result, int):
         return str(result)
     if isinstance(result, str) and result.strip() and result.strip().isdigit():
         return result.strip()
+
+    # Форма 2: вложенный объект с "id" (может быть {"item": {"id": 501}} или {"id": 501})
+    if isinstance(result, dict):
+        # Пытаемся извлечь "id" прямо из result
+        if "id" in result:
+            id_value = result["id"]
+            if isinstance(id_value, int):
+                return str(id_value)
+            if isinstance(id_value, str) and id_value.strip() and id_value.strip().isdigit():
+                return id_value.strip()
+
+        # Пытаемся найти объект с "id" (например, {"item": {"id": 501}})
+        for key, value in result.items():
+            if isinstance(value, dict) and "id" in value:
+                id_value = value["id"]
+                if isinstance(id_value, int):
+                    return str(id_value)
+                if isinstance(id_value, str) and id_value.strip() and id_value.strip().isdigit():
+                    return id_value.strip()
 
     return None
 
@@ -168,7 +197,7 @@ class ProjectCreationService:
         # Шаг 2: создание компании, если не найдена
         try:
             created = self._call("crm.company.add", {"fields": {"TITLE": company_name}})
-            created_id = _extract_scalar_id(created)
+            created_id = _extract_created_id(created)
         except Exception as exc:
             logger.warning("ensure_company: crm.company.add failed: %s", exc)
             return StepResult(status="error", error=f"Не удалось создать компанию: {exc}")
