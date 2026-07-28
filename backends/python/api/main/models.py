@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Tuple
 
 import jwt
@@ -75,10 +75,14 @@ class Bitrix24Account(models.Model, AbstractBitrixToken):
         return Client(self)
 
     def on_portal_domain_changed_event(self, _: PortalDomainChangedEvent):
-        self.save(update_fields=["portal_url"])
+        self.save(update_fields=["domain_url"])
 
     def on_oauth_token_renewed_event(self, event: OAuthTokenRenewedEvent):
-        self.expires = event.renewed_oauth_token.oauth_token.expires
+        expires = event.renewed_oauth_token.oauth_token.expires
+        # SDK обычно отдаёт expires как datetime (см. update_or_create_from_oauth_placement_data
+        # ниже), но поле в модели — IntegerField (unix timestamp). Приводим устойчиво к обоим
+        # случаям: datetime -> timestamp, число (int/float) оставляем как есть.
+        self.expires = int(expires.timestamp()) if isinstance(expires, datetime) else expires
         self.expires_in = event.renewed_oauth_token.oauth_token.expires_in
         self.save(update_fields=["access_token", "refresh_token", "expires", "expires_in"])
 
