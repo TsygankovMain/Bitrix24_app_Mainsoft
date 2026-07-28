@@ -53,6 +53,17 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Django проходит response-фазу в порядке, ОБРАТНОМ этому списку: модуль,
+    # стоящий выше (раньше), видит ответ позже — последним перед отправкой клиенту.
+    # Сжатие обязано быть самым последним преобразованием тела ответа, поэтому
+    # GZipMiddleware должен стоять выше всего, что ещё читает или меняет body:
+    # ImmutableNuxtWhiteNoiseMiddleware (статика), RequestLoggingMiddleware (пишет
+    # response.content как текст в лог — сожми раньше, и туда уедут бинарные
+    # gzip-байты вместо читаемого тела), CommonMiddleware, CSRF, messages и т.д.
+    # Для статики модуль безвреден: если WhiteNoise уже отдал предсжатый .br/.gz
+    # файл, у ответа выставлен Content-Encoding, и GZipMiddleware такой ответ
+    # пропускает без повторного сжатия (см. main.tests_compression).
+    "django.middleware.gzip.GZipMiddleware",
     "main.whitenoise_immutable.ImmutableNuxtWhiteNoiseMiddleware", # WhiteNoise + immutable-кеш для /_nuxt/*
     "main.middleware.RequestLoggingMiddleware",
     "main.middleware.ApiTrailingSlashNormalizeMiddleware",
