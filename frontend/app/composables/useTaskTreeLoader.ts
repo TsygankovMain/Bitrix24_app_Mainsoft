@@ -70,6 +70,10 @@ export function useTaskTreeLoader() {
     // user.get у Bitrix: user.get без курсора отдавал только первые 50 (баг «только
     // 50 сотрудников» / «User <id>» в дереве задачи). БД держит полную актуальную
     // копию (Фаза 2 sync-offload).
+    //
+    // activeOnly=false: списания часов в дереве задачи сплошь и рядом относятся
+    // к уже уволенным сотрудникам — их имена обязаны резолвиться, а не
+    // показывать "User <id>" (хотфикс 2026-07-28).
     const map: Record<string, TaskWorkspaceUser> = {}
     const USERS_PAGE_LIMIT = 200
     const USERS_MAX_PAGES = 25 // защита от зацикливания; 25*200 = 5000 сотрудников с запасом
@@ -77,7 +81,7 @@ export function useTaskTreeLoader() {
     let hitPageCap = false
     try {
       while (page <= USERS_MAX_PAGES) {
-        const response = await apiStore.getUsers(page, USERS_PAGE_LIMIT, true)
+        const response = await apiStore.getUsers(page, USERS_PAGE_LIMIT, false)
         for (const item of response.items) {
           map[String(item.id)] = { ID: item.id, NAME: item.name, LAST_NAME: item.last_name }
         }
@@ -221,6 +225,11 @@ export function useTaskTreeLoader() {
       const allTaskIds = allTasks.map(task => task.id)
       const taskItems: Array<{ taskId: string; item: TaskWorkspaceItem }> = []
       const seenItemIds = new Set<string>()
+      // Сотрудники, которых нет в usersMap (не попали в /api/users — справочник
+      // ещё не досинкался или портал новый). Дорезолвливаются одним
+      // Bitrix-батчем после сбора всех элементов дерева (см. ниже).
+      const missingEmployeeIds = new Set<string>()
+      const pendingFallbackItems: TaskWorkspaceItem[] = []
 
       for (let index = 0; index < allTaskIds.length; index += 50) {
         const chunk = allTaskIds.slice(index, index + 50)
@@ -261,20 +270,22 @@ export function useTaskTreeLoader() {
             const employeeName = user ? `${user.NAME || ''} ${user.LAST_NAME || ''}`.trim() : `User ${employeeId}`
             const date = (item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')) as string
 
-            taskItems.push({
-              taskId: taskIdValue,
-              item: {
-                id: itemId,
-                title: item.title || item.TITLE || '',
-                createdTime: item.createdTime,
-                hours: parseFloat(item[fieldHours] as string) || 0,
-                isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
-                description: (item[fieldDescription] || '') as string,
-                employeeId,
-                employeeName,
-                date
-              }
-            })
+            const taskItem: TaskWorkspaceItem = {
+              id: itemId,
+              title: item.title || item.TITLE || '',
+              createdTime: item.createdTime,
+              hours: parseFloat(item[fieldHours] as string) || 0,
+              isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
+              description: (item[fieldDescription] || '') as string,
+              employeeId,
+              employeeName,
+              date
+            }
+            if (!user && employeeId) {
+              missingEmployeeIds.add(employeeId)
+              pendingFallbackItems.push(taskItem)
+            }
+            taskItems.push({ taskId: taskIdValue, item: taskItem })
           }
 
           if (items.length >= 50) {
@@ -318,20 +329,22 @@ export function useTaskTreeLoader() {
               const employeeName = user ? `${user.NAME || ''} ${user.LAST_NAME || ''}`.trim() : `User ${employeeId}`
               const date = (item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')) as string
 
-              taskItems.push({
-                taskId: String(item[fieldTaskId] ?? currentTaskId),
-                item: {
-                  id: itemId,
-                  title: item.title || item.TITLE || '',
-                  createdTime: item.createdTime,
-                  hours: parseFloat(item[fieldHours] as string) || 0,
-                  isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
-                  description: (item[fieldDescription] || '') as string,
-                  employeeId,
-                  employeeName,
-                  date
-                }
-              })
+              const taskItem: TaskWorkspaceItem = {
+                id: itemId,
+                title: item.title || item.TITLE || '',
+                createdTime: item.createdTime,
+                hours: parseFloat(item[fieldHours] as string) || 0,
+                isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
+                description: (item[fieldDescription] || '') as string,
+                employeeId,
+                employeeName,
+                date
+              }
+              if (!user && employeeId) {
+                missingEmployeeIds.add(employeeId)
+                pendingFallbackItems.push(taskItem)
+              }
+              taskItems.push({ taskId: String(item[fieldTaskId] ?? currentTaskId), item: taskItem })
             }
 
             pageCount += 1
@@ -341,6 +354,58 @@ export function useTaskTreeLoader() {
 
             start += 50
           }
+        }
+      }
+
+      // Bitrix-фоллбэк для сотрудников вне usersMap (/api/users справочник ещё
+      // не досинкался / портал новый). Раньше такой батч уже был в этом файле
+      // до перехода на локальный справочник (см. git-историю), тот же паттерн
+      // используется и сейчас в reports/project-report.client.vue. Сбой здесь
+      // мягко деградирует до плейсхолдера "User <id>" — как и сбой /api/users
+      // выше — и не должен ронять дерево задачи (хотфикс 2026-07-28).
+      if (missingEmployeeIds.size > 0) {
+        try {
+          const idsToResolve = Array.from(missingEmployeeIds)
+          const resolvedUsers: Record<string, TaskWorkspaceUser> = {}
+
+          for (let i = 0; i < idsToResolve.length; i += 50) {
+            const chunk = idsToResolve.slice(i, i + 50)
+            const userBatch: Record<string, { method: string; params: Record<string, unknown> }> = {}
+            for (const id of chunk) {
+              userBatch[`user_${id}`] = { method: 'user.get', params: { ID: id } }
+            }
+
+            const userBatchResponse = await client.callBatch(userBatch)
+            const userBatchData = userBatchResponse.getData()
+
+            for (const id of chunk) {
+              const response = userBatchData[`user_${id}`] as RawRecord | undefined
+              if (!response || response.error) {
+                continue
+              }
+              const raw = extractResult(response)
+              const record = (Array.isArray(raw) ? raw[0] : raw) as RawRecord | null | undefined
+              if (record && record.ID !== undefined) {
+                resolvedUsers[id] = {
+                  ID: record.ID as string | number,
+                  NAME: record.NAME as string | undefined,
+                  LAST_NAME: record.LAST_NAME as string | undefined
+                }
+              }
+            }
+          }
+
+          if (Object.keys(resolvedUsers).length > 0) {
+            usersMap.value = { ...usersMap.value, ...resolvedUsers }
+            for (const taskItem of pendingFallbackItems) {
+              const resolved = resolvedUsers[String(taskItem.employeeId)]
+              if (resolved) {
+                taskItem.employeeName = `${resolved.NAME || ''} ${resolved.LAST_NAME || ''}`.trim() || taskItem.employeeName
+              }
+            }
+          }
+        } catch (fallbackError) {
+          console.error('Failed to resolve missing employee names via Bitrix user.get fallback', fallbackError)
         }
       }
 
