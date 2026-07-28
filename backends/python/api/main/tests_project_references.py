@@ -141,6 +141,23 @@ class CompaniesFromDbTest(TestCase):
         self.assertEqual([c["name"] for c in companies], ["АО Ромашка"])
         self.assertEqual(client.methods_called(), [])
 
+    def test_companies_keys_do_not_include_inn(self):
+        """Фиксирует набор ключей get_companies() (ревью Task 3): локальная
+        проекция карточек проектов не хранит ИНН вовсе (в таблице project_card
+        такого поля нет), поэтому "inn" здесь не появится ни сейчас, ни
+        случайно в будущем. Если это когда-нибудь изменится, тест должен
+        упасть громко — а не позволить кому-то снова опереться на
+        company["inn"] из get_companies() и тихо получить пустые строки,
+        как это уже случилось с inn_backfill_service (см. Task 6 плана:
+        дозаполнение ИНН намеренно вызывает get_full_company_directory(),
+        а не этот метод)."""
+        client = _FakeClient()
+        companies = ProjectCardService(client, self.account).get_companies()
+
+        self.assertEqual(len(companies), 1)
+        self.assertEqual(set(companies[0].keys()), {"id", "name", "search_text"})
+        self.assertNotIn("inn", companies[0])
+
     def test_no_project_cards_gives_empty_list_not_full_scan(self):
         ProjectCard.objects.all().delete()
         client = _FakeClient()
@@ -150,14 +167,28 @@ class CompaniesFromDbTest(TestCase):
         self.assertEqual(client.methods_called(), [])
 
     def test_other_portal_companies_are_not_visible(self):
+        # Фикс-раунд ревью: исходный тест заводил второй портал вообще без
+        # карточек и проверял пустоту результата — такой тест проходит и при
+        # полностью сломанном фильтре (запрос без scope_to_tenant тоже даёт
+        # [], пока у "чужого" портала нет ни одной строки в таблице). Заводим
+        # карточки с РАЗНЫМИ компаниями на обоих порталах и проверяем, что
+        # каждый видит только свою — это ловит утечку в любую сторону.
         other = Bitrix24Account.objects.create(
             b24_user_id=2, is_b24_user_admin=True, member_id="m-refs-3",
             is_master_account=True, domain_url="other.bitrix24.ru",
             status="active", application_version=1,
         )
-        companies = ProjectCardService(_FakeClient(), other).get_companies()
+        ProjectCard.objects.create(
+            **scope_to_tenant(other, write=True),
+            project_id="77", project_name="Портал ООО Чужой", stage="NEW",
+            company_id="99", company_name="ООО Чужой",
+        )
 
-        self.assertEqual(companies, [])
+        own_companies = ProjectCardService(_FakeClient(), self.account).get_companies()
+        other_companies = ProjectCardService(_FakeClient(), other).get_companies()
+
+        self.assertEqual([c["id"] for c in own_companies], ["15"])
+        self.assertEqual([c["id"] for c in other_companies], ["99"])
 
     def test_board_data_does_not_scan_the_portal(self):
         """get_board_data() не должен ОБХОДИТЬ портал: не должно быть ни
