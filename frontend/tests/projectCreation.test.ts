@@ -4,6 +4,7 @@ import { addOneYear, plannedAmount } from '../app/types/project-creation'
 import { stepBadgeClass, stepErrorTextClass, stepLabel } from '../app/utils/projectCreationLabels'
 import {
   missingFieldLabel,
+  shouldEmitProjectCreated,
   shouldRefetchLegalEntities,
   shouldResetFormOnOpen,
   shouldShowLegalEntityBlock,
@@ -170,4 +171,69 @@ test('missingFieldLabel: известное поле — человечески�
 
 test('missingFieldLabel: неизвестное поле — сырой код как есть, а не пусто', () => {
   assert.equal(missingFieldLabel('stage'), 'stage')
+})
+
+// Важное 2 финального ревью: событие 'created' (по нему доска/главный экран
+// перечитывают себя — см. onProjectCreated в pages/index.client.vue и
+// pages/projects/index.client.vue) раньше отправлялось только при
+// result.done===true. Но группа в Задачах пишется в локальную таблицу
+// (write_through на бэкенде) сразу, как только у неё есть id, — ДО попытки
+// шага карточки. Если карточка заканчивается status='error' (например,
+// Битрикс моргнул на crm.item.list), done=false прятал уже записанную
+// строку от доски: сотрудник закрывал окно и не видел свежий проект.
+// group.id заполнен ровно тогда, когда group.status — 'created' или 'found'
+// (ensure_group никогда не выставляет id при 'ambiguous'/'error') — то есть
+// ровно тогда, когда оркестратор дошёл до write_through независимо от
+// исхода карточки. Условие шире прежнего done: там, где done было true,
+// group.id тоже обязательно заполнен (card.status!=='error' недостижим без
+// успешной группы), так что уже покрытые случаи не меняются.
+function makeCreationResult(overrides: {
+  groupId?: string | null
+  cardStatus?: string
+  done?: boolean
+  missingFields?: string[]
+}) {
+  return {
+    company: { status: 'found', id: '1', name: 'АО Ромашка', candidates: [], error: null },
+    group: {
+      status: overrides.groupId ? 'found' : 'skipped',
+      id: overrides.groupId ?? null,
+      name: '',
+      candidates: [],
+      error: null
+    },
+    card: {
+      status: overrides.cardStatus ?? 'created',
+      id: overrides.cardStatus === 'error' ? null : '3',
+      name: '',
+      candidates: [],
+      error: overrides.cardStatus === 'error' ? 'Не удалось найти карточку.' : null
+    },
+    done: overrides.done ?? false,
+    missing_fields: overrides.missingFields ?? []
+  } as never
+}
+
+test('shouldEmitProjectCreated: группа создана, карточка упала ошибкой (done=false) — событие всё равно нужно', () => {
+  const result = makeCreationResult({ groupId: '44', cardStatus: 'error', done: false })
+  assert.equal(shouldEmitProjectCreated(result), true)
+})
+
+test('shouldEmitProjectCreated: группы нет (ранний отказ по missing_fields) — событие не отправляем', () => {
+  const result = makeCreationResult({ groupId: null, missingFields: ['hourly_rate'] })
+  assert.equal(shouldEmitProjectCreated(result), false)
+})
+
+test('shouldEmitProjectCreated: обычный полный успех (done=true) — событие отправляем как и раньше', () => {
+  const result = makeCreationResult({ groupId: '44', cardStatus: 'created', done: true })
+  assert.equal(shouldEmitProjectCreated(result), true)
+})
+
+test('shouldEmitProjectCreated: карточка осознанно skipped (смарт-процесс не настроен), группа есть — событие нужно', () => {
+  const result = makeCreationResult({ groupId: '44', cardStatus: 'skipped', done: true })
+  assert.equal(shouldEmitProjectCreated(result), true)
+})
+
+test('shouldEmitProjectCreated: результата ещё нет (null) — не роняет интерфейс', () => {
+  assert.equal(shouldEmitProjectCreated(null), false)
 })

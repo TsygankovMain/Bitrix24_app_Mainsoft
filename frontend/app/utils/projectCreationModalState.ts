@@ -92,3 +92,30 @@ const MISSING_FIELD_LABELS: Record<string, string> = {
 export function missingFieldLabel(field: string): string {
   return MISSING_FIELD_LABELS[field] ?? field
 }
+
+/**
+ * Важное 2 финального ревью: сигнал "перечитать доску/главный экран" (см.
+ * onProjectCreated в pages/index.client.vue и pages/projects/index.client.vue,
+ * подписанные на событие 'created' модалки) раньше отправлялся только при
+ * result.done === true. На бэкенде done = card.status != "error" — то есть
+ * условие следило ТОЛЬКО за исходом последнего, третьего шага.
+ *
+ * Но локальная строка проекта пишется в базу (write_through) сразу, как
+ * только есть group.id, — ДО попытки создать карточку смарт-процесса. Если
+ * сама эта попытка заканчивается status='error' (например, Битрикс моргнул
+ * на crm.item.list), строка в базе уже есть, а done=false прятал её от
+ * доски: сотрудник закрывал окно и не видел свежий проект, хотя группа в
+ * Задачах и локальная запись реально существуют.
+ *
+ * group.id заполнен ровно тогда, когда group.status — 'created' или 'found'
+ * (ensure_group в project_creation_service.py никогда не выставляет id при
+ * 'ambiguous' или 'error') — то есть ровно тогда, когда оркестратор дошёл до
+ * write_through, независимо от того, чем закончился шаг карточки. Условие
+ * шире прежнего done, а не просто другое: там, где done было true, group.id
+ * тоже обязательно заполнен (card.status !== 'error' на бэкенде достижимо
+ * только после успешной группы) — уже покрытые случаи не меняются,
+ * добавляется только пропущенный (группа есть, карточка — error).
+ */
+export function shouldEmitProjectCreated(result: ProjectCreationResult | null): boolean {
+  return Boolean(result?.group?.id)
+}

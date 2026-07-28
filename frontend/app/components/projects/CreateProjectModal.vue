@@ -9,6 +9,7 @@ import { formatProjectCurrency } from '~/utils/projectBoard'
 import { stepBadgeClass, stepErrorTextClass, stepLabel } from '~/utils/projectCreationLabels'
 import {
   missingFieldLabel,
+  shouldEmitProjectCreated,
   shouldRefetchLegalEntities,
   shouldResetFormOnOpen,
   shouldShowLegalEntityBlock,
@@ -241,7 +242,12 @@ async function submit() {
   try {
     result.value = await apiStore.createProject(form.value)
     selectedCandidateId.value = ''
-    if (result.value.done) {
+    // Важное 2 финального ревью: раньше условием было result.value.done —
+    // видело только исход шага карточки и пропускало случай «группа
+    // создана, карточка упала ошибкой» (строка уже в базе, а доска не
+    // перечитывается). shouldEmitProjectCreated смотрит на group.id вместо
+    // done — см. её докстринг в projectCreationModalState.ts.
+    if (shouldEmitProjectCreated(result.value)) {
       emit('created', result.value)
     } else if (shouldRefetchLegalEntities(result.value.missing_fields, legalEntities.value.length)) {
       // Находка 2: бэкенд посчитал юрлицо обязательным, хотя клиент так не
