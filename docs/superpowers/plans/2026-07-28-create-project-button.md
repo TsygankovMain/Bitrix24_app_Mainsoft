@@ -430,7 +430,9 @@ git commit -m "feat(create-project): чистый расчёт полей кар
   - `@dataclass StepResult` с полями `status: str`, `id: Optional[str]`, `name: str`, `candidates: List[Dict[str, str]]`, `error: Optional[str]`; метод `as_dict() -> Dict[str, Any]`.
   - `class ProjectCreationService` с `__init__(self, client, account)` и методом `ensure_company(self, company_id: Optional[str], company_name: str) -> StepResult`.
   - `_extract_rows(response: Any) -> Tuple[List[Dict[str, Any]], bool]` — защищённый разбор списочного ответа Битрикса. Возвращает `(rows, parsed_ok)`.
-  - `_extract_scalar_id(response: Any) -> Optional[str]` — защищённое извлечение скалярного идентификатора из `result`; `None`, если там словарь, список или `None`.
+  - `_extract_created_id(response: Any) -> Optional[str]` — идентификатор созданной записи из ответа метода `*.add`. Формы отличаются по методам: `crm.company.add` и `sonet_group.create` → `{"result": 77}`; `crm.item.add` → `{"result": {"item": {"id": 501}}}`; встречается и `{"result": {"id": 501}}`. Всё остальное → `None`, вызывающий код превращает это в `status: "error"`.
+
+**Про `_extract_created_id` отдельно:** списочный `_extract_rows` для ответов создания не годится — он не знает ключа `item` в единственном числе. Если звать его здесь, успешно созданная карточка смарт-процесса будет распознана как ошибка (проверено запуском при ревью Task 2).
 
 **Разбор ответа обязан быть таким же защищённым, как сам вызов.** Шаг оркестратора не имеет права бросить исключение: вызывающий код собирает частичный результат по трём шагам, и падение первого шага означает, что два следующих не выполнятся вовсе. `response.get("result")` напрямую использовать нельзя — Битрикс отдаёт `result` то списком, то словарём, а при нештатных ситуациях чем угодно. Тот же приём уже применён в проекте: см. `extract_items_from_response` в `project_sync_service.py`.
 
@@ -869,10 +871,10 @@ cd backends/python/api && python manage.py test main.tests_project_creation_serv
             logger.warning("ensure_group: sonet_group.create failed: %s", exc)
             return StepResult(status="error", error=f"Не удалось создать проект: {exc}")
 
-        # _extract_scalar_id (заведён в Task 2) переживает created=None и
+        # _extract_created_id (заведён в Task 2) переживает created=None и
         # result, оказавшийся словарём или списком: без него _clean_str тихо
         # положил бы в id строку вида "{'ID': 44}" со статусом "created".
-        created_id = _clean_str(_extract_scalar_id(created))
+        created_id = _clean_str(_extract_created_id(created))
         if not created_id:
             return StepResult(status="error", error="Битрикс не вернул идентификатор проекта.")
 
@@ -1187,10 +1189,9 @@ from .tenant_scoping import scope_to_tenant
 
         # crm.item.add отдаёт созданную запись как result.item — достаём id
         # через тот же защищённый разбор, что и везде (заведён в Task 2).
-        created_rows, _ = _extract_rows(created)
-        created_id = _clean_str(created_rows[0].get("id") or created_rows[0].get("ID")) if created_rows else ""
-        if not created_id:
-            created_id = _clean_str(_extract_scalar_id(created))
+        # crm.item.add отдаёт созданную запись как result.item — _extract_rows
+        # здесь не годится, он не знает ключа в единственном числе.
+        created_id = _clean_str(_extract_created_id(created))
         if not created_id:
             return StepResult(status="error", error="Битрикс не вернул идентификатор карточки.")
 
