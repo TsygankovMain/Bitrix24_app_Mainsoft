@@ -88,9 +88,14 @@ class ResolveProjectFieldsTest(SimpleTestCase):
         self.assertIsNone(fields.our_legal_entity_id)
         self.assertNotIn("our_legal_entity_id", missing)
 
-    def test_rate_missing_in_config_makes_the_field_required(self):
+    def test_rate_missing_everywhere_does_not_block_creation(self):
+        # Решение заказчика 29.07.2026: поле ставки убрано с формы. Если её
+        # нет и в настройках портала, заполнить значение физически нечем —
+        # требование блокировало бы создание проектов навсегда (все четыре
+        # шага "пропущено" и ни одного действия на экране, которое чинит).
         fields, missing = _resolve({"project_name": "П", "company_id": "15"}, config=_config(hourly_rate=0))
-        self.assertIn("hourly_rate", missing)
+        self.assertNotIn("hourly_rate", missing)
+        self.assertEqual(missing, [])
 
     def test_rate_from_form_beats_config(self):
         fields, missing = _resolve({"project_name": "П", "company_id": "15", "hourly_rate": "2000"})
@@ -119,7 +124,9 @@ class ResolveProjectFieldsTest(SimpleTestCase):
             config=_config(hourly_rate=0),
         )
         self.assertIsNone(fields.planned_budget_amount)
-        self.assertIn("hourly_rate", missing)
+        # Неизвестная ставка больше не попадает в missing (см. тест выше):
+        # плановая сумма остаётся None, но создание проекта не блокируется.
+        self.assertNotIn("hourly_rate", missing)
 
     def test_end_date_follows_explicit_start_date(self):
         fields, _ = _resolve(
