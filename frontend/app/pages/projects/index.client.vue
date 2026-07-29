@@ -3,7 +3,7 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref } from 'vue'
 import SearchableSelect from '~/components/common/SearchableSelect.vue'
 import { useProgress } from '~/composables/useProgress'
-import CreateProjectModal from '~/components/projects/CreateProjectModal.vue'
+import CreateProjectDrawer from '~/components/projects/CreateProjectDrawer.vue'
 import ProjectBoardColumn from '~/components/projects/ProjectBoardColumn.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import ProjectTimelineLane from '~/components/projects/ProjectTimelineLane.vue'
@@ -886,7 +886,7 @@ onMounted(async () => {
         @open-spa="openSpa"
       />
 
-      <CreateProjectModal v-if="CREATE_PROJECT_BUTTON_ENABLED" v-model:open="createProjectOpen" @created="onProjectCreated" />
+      <CreateProjectDrawer v-if="CREATE_PROJECT_BUTTON_ENABLED" v-model:open="createProjectOpen" @created="onProjectCreated" />
     </div>
   </div>
 </template>
