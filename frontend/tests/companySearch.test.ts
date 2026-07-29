@@ -8,6 +8,7 @@ import {
   companyNameMatchesQuery,
   companySearchNoticeText,
   createCompanySearchGate,
+  isCreatingNewCompany,
   isRateLimitError,
   limitVisibleSuggestions,
   MAX_VISIBLE_SUGGESTIONS,
@@ -363,4 +364,38 @@ test('limitVisibleSuggestions: явно переданный потолок пе
 
 test('MAX_VISIBLE_SUGGESTIONS: в границах, которые просит бриф (не больше 5-7)', () => {
   assert.ok(MAX_VISIBLE_SUGGESTIONS >= 5 && MAX_VISIBLE_SUGGESTIONS <= 7)
+})
+
+// --- isCreatingNewCompany ---
+// inn-frontend-brief.md, §1: поле ИНН появляется только когда создаётся
+// НОВАЯ компания — то есть company_id пуст, а company_name (введённый
+// текст) — нет. Та же пара характеризует ветку "создать новую компанию" и
+// на бэкенде (resolve_project_fields: "ИНН обязателен РОВНО когда форма
+// создаёт НОВУЮ компанию: company_id не передан, а company_name есть").
+// Функция используется и чтобы показать/скрыть поле ИНН, и чтобы решить,
+// требовать ли валидный ИНН в canSubmit — одно и то же условие для обоих
+// решений, вынесено один раз, чтобы им не разойтись.
+
+test('isCreatingNewCompany: id пуст, есть введённое название — создаётся новая компания', () => {
+  assert.equal(isCreatingNewCompany(null, 'Ромашка'), true)
+})
+
+test('isCreatingNewCompany: id указывает на существующую компанию — не создаётся новая, даже если name тоже пришёл', () => {
+  assert.equal(isCreatingNewCompany('42', 'АО Ромашка'), false)
+})
+
+test('isCreatingNewCompany: ни id, ни названия — поле компании пусто, новая компания не создаётся', () => {
+  assert.equal(isCreatingNewCompany(null, ''), false)
+})
+
+test('isCreatingNewCompany: название из одних пробелов — то же самое, что пусто', () => {
+  assert.equal(isCreatingNewCompany(null, '   '), false)
+})
+
+test('isCreatingNewCompany: пустая строка id (не null) ведёт себя как отсутствие id', () => {
+  assert.equal(isCreatingNewCompany('', 'Ромашка'), true)
+})
+
+test('isCreatingNewCompany: undefined id — не роняет функцию, ведёт себя как отсутствие id', () => {
+  assert.equal(isCreatingNewCompany(undefined as unknown as null, 'Ромашка'), true)
 })

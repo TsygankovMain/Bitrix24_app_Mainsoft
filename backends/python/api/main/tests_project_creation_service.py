@@ -295,6 +295,672 @@ class EnsureCompanyTest(_ServiceTestCase):
         self.assertNotIn("crm.company.add", client.methods_called())
 
 
+class EnsureCompanyByInnTest(_ServiceTestCase):
+    """Шаг 1 ensure_company при переданном ИНН (решение заказчика 29.07.2026,
+    inn-brief.md): точный поиск по РЕКВИЗИТУ (crm.requisite.list, RQ_INN), а
+    не по названию — компания у Битрикса привязана к ИНН, а не к тексту,
+    который ввёл человек. Без inn= (или с inn="") поведение полностью
+    совпадает с EnsureCompanyTest — см. test_inn_not_provided_skips_inn_
+    search_entirely ниже и весь класс EnsureCompanyTest, оставшийся
+    нетронутым."""
+
+    VALID_INN = "7707083893"  # проверенный валидный ИНН юрлица (10 цифр)
+
+    def test_inn_match_is_used_without_creating(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ENTITY_ID": "77", "RQ_INN": self.VALID_INN}]},
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "found")
+        self.assertEqual(result.id, "77")
+        self.assertIsNone(result.entered_name)
+        self.assertNotIn("crm.company.add", client.methods_called())
+
+    def test_inn_match_under_different_name_is_flagged_not_silently_renamed(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ENTITY_ID": "77", "RQ_INN": self.VALID_INN}]},
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "ООО Старое Название"}]},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "found")
+        self.assertEqual(result.id, "77")
+        # .name — НАСТОЯЩЕЕ (найденное) название, не то, что ввёл человек.
+        self.assertEqual(result.name, "ООО Старое Название")
+        # .entered_name — то, что ввёл человек, отдельным полем (не в error).
+        self.assertEqual(result.entered_name, "АО Ромашка")
+        self.assertIsNone(result.error)
+        self.assertNotIn("crm.company.add", client.methods_called())
+
+    def test_as_dict_exposes_entered_name(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ENTITY_ID": "77", "RQ_INN": self.VALID_INN}]},
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "ООО Старое Название"}]},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.as_dict()["entered_name"], "АО Ромашка")
+
+    def test_inn_search_uses_exact_filter_not_substring(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": 77},
+        })
+        self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        method, params = client.calls[0]
+        self.assertEqual(method, "crm.requisite.list")
+        self.assertEqual(params["filter"]["ENTITY_TYPE_ID"], 4)
+        self.assertNotIn("%RQ_INN", params["filter"])
+        self.assertEqual(params["filter"]["RQ_INN"], self.VALID_INN)
+
+    def test_no_inn_match_falls_back_to_name_search_and_creates(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": 77},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+        self.assertEqual(
+            client.methods_called(), ["crm.requisite.list", "crm.company.list", "crm.company.add"]
+        )
+
+    def test_inn_not_provided_skips_inn_search_entirely(self):
+        client = _FakeClient({"crm.company.list": {"result": [{"ID": "15", "TITLE": "АО Ромашка"}]}})
+        result = self.service(client).ensure_company(None, "АО Ромашка")
+
+        self.assertEqual(result.status, "found")
+        self.assertNotIn("crm.requisite.list", client.methods_called())
+
+    def test_blank_inn_string_skips_inn_search_entirely(self):
+        client = _FakeClient({"crm.company.list": {"result": [{"ID": "15", "TITLE": "АО Ромашка"}]}})
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn="   ")
+
+        self.assertEqual(result.status, "found")
+        self.assertNotIn("crm.requisite.list", client.methods_called())
+
+    def test_explicit_company_id_skips_inn_search_even_if_inn_is_sent(self):
+        """Оборонительная проверка "не трогается" на уровне сервиса, не
+        только чистой функции resolve_project_fields: даже если inn=
+        передан вместе с company_id, ensure_company не должен полезть за
+        реквизитами уже выбранной компании (inn-brief.md, "Решение")."""
+        client = _FakeClient()
+        result = self.service(client).ensure_company("15", "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "found")
+        self.assertEqual(result.id, "15")
+        self.assertEqual(client.methods_called(), [])
+
+    def test_multiple_inn_matches_return_ambiguous(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [
+                {"ENTITY_ID": "77", "RQ_INN": self.VALID_INN},
+                {"ENTITY_ID": "78", "RQ_INN": self.VALID_INN},
+            ]},
+            "crm.company.list": [
+                {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+                {"result": [{"ID": "78", "TITLE": "АО Ромашка Два"}]},
+            ],
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "ambiguous")
+        self.assertEqual(sorted(c["id"] for c in result.candidates), ["77", "78"])
+        self.assertNotIn("crm.company.add", client.methods_called())
+
+    def test_orphaned_requisite_falls_back_to_name_search(self):
+        """Реквизит с этим ИНН есть, а компании уже нет (удалена) — не
+        считаем совпадением, ищем по названию как обычно."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ENTITY_ID": "999", "RQ_INN": self.VALID_INN}]},
+            "crm.company.list": [
+                {"result": []},  # резолв TITLE для ENTITY_ID=999 — компании нет
+                {"result": []},  # поиск по названию — тоже пусто
+            ],
+            "crm.company.add": {"result": 77},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+        self.assertEqual(result.id, "77")
+
+    def test_inn_search_malformed_response_is_error(self):
+        client = _FakeClient({"crm.requisite.list": {"result": {"unexpected": "shape"}}})
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.company.add", client.methods_called())
+
+    def test_inn_search_bitrix_failure_becomes_error(self):
+        client = _FakeClient({"crm.requisite.list": RuntimeError("портал недоступен")})
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("портал недоступен", result.error)
+
+    def test_inn_match_company_lookup_malformed_response_is_error(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ENTITY_ID": "77", "RQ_INN": self.VALID_INN}]},
+            "crm.company.list": {"result": {"unexpected": "shape"}},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.company.add", client.methods_called())
+
+    def test_inn_match_company_lookup_failure_becomes_error(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ENTITY_ID": "77", "RQ_INN": self.VALID_INN}]},
+            "crm.company.list": RuntimeError("нет доступа"),
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+
+    def test_inn_search_accepts_lower_camel_case_fields(self):
+        """Остальной код проекта проверяет оба варианта регистра полей
+        Битрикса (ENTITY_ID/entityId, RQ_INN/rqInn — см.
+        project_board_service.py/company_search_service.py); та же защита
+        нужна и здесь."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"entityId": "77", "rqInn": self.VALID_INN}]},
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+        })
+        result = self.service(client).ensure_company(None, "АО Ромашка", inn=self.VALID_INN)
+
+        self.assertEqual(result.status, "found")
+        self.assertEqual(result.id, "77")
+
+
+class EnsureRequisiteTest(_ServiceTestCase):
+    """Шаг реквизита (ИНН) для новой компании — inn-brief.md, раздел
+    «Реквизит — отдельный шаг со своим статусом». В create()/
+    _create_under_lock вызывается безусловно после ensure_company, но сам
+    решает применимость по company_id/inn (см. test_blank_*_is_skipped_
+    ниже) — тот же приём, что и у ensure_card с entity_type_id/mapping.
+
+    Выбор шаблона реквизита (два раунда ре-ревью координатора после сверки с
+    документацией Битрикса, см. inn-backend-report.md): у
+    crm.requisite.preset.list НЕТ признака "по умолчанию" — полный список
+    полей шаблона: ID, ENTITY_TYPE_ID, COUNTRY_ID, DATE_CREATE, DATE_MODIFY,
+    CREATED_BY_ID, MODIFY_BY_ID, NAME, XML_ID, ACTIVE, SORT. Выбор идёт по
+    ACTIVE="Y" + детерминированному порядку {"SORT": "ASC", "ID": "ASC"}, и
+    ОБЯЗАТЕЛЬНО проверяется поддержка поля RQ_INN конкретным шаблоном через
+    crm.requisite.preset.field.list — состав полей шаблона настраиваемый,
+    без этой проверки crm.requisite.add мог бы молча создать реквизит без
+    ИНН (шаг отчитался бы успехом, ИНН потерян).
+
+    Второй раунд (см. test_field_list_request_uses_preset_object_not_scalar_id):
+    запрос crm.requisite.preset.field.list — {"preset": {"ID": ...}}, НЕ
+    {"id": ...}; форма ответа ПОДТВЕРЖДЕНА — result это список объектов с
+    кодом поля в FIELD_NAME (словарь по кодам — не основной, а лишь
+    защитный вариант для этого метода); один запрос без обхода страниц —
+    решение осознанное (шаблон реквизита физически не превышает одну
+    страницу ответа), задокументировано в докстринге
+    _requisite_preset_supports_inn.
+
+    Третий раунд, задача на вычитание (см. inn-trim-report.md): пагинация
+    убрана целиком (константа лимита страниц и цикл обхода — код и тесты).
+    Заодно чинится ре-ревью координатора — текст ошибки при
+    _resolve_requisite_preset_id() -> None различает "отсутствие шаблона
+    ПОДТВЕРЖДЕНО" (настройка портала, повтор не поможет) от "не удалось
+    ПРОВЕРИТЬ" (временный сбой Битрикса, повтор имеет смысл) — см.
+    test_no_template_error_states_it_is_a_portal_setting_not_a_retry_case
+    и test_verification_failure_error_states_retry_may_help_not_a_portal_
+    setting ниже."""
+
+    VALID_INN = "7707083893"
+
+    def setUp(self):
+        super().setUp()
+        # _resolve_requisite_preset_id кэширует по account.pk — Django
+        # TestCase откатывает транзакцию между тестами, и pk легко
+        # повторяется у SQLite (см. cache.clear() в CreateCacheInvalidationTest
+        # этого же файла, тот же повод). Без явной очистки один тест мог бы
+        # унаследовать PRESET_ID, закэшированный другим тестом этого класса.
+        cache.clear()
+
+    def _preset_response(self, presets):
+        return {"result": presets}
+
+    def _active_preset(self, preset_id, name="Российская компания", **overrides):
+        row = {"ID": preset_id, "ENTITY_TYPE_ID": "4", "NAME": name, "ACTIVE": "Y"}
+        row.update(overrides)
+        return row
+
+    def _field_list_response(self, codes):
+        """Форма ответа crm.requisite.preset.field.list по умолчанию в
+        тестах — список объектов-описаний поля с кодом в FIELD_NAME.
+        ПОДТВЕРЖДЕНО документацией Битрикса (см. докстринг
+        _extract_preset_field_codes) — основной вариант, не один из
+        нескольких равновероятных."""
+        return {"result": [{"FIELD_NAME": code} for code in codes]}
+
+    def _field_list_dict_response(self, codes):
+        """Второй, ЗАЩИТНЫЙ вариант формы ответа — словарь, ключи которого
+        коды полей (семейство crm.*.fields; для ЭТОГО метода документацией
+        не подтверждён, см. докстринг _extract_preset_field_codes)."""
+        return {"result": {code: {} for code in codes}}
+
+    def test_field_list_request_uses_preset_object_not_scalar_id(self):
+        """Регрессия ре-ревью координатора: первая версия слала {"id": ...}
+        вместо {"preset": {"ID": ...}} — метод не отрабатывал вовсе,
+        поддержка RQ_INN не подтверждалась НИ ДЛЯ ОДНОГО шаблона, кнопка
+        «Создать проект» переставала работать целиком на ветке новой
+        компании. Это ровно тот случай, где ошибка не видна в разборе
+        ответа (разбор был написан и протестирован верно) и ловится только
+        проверкой структуры самого запроса."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        field_list_call = next(c for c in client.calls if c[0] == "crm.requisite.preset.field.list")
+        params = field_list_call[1]
+        self.assertNotIn("id", params)
+        self.assertEqual(params["preset"], {"ID": 5})
+        self.assertEqual(params["start"], 0)
+
+    def test_creates_requisite_with_single_qualifying_preset(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN", "RQ_COMPANY_NAME"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+        self.assertEqual(result.id, "501")
+
+        method, params = client.calls[-1]
+        self.assertEqual(method, "crm.requisite.add")
+        req_fields = params["fields"]
+        self.assertEqual(req_fields["PRESET_ID"], 5)
+        self.assertEqual(req_fields["ENTITY_TYPE_ID"], 4)
+        self.assertEqual(req_fields["ENTITY_ID"], 77)
+        self.assertEqual(req_fields["RQ_INN"], self.VALID_INN)
+        self.assertEqual(req_fields["NAME"], "АО Ромашка")
+
+    def test_preset_list_request_uses_active_filter_and_deterministic_order(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        preset_list_call = next(c for c in client.calls if c[0] == "crm.requisite.preset.list")
+        params = preset_list_call[1]
+        self.assertEqual(params["filter"]["ENTITY_TYPE_ID"], 4)
+        self.assertEqual(params["filter"]["ACTIVE"], "Y")
+        self.assertEqual(params["order"], {"SORT": "ASC", "ID": "ASC"})
+
+    def test_multiple_qualifying_presets_pick_first_by_order(self):
+        """Оба шаблона активны и поддерживают RQ_INN — берётся ПЕРВЫЙ в
+        порядке, который вернул сервер (SORT/ID ASC), а не последний и не
+        произвольный."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response(
+                [self._active_preset("5", name="Первый"), self._active_preset("6", name="Второй")]
+            ),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        _, params = client.calls[-1]
+        self.assertEqual(params["fields"]["PRESET_ID"], 5)
+
+    def test_preset_without_rq_inn_support_is_skipped_for_next_candidate(self):
+        """Первый (по порядку) шаблон активен, но в его состав полей RQ_INN
+        не входит — без проверки crm.requisite.add мог бы молча создать
+        реквизит без ИНН. Второй шаблон поддерживает RQ_INN — используется он."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response(
+                [self._active_preset("5", name="Без ИНН"), self._active_preset("6", name="С ИНН")]
+            ),
+            "crm.requisite.preset.field.list": [
+                self._field_list_response(["RQ_COMPANY_NAME"]),  # шаблон 5 — без RQ_INN
+                self._field_list_response(["RQ_INN", "RQ_COMPANY_NAME"]),  # шаблон 6 — с RQ_INN
+            ],
+            "crm.requisite.add": {"result": 501},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+        _, params = client.calls[-1]
+        self.assertEqual(params["fields"]["PRESET_ID"], 6)
+        # Оба шаблона были проверены на RQ_INN — не только первый.
+        self.assertEqual(
+            [c[1]["preset"]["ID"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
+            [5, 6],
+        )
+
+    def test_no_candidate_supports_rq_inn_is_the_same_as_no_template_error(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response(
+                [self._active_preset("5"), self._active_preset("6")]
+            ),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_COMPANY_NAME"]),
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertIsNotNone(result.error)
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+
+    def test_inactive_preset_is_not_considered_even_if_server_returns_it(self):
+        """Оборонительная проверка (та же практика, что и для ENTITY_TYPE_ID
+        выше): не доверяем одному только серверному filter=ACTIVE:"Y" —
+        перепроверяем на клиенте. Неактивный шаблон идёт первым в списке (по
+        SORT), но не должен быть выбран — используется активный."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([
+                self._active_preset("5", name="Неактивный", ACTIVE="N"),
+                self._active_preset("6", name="Активный"),
+            ]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+        _, params = client.calls[-1]
+        self.assertEqual(params["fields"]["PRESET_ID"], 6)
+        # Неактивный шаблон не должен даже дойти до проверки RQ_INN.
+        self.assertEqual(
+            [c[1]["preset"]["ID"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
+            [6],
+        )
+
+    def test_only_inactive_presets_is_the_same_as_no_template_error(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response(
+                [self._active_preset("5", ACTIVE="N")]
+            ),
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.requisite.preset.field.list", client.methods_called())
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+
+    def test_preset_filtered_by_entity_type_id_four(self):
+        """Пресеты для физлиц/ИП (другой ENTITY_TYPE_ID) не должны попасть
+        в выбор — даже если сервер вернул их вперемешку."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([
+                {"ID": "9", "ENTITY_TYPE_ID": "1", "NAME": "Физлицо", "ACTIVE": "Y"},
+                self._active_preset("6"),
+            ]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        _, params = client.calls[-1]
+        self.assertEqual(params["fields"]["PRESET_ID"], 6)
+        # ID=9 (чужой ENTITY_TYPE_ID) не должен даже дойти до проверки RQ_INN.
+        self.assertEqual(
+            [c[1]["preset"]["ID"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
+            [6],
+        )
+
+    def test_preset_response_wrapped_in_items_key_is_parsed(self):
+        """crm.item.list-подобная форма ({"result": {"items": [...]}}) — форма
+        ответа именно этого метода нигде в проекте раньше не проверялась
+        (inn-brief.md: «уже дважды... разбор ответа оказывался неверным»)."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": {"result": {"items": [self._active_preset("6")]}},
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+
+    def test_preset_field_list_dict_shaped_response_is_still_parsed_defensively(self):
+        """Второй, ЗАЩИТНЫЙ вариант формы ответа — словарь по кодам полей
+        (семейство crm.*.fields). Для ЭТОГО метода документацией не
+        подтверждён (основной и подтверждённый — список с FIELD_NAME, см.
+        test_creates_requisite_with_single_qualifying_preset и докстринг
+        _extract_preset_field_codes), но разбор всё равно его переживает —
+        чистая защита на случай расхождения версии/локали портала."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_dict_response(["RQ_INN", "RQ_COMPANY_NAME"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+
+    def test_preset_field_list_malformed_response_treats_preset_as_unsupported(self):
+        """Неразбираемый ответ crm.requisite.preset.field.list — не
+        "наверное поддерживает", а "не подтверждено": шаблон пропускается,
+        как и при явном отсутствии RQ_INN (безопаснее пропустить рабочий
+        шаблон, чем один раз молча потерять ИНН). Единственный кандидат —
+        значит field.list не отработал НА ВСЕХ кандидатах: текст ошибки
+        обязан звать повторить, а не отправлять чинить портал (ре-ревью
+        координатора, см. inn-trim-report.md и test_verification_failure_
+        error_states_retry_may_help_not_a_portal_setting ниже)."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": {"result": "неожиданная строка вместо словаря/списка"},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+        self.assertNotIn("не настроен", result.error)
+        self.assertNotIn("не поможет", result.error)
+
+    def test_preset_field_list_bitrix_failure_treats_preset_as_unsupported(self):
+        """Тот же случай, что и выше, только причина — сетевой сбой, а не
+        неразборчивый ответ; сообщение обязано быть тем же самым "не
+        подтверждено", а не "настройка портала"."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": RuntimeError("сеть недоступна"),
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+        self.assertNotIn("не настроен", result.error)
+        self.assertNotIn("не поможет", result.error)
+
+    def test_no_preset_template_is_a_clear_error_not_invented(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": {"result": []},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertIsNotNone(result.error)
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+
+    def test_no_template_error_states_it_is_a_portal_setting_not_a_retry_case(self):
+        """Ре-ревью координатора: текст ошибки обязан прямо говорить, что
+        нужна настройка портала, а не временный сбой — иначе человек будет
+        жать «Повторить» бесконечно. Тут отсутствие шаблона ПОДТВЕРЖДЕНО —
+        crm.requisite.preset.list честно отработал и отдал пустой список."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": {"result": []},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertIn("не настроен", result.error)
+        self.assertIn("не поможет", result.error)
+
+    def test_verification_failure_error_states_retry_may_help_not_a_portal_setting(self):
+        """Второй раунд ре-ревью координатора (задача на вычитание, см.
+        inn-trim-report.md): сетевой сбой crm.requisite.preset.list — НЕ то
+        же самое, что подтверждённое отсутствие подходящего шаблона. Раньше
+        текст ошибки был один на оба случая и ВСЕГДА обвинял настройку
+        портала — здесь портал мог быть настроен верно, сообщение обязано
+        звать повторить, а не отправлять администратора чинить то, что не
+        сломано. Сравни с test_no_template_error_states_it_is_a_portal_
+        setting_not_a_retry_case выше — тот же метод падает по другой
+        причине и обязан дать ДРУГОЙ текст."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": RuntimeError("сеть недоступна"),
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+        self.assertNotIn("не настроен", result.error)
+        self.assertNotIn("не поможет", result.error)
+        self.assertIn("Не удалось проверить", result.error)
+
+    def test_preset_list_malformed_response_is_error_not_crash(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": {"result": ["garbage", "strings"]},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+        self.assertNotIn("не настроен", result.error)
+        self.assertNotIn("не поможет", result.error)
+
+    def test_preset_list_bitrix_failure_is_error_not_crash(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": RuntimeError("сеть недоступна"),
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+
+    def test_existing_requisite_with_same_inn_is_found_not_recreated(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ID": "900", "ENTITY_ID": "77", "RQ_INN": self.VALID_INN}]},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "found")
+        self.assertEqual(result.id, "900")
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+        self.assertNotIn("crm.requisite.preset.list", client.methods_called())
+
+    def test_existing_requisite_with_different_inn_does_not_block_creation(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ID": "900", "ENTITY_ID": "77", "RQ_INN": "9999999999"}]},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+
+    def test_idempotency_check_is_scoped_to_this_company(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        method, params = client.calls[0]
+        self.assertEqual(method, "crm.requisite.list")
+        self.assertEqual(params["filter"]["ENTITY_TYPE_ID"], 4)
+        self.assertEqual(params["filter"]["ENTITY_ID"], 77)
+
+    def test_idempotency_check_malformed_response_is_error_not_crash(self):
+        client = _FakeClient({"crm.requisite.list": {"result": {"unexpected": "shape"}}})
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+
+    def test_idempotency_check_bitrix_failure_is_error_not_crash(self):
+        client = _FakeClient({"crm.requisite.list": RuntimeError("нет прав")})
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+
+    def test_add_failure_becomes_error_status(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": RuntimeError("поле не найдено"),
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("поле не найдено", result.error)
+
+    def test_add_without_valid_id_becomes_error(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": ""},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+
+    def test_blank_inn_is_skipped_no_bitrix_calls(self):
+        client = _FakeClient()
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", "")
+
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(client.methods_called(), [])
+
+    def test_blank_company_id_is_skipped_no_bitrix_calls(self):
+        client = _FakeClient()
+        result = self.service(client).ensure_requisite("", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(client.methods_called(), [])
+
+    def test_preset_lookup_is_cached_across_calls(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        service = self.service(client)
+        service.ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+        service.ensure_requisite("78", "АО Вторая", "7736050003")
+
+        # Кэшируется РЕЗУЛЬТАТ разрешения — ни preset.list, ни per-кандидатная
+        # проверка RQ_INN не повторяются на второй вызов.
+        self.assertEqual(client.methods_called().count("crm.requisite.preset.list"), 1)
+        self.assertEqual(client.methods_called().count("crm.requisite.preset.field.list"), 1)
+
+
 class EnsureGroupTest(_ServiceTestCase):
     def test_single_match_is_reused(self):
         client = _FakeClient({
@@ -680,6 +1346,12 @@ class CreateOrchestrationTest(_ServiceTestCase):
             )}},
             "crm.company.list": {"result": []},
             "crm.company.add": {"result": 77},
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": {"result": [
+                {"ID": "5", "ENTITY_TYPE_ID": "4", "NAME": "Российская компания", "ACTIVE": "Y"}
+            ]},
+            "crm.requisite.preset.field.list": {"result": {"RQ_INN": {}, "RQ_COMPANY_NAME": {}}},
+            "crm.requisite.add": {"result": 501},
             "sonet_group.get": {"result": []},
             "sonet_group.create": {"result": 44},
             "crm.item.list": {"result": {"items": []}},
@@ -689,7 +1361,13 @@ class CreateOrchestrationTest(_ServiceTestCase):
         return _FakeClient(responses)
 
     def _form(self, **overrides):
-        form = {"project_name": "Портал АО Ромашка", "company_name": "АО Ромашка"}
+        form = {
+            "project_name": "Портал АО Ромашка",
+            "company_name": "АО Ромашка",
+            # ИНН обязателен при создании новой компании (company_id не
+            # передан) — решение заказчика 29.07.2026, inn-brief.md.
+            "inn": "7707083893",
+        }
         form.update(overrides)
         return form
 
@@ -703,6 +1381,7 @@ class CreateOrchestrationTest(_ServiceTestCase):
         result = self._create(self._client())
 
         self.assertEqual(result["company"]["status"], "created")
+        self.assertEqual(result["requisite"]["status"], "created")
         self.assertEqual(result["group"]["status"], "created")
         self.assertEqual(result["card"]["status"], "created")
         self.assertTrue(result["done"])
@@ -712,6 +1391,13 @@ class CreateOrchestrationTest(_ServiceTestCase):
         client = self._client(
             **{
                 "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+                # Реквизит с этим ИНН у этой компании уже есть (первый вызов
+                # его записал) — идемпотентная проверка ensure_requisite
+                # обязана найти его и не создавать заново (тот же принцип,
+                # что и у company/group/card ниже).
+                "crm.requisite.list": {"result": [
+                    {"ID": "900", "ENTITY_ID": "77", "RQ_INN": "7707083893"}
+                ]},
                 "sonet_group.get": {"result": [{"ID": "44", "NAME": "Портал АО Ромашка"}]},
                 "crm.item.list": {"result": {"items": [{"id": 901}]}},
             }
@@ -719,10 +1405,11 @@ class CreateOrchestrationTest(_ServiceTestCase):
         result = self._create(client)
 
         self.assertEqual(result["company"]["status"], "found")
+        self.assertEqual(result["requisite"]["status"], "found")
         self.assertEqual(result["group"]["status"], "found")
         self.assertEqual(result["card"]["status"], "found")
         self.assertTrue(result["done"])
-        for method in ("crm.company.add", "sonet_group.create", "crm.item.add"):
+        for method in ("crm.company.add", "crm.requisite.add", "sonet_group.create", "crm.item.add"):
             self.assertNotIn(method, client.methods_called())
 
     def test_group_failure_keeps_company_and_skips_card(self):
@@ -758,6 +1445,9 @@ class CreateOrchestrationTest(_ServiceTestCase):
         result = self._create(client)
 
         self.assertEqual(result["company"]["status"], "ambiguous")
+        # Компания не резолвилась — реквизиту нечего делать, шаг не пытался
+        # (см. ранний return в _create_under_lock).
+        self.assertEqual(result["requisite"]["status"], "skipped")
         self.assertEqual(result["group"]["status"], "skipped")
         self.assertEqual(result["card"]["status"], "skipped")
         self.assertFalse(result["done"])
@@ -770,6 +1460,45 @@ class CreateOrchestrationTest(_ServiceTestCase):
         self.assertIn("project_name", result["missing_fields"])
         self.assertFalse(result["done"])
         self.assertNotIn("crm.company.add", client.methods_called())
+
+    def test_missing_inn_stops_before_any_bitrix_call_when_creating_new_company(self):
+        # Сквозная (не только на уровне resolve_project_fields — см.
+        # tests_project_creation_defaults.InnRequirementTest) проверка: без
+        # ИНН при создании новой компании create() обязан остановиться на
+        # missing_fields, ничего не создав и не изменив в Битриксе (не 500,
+        # см. inn-brief.md "Битый ИНН — понятная ошибка, а не 500"). Ссылочные
+        # чтения (config/legal_entities/stage_options) происходят раньше
+        # проверки missing — так же, как и в
+        # test_missing_required_fields_stop_before_any_bitrix_call выше, —
+        # поэтому здесь, как и там, проверяется отсутствие МУТИРУЮЩИХ вызовов,
+        # а не пустой журнал вызовов целиком.
+        client = self._client()
+        result = self._create(client, form={"project_name": "Портал", "company_name": "АО Ромашка"})
+
+        self.assertIn("inn", result["missing_fields"])
+        self.assertFalse(result["done"])
+        for method in ("crm.company.add", "crm.requisite.add", "sonet_group.create", "crm.item.add"):
+            self.assertNotIn(method, client.methods_called())
+
+    def test_invalid_inn_stops_before_any_bitrix_call(self):
+        # "٧٧٠٧٠٨٣٨٩٣" — аравийско-индийские цифры того же числа 7707083893,
+        # что и валидный ИНН по умолчанию в _form() выше: та же ловушка, что
+        # и в tests_inn_validation.test_unicode_digit_lookalikes_are_rejected_
+        # not_crash, но здесь проверяется сквозной путь (значит, ASCII-
+        # ограничение реально останавливает Bitrix-вызовы, а не только сам
+        # validate_inn). Контрольная сумма сознательно не проверяется
+        # (см. докстринг inn_validation.py) — поэтому пример невалидности
+        # обязан быть про состав символов, не про контрольную цифру.
+        client = self._client()
+        result = self._create(
+            client,
+            form={"project_name": "Портал", "company_name": "АО Ромашка", "inn": "٧٧٠٧٠٨٣٨٩٣"},
+        )
+
+        self.assertIn("inn", result["missing_fields"])
+        self.assertFalse(result["done"])
+        for method in ("crm.company.add", "crm.requisite.add", "sonet_group.create", "crm.item.add"):
+            self.assertNotIn(method, client.methods_called())
 
     def test_card_error_still_reports_created_company_and_group(self):
         client = self._client(**{"crm.item.add": RuntimeError("поле не найдено")})
@@ -806,6 +1535,12 @@ class CreateOrchestrationConcurrencyTest(_ServiceTestCase):
             )}},
             "crm.company.list": {"result": []},
             "crm.company.add": {"result": 77},
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": {"result": [
+                {"ID": "5", "ENTITY_TYPE_ID": "4", "NAME": "Российская компания", "ACTIVE": "Y"}
+            ]},
+            "crm.requisite.preset.field.list": {"result": {"RQ_INN": {}, "RQ_COMPANY_NAME": {}}},
+            "crm.requisite.add": {"result": 501},
             "sonet_group.get": {"result": []},
             "sonet_group.create": {"result": 44},
             "crm.item.list": {"result": {"items": []}},
@@ -815,7 +1550,11 @@ class CreateOrchestrationConcurrencyTest(_ServiceTestCase):
         return _FakeClient(responses)
 
     def _form(self, **overrides):
-        form = {"project_name": "Портал АО Ромашка", "company_name": "АО Ромашка"}
+        form = {
+            "project_name": "Портал АО Ромашка",
+            "company_name": "АО Ромашка",
+            "inn": "7707083893",
+        }
         form.update(overrides)
         return form
 
@@ -832,6 +1571,7 @@ class CreateOrchestrationConcurrencyTest(_ServiceTestCase):
             result = self._create(client)
 
         self.assertEqual(result["company"]["status"], "error")
+        self.assertEqual(result["requisite"]["status"], "skipped")
         self.assertEqual(result["group"]["status"], "skipped")
         self.assertEqual(result["card"]["status"], "skipped")
         self.assertFalse(result["done"])
@@ -839,8 +1579,8 @@ class CreateOrchestrationConcurrencyTest(_ServiceTestCase):
         # Лок берётся до первого шага, а не после — ни один мутирующий или
         # поисковый вызов ensure_* не должен был случиться.
         for method in (
-            "crm.company.add", "sonet_group.get", "sonet_group.create",
-            "crm.item.list", "crm.item.add",
+            "crm.company.add", "crm.requisite.list", "crm.requisite.add",
+            "sonet_group.get", "sonet_group.create", "crm.item.list", "crm.item.add",
         ):
             self.assertNotIn(method, client.methods_called())
         self.assertEqual(ProjectCard.objects.count(), 0)
@@ -937,6 +1677,148 @@ class CreateOrchestrationConcurrencyTest(_ServiceTestCase):
         self.assertEqual(cards.first().project_hours_budget, 20.0)
 
 
+class RequisiteOrchestrationTest(_ServiceTestCase):
+    """Реквизит (ИНН) как шаг оркестратора create() — inn-brief.md, разделы
+    «Реквизит — отдельный шаг со своим статусом» и «Оценка» (новый режим
+    частичного отказа). Юнит-тесты самого шага — в EnsureRequisiteTest выше;
+    здесь — его место в create()/_create_under_lock: когда он вызывается,
+    как влияет на done, и ключевой сценарий ретрая из брифа."""
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+
+    def _client(self, **overrides):
+        responses = {
+            "app.option.get": {"result": {"timestamp_config": (
+                '{"hourly_rate": 1500, "project_sp_entity_type_id": 180,'
+                ' "project_fields_mapping": {"title": "title",'
+                ' "bitrix_group_id": "ufCrm7Group", "stage_id": "stageId"}}'
+            )}},
+            "crm.company.list": {"result": []},
+            "crm.company.add": {"result": 77},
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": {"result": [
+                {"ID": "5", "ENTITY_TYPE_ID": "4", "NAME": "Российская компания", "ACTIVE": "Y"}
+            ]},
+            "crm.requisite.preset.field.list": {"result": {"RQ_INN": {}, "RQ_COMPANY_NAME": {}}},
+            "crm.requisite.add": {"result": 501},
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": {"result": 44},
+            "crm.item.list": {"result": {"items": []}},
+            "crm.item.add": {"result": {"item": {"id": 901}}},
+        }
+        responses.update(overrides)
+        return _FakeClient(responses)
+
+    def _form(self, **overrides):
+        form = {
+            "project_name": "Портал АО Ромашка",
+            "company_name": "АО Ромашка",
+            "inn": "7707083893",
+        }
+        form.update(overrides)
+        return form
+
+    def _create(self, client, form=None):
+        return self.service(client).create(
+            form or self._form(), current_user_id="42", current_user_name="Петров Иван",
+            today=date(2026, 7, 28),
+        )
+
+    def test_requisite_step_runs_and_creates_after_new_company(self):
+        result = self._create(self._client())
+
+        self.assertEqual(result["company"]["status"], "created")
+        self.assertEqual(result["requisite"]["status"], "created")
+        self.assertTrue(result["done"])
+
+    def test_requisite_step_is_skipped_for_existing_company_selected_by_id(self):
+        client = self._client()
+        result = self._create(
+            client,
+            form={"project_name": "Портал АО Ромашка", "company_id": "15", "company_name": "АО Ромашка"},
+        )
+
+        self.assertEqual(result["company"]["status"], "found")
+        self.assertEqual(result["requisite"]["status"], "skipped")
+        self.assertTrue(result["done"])
+        for method in ("crm.requisite.list", "crm.requisite.preset.list", "crm.requisite.add"):
+            self.assertNotIn(method, client.methods_called())
+
+    def test_requisite_failure_does_not_block_group_and_card_but_clears_done(self):
+        client = self._client(**{"crm.requisite.add": RuntimeError("нет прав на реквизиты")})
+        result = self._create(client)
+
+        self.assertEqual(result["company"]["status"], "created")
+        self.assertEqual(result["requisite"]["status"], "error")
+        self.assertEqual(result["group"]["status"], "created")
+        self.assertEqual(result["card"]["status"], "created")
+        self.assertFalse(result["done"])
+        # Компания и группа реально созданы в Битриксе несмотря на сбой
+        # реквизита — откатывать их нельзя (inn-brief.md, "новый режим
+        # частичного отказа").
+        self.assertEqual(ProjectCard.objects.filter(project_id="44").count(), 1)
+
+    def test_no_preset_template_creates_company_but_flags_requisite_error(self):
+        client = self._client(**{"crm.requisite.preset.list": {"result": []}})
+        result = self._create(client)
+
+        self.assertEqual(result["company"]["status"], "created")
+        self.assertEqual(result["requisite"]["status"], "error")
+        self.assertIsNotNone(result["requisite"]["error"])
+        self.assertFalse(result["done"])
+        # Компания не откатывается — остаётся созданной в CRM клиента.
+        self.assertIsNotNone(result["company"]["id"])
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+
+    def test_retry_after_requisite_failure_writes_missing_requisite_without_second_company(self):
+        """Ключевой сценарий брифа: "компания создана, реквизит нет" — повтор
+        не создаёт вторую компанию (шаг 2 ensure_company найдёт её по точному
+        названию, раз по ИНН реквизита ещё нет ни у кого), но обязан дописать
+        реквизит."""
+        first_client = self._client(**{"crm.requisite.add": RuntimeError("временный сбой сети")})
+        first_result = self._create(first_client)
+        self.assertEqual(first_result["company"]["status"], "created")
+        self.assertEqual(first_result["requisite"]["status"], "error")
+
+        # Повтор: crm.requisite.list (поиск по ИНН в ensure_company) по-прежнему
+        # пуст — реквизит так и не был записан, — компания находится по точному
+        # названию (шаг 2), а реквизит на этот раз обязан дописаться.
+        second_client = self._client(**{
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+        })
+        second_result = self._create(second_client)
+
+        self.assertEqual(second_result["company"]["status"], "found")
+        self.assertEqual(second_result["requisite"]["status"], "created")
+        self.assertTrue(second_result["done"])
+        self.assertNotIn("crm.company.add", second_client.methods_called())
+
+    def test_repeat_call_after_full_success_does_not_recreate_anything(self):
+        first_result = self._create(self._client())
+        self.assertEqual(first_result["requisite"]["status"], "created")
+
+        # Повтор: компания находится по ИНН (реквизит из первого вызова уже
+        # существует — тот же crm.requisite.list отвечает и на поиск компании
+        # в ensure_company, и на идемпотентную проверку в ensure_requisite:
+        # _FakeClient различает ответы только по имени метода, не по фильтру
+        # (см. докстринг _FakeClient в начале файла).
+        second_client = self._client(**{
+            "crm.requisite.list": {"result": [
+                {"ID": "900", "ENTITY_ID": "77", "RQ_INN": "7707083893"}
+            ]},
+            "crm.company.list": {"result": [{"ID": "77", "TITLE": "АО Ромашка"}]},
+        })
+        second_result = self._create(second_client)
+
+        self.assertEqual(second_result["company"]["status"], "found")
+        self.assertEqual(second_result["requisite"]["status"], "found")
+        self.assertTrue(second_result["done"])
+        for method in ("crm.company.add", "crm.requisite.add"):
+            self.assertNotIn(method, second_client.methods_called())
+
+
 class CreateEndpointRoutingTest(_ServiceTestCase):
     def test_route_is_registered(self):
         from django.urls import reverse
@@ -978,6 +1860,12 @@ class CreateCacheInvalidationTest(_ServiceTestCase):
             )}},
             "crm.company.list": {"result": []},
             "crm.company.add": {"result": 77},
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": {"result": [
+                {"ID": "5", "ENTITY_TYPE_ID": "4", "NAME": "Российская компания", "ACTIVE": "Y"}
+            ]},
+            "crm.requisite.preset.field.list": {"result": {"RQ_INN": {}, "RQ_COMPANY_NAME": {}}},
+            "crm.requisite.add": {"result": 501},
             "sonet_group.get": {"result": []},
             "sonet_group.create": {"result": 44},
             "crm.item.list": {"result": {"items": []}},
@@ -987,7 +1875,11 @@ class CreateCacheInvalidationTest(_ServiceTestCase):
         return _FakeClient(responses)
 
     def _form(self, **overrides):
-        form = {"project_name": "Портал АО Ромашка", "company_name": "АО Ромашка"}
+        form = {
+            "project_name": "Портал АО Ромашка",
+            "company_name": "АО Ромашка",
+            "inn": "7707083893",
+        }
         form.update(overrides)
         return form
 

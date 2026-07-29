@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from .inn_validation import validate_inn
+
 DEFAULT_PROJECT_TYPE = "delivery"
 DEFAULT_BUDGET_MODE = "hours_and_amount"
 
@@ -30,6 +32,7 @@ class ResolvedProjectFields:
     project_name: str
     company_id: Optional[str]
     company_name: str
+    inn: str
     our_legal_entity_id: Optional[str]
     our_legal_entity_name: str
     curator_user_id: str
@@ -141,8 +144,8 @@ def resolve_project_fields(
 ) -> Tuple[ResolvedProjectFields, List[str]]:
     """Считает итоговые значения полей и список недостающих обязательных.
 
-    Ключи в списке missing: "project_name", "company", "our_legal_entity_id",
-    "hourly_rate" — их фронт подсвечивает в форме.
+    Ключи в списке missing: "project_name", "company", "inn",
+    "our_legal_entity_id", "hourly_rate" — их фронт подсвечивает в форме.
 
     Исключения из правила «пустых полей не остаётся» (см. докстринг модуля),
     перечислены полностью:
@@ -159,6 +162,17 @@ def resolve_project_fields(
       сбоил и вернул только автоматические стадии (см. докстринг
       _first_manual_stage_id) — в обоих случаях подставлять первый попавшийся
       элемент нельзя, а падать на пустом/деградировавшем портале нельзя тоже.
+
+    ИНН (решение заказчика 29.07.2026, inn-brief.md) — обязателен РОВНО когда
+    форма создаёт НОВУЮ компанию: company_id не передан, а company_name есть
+    (это и есть пара с действием «Создать компанию «…»» на фронте). Во всех
+    остальных случаях — компания уже выбрана по id (существующая — реквизиты
+    не наша забота, см. докстринг ensure_company/ensure_requisite в
+    project_creation_service.py), либо не выбрана вовсе (тогда уже блокирует
+    "company", дублировать ошибку через "inn" незачем) — fields.inn всегда
+    "", даже если в payload случайно долетело значение: это не проверка "поле
+    пустое", а сознательный сброс на не-нашей ветке (см. тест
+    test_inn_is_ignored_for_existing_company_even_if_sent).
     """
     form = form or {}
     missing: List[str] = []
@@ -171,6 +185,17 @@ def resolve_project_fields(
     company_name = _clean_str(form.get("company_name"))
     if not company_id and not company_name:
         missing.append("company")
+
+    # ИНН — только на ветке "создаём новую компанию" (company_id отсутствует,
+    # company_name есть). Для company_id-ветки (компания уже выбрана) поле
+    # сбрасывается в "" безусловно, даже если payload его прислал — не наша
+    # забота трогать реквизиты чужой/уже существующей компании (см. докстринг
+    # выше и ensure_company/ensure_requisite в project_creation_service.py).
+    inn = ""
+    if not company_id and company_name:
+        inn = _clean_str(form.get("inn"))
+        if validate_inn(inn) is not None:
+            missing.append("inn")
 
     legal_entity_id = _clean_str(form.get("our_legal_entity_id")) or None
     legal_entity_name = _clean_str(form.get("our_legal_entity_name"))
@@ -217,6 +242,7 @@ def resolve_project_fields(
         project_name=project_name,
         company_id=company_id,
         company_name=company_name,
+        inn=inn,
         our_legal_entity_id=legal_entity_id,
         our_legal_entity_name=legal_entity_name,
         curator_user_id=curator_user_id,

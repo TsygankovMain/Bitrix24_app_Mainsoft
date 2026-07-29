@@ -144,6 +144,24 @@ export function companyFieldsForQuery(query: string): { company_id: null, compan
   return { company_id: null, company_name: normalizeCompanyQuery(query) }
 }
 
+/**
+ * Решает, создаёт ли текущее состояние полей формы НОВУЮ компанию — то есть
+ * company_id пуст, а company_name (введённый текст) — нет. Ровно та же пара,
+ * которую companyFieldsForQuery выше пишет ОДНОЙ операцией до первого выбора
+ * варианта из списка, и ровно то же условие, которым бэкенд решает, нужен
+ * ли ИНН (resolve_project_fields, backends/python/api/main/
+ * project_creation_defaults.py: "ИНН обязателен РОВНО когда форма создаёт
+ * НОВУЮ компанию: company_id не передан, а company_name есть").
+ *
+ * Используется дважды в CreateProjectModal.vue — показать/скрыть поле ИНН
+ * (inn-frontend-brief.md, §1: "появляется только когда создаётся НОВАЯ
+ * компания") и потребовать ли валидный ИНН в canSubmit — одно и то же
+ * решение вынесено один раз, чтобы двум местам не разойтись.
+ */
+export function isCreatingNewCompany(companyId: string | null | undefined, companyName: string): boolean {
+  return !companyId && normalizeCompanyQuery(companyName).length > 0
+}
+
 export interface PendingCompanyDisplayLabelInput {
   /** Каноничное имя УЖЕ ВЫБРАННОЙ из списка компании (готовая строка —
    * SearchableSelect сам решает, добавлять ли к ней "· ИНН ...", это не

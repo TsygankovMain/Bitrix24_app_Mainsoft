@@ -208,3 +208,92 @@ class ResolveProjectFieldsTest(SimpleTestCase):
     def test_is_support_y_is_parsed_as_true(self):
         fields, _ = _resolve({"project_name": "П", "company_id": "15", "is_support": "Y"})
         self.assertTrue(fields.is_support)
+
+
+class InnRequirementTest(SimpleTestCase):
+    """ИНН обязателен ровно при создании НОВОЙ компании (решение заказчика
+    29.07.2026, inn-brief.md): company_id отсутствует, а company_name
+    заполнено — то есть форма находится в паре с действием «Создать
+    компанию «…»». Для уже выбранной компании (company_id есть) ИНН не
+    запрашивается и не трогается — см. докстринг ensure_company/
+    ensure_requisite в project_creation_service.py."""
+
+    VALID_INN = "7707083893"  # проверенный валидный ИНН юрлица (10 цифр)
+
+    def test_missing_inn_blocks_new_company_creation(self):
+        _, missing = _resolve({"project_name": "П", "company_name": "АО Ромашка"})
+        self.assertIn("inn", missing)
+
+    def test_non_ascii_digit_inn_blocks_new_company_creation(self):
+        # Контрольная сумма ИНН сознательно не проверяется (см. докстринг
+        # inn_validation.py) — "٧٧٠٧٠٨٣٨٩٣" (аравийско-индийские цифры того
+        # же числа 7707083893, что и VALID_INN этого класса) проверяет то, что
+        # реально осталось главной защитой этого модуля: состав символов.
+        # Без неё такая строка выглядела бы валидным ИНН и дошла бы до
+        # реквизита в CRM клиента, не находясь потом обычным поиском (см.
+        # tests_inn_validation.test_unicode_digit_lookalikes_are_rejected_
+        # not_crash) — эта проверка убеждается, что защита реально
+        # прокидывается через resolve_project_fields, а не работает только
+        # внутри validate_inn самого по себе.
+        _, missing = _resolve(
+            {"project_name": "П", "company_name": "АО Ромашка", "inn": "٧٧٠٧٠٨٣٨٩٣"}
+        )
+        self.assertIn("inn", missing)
+
+    def test_wrong_length_inn_blocks_new_company_creation(self):
+        _, missing = _resolve(
+            {"project_name": "П", "company_name": "АО Ромашка", "inn": "123"}
+        )
+        self.assertIn("inn", missing)
+
+    def test_valid_inn_satisfies_the_requirement(self):
+        fields, missing = _resolve(
+            {"project_name": "П", "company_name": "АО Ромашка", "inn": self.VALID_INN}
+        )
+        self.assertNotIn("inn", missing)
+        self.assertEqual(fields.inn, self.VALID_INN)
+
+    def test_inn_whitespace_is_trimmed(self):
+        fields, missing = _resolve(
+            {"project_name": "П", "company_name": "АО Ромашка", "inn": f"  {self.VALID_INN}  "}
+        )
+        self.assertNotIn("inn", missing)
+        self.assertEqual(fields.inn, self.VALID_INN)
+
+    def test_inn_not_required_when_existing_company_is_selected_by_id(self):
+        _, missing = _resolve(
+            {"project_name": "П", "company_id": "15", "company_name": "АО Ромашка"}
+        )
+        self.assertNotIn("inn", missing)
+
+    def test_inn_is_ignored_for_existing_company_even_if_sent(self):
+        # Оборонительная проверка "не трогается": даже если инн случайно
+        # долетел в payload вместе с company_id (обрывок формы, баг фронта),
+        # чистая функция обязана его не заметить — это не наша зона (см.
+        # "Решение" в inn-brief.md).
+        fields, missing = _resolve(
+            {
+                "project_name": "П",
+                "company_id": "15",
+                "company_name": "АО Ромашка",
+                "inn": self.VALID_INN,
+            }
+        )
+        self.assertNotIn("inn", missing)
+        self.assertEqual(fields.inn, "")
+
+    def test_inn_not_required_when_company_is_entirely_missing(self):
+        # И company_id, и company_name пусты — "company" уже блокирует
+        # создание, дублировать ошибку через "inn" не нужно: до выбора
+        # компании поле ИНН на форме не появляется вовсе (inn-brief.md,
+        # "Что ещё затрагивается").
+        _, missing = _resolve({"project_name": "П"})
+        self.assertIn("company", missing)
+        self.assertNotIn("inn", missing)
+
+    def test_blank_inn_field_default_is_empty_string_not_none(self):
+        # ResolvedProjectFields.inn — всегда str (как остальные строковые
+        # поля датакласса), никогда None, чтобы вызывающему не нужно было
+        # ветвиться на случай None.
+        fields, _ = _resolve({"project_name": "П", "company_id": "15"})
+        self.assertEqual(fields.inn, "")

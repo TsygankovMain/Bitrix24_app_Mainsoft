@@ -3,11 +3,12 @@ import { computed, ref, watch } from 'vue'
 import SearchableSelect from '~/components/common/SearchableSelect.vue'
 import { useApiStore } from '~/stores/api'
 import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from '~/utils/apiErrors'
-import { companyFieldsForQuery } from '~/utils/companySearch'
+import { companyFieldsForQuery, isCreatingNewCompany } from '~/utils/companySearch'
+import { isValidInn, validateInn } from '~/utils/innValidation'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { formatProjectCurrency } from '~/utils/projectBoard'
-import { stepBadgeClass, stepErrorTextClass, stepLabel } from '~/utils/projectCreationLabels'
+import { companyNameMismatchNotice, stepBadgeClass, stepErrorTextClass, stepLabel } from '~/utils/projectCreationLabels'
 import {
   missingFieldLabel,
   shouldEmitProjectCreated,
@@ -78,6 +79,7 @@ function blankForm(): ProjectCreationForm {
     project_name: '',
     company_id: null,
     company_name: '',
+    inn: '',
     our_legal_entity_id: null,
     project_start_date: today,
     project_end_date: addOneYear(today),
@@ -103,9 +105,36 @@ const amount = computed(() => plannedAmount(form.value.project_hours_budget, for
 // `elif legal_entities:` ложно для пустого списка).
 const needsLegalEntityChoice = computed(() => legalEntities.value.length > 1)
 
+// inn-frontend-brief.md, §1: поле ИНН появляется только в паре с действием
+// «Создать компанию «…»» — то есть когда company_id ещё не выбран, а текст
+// уже введён. isCreatingNewCompany вынесена в companySearch.ts именно
+// потому, что тем же условием (не дублируя его) ниже проверяется валидность
+// ИНН в canSubmit — те же ветки формы, что решают, нужен ли ИНН и на
+// бэкенде (resolve_project_fields).
+const creatingNewCompany = computed(() => isCreatingNewCompany(form.value.company_id, form.value.company_name))
+
+// Живая подсказка, а не только сообщение из missing_fields после отправки:
+// эта форма трижды уезжала в прод сломанной, а молча недоступная кнопка
+// «Создать» без единого объяснения — тот же класс проблемы на новом поле.
+// Пусто, пока поле не тронуто (не пугаем "ИНН не указан" на ещё чистом
+// поле — canSubmit и так держит кнопку недоступной), текст появляется, как
+// только в поле есть хоть какой-то текст, который validateInn не принимает.
+const innValidationError = computed(() => {
+  if (!creatingNewCompany.value) return null
+  const typed = form.value.inn.trim()
+  if (!typed) return null
+  return validateInn(typed)
+})
+
 const curatorName = computed(() => userStore.login?.trim() || 'вы')
 
 const missing = computed(() => result.value?.missing_fields ?? [])
+
+// §3 брифа ИНН — ГЛАВНОЕ в задаче: непустой result.company.entered_name
+// значит, что проект привяжется к УЖЕ СУЩЕСТВУЮЩЕЙ компании под другим
+// названием, чем ввёл человек. Текст — чистая функция с тестами (см.
+// companyNameMismatchNotice в projectCreationLabels.ts), не строка в разметке.
+const companyMismatchNotice = computed(() => (result.value ? companyNameMismatchNotice(result.value.company) : null))
 
 // Находка 2 фикс-раунда ревью задачи 8: needsLegalEntityChoice — клиентская
 // оценка (по факту загрузки своих юрлиц), а бэкенд решает необходимость
@@ -125,6 +154,10 @@ const unslottedMissing = computed(() => unslottedMissingFields(missing.value))
 const canSubmit = computed(() =>
   Boolean(form.value.project_name.trim())
   && Boolean(form.value.company_id || form.value.company_name.trim())
+  // inn-brief.md, раздел «Решение»: без валидного ИНН действие создания
+  // новой компании недоступно. Для уже выбранной компании (creatingNewCompany
+  // === false) условие не участвует — тот же приём, что и ниже для юрлица.
+  && (!creatingNewCompany.value || isValidInn(form.value.inn))
   && (!needsLegalEntityChoice.value || Boolean(form.value.our_legal_entity_id))
   && Boolean(form.value.hourly_rate.trim())
 )
@@ -233,6 +266,15 @@ function handleCompanyQueryChanged(query: string) {
 
 function handleCompanySelected(option: ProjectBoardDirectoryOption | null) {
   form.value.company_name = option ? String(option.name) : ''
+  if (option) {
+    // Выбрана СУЩЕСТВУЮЩАЯ компания — её реквизиты не наша забота (бриф
+    // ИНН, раздел «Решение»), бэкенд и сам безусловно сбрасывает fields.inn
+    // на этой ветке (resolve_project_fields). Чистим и на фронте — иначе,
+    // если сотрудник передумает и снова начнёт печатать (вернувшись на
+    // ветку «новая компания»), поле ИНН всплывёт со значением от уже
+    // неактуальной, прошлой попытки.
+    form.value.inn = ''
+  }
 }
 
 // Д2 хотфикса 2026-07-29: SearchableSelect эмитит create-requested по явному
@@ -328,7 +370,13 @@ function retry() {
 }
 
 function chooseCandidate(step: 'company', id: string) {
-  if (step === 'company') form.value.company_id = id
+  if (step === 'company') {
+    form.value.company_id = id
+    // Та же причина, что и в handleCompanySelected выше: выбор компании из
+    // списка кандидатов (ambiguous) — это выбор УЖЕ СУЩЕСТВУЮЩЕЙ компании,
+    // ИНН для неё не наша забота и не должен остаться от предыдущей попытки.
+    form.value.inn = ''
+  }
   return submit()
 }
 
@@ -377,6 +425,21 @@ function closeModal() {
           />
           <span class="text-xs text-slate-400">Не нашли компанию в поиске — нажмите «Создать компанию» в списке, чтобы завести новую с введённым названием.</span>
           <span v-if="missing.includes('company')" class="text-xs text-rose-600">Выберите компанию или впишите название новой.</span>
+        </div>
+
+        <div v-if="creatingNewCompany" class="grid gap-1 text-sm">
+          <span class="font-medium text-slate-700">ИНН новой компании <span class="text-rose-500">*</span></span>
+          <input
+            v-model="form.inn"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            placeholder="10 цифр (юрлицо) или 12 (ИП)"
+            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          >
+          <span v-if="innValidationError" class="text-xs text-rose-600">{{ innValidationError }}</span>
+          <span v-else-if="missing.includes('inn')" class="text-xs text-rose-600">Введите корректный ИНН — без него новую компанию создать нельзя.</span>
+          <span v-else class="text-xs text-slate-400">Нужен, чтобы не завести в CRM дубль уже существующей компании.</span>
         </div>
 
         <div v-if="showLegalEntityBlock" class="grid gap-1 text-sm">
@@ -463,11 +526,15 @@ function closeModal() {
         <div v-if="result" class="ms-panel-muted space-y-3">
           <div class="flex flex-wrap gap-2">
             <span :class="['ms-pill', stepBadgeClass(result.company)]">Компания {{ stepLabel(result.company) }}</span>
+            <span :class="['ms-pill', stepBadgeClass(result.requisite)]">Реквизит {{ stepLabel(result.requisite) }}</span>
             <span :class="['ms-pill', stepBadgeClass(result.group)]">Проект {{ stepLabel(result.group) }}</span>
             <span :class="['ms-pill', stepBadgeClass(result.card)]">Карточка {{ stepLabel(result.card) }}</span>
           </div>
 
+          <p v-if="companyMismatchNotice" class="ms-panel-warning">{{ companyMismatchNotice }}</p>
+
           <p v-if="result.company.error" :class="stepErrorTextClass(result.company)">Компания: {{ result.company.error }}</p>
+          <p v-if="result.requisite.error" :class="stepErrorTextClass(result.requisite)">Реквизит: {{ result.requisite.error }}</p>
           <p v-if="result.group.error" :class="stepErrorTextClass(result.group)">Проект: {{ result.group.error }}</p>
           <p v-if="result.card.error" :class="stepErrorTextClass(result.card)">Карточка: {{ result.card.error }}</p>
 
