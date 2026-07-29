@@ -161,14 +161,12 @@ const missing = computed(() => result.value?.missing_fields ?? [])
 // companyNameMismatchNotice в projectCreationLabels.ts), не строка в разметке.
 const companyMismatchNotice = computed(() => (result.value ? companyNameMismatchNotice(result.value.company) : null))
 
-// Находка 2 фикс-раунда ревью задачи 8: needsLegalEntityChoice — клиентская
-// оценка (по факту загрузки своих юрлиц), а бэкенд решает необходимость
-// поля независимо на каждой отправке. Если клиентский список не догрузился
-// на портале, где юрлиц на самом деле несколько, needsLegalEntityChoice
-// молчит, а бэкенд вернёт missing_fields с our_legal_entity_id — блок обязан
-// появиться в любом из двух случаев, иначе сотрудник не увидит ни поля, ни
-// объяснения (см. shouldShowLegalEntityBlock).
-const showLegalEntityBlock = computed(() => shouldShowLegalEntityBlock(needsLegalEntityChoice.value, missing.value))
+// Блок «Наше юрлицо» показывается всегда — спека §5 требует, чтобы
+// автоподставленные значения были ВИДНЫ сотруднику и редактируемы, а не
+// работали скрытым дефолтом. Раньше блок прятался, когда юрлицо на портале
+// одно, и человек не видел, от кого заводится проект. Подробнее — в
+// докстринге shouldShowLegalEntityBlock.
+const showLegalEntityBlock = computed(() => shouldShowLegalEntityBlock())
 
 // Запасной путь на случай, если когда-нибудь появится ещё одно поле формы
 // без своего слота на экране — тот же класс бага, что и находка 2, просто
