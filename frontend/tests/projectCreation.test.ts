@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { addOneYear, plannedAmount } from '../app/types/project-creation'
-import { stepBadgeClass, stepErrorTextClass, stepLabel } from '../app/utils/projectCreationLabels'
+import { companyNameMismatchNotice, stepBadgeClass, stepErrorTextClass, stepLabel } from '../app/utils/projectCreationLabels'
 import {
   missingFieldLabel,
   shouldEmitProjectCreated,
@@ -149,11 +149,20 @@ test('shouldRefetchLegalEntities: юрлицо не упомянуто сред�
 // Более широкий вопрос из находки 2: то же расхождение может случиться с
 // любым другим полем из missing_fields, для которого на форме нет
 // отдельного слота. Запасной путь — общее сообщение обо всём необъяснённом.
-test('unslottedMissingFields: все четыре известных сегодня поля уже имеют слот на форме', () => {
+test('unslottedMissingFields: все пять известных сегодня полей уже имеют слот на форме', () => {
   assert.deepEqual(
-    unslottedMissingFields(['project_name', 'company', 'our_legal_entity_id', 'hourly_rate']),
+    unslottedMissingFields(['project_name', 'company', 'inn', 'our_legal_entity_id', 'hourly_rate']),
     []
   )
+})
+
+// inn-frontend-brief.md: ИНН — пятое поле с собственной подсказкой на форме
+// (см. CreateProjectModal.vue, блок v-if="creatingNewCompany"). Без записи
+// здесь missing_fields=['inn'] дублировался бы и точечной подсказкой под
+// полем, и общим баннером "Не хватает данных для отправки: inn." — тот же
+// класс бага, что и находка 2 (см. докстринг выше), просто для нового поля.
+test('unslottedMissingFields: inn — у него есть слот на форме (поле ИНН), не должен дублироваться в общем баннере', () => {
+  assert.deepEqual(unslottedMissingFields(['inn']), [])
 })
 
 test('unslottedMissingFields: неизвестное поле остаётся для общего сообщения', () => {
@@ -167,6 +176,7 @@ test('unslottedMissingFields: пустой список ничего не рон
 test('missingFieldLabel: известное поле — человеческий текст', () => {
   assert.equal(missingFieldLabel('our_legal_entity_id'), 'юрлицо')
   assert.equal(missingFieldLabel('hourly_rate'), 'ставка')
+  assert.equal(missingFieldLabel('inn'), 'ИНН')
 })
 
 test('missingFieldLabel: неизвестное поле — сырой код как есть, а не пусто', () => {
@@ -236,4 +246,49 @@ test('shouldEmitProjectCreated: карточка осознанно skipped (с�
 
 test('shouldEmitProjectCreated: результата ещё нет (null) — не роняет интерфейс', () => {
   assert.equal(shouldEmitProjectCreated(null), false)
+})
+
+// --- companyNameMismatchNotice ---
+// inn-frontend-brief.md, §3 — ГЛАВНОЕ в задаче ИНН. Когда шаг company
+// находит компанию по ИНН под ДРУГИМ названием, чем ввёл человек, сервер
+// намеренно отдаёт два сырых названия раздельно (name — найденное,
+// entered_name — введённое, см. StepResult.entered_name в
+// project_creation_service.py) и не собирает готовую фразу — формулировка
+// на фронте. Молча подменять введённое название на чужое нельзя (тот же
+// класс расхождения, что и Важное 3 финального ревью — см. докстринг
+// companyFieldsForQuery в companySearch.ts).
+function makeCompanyStep(name: string, enteredName: string | null) {
+  return { status: 'found', id: '1', name, candidates: [], error: null, entered_name: enteredName } as never
+}
+
+test('companyNameMismatchNotice: entered_name пуст (обычный случай) — предупреждения нет', () => {
+  assert.equal(companyNameMismatchNotice(makeCompanyStep('АО Ромашка', null)), null)
+})
+
+test('companyNameMismatchNotice: entered_name отличается от name — предупреждение называет ОБА названия', () => {
+  const notice = companyNameMismatchNotice(makeCompanyStep('Ромашка Плюс', 'Ромашка'))
+  assert.notEqual(notice, null)
+  assert.match(notice as string, /Ромашка Плюс/)
+  assert.match(notice as string, /Ромашка(?! Плюс)/)
+})
+
+test('companyNameMismatchNotice: явно упоминает, что проект привяжется к найденной компании (не молчаливая подмена)', () => {
+  const notice = companyNameMismatchNotice(makeCompanyStep('Ромашка Плюс', 'Ромашка')) as string
+  assert.match(notice, /привя/i)
+})
+
+test('companyNameMismatchNotice: entered_name совпадает с name после обрезки пробелов — расхождения на самом деле нет', () => {
+  assert.equal(companyNameMismatchNotice(makeCompanyStep('Ромашка', '  Ромашка  ')), null)
+})
+
+test('companyNameMismatchNotice: entered_name из одних пробелов — то же самое, что null', () => {
+  assert.equal(companyNameMismatchNotice(makeCompanyStep('АО Ромашка', '   ')), null)
+})
+
+test('companyNameMismatchNotice: пустое name при непустом entered_name — защитный случай, не показываем "под названием «»"', () => {
+  assert.equal(companyNameMismatchNotice(makeCompanyStep('', 'Ромашка')), null)
+})
+
+test('companyNameMismatchNotice: undefined/неизвестный статус шага не роняет функцию', () => {
+  assert.equal(companyNameMismatchNotice({ status: 'skipped' } as never), null)
 })

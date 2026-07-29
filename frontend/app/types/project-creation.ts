@@ -1,6 +1,6 @@
-/** Один из трёх шагов оркестратора кнопки «Создать проект» (компания /
- * группа в Задачах / карточка смарт-процесса). Формат совпадает с
- * StepResult.as_dict() на бэкенде (project_creation_service.py).
+/** Один из четырёх шагов оркестратора кнопки «Создать проект» (компания /
+ * реквизит / группа в Задачах / карточка смарт-процесса). Формат совпадает
+ * с StepResult.as_dict() на бэкенде (project_creation_service.py).
  *
  * status:
  * - 'created'   — шаг создал новую сущность.
@@ -12,17 +12,25 @@
  *                 ожидаемо, показывать по-другому, чем 'error'. Для
  *                 компании и группы верно, что причина всегда одна и та
  *                 же — предыдущий шаг не дал нужного идентификатора, и
- *                 error тогда тоже null. Для КАРТОЧКИ это не так: она
- *                 возвращает 'skipped' и когда сам смарт-процесс проектов
- *                 не настроен на портале — в этом случае error ЗАПОЛНЕН
- *                 объяснением причины (например, «Смарт-процесс проектов
- *                 не настроен — карточка не создана.»), хотя статус
+ *                 error тогда тоже null. Для КАРТОЧКИ и РЕКВИЗИТА это не
+ *                 так: они возвращают 'skipped' и когда неприменимы по
+ *                 другой причине (карточка — смарт-процесс не настроен;
+ *                 реквизит — компания выбрана из поиска, а не создаётся
+ *                 новая, см. ensure_requisite) — в этих случаях error может
+ *                 быть ЗАПОЛНЕН объяснением причины (например, «Смарт-процесс
+ *                 проектов не настроен — карточка не создана.»), хотя статус
  *                 остаётся нейтральным, а не 'error' (см.
- *                 ensure_card в project_creation_service.py и
- *                 frontend/app/utils/projectCreationLabels.ts::stepErrorTextClass).
+ *                 ensure_card/ensure_requisite в project_creation_service.py
+ *                 и frontend/app/utils/projectCreationLabels.ts::stepErrorTextClass).
  *                 Не считать error===null инвариантом статуса 'skipped'.
  * - 'error'     — шаг пытался и не смог (сетевая ошибка Битрикса и т.п.),
  *                 подробности в error.
+ *
+ * entered_name — почти всегда null. Непусто ТОЛЬКО у шага company и только
+ * когда компания нашлась по ИНН, но называется в портале иначе, чем ввёл
+ * человек (см. companyNameMismatchNotice в projectCreationLabels.ts). Поле
+ * "name" в этом случае несёт НАЙДЕННОЕ (настоящее) название, как и во всех
+ * остальных статусах — эти два поля нарочно не смешаны в один текст.
  */
 export interface ProjectCreationStep {
   status: 'created' | 'found' | 'ambiguous' | 'skipped' | 'error'
@@ -30,18 +38,23 @@ export interface ProjectCreationStep {
   name: string
   candidates: Array<{ id: string, name: string }>
   error: string | null
+  entered_name: string | null
 }
 
 /** Ответ POST /api/project-board/create.
  *
- * done не означает «все три шага создали новое» — он означает «карточка не
- * в состоянии ошибки». Шаги вполне могут вернуть 'found' вместо 'created'
- * (повторное нажатие после частичного успеха), и это нормальный успешный
- * исход. missing_fields — обязательные поля формы, которых не хватило для
- * старта (см. project_creation_defaults.resolve_project_fields).
+ * done не означает «все четыре шага создали новое» — он означает «ни
+ * карточка, ни реквизит не в состоянии ошибки» (inn-brief.md: отказ
+ * реквизита гасит done так же, как отказ карточки). Шаги вполне могут
+ * вернуть 'found' вместо 'created' (повторное нажатие после частичного
+ * успеха) или 'skipped' (реквизит неприменим для уже выбранной компании) —
+ * это нормальный успешный исход. missing_fields — обязательные поля формы,
+ * которых не хватило для старта (см. project_creation_defaults.resolve_project_fields);
+ * "inn" — тот же список, когда создаётся новая компания без валидного ИНН.
  */
 export interface ProjectCreationResult {
   company: ProjectCreationStep
+  requisite: ProjectCreationStep
   group: ProjectCreationStep
   card: ProjectCreationStep
   done: boolean
@@ -50,11 +63,17 @@ export interface ProjectCreationResult {
 
 /** Форма кнопки «Создать проект». CompanySearchResult/MyCompaniesResult для
  * шага выбора компании уже определены в ~/types/project-board — здесь не
- * дублируются. */
+ * дублируются.
+ *
+ * inn — обязателен РОВНО когда создаётся новая компания (company_id пуст,
+ * company_name есть, см. isCreatingNewCompany в companySearch.ts и
+ * resolve_project_fields на бэкенде); для уже выбранной компании поле
+ * игнорируется бэкендом безусловно, даже если непусто. */
 export interface ProjectCreationForm {
   project_name: string
   company_id: string | null
   company_name: string
+  inn: string
   our_legal_entity_id: string | null
   project_start_date: string
   project_end_date: string

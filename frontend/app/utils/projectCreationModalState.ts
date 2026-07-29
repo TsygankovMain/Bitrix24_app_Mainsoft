@@ -67,10 +67,12 @@ export function shouldRefetchLegalEntities(missingFields: string[], legalEntitie
 
 /** Поля из missing_fields, у которых уже есть выделенное место на форме —
  * подсказка рядом с самим полем (см. resolve_project_fields — сегодня это
- * ровно четыре ключа). Если бэкенд когда-нибудь начнёт присылать
- * missing_fields с ключом без своего слота на экране — тот же класс бага,
- * что и находка 2, просто для другого поля. */
-const SLOTTED_MISSING_FIELDS = ['project_name', 'company', 'our_legal_entity_id', 'hourly_rate']
+ * пять ключей: четыре исходных плюс "inn", см. inn-frontend-brief.md, §1 —
+ * поле ИНН со своей подсказкой в CreateProjectModal.vue, v-if="creatingNewCompany").
+ * Если бэкенд когда-нибудь начнёт присылать missing_fields с ключом без
+ * своего слота на экране — тот же класс бага, что и находка 2, просто для
+ * другого поля. */
+const SLOTTED_MISSING_FIELDS = ['project_name', 'company', 'inn', 'our_legal_entity_id', 'hourly_rate']
 
 /** Запасной путь на случай будущего поля без своего слота: то, что не
  * покрыто ни одной точечной подсказкой на форме, показываем одним общим
@@ -82,6 +84,7 @@ export function unslottedMissingFields(missingFields: string[]): string[] {
 const MISSING_FIELD_LABELS: Record<string, string> = {
   project_name: 'название проекта',
   company: 'компания',
+  inn: 'ИНН',
   our_legal_entity_id: 'юрлицо',
   hourly_rate: 'ставка'
 }
