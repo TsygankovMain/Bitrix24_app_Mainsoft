@@ -32,21 +32,12 @@ logger = logging.getLogger(__name__)
 # магическому числу в новых crm.requisite.* вызовах этого модуля.
 REQUISITE_ENTITY_TYPE_ID = 4
 # Состав шаблонов реквизитов меняется крайне редко, а разрешение шаблона
-# теперь стоит до трёх живых вызовов (preset.list + до N field.list на
-# кандидата, см. _resolve_requisite_preset_id) — кэшируем РЕЗУЛЬТАТ надолго,
-# как MY_COMPANIES_CACHE_TTL в company_search_service.py (тоже "редко
+# стоит до 1 + N живых вызовов (preset.list + один field.list на кандидата,
+# см. _resolve_requisite_preset_id) — кэшируем РЕЗУЛЬТАТ надолго, как
+# MY_COMPANIES_CACHE_TTL в company_search_service.py (тоже "редко
 # меняющийся" справочник). Отрицательный результат (подходящего шаблона нет /
 # сбой) не кэшируется вовсе — см. докстринг _resolve_requisite_preset_id.
 REQUISITE_PRESET_CACHE_TTL = 60 * 60 * 6
-# crm.requisite.preset.field.list постраничный, как и прочие ...list в
-# Битриксе (курсор "next", см. _extract_next_page_start) — реальный шаблон
-# реквизита практически никогда не превышает одну страницу (~50 полей на
-# страницу; полный набор полей компании/юрлица в Битриксе — несколько
-# десятков), так что предел здесь ЗАЩИТА ОТ ЗАЦИКЛИВАНИЯ на не продвигающемся
-# курсоре "next", а не ожидаемый рабочий лимит (см. докстринг
-# _requisite_preset_supports_inn — решение об обходе всех страниц, а не
-# только первой, принято осознанно).
-_REQUISITE_PRESET_FIELD_LIST_MAX_PAGES = 20
 
 
 @dataclass
@@ -211,10 +202,10 @@ def _extract_preset_field_codes(response: Any) -> Optional[set]:
     основной путь.
 
     Возвращает `None`, если форма ответа не подошла ни под один вариант —
-    вызывающий код (_requisite_preset_supports_inn) трактует это как "нельзя
-    подтвердить поддержку RQ_INN" на этой странице и уходит в error, а не
-    рискует потерять ИНН молча (RQ_INN не гарантирован в каждом шаблоне —
-    состав полей настраиваемый).
+    вызывающий код (_requisite_preset_supports_inn) трактует это как
+    неопределённость ("нельзя ни подтвердить, ни опровергнуть поддержку
+    RQ_INN"), а не рискует потерять ИНН молча, приняв её за поддержку
+    (RQ_INN не гарантирован в каждом шаблоне — состав полей настраиваемый).
     """
     if not isinstance(response, dict):
         return None
@@ -245,27 +236,6 @@ def _extract_preset_field_codes(response: Any) -> Optional[set]:
         return codes or None
 
     return None
-
-
-def _extract_next_page_start(response: Any) -> Optional[int]:
-    """Извлекает курсор следующей страницы ("next") из ответа списочного
-    метода Битрикса — тот же приём, что и _extract_items_from_response в
-    project_board_service.py: Битрикс кладёт "next" на верхнем уровне
-    ответа, иногда — вложенным в result, если result сам словарь.
-    `None`, если следующей страницы нет или значение не разбирается в int."""
-    if not isinstance(response, dict):
-        return None
-    next_value = response.get("next")
-    if next_value is None:
-        result = response.get("result")
-        if isinstance(result, dict):
-            next_value = result.get("next")
-    if next_value in (None, "", False):
-        return None
-    try:
-        return int(next_value)
-    except (TypeError, ValueError):
-        return None
 
 
 class ProjectCreationService:
@@ -452,7 +422,7 @@ class ProjectCreationService:
 
         return StepResult(status="created", id=created_id, name=company_name)
 
-    def _requisite_preset_supports_inn(self, preset_id: str) -> bool:
+    def _requisite_preset_supports_inn(self, preset_id: str) -> Optional[bool]:
         """Проверяет через crm.requisite.preset.field.list, включено ли поле
         RQ_INN в состав ЭТОГО конкретного шаблона.
 
@@ -476,64 +446,48 @@ class ProjectCreationService:
         по себе устойчивое падение НЕ является доказательством корректности
         разбора ответа.
 
-        Пагинация — метод постраничный, как и прочие ...list в Битриксе
-        (курсор "next", тот же приём, что и в _fetch_paginated в
-        project_board_service.py). Решение ОСОЗНАННОЕ — обходим страницы
-        полностью, а не ограничиваемся первой: обрезанная проверка не
-        "иногда не находит", а даёт ЛОЖНОЕ "не поддерживает" для шаблона,
-        который на самом деле подходит (RQ_INN может лежать на второй
-        странице) — шаг ошибочно уйдёт в "нет подходящего шаблона" на
-        портале, где подходящий шаблон есть. Не потеря данных (безопасное
-        направление отказа сохраняется), но лишний неверный отказ. Цена
-        обхода приемлема: результат в любом случае кэшируется на
-        REQUISITE_PRESET_CACHE_TTL — разовая, а не на каждое нажатие кнопки.
-        _REQUISITE_PRESET_FIELD_LIST_MAX_PAGES — просто защита от
-        зацикливания на не продвигающемся курсоре, не ожидаемый предел.
+        Один запрос, без обхода страниц (задача на вычитание — прежде метод
+        обходил все страницы курсором "next", см. git-историю и
+        inn-trim-report.md). Безопасно: у реального шаблона реквизита
+        два-три десятка полей, одна страница ответа Битрикса вмещает около
+        полусотни — вторая страница физически не наступает. "start": 0
+        оставлен явным в запросе, а не опущен — так виднее, что это ПЕРВАЯ
+        страница, а не "сколько получится".
 
-        Любая неопределённость (сбой сети, неразбираемый ответ, исчерпан
-        лимит страниц) трактуется как "не подтверждено" -> False, а не как
-        "наверное поддерживает": безопаснее пропустить рабочий шаблон, чем
-        один раз молча потерять ИНН.
+        Возвращает `True`/`False`, когда ответ Битрикса получен и разобран
+        (RQ_INN найден среди полей шаблона / не найден), и `None`, когда сам
+        факт поддержки НЕ подтверждён и НЕ опровергнут — сбой сети или
+        неразбираемый ответ. Раньше оба случая ("точно не поддерживает" и
+        "не смогли проверить") схлопывались в один и тот же bool `False` —
+        _resolve_requisite_preset_id ниже теперь различает их, чтобы
+        ensure_requisite мог сказать сотруднику разные вещи ("нужна
+        настройка портала" против "повторите позже").
         """
-        start = 0
-        for _ in range(_REQUISITE_PRESET_FIELD_LIST_MAX_PAGES):
-            try:
-                response = self._call(
-                    "crm.requisite.preset.field.list",
-                    {"preset": {"ID": self._to_bitrix_id(preset_id)}, "start": start},
-                )
-            except Exception as exc:
-                logger.warning(
-                    "_requisite_preset_supports_inn: crm.requisite.preset.field.list "
-                    "failed for preset %s (start=%s): %s",
-                    preset_id, start, exc,
-                )
-                return False
+        try:
+            response = self._call(
+                "crm.requisite.preset.field.list",
+                {"preset": {"ID": self._to_bitrix_id(preset_id)}, "start": 0},
+            )
+        except Exception as exc:
+            logger.warning(
+                "_requisite_preset_supports_inn: crm.requisite.preset.field.list "
+                "failed for preset %s: %s",
+                preset_id, exc,
+            )
+            return None
 
-            field_codes = _extract_preset_field_codes(response)
-            if field_codes is None:
-                logger.warning(
-                    "_requisite_preset_supports_inn: crm.requisite.preset.field.list "
-                    "returned unexpected format for preset %s (start=%s)",
-                    preset_id, start,
-                )
-                return False
-            if "RQ_INN" in field_codes:
-                return True
+        field_codes = _extract_preset_field_codes(response)
+        if field_codes is None:
+            logger.warning(
+                "_requisite_preset_supports_inn: crm.requisite.preset.field.list "
+                "returned unexpected format for preset %s",
+                preset_id,
+            )
+            return None
 
-            next_start = _extract_next_page_start(response)
-            if next_start is None or next_start <= start:
-                return False
-            start = next_start
+        return "RQ_INN" in field_codes
 
-        logger.warning(
-            "_requisite_preset_supports_inn: preset %s exceeded %d pages without "
-            "resolving RQ_INN support — treating as unsupported.",
-            preset_id, _REQUISITE_PRESET_FIELD_LIST_MAX_PAGES,
-        )
-        return False
-
-    def _resolve_requisite_preset_id(self) -> Optional[str]:
+    def _resolve_requisite_preset_id(self) -> Tuple[Optional[str], bool]:
         """Шаблон реквизита для компаний (ENTITY_TYPE_ID=4), поддерживающий
         поле RQ_INN.
 
@@ -552,23 +506,41 @@ class ProjectCreationService:
         3. Для каждого кандидата по этому порядку — проверка через
            _requisite_preset_supports_inn, что в шаблоне ЕСТЬ поле RQ_INN
            (состав полей шаблона настраиваемый, не гарантирован). Первый
-           подошедший — результат. Ни одного подошедшего — None, вызывающий
-           код (ensure_requisite) трактует это как "шаблона нет" — компанию
-           не трогает, шаг помечает понятной ошибкой.
+           подошедший — результат.
 
-        Результат (только успешный) кэшируется — состав шаблонов меняется
-        крайне редко, а разрешение теперь стоит до 1 + N живых вызовов.
+        Возвращает (preset_id, confirmed):
+        - preset_id — id подходящего шаблона, иначе None.
+        - confirmed — имеет смысл только когда preset_id is None. True,
+          если отсутствие подходящего шаблона ПОДТВЕРЖДЕНО: crm.requisite.
+          preset.list отработал и разобрался, а среди кандидатов либо не
+          нашлось ни одного (в том числе когда активных шаблонов вовсе нет),
+          либо хотя бы для одного из них crm.requisite.preset.field.list
+          успешно подтвердил отсутствие RQ_INN. False — ничего не
+          подтверждено: сам crm.requisite.preset.list не отработал (сбой
+          сети / неразбираемый ответ), либо field.list не отработал НИ ДЛЯ
+          ОДНОГО кандидата (все проверки инцидентны). Разделение существует
+          ради ensure_requisite ниже (ре-ревью координатора, см.
+          inn-trim-report.md): раньше при preset_id is None текст ошибки
+          ВСЕГДА обвинял настройку портала, даже когда причина — временный
+          сбой Битрикса, а не отсутствие шаблона. False здесь не значит
+          "наверное шаблон есть" — как и раньше, неопределённость не
+          трактуется в пользу "поддерживает", просто её причина теперь
+          называется честно в тексте ошибки, а не подменяется поводом
+          "почини портал", который сотрудник не может исправить.
+
+        Результат (preset_id, только успешный) кэшируется — состав шаблонов
+        меняется крайне редко, а разрешение стоит до 1 + N живых вызовов.
         Отрицательный результат (подходящего шаблона нет, сбой сети,
-        неразбираемый ответ) НЕ кэшируется — тот же принцип, что и в
-        company_search_service.py/project_board_service.py ("неудачный
-        поиск не кэшируем"): временный сбой или ещё не настроенный на
-        портале шаблон не должен запирать создание проектов на
-        REQUISITE_PRESET_CACHE_TTL (6 часов).
+        неразбираемый ответ — вне зависимости от confirmed) НЕ кэшируется —
+        тот же принцип, что и в company_search_service.py/
+        project_board_service.py ("неудачный поиск не кэшируем"): временный
+        сбой или ещё не настроенный на портале шаблон не должен запирать
+        создание проектов на REQUISITE_PRESET_CACHE_TTL (6 часов).
         """
         cache_key = build_account_cache_key(self.account, "requisite-presets")
         cached = cache.get(cache_key)
         if cached:
-            return cached
+            return cached, True
 
         try:
             response = self._call(
@@ -582,10 +554,10 @@ class ProjectCreationService:
             rows, parsed_ok = _extract_rows(response)
         except Exception as exc:
             logger.warning("_resolve_requisite_preset_id: crm.requisite.preset.list failed: %s", exc)
-            return None
+            return None, False
         if not parsed_ok:
             logger.warning("_resolve_requisite_preset_id: crm.requisite.preset.list returned unexpected format")
-            return None
+            return None, False
 
         # Серверные filter/order не обязаны быть последней инстанцией (см.
         # докстринг _normalize_rows в company_search_service.py про
@@ -601,15 +573,28 @@ class ProjectCreationService:
             and _clean_str(row.get("ACTIVE") or row.get("active")).upper() == "Y"
         ]
 
+        # confirmed_absent: хотя бы один кандидат успешно проверен и
+        # подтверждённо не поддерживает RQ_INN (см. докстринг выше).
+        confirmed_absent = False
         for preset in presets:
             preset_id = _clean_str(preset.get("ID") or preset.get("id"))
             if not preset_id:
                 continue
-            if self._requisite_preset_supports_inn(preset_id):
+            supports = self._requisite_preset_supports_inn(preset_id)
+            if supports:
                 cache.set(cache_key, preset_id, REQUISITE_PRESET_CACHE_TTL)
-                return preset_id
+                return preset_id, True
+            if supports is False:
+                confirmed_absent = True
+            # supports is None -> сбой/неразборчивый ответ для ЭТОГО
+            # кандидата — ни подтверждает, ни опровергает, идём к следующему.
 
-        return None
+        # Кандидатов не было вовсе (в том числе активных шаблонов на портале
+        # нет) — отсутствие подтверждено. Кандидаты были, но подтвердить
+        # отсутствие RQ_INN удалось хотя бы для одного — тоже подтверждено
+        # (см. докстринг выше). Кандидаты были, но ПРОВЕРКА не отработала ни
+        # для одного — не подтверждено.
+        return None, confirmed_absent or not presets
 
     def ensure_requisite(self, company_id: str, company_name: str, inn: str) -> StepResult:
         """Шаг реквизита (ИНН) — вызывается ТОЛЬКО для новой компании: при
@@ -629,17 +614,31 @@ class ProjectCreationService:
         компании, а не факт "хоть что-то есть".
 
         Отсутствие ПОДХОДЯЩЕГО шаблона реквизитов на портале — не повод
-        трогать компанию: она остаётся, а этот шаг возвращает status="error"
-        с понятной причиной (не временный сбой — портал требует донастройки,
-        см. текст ошибки ниже). "Подходящий" — активный (ACTIVE="Y") и
-        поддерживающий поле RQ_INN: состав полей шаблона настраиваемый
-        (crm.requisite.preset.field.list), RQ_INN не гарантирован в каждом
-        (см. докстринг _resolve_requisite_preset_id/_requisite_preset_supports_inn)
-        — без этой проверки crm.requisite.add мог бы молча создать реквизит
-        БЕЗ ИНН, и шаг отчитался бы успехом, потеряв ИНН без единой ошибки.
+        трогать компанию: она остаётся, а этот шаг возвращает status="error".
+        "Подходящий" — активный (ACTIVE="Y") и поддерживающий поле RQ_INN:
+        состав полей шаблона настраиваемый (crm.requisite.preset.field.list),
+        RQ_INN не гарантирован в каждом (см. докстринг
+        _resolve_requisite_preset_id/_requisite_preset_supports_inn) — без
+        этой проверки crm.requisite.add мог бы молча создать реквизит БЕЗ
+        ИНН, и шаг отчитался бы успехом, потеряв ИНН без единой ошибки.
         Придумывать PRESET_ID нельзя — угаданный шаблон может привязать
         реквизит к чужой форме (ИП вместо юрлица, другая страна) и испортить
         данные в CRM клиента сильнее, чем отсутствующий ИНН.
+
+        Текст ошибки при preset_id is None — ДВА разных варианта, не один
+        (ре-ревью координатора, см. inn-trim-report.md): раньше текст ВСЕГДА
+        обвинял настройку портала, даже когда _resolve_requisite_preset_id
+        вернул None из-за временного сбоя Битрикса (сетевая ошибка/
+        неразбираемый ответ crm.requisite.preset.list, либо сбой
+        crm.requisite.preset.field.list на всех кандидатах) — сообщение
+        отправляло администратора чинить портал, который на самом деле
+        исправен. Теперь `confirmed` (второй элемент кортежа) разводит
+        случаи: True — отсутствие подходящего шаблона ПОДТВЕРЖДЕНО, текст
+        называет причину настройкой портала и говорит, что повтор не
+        поможет; False — ничего не подтверждено, текст говорит про
+        временный сбой и предлагает повторить. Статус StepResult в обоих
+        случаях "error" — меняется только содержимое поля error, не форма
+        ответа.
         """
         company_id = _clean_str(company_id)
         company_name = _clean_str(company_name)
@@ -674,22 +673,34 @@ class ProjectCreationService:
                 existing_id = _clean_str(row.get("ID") or row.get("id"))
                 return StepResult(status="found", id=existing_id, name=inn)
 
-        preset_id = self._resolve_requisite_preset_id()
+        preset_id, confirmed = self._resolve_requisite_preset_id()
         if not preset_id:
-            return StepResult(
-                status="error",
-                # Явно "это настройка портала", а не временный сбой — иначе
-                # человек будет жать "Повторить" бесконечно (ре-ревью
-                # координатора): формулировка называет ПРИЧИНУ (нет активного
-                # шаблона с полем ИНН) и говорит, что повтор не поможет, а не
-                # просто "не удалось".
-                error=(
+            if confirmed:
+                # Отсутствие подходящего шаблона ПОДТВЕРЖДЕНО — явно "это
+                # настройка портала", а не временный сбой, иначе человек
+                # будет жать "Повторить" бесконечно (ре-ревью координатора):
+                # формулировка называет ПРИЧИНУ (нет активного шаблона с
+                # полем ИНН) и говорит, что повтор не поможет, а не просто
+                # "не удалось".
+                error = (
                     "На портале не настроен активный шаблон реквизитов с полем ИНН "
                     "для компаний. Это нужно донастроить в разделе «Реквизиты» "
                     "в Битрикс24 — повторное нажатие кнопки не поможет. "
                     "Обратитесь к администратору портала."
-                ),
-            )
+                )
+            else:
+                # НЕ подтверждено — сетевая ошибка/неразбираемый ответ
+                # crm.requisite.preset.list, либо сбой crm.requisite.preset.
+                # field.list на всех кандидатах (см. докстринг
+                # _resolve_requisite_preset_id). Портал может быть настроен
+                # правильно — отправлять чинить его нечестно. Текст обязан
+                # звать повторить, а не "не поможет".
+                error = (
+                    "Не удалось проверить шаблоны реквизитов на портале Битрикс24 — "
+                    "временный сбой при обращении к нему. Повторите нажатие кнопки "
+                    "чуть позже."
+                )
+            return StepResult(status="error", error=error)
 
         try:
             created = self._call(

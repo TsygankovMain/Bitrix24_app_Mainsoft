@@ -499,10 +499,20 @@ class EnsureRequisiteTest(_ServiceTestCase):
     запрос crm.requisite.preset.field.list — {"preset": {"ID": ...}}, НЕ
     {"id": ...}; форма ответа ПОДТВЕРЖДЕНА — result это список объектов с
     кодом поля в FIELD_NAME (словарь по кодам — не основной, а лишь
-    защитный вариант для этого метода); метод постраничный, обходим все
-    страницы курсором "next" (см. test_rq_inn_on_second_page_is_found_via_
-    pagination) — решение осознанное, задокументировано в докстринге
-    _requisite_preset_supports_inn."""
+    защитный вариант для этого метода); один запрос без обхода страниц —
+    решение осознанное (шаблон реквизита физически не превышает одну
+    страницу ответа), задокументировано в докстринге
+    _requisite_preset_supports_inn.
+
+    Третий раунд, задача на вычитание (см. inn-trim-report.md): пагинация
+    убрана целиком (константа лимита страниц и цикл обхода — код и тесты).
+    Заодно чинится ре-ревью координатора — текст ошибки при
+    _resolve_requisite_preset_id() -> None различает "отсутствие шаблона
+    ПОДТВЕРЖДЕНО" (настройка портала, повтор не поможет) от "не удалось
+    ПРОВЕРИТЬ" (временный сбой Битрикса, повтор имеет смысл) — см.
+    test_no_template_error_states_it_is_a_portal_setting_not_a_retry_case
+    и test_verification_failure_error_states_retry_may_help_not_a_portal_
+    setting ниже."""
 
     VALID_INN = "7707083893"
 
@@ -523,16 +533,13 @@ class EnsureRequisiteTest(_ServiceTestCase):
         row.update(overrides)
         return row
 
-    def _field_list_response(self, codes, next_start=None):
+    def _field_list_response(self, codes):
         """Форма ответа crm.requisite.preset.field.list по умолчанию в
         тестах — список объектов-описаний поля с кодом в FIELD_NAME.
         ПОДТВЕРЖДЕНО документацией Битрикса (см. докстринг
         _extract_preset_field_codes) — основной вариант, не один из
         нескольких равновероятных."""
-        payload = {"result": [{"FIELD_NAME": code} for code in codes]}
-        if next_start is not None:
-            payload["next"] = next_start
-        return payload
+        return {"result": [{"FIELD_NAME": code} for code in codes]}
 
     def _field_list_dict_response(self, codes):
         """Второй, ЗАЩИТНЫЙ вариант формы ответа — словарь, ключи которого
@@ -582,67 +589,6 @@ class EnsureRequisiteTest(_ServiceTestCase):
         self.assertEqual(req_fields["ENTITY_ID"], 77)
         self.assertEqual(req_fields["RQ_INN"], self.VALID_INN)
         self.assertEqual(req_fields["NAME"], "АО Ромашка")
-
-    def test_rq_inn_on_second_page_is_found_via_pagination(self):
-        """Первая страница не содержит RQ_INN, но отдаёт курсор "next" —
-        вторая страница содержит RQ_INN. Обрезанная (только первая
-        страница) проверка дала бы ложное "не поддерживает" для рабочего
-        шаблона (см. докстринг _requisite_preset_supports_inn)."""
-        client = _FakeClient({
-            "crm.requisite.list": {"result": []},
-            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
-            "crm.requisite.preset.field.list": [
-                self._field_list_response(["RQ_COMPANY_NAME"], next_start=50),
-                self._field_list_response(["RQ_INN"]),
-            ],
-            "crm.requisite.add": {"result": 501},
-        })
-        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
-
-        self.assertEqual(result.status, "created")
-        field_list_calls = [c for c in client.calls if c[0] == "crm.requisite.preset.field.list"]
-        self.assertEqual([c[1]["start"] for c in field_list_calls], [0, 50])
-
-    def test_no_rq_inn_across_all_pages_is_the_same_as_no_template_error(self):
-        client = _FakeClient({
-            "crm.requisite.list": {"result": []},
-            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
-            "crm.requisite.preset.field.list": [
-                self._field_list_response(["RQ_COMPANY_NAME"], next_start=50),
-                self._field_list_response(["RQ_COMPANY_FULL_NAME"]),  # без "next" — последняя страница
-            ],
-        })
-        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
-
-        self.assertEqual(result.status, "error")
-        self.assertNotIn("crm.requisite.add", client.methods_called())
-        field_list_calls = [c for c in client.calls if c[0] == "crm.requisite.preset.field.list"]
-        self.assertEqual(len(field_list_calls), 2)
-
-    def test_pagination_page_cap_prevents_infinite_loop(self):
-        """_REQUISITE_PRESET_FIELD_LIST_MAX_PAGES — защита от зацикливания
-        на не продвигающемся курсоре "next", не ожидаемый рабочий предел
-        (см. докстринг _requisite_preset_supports_inn). Патчим константу на
-        2, чтобы не городить фикстуру на 20 страниц ради теста именно этой
-        защиты — третья "страница" с RQ_INN нарочно не должна быть
-        запрошена."""
-        responses = [
-            self._field_list_response(["RQ_COMPANY_NAME"], next_start=50),
-            self._field_list_response(["RQ_COMPANY_FULL_NAME"], next_start=100),
-            self._field_list_response(["RQ_INN"]),
-        ]
-        client = _FakeClient({
-            "crm.requisite.list": {"result": []},
-            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
-            "crm.requisite.preset.field.list": responses,
-        })
-        with patch("main.project_creation_service._REQUISITE_PRESET_FIELD_LIST_MAX_PAGES", 2):
-            result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
-
-        self.assertEqual(result.status, "error")
-        self.assertEqual(
-            client.methods_called().count("crm.requisite.preset.field.list"), 2
-        )
 
     def test_preset_list_request_uses_active_filter_and_deterministic_order(self):
         client = _FakeClient({
@@ -811,7 +757,11 @@ class EnsureRequisiteTest(_ServiceTestCase):
         """Неразбираемый ответ crm.requisite.preset.field.list — не
         "наверное поддерживает", а "не подтверждено": шаблон пропускается,
         как и при явном отсутствии RQ_INN (безопаснее пропустить рабочий
-        шаблон, чем один раз молча потерять ИНН)."""
+        шаблон, чем один раз молча потерять ИНН). Единственный кандидат —
+        значит field.list не отработал НА ВСЕХ кандидатах: текст ошибки
+        обязан звать повторить, а не отправлять чинить портал (ре-ревью
+        координатора, см. inn-trim-report.md и test_verification_failure_
+        error_states_retry_may_help_not_a_portal_setting ниже)."""
         client = _FakeClient({
             "crm.requisite.list": {"result": []},
             "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
@@ -821,8 +771,13 @@ class EnsureRequisiteTest(_ServiceTestCase):
 
         self.assertEqual(result.status, "error")
         self.assertNotIn("crm.requisite.add", client.methods_called())
+        self.assertNotIn("не настроен", result.error)
+        self.assertNotIn("не поможет", result.error)
 
     def test_preset_field_list_bitrix_failure_treats_preset_as_unsupported(self):
+        """Тот же случай, что и выше, только причина — сетевой сбой, а не
+        неразборчивый ответ; сообщение обязано быть тем же самым "не
+        подтверждено", а не "настройка портала"."""
         client = _FakeClient({
             "crm.requisite.list": {"result": []},
             "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
@@ -832,6 +787,8 @@ class EnsureRequisiteTest(_ServiceTestCase):
 
         self.assertEqual(result.status, "error")
         self.assertNotIn("crm.requisite.add", client.methods_called())
+        self.assertNotIn("не настроен", result.error)
+        self.assertNotIn("не поможет", result.error)
 
     def test_no_preset_template_is_a_clear_error_not_invented(self):
         client = _FakeClient({
@@ -847,7 +804,8 @@ class EnsureRequisiteTest(_ServiceTestCase):
     def test_no_template_error_states_it_is_a_portal_setting_not_a_retry_case(self):
         """Ре-ревью координатора: текст ошибки обязан прямо говорить, что
         нужна настройка портала, а не временный сбой — иначе человек будет
-        жать «Повторить» бесконечно."""
+        жать «Повторить» бесконечно. Тут отсутствие шаблона ПОДТВЕРЖДЕНО —
+        crm.requisite.preset.list честно отработал и отдал пустой список."""
         client = _FakeClient({
             "crm.requisite.list": {"result": []},
             "crm.requisite.preset.list": {"result": []},
@@ -856,6 +814,28 @@ class EnsureRequisiteTest(_ServiceTestCase):
 
         self.assertIn("не настроен", result.error)
         self.assertIn("не поможет", result.error)
+
+    def test_verification_failure_error_states_retry_may_help_not_a_portal_setting(self):
+        """Второй раунд ре-ревью координатора (задача на вычитание, см.
+        inn-trim-report.md): сетевой сбой crm.requisite.preset.list — НЕ то
+        же самое, что подтверждённое отсутствие подходящего шаблона. Раньше
+        текст ошибки был один на оба случая и ВСЕГДА обвинял настройку
+        портала — здесь портал мог быть настроен верно, сообщение обязано
+        звать повторить, а не отправлять администратора чинить то, что не
+        сломано. Сравни с test_no_template_error_states_it_is_a_portal_
+        setting_not_a_retry_case выше — тот же метод падает по другой
+        причине и обязан дать ДРУГОЙ текст."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": RuntimeError("сеть недоступна"),
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+        self.assertNotIn("не настроен", result.error)
+        self.assertNotIn("не поможет", result.error)
+        self.assertIn("Не удалось проверить", result.error)
 
     def test_preset_list_malformed_response_is_error_not_crash(self):
         client = _FakeClient({
@@ -866,6 +846,8 @@ class EnsureRequisiteTest(_ServiceTestCase):
 
         self.assertEqual(result.status, "error")
         self.assertNotIn("crm.requisite.add", client.methods_called())
+        self.assertNotIn("не настроен", result.error)
+        self.assertNotIn("не поможет", result.error)
 
     def test_preset_list_bitrix_failure_is_error_not_crash(self):
         client = _FakeClient({
