@@ -13,17 +13,29 @@ from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 from b24pysdk import Client
+from django.core.cache import cache
 from django.utils import timezone
 
 from .configuration_service import ConfigurationService
 from .models import Bitrix24Account, ProjectCard
 from .project_board_service import ProjectCardService
-from .project_board_shared import invalidate_project_runtime_caches
+from .project_board_shared import build_account_cache_key, invalidate_project_runtime_caches
 from .project_creation_defaults import ResolvedProjectFields, resolve_project_fields
 from .tenant_scoping import scope_to_tenant
 from .utils.decorators.sync_lock import SyncLockBusy, account_sync_lock
 
 logger = logging.getLogger(__name__)
+
+# ENTITY_TYPE_ID реквизита для компаний — то же значение 4, что и везде в
+# проекте для crm.company/crm.requisite (company_search_service.py,
+# project_board_service.py). Отдельная константа здесь просто даёт имя
+# магическому числу в новых crm.requisite.* вызовах этого модуля.
+REQUISITE_ENTITY_TYPE_ID = 4
+# Шаблоны реквизитов меняются редко (inn-brief.md) — кэшируем список надолго,
+# как MY_COMPANIES_CACHE_TTL в company_search_service.py (тоже "редко
+# меняющийся" справочник). Отрицательный результат (шаблонов нет / сбой) не
+# кэшируется вовсе — см. докстринг _get_default_requisite_preset_id.
+REQUISITE_PRESET_CACHE_TTL = 60 * 60 * 6
 
 
 @dataclass
@@ -33,19 +45,28 @@ class StepResult:
     name: str = ""
     candidates: List[Dict[str, str]] = field(default_factory=list)
     error: Optional[str] = None
+    # Заполняется ТОЛЬКО когда ensure_company нашёл компанию по ИНН под ДРУГИМ
+    # названием, чем ввёл сотрудник (см. докстринг ensure_company) — исходное
+    # введённое имя, для явного предупреждения на фронте: "компания с таким
+    # ИНН уже есть под названием «<name>»". Поле "name" в этом случае несёт
+    # НАЙДЕННОЕ (настоящее) название, как и во всех остальных статусах — эта
+    # пара полей нарочно не смешивается в один текст ошибки (inn-brief.md:
+    # "поле в StepResult заведи явное, не прячь в тексте ошибки").
+    entered_name: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
         # list(...), а не self.candidates напрямую: create() подставляет один
-        # и тот же экземпляр StepResult(status="skipped") сразу в три ключа
-        # ответа (company/group/card) — без копии все три получили бы ссылку
-        # на один список, и правка candidates одного шага тихо портила бы
-        # два других (ревью фикс-раунда задачи 5).
+        # и тот же экземпляр StepResult(status="skipped") сразу в четыре ключа
+        # ответа (company/requisite/group/card) — без копии все четыре получили
+        # бы ссылку на один список, и правка candidates одного шага тихо
+        # портила бы остальные (ревью фикс-раунда задачи 5).
         return {
             "status": self.status,
             "id": self.id,
             "name": self.name,
             "candidates": list(self.candidates),
             "error": self.error,
+            "entered_name": self.entered_name,
         }
 
 
@@ -156,6 +177,37 @@ def _extract_created_id(response: Any) -> Optional[str]:
     return None
 
 
+def _is_default_preset(preset: Dict[str, Any]) -> bool:
+    """True, если элемент crm.requisite.preset.list помечен шаблоном "по
+    умолчанию".
+
+    Название и форма поля-маркера у этого метода нигде в проекте раньше не
+    встречались (inn-brief.md: до этой задачи crm.requisite.add и
+    crm.requisite.preset.list не вызывались вовсе, есть только .list на
+    чтение). Проверяем сразу несколько правдоподобных имён поля и несколько
+    кодировок "истины" — тот же приём, каким остальной код проекта переживает
+    разные регистры полей Битрикса (RQ_INN/rqInn, ENTITY_ID/entityId и т.д.,
+    см. company_search_service.py/project_board_service.py). Если ни один
+    вариант не сработал — просто не дефолтный: вызывающий код
+    (_get_default_requisite_preset_id) возьмёт первый элемент списка, как и
+    предписывает inn-brief.md ("если шаблонов несколько — брать помеченный
+    по умолчанию, иначе первый") — это осознанный отказ угадывать
+    непроверенное имя поля, а не пропущенный случай.
+    """
+    for key in ("IS_DEFAULT", "isDefault", "DEFAULT", "default"):
+        if key not in preset:
+            continue
+        value = preset[key]
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str) and value.strip().upper() in {"Y", "YES", "TRUE", "1"}:
+            return True
+        return False
+    return False
+
+
 class ProjectCreationService:
     def __init__(self, client: Optional[Client], account: Bitrix24Account):
         self.client = client or account.client
@@ -164,10 +216,120 @@ class ProjectCreationService:
     def _call(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
         return self.client._bitrix_token.call_method(method, params)
 
-    def ensure_company(self, company_id: Optional[str], company_name: str) -> StepResult:
-        """Шаг 1: компания. Передан id — используем как есть, поиска не делаем."""
+    def _resolve_company_title(self, company_id: str) -> Optional[str]:
+        """Достаёт TITLE компании по id — нужно, чтобы показать НАСТОЯЩЕЕ
+        название найденной по ИНН компании (см. ensure_company), а не то,
+        что ввёл человек: crm.requisite.list отдаёт ENTITY_ID, но не TITLE.
+
+        Три исхода, различимые без отдельного флага "ok" — `None` уже не
+        пересекается с пустой строкой:
+        - `None` — ответ неразобираем или сбой сети (вызывающий код
+          превращает это в status="error");
+        - `""` — компании с таким id нет (осиротевший реквизит: компанию
+          удалили, реквизит остался) — вызывающий код трактует это как
+          "не найдена", а не как ошибку;
+        - непустая строка — настоящее название компании.
+        """
+        try:
+            response = self._call(
+                "crm.company.list",
+                {"filter": {"ID": self._to_bitrix_id(company_id)}, "select": ["ID", "TITLE"]},
+            )
+            rows, parsed_ok = _extract_rows(response)
+        except Exception as exc:
+            logger.warning("ensure_company: company lookup by id failed: %s", exc)
+            return None
+        if not parsed_ok:
+            logger.warning("ensure_company: company lookup by id returned unexpected format")
+            return None
+        if not rows:
+            return ""
+        return _clean_str(rows[0].get("TITLE") or rows[0].get("title"))
+
+    def _find_company_by_inn(self, inn: str, entered_company_name: str) -> Optional[StepResult]:
+        """Точный поиск компании по ИНН через реквизит (RQ_INN, не %RQ_INN —
+        подстрочный фильтр отдал бы чужую компанию).
+
+        Возвращает `None`, если ни одного совпадения нет: это НЕ ошибка, а
+        сигнал вызывающему коду (ensure_company) продолжить обычным поиском
+        по названию — реквизита с таким ИНН пока никто не заводил. Любой
+        другой исход (нашли ровно одну компанию, нашли несколько, сбой сети
+        или неразбираемый ответ) — уже готовый StepResult, который
+        ensure_company возвращает как есть, дальше не разбираясь.
+        """
+        try:
+            response = self._call(
+                "crm.requisite.list",
+                {
+                    "filter": {"ENTITY_TYPE_ID": REQUISITE_ENTITY_TYPE_ID, "RQ_INN": inn},
+                    "select": ["ENTITY_ID", "RQ_INN"],
+                },
+            )
+            rows, parsed_ok = _extract_rows(response)
+        except Exception as exc:
+            logger.warning("ensure_company: crm.requisite.list (by INN) failed: %s", exc)
+            return StepResult(status="error", error=f"Не удалось найти компанию по ИНН: {exc}")
+        if not parsed_ok:
+            logger.warning("ensure_company: crm.requisite.list (by INN) returned unexpected format")
+            return StepResult(status="error", error="Битрикс вернул ответ в неожиданном формате при поиске по ИНН.")
+
+        entity_ids: List[str] = []
+        seen_ids = set()
+        for row in rows:
+            entity_id = _clean_str(row.get("ENTITY_ID") or row.get("entityId"))
+            if entity_id and entity_id not in seen_ids:
+                seen_ids.add(entity_id)
+                entity_ids.append(entity_id)
+
+        inn_matches: List[Dict[str, str]] = []
+        for entity_id in entity_ids:
+            title = self._resolve_company_title(entity_id)
+            if title is None:
+                return StepResult(status="error", error="Не удалось получить данные компании по ИНН.")
+            if not title:
+                # Осиротевший реквизит (компания удалена) — не совпадение,
+                # пропускаем и идём дальше искать по названию.
+                continue
+            inn_matches.append({"id": entity_id, "name": title})
+
+        if len(inn_matches) > 1:
+            return StepResult(status="ambiguous", candidates=inn_matches)
+        if len(inn_matches) == 1:
+            match = inn_matches[0]
+            entered_name = entered_company_name if entered_company_name != match["name"] else None
+            return StepResult(
+                status="found", id=match["id"], name=match["name"] or entered_company_name, entered_name=entered_name
+            )
+        return None
+
+    def ensure_company(self, company_id: Optional[str], company_name: str, inn: Optional[str] = None) -> StepResult:
+        """Шаг компании. Передан id — используем как есть, поиска не делаем,
+        ИНН при этом не смотрим вовсе: для уже выбранной из поиска компании
+        реквизиты не наша забота (решение заказчика 29.07.2026, inn-brief.md,
+        раздел "Решение") — она либо уже имеет реквизит, либо нет.
+
+        Иначе (создание НОВОЙ компании, inn обычно уже проверен на входе
+        resolve_project_fields — см. её докстринг, но эта функция не
+        полагается на это и просто использует inn как есть, пустая строка
+        от невалидного ИНН здесь безопасна — ниже просто пропустит поиск по
+        ИНН) — порядок ровно как в inn-brief.md:
+
+        1. Точный поиск по ИНН (crm.requisite.list, RQ_INN) — ИНН настоящий
+           идентификатор юрлица, значит имеет приоритет над текстом названия.
+        2. Точный поиск по названию (=TITLE, как раньше).
+        3. Создание (crm.company.add) — реквизит создаётся ОТДЕЛЬНЫМ шагом
+           (ensure_requisite), не здесь.
+
+        Расхождение имени: если по ИНН нашлась компания с ДРУГИМ названием,
+        берём найденную (создание второй компании с тем же ИНН недопустимо —
+        порча данных CRM клиента) и заполняем entered_name — то, что ввёл
+        человек, — чтобы фронт мог явно предупредить, а не молча подменить
+        название. StepResult.name при этом несёт НАСТОЯЩЕЕ (найденное)
+        название, как и во всех остальных статусах.
+        """
         company_id = _clean_str(company_id)
         company_name = _clean_str(company_name)
+        inn = _clean_str(inn)
 
         if company_id:
             return StepResult(status="found", id=company_id, name=company_name)
@@ -175,7 +337,14 @@ class ProjectCreationService:
         if not company_name:
             return StepResult(status="error", error="Не указана компания.")
 
-        # Шаг 1: поиск по названию
+        if inn:
+            inn_result = self._find_company_by_inn(inn, company_name)
+            if inn_result is not None:
+                return inn_result
+            # None -> реквизита с этим ИНН нет ни у кого — идём дальше, к
+            # поиску по названию (см. докстринг _find_company_by_inn).
+
+        # Шаг 2: поиск по точному названию
         try:
             response = self._call(
                 "crm.company.list",
@@ -207,7 +376,7 @@ class ProjectCreationService:
         if len(matches) > 1:
             return StepResult(status="ambiguous", candidates=matches)
 
-        # Шаг 2: создание компании, если не найдена
+        # Шаг 3: создание компании, если не найдена ни по ИНН, ни по названию
         try:
             created = self._call("crm.company.add", {"fields": {"TITLE": company_name}})
             created_id = _extract_created_id(created)
@@ -223,8 +392,157 @@ class ProjectCreationService:
 
         return StepResult(status="created", id=created_id, name=company_name)
 
+    def _get_default_requisite_preset_id(self) -> Optional[str]:
+        """Шаблон реквизитов для компаний (ENTITY_TYPE_ID=4). Несколько —
+        берём помеченный по умолчанию, иначе первый (inn-brief.md). Список
+        кэшируется — "меняется редко" (там же); отрицательный результат
+        (шаблонов нет, сбой сети, неразбираемый ответ) НЕ кэшируется, чтобы
+        временный сбой или ещё не настроенный на портале шаблон не запирали
+        создание проектов на REQUISITE_PRESET_CACHE_TTL (6 часов) — тот же
+        принцип, что и в company_search_service.py/project_board_service.py
+        ("неудачный поиск не кэшируем").
+        """
+        cache_key = build_account_cache_key(self.account, "requisite-presets")
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            response = self._call(
+                "crm.requisite.preset.list",
+                {
+                    "filter": {"ENTITY_TYPE_ID": REQUISITE_ENTITY_TYPE_ID},
+                    "select": ["ID", "NAME", "ENTITY_TYPE_ID", "IS_DEFAULT"],
+                },
+            )
+            rows, parsed_ok = _extract_rows(response)
+        except Exception as exc:
+            logger.warning("_get_default_requisite_preset_id: crm.requisite.preset.list failed: %s", exc)
+            return None
+        if not parsed_ok:
+            logger.warning("_get_default_requisite_preset_id: crm.requisite.preset.list returned unexpected format")
+            return None
+
+        # Серверный filter ENTITY_TYPE_ID не обязан быть последней инстанцией
+        # (см. докстринг _normalize_rows в company_search_service.py про
+        # недоверие форме ответа Битрикса вообще) — перепроверяем на
+        # клиенте, как и везде в проекте.
+        presets = [
+            row for row in rows
+            if _clean_str(row.get("ENTITY_TYPE_ID")) == str(REQUISITE_ENTITY_TYPE_ID)
+        ]
+        if not presets:
+            return None
+
+        preset_id = ""
+        for preset in presets:
+            if _is_default_preset(preset):
+                preset_id = _clean_str(preset.get("ID") or preset.get("id"))
+                break
+        if not preset_id:
+            preset_id = _clean_str(presets[0].get("ID") or presets[0].get("id"))
+        if not preset_id:
+            return None
+
+        cache.set(cache_key, preset_id, REQUISITE_PRESET_CACHE_TTL)
+        return preset_id
+
+    def ensure_requisite(self, company_id: str, company_name: str, inn: str) -> StepResult:
+        """Шаг реквизита (ИНН) — вызывается ТОЛЬКО для новой компании: при
+        company_id, пришедшем от клиента (существующая компания из поиска),
+        create() передаёт сюда fields.inn == "" (см. докстринг
+        resolve_project_fields) — этот шаг тут же возвращает "skipped", ИНН
+        уже выбранной компании не наша забота (inn-brief.md, "Решение").
+
+        Идемпотентен так же, как остальные шаги: сначала смотрит, нет ли уже
+        у ЭТОЙ компании реквизита с ЭТИМ ИНН, и только тогда создаёт. Это
+        закрывает повтор после частичного отказа "компания создана, реквизит
+        нет" (см. create()/_create_under_lock): второй вызов найдёт компанию
+        по точному названию (шаг 2 ensure_company, раз по ИНН реквизита ещё
+        нет никому) и обязан дописать реквизит, а не развести руками. Другой
+        реквизит той же компании (другой ИНН — например, старая ошибка
+        данных) не блокирует создание: проверяем именно ЭТОТ ИНН у ЭТОЙ
+        компании, а не факт "хоть что-то есть".
+
+        Отсутствие шаблона реквизитов на портале — не повод трогать компанию:
+        она остаётся, а этот шаг возвращает status="error" с понятной
+        причиной. Придумывать PRESET_ID нельзя — угаданный шаблон может
+        привязать реквизит к чужой форме (ИП вместо юрлица, другая страна) и
+        испортить данные в CRM клиента сильнее, чем отсутствующий ИНН.
+        """
+        company_id = _clean_str(company_id)
+        company_name = _clean_str(company_name)
+        inn = _clean_str(inn)
+
+        if not company_id or not inn:
+            return StepResult(status="skipped")
+
+        # Идемпотентность: у компании уже есть реквизит с этим ИНН?
+        try:
+            response = self._call(
+                "crm.requisite.list",
+                {
+                    "filter": {
+                        "ENTITY_TYPE_ID": REQUISITE_ENTITY_TYPE_ID,
+                        "ENTITY_ID": self._to_bitrix_id(company_id),
+                    },
+                    "select": ["ID", "ENTITY_ID", "RQ_INN"],
+                },
+            )
+            rows, parsed_ok = _extract_rows(response)
+        except Exception as exc:
+            logger.warning("ensure_requisite: crm.requisite.list failed: %s", exc)
+            return StepResult(status="error", error=f"Не удалось проверить реквизиты компании: {exc}")
+        if not parsed_ok:
+            logger.warning("ensure_requisite: crm.requisite.list returned unexpected format")
+            return StepResult(status="error", error="Битрикс вернул ответ в неожиданном формате при проверке реквизита.")
+
+        for row in rows:
+            existing_inn = _clean_str(row.get("RQ_INN") or row.get("rqInn"))
+            if existing_inn == inn:
+                existing_id = _clean_str(row.get("ID") or row.get("id"))
+                return StepResult(status="found", id=existing_id, name=inn)
+
+        preset_id = self._get_default_requisite_preset_id()
+        if not preset_id:
+            return StepResult(
+                status="error",
+                error=(
+                    "На портале не настроен шаблон реквизитов для компаний — "
+                    "ИНН не сохранён. Обратитесь к администратору Битрикс24."
+                ),
+            )
+
+        try:
+            created = self._call(
+                "crm.requisite.add",
+                {
+                    "fields": {
+                        "ENTITY_TYPE_ID": REQUISITE_ENTITY_TYPE_ID,
+                        "ENTITY_ID": self._to_bitrix_id(company_id),
+                        "PRESET_ID": self._to_bitrix_id(preset_id),
+                        # NAME обязателен у crm.requisite.add и не имеет
+                        # отдельного поля в форме — используем название
+                        # компании, как это по умолчанию делает сама форма
+                        # реквизитов в интерфейсе Битрикса.
+                        "NAME": company_name or inn,
+                        "RQ_INN": inn,
+                    }
+                },
+            )
+            created_id = _extract_created_id(created)
+        except Exception as exc:
+            logger.warning("ensure_requisite: crm.requisite.add failed: %s", exc)
+            return StepResult(status="error", error=f"Не удалось создать реквизит: {exc}")
+
+        if not created_id:
+            return StepResult(status="error", error="Битрикс не вернул идентификатор реквизита.")
+
+        return StepResult(status="created", id=created_id, name=inn)
+
     def ensure_group(self, group_name: str) -> StepResult:
-        """Шаг 2: проект/группа в Задачах.
+        """Шаг 3: проект/группа в Задачах (после компании и её реквизита —
+        см. докстринг create()).
 
         sonet_group.get фильтрует по подстроке, поэтому совпадением считаем
         только точное равенство имени — иначе «Портал Ромашка» подцепит
@@ -330,7 +648,7 @@ class ProjectCreationService:
         entity_type_id: int,
         mapping: Dict[str, Any],
     ) -> StepResult:
-        """Шаг 3: карточка смарт-процесса, связанная с группой."""
+        """Шаг 4: карточка смарт-процесса, связанная с группой."""
         if not entity_type_id or not mapping:
             return StepResult(
                 status="skipped",
@@ -433,10 +751,15 @@ class ProjectCreationService:
         current_user_name: str,
         today: Optional[date] = None,
     ) -> Dict[str, Any]:
-        """Оркестратор: компания -> группа -> карточка, строго по порядку —
-        карточка ссылается на первые две сущности. Сбой шага не откатывает уже
-        созданное: возвращаем частичный результат, повторный вызов досоздаёт
-        недостающее (каждый шаг идемпотентен сам по себе).
+        """Оркестратор: компания -> её реквизит (ИНН) -> группа -> карточка,
+        строго по порядку — карточка ссылается на первые две сущности (id
+        компании, не реквизита). Сбой шага не откатывает уже созданное:
+        возвращаем частичный результат, повторный вызов досоздаёт недостающее
+        (каждый шаг идемпотентен сам по себе, включая реквизит — см. докстринг
+        ensure_requisite). Шаг реквизита применим только при создании НОВОЙ
+        компании (fields.inn пуст для уже выбранной из поиска — см. докстринг
+        resolve_project_fields) и сам решает свою применимость, как и
+        ensure_card решает применимость по конфигу смарт-процесса.
 
         Конкурентность (поднято ревью Task 2/4, см. progress.md):
 
@@ -494,6 +817,7 @@ class ProjectCreationService:
         if missing:
             return {
                 "company": skipped.as_dict(),
+                "requisite": skipped.as_dict(),
                 "group": skipped.as_dict(),
                 "card": skipped.as_dict(),
                 "done": False,
@@ -510,6 +834,7 @@ class ProjectCreationService:
             )
             return {
                 "company": busy.as_dict(),
+                "requisite": skipped.as_dict(),
                 "group": skipped.as_dict(),
                 "card": skipped.as_dict(),
                 "done": False,
@@ -519,13 +844,15 @@ class ProjectCreationService:
     def _create_under_lock(
         self, fields: ResolvedProjectFields, config: Dict[str, Any], skipped: StepResult
     ) -> Dict[str, Any]:
-        """Тело create() внутри account_sync_lock: сами три шага плюс
-        write-through. Вынесено отдельным методом только ради читаемости
-        create() — самостоятельного смысла вне лока не имеет."""
-        company = self.ensure_company(fields.company_id, fields.company_name)
+        """Тело create() внутри account_sync_lock: компания -> её реквизит
+        (ИНН) -> группа -> карточка, плюс write-through. Вынесено отдельным
+        методом только ради читаемости create() — самостоятельного смысла
+        вне лока не имеет."""
+        company = self.ensure_company(fields.company_id, fields.company_name, fields.inn)
         if not company.id:
             return {
                 "company": company.as_dict(),
+                "requisite": skipped.as_dict(),
                 "group": skipped.as_dict(),
                 "card": skipped.as_dict(),
                 "done": False,
@@ -534,10 +861,20 @@ class ProjectCreationService:
         fields.company_id = company.id
         fields.company_name = fields.company_name or company.name
 
+        # fields.inn пуст ровно тогда, когда компания уже была выбрана из
+        # поиска (company_id пришёл от клиента) — resolve_project_fields
+        # гарантирует это (см. её докстринг про "не трогается"), поэтому
+        # здесь достаточно просто позвать шаг: он сам вернёт "skipped" на
+        # пустом ИНН (см. докстринг ensure_requisite), отдельная ветка
+        # if/else тут не нужна — тот же приём, что и с ensure_card ниже
+        # (шаг сам решает свою применимость по конфигу, а не вызывающий код).
+        requisite = self.ensure_requisite(company.id, company.name, fields.inn)
+
         group = self.ensure_group(fields.project_name)
         if not group.id:
             return {
                 "company": company.as_dict(),
+                "requisite": requisite.as_dict(),
                 "group": group.as_dict(),
                 "card": skipped.as_dict(),
                 "done": False,
@@ -621,8 +958,15 @@ class ProjectCreationService:
 
         return {
             "company": company.as_dict(),
+            "requisite": requisite.as_dict(),
             "group": group.as_dict(),
             "card": card.as_dict(),
-            "done": card.status != "error",
+            # requisite.status != "error" — новый режим частичного отказа
+            # "компания создана, реквизит нет" (inn-brief.md) обязан вести
+            # себя как и остальные шаги: сорвать done, чтобы фронт предложил
+            # повторить. skipped (существующая компания, ИНН не при делах)
+            # done не трогает — так же, как "skipped" у card (смарт-процесс
+            # не настроен) сегодня не трогает done.
+            "done": card.status != "error" and requisite.status != "error",
             "missing_fields": [],
         }
