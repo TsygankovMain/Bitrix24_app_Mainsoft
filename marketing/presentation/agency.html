@@ -587,392 +587,533 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
 .cta-chip.solid { background: #fff; color: var(--accent-dk); border-color: #fff; }
 
 /* ============================================================
-   МОКАПЫ — окно Bitrix24
+   МОКАПЫ — воспроизводят реальный интерфейс приложения.
+   Источник значений: frontend/app/assets/css/main.css (токены ms-*),
+   pages/guide.client.vue (стили guide-*), pages/embedded.vue,
+   components/reports/*. Менять только вместе с продуктом.
    ============================================================ */
 
-.mock {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+:root {
+  /* Токены приложения, один в один из main.css */
+  --app-page-bg:      #F1F4F6;
+  --app-border:       #DFE0E3;
+  --app-border-2:     #C9CCD0;
+  --app-surface:      #FFFFFF;
+  --app-text:         #333333;
+  --app-text-muted:   #525C69;
+  --app-accent:       #0075FF;
+  --app-accent-soft:  #E8F3FF;
+  /* Слейт-шкала Tailwind, которой размечены компоненты */
+  --sl-900: #0F172A; --sl-800: #1E293B; --sl-700: #334155; --sl-600: #475569;
+  --sl-500: #64748B; --sl-400: #94A3B8; --sl-300: #CBD5E1; --sl-200: #E2E8F0;
+  --sl-100: #F1F5F9; --sl-50:  #F8FAFC;
+}
+
+/* ---------- Оболочка страницы приложения ---------- */
+
+.app {
+  background: var(--app-page-bg);
+  border-radius: 18px;
+  padding: 18px;
   box-shadow: var(--shadow-lg);
-  overflow: hidden;
+  color: var(--app-text);
   font-size: 13px;
-  color: var(--ink);
+  overflow: hidden;
 }
 
-.mock-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: #EDF1F5;
-  border-bottom: 1px solid var(--line);
+/* B24Card */
+.app-card {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 20px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+  overflow: hidden;
 }
-.mock-dot { width: 9px; height: 9px; border-radius: 50%; background: #C9D3DD; }
-.mock-title {
-  margin-left: 8px;
-  font-size: 12.5px;
+
+.app-card-head {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.app-card-body { padding: 18px 20px; }
+
+.app-back {
+  display: inline-block;
+  margin-bottom: 12px;
+  color: var(--app-accent);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.app-h2 {
+  font-size: 20px;
   font-weight: 600;
-  color: #5A6A7A;
+  color: var(--sl-900);
+  margin: 0;
+  letter-spacing: -.01em;
 }
-.mock-crumbs { margin-left: auto; font-size: 11.5px; color: var(--muted); }
 
-.mock-tabs {
+.app-sub {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: var(--sl-500);
+  line-height: 1.45;
+}
+
+.app-head-row {
   display: flex;
-  gap: 2px;
-  padding: 0 14px;
-  background: #F7F9FB;
-  border-bottom: 1px solid var(--line);
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
-.mock-tab {
-  padding: 11px 15px;
-  font-size: 12.5px;
-  font-weight: 550;
-  color: var(--ink-2);
-  border-bottom: 2px solid transparent;
-}
-.mock-tab.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 650; }
 
-.mock-body { padding: 16px 18px; background: #fff; }
-.mock-body.soft { background: var(--bg-soft); }
-
-/* Панель фильтров */
-.mock-filters {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 11px 18px;
-  border-bottom: 1px solid var(--line-soft);
-  background: #FCFDFE;
-}
-.mock-field {
+/* B24Button */
+.b24-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #fff;
-  font-size: 12px;
-  color: var(--ink-2);
+  justify-content: center;
+  border-radius: 10px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
-.mock-field b { color: var(--ink); font-weight: 600; }
-.mock-field::after { content: "▾"; color: var(--muted); font-size: 10px; }
-.mock-field.no-caret::after { content: ""; }
-.mock-btn {
-  padding: 7px 15px;
-  border-radius: 7px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 12px;
+.b24-btn.primary { background: var(--app-accent); color: #fff; }
+.b24-btn.success { background: #14A05E; color: #fff; }
+.b24-btn.default { background: var(--sl-200); color: var(--sl-700); }
+.b24-btn.ghost   { background: #fff; border: 1px solid var(--app-border); color: var(--sl-600); }
+.btn-row { display: flex; gap: 8px; }
+
+/* ms-filter-wrap */
+.app-filters {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  border: 1px solid var(--sl-200);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, .8);
+  padding: 14px;
+}
+
+.app-field { display: grid; gap: 5px; }
+.app-field-label { font-size: 12px; font-weight: 600; color: var(--sl-500); }
+.app-input {
+  border: 1px solid var(--sl-200);
+  border-radius: 12px;
+  background: #fff;
+  padding: 8px 11px;
+  font-size: 13px;
+  color: var(--sl-700);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  min-width: 132px;
+}
+.app-input.caret { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.app-input.caret::after { content: "▾"; color: var(--sl-400); font-size: 10px; }
+
+/* ms-kpi-grid + ReportMetricCard */
+.kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.kpi-grid.k2 { grid-template-columns: repeat(2, 1fr); }
+.kpi-grid.k4 { grid-template-columns: repeat(4, 1fr); }
+
+.kpi {
+  border: 1px solid var(--sl-200);
+  border-radius: 16px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+}
+.kpi .k-l {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--sl-500);
+}
+.kpi .k-v { margin-top: 7px; font-size: 22px; font-weight: 700; color: var(--sl-900); line-height: 1.1; }
+.kpi .k-c { margin-top: 4px; font-size: 12px; color: var(--sl-500); }
+
+.kpi.success { border-color: #D1FAE5; background: #ECFDF5; }
+.kpi.success .k-v { color: #047857; }
+.kpi.danger  { border-color: #FEE2E2; background: #FEF2F2; }
+.kpi.danger  .k-v { color: #B91C1C; }
+.kpi.info    { border-color: #E0F2FE; background: #F0F9FF; }
+.kpi.info    .k-v { color: #0369A1; }
+.kpi.warning { border-color: #FEF3C7; background: #FFFBEB; }
+.kpi.warning .k-v { color: #B45309; }
+
+/* ms-table */
+.app-table-shell {
+  overflow: hidden;
+  border: 1px solid var(--sl-200);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+}
+.app-table { width: 100%; border-collapse: collapse; }
+.app-table thead { background: var(--sl-50); }
+.app-table th {
+  padding: 11px 16px;
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--sl-500);
+  white-space: nowrap;
+}
+.app-table td {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--sl-700);
+  border-top: 1px solid var(--sl-200);
+}
+.app-table .r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.app-table tr.project > td { background: rgba(239, 246, 255, .6); font-weight: 700; color: var(--sl-800); }
+.app-table tr.total > td {
+  background: var(--sl-100);
+  border-top: 2px solid var(--sl-300);
+  font-weight: 700;
+  color: var(--sl-700);
+}
+.app-table .ok   { color: #059669; }
+.app-table .bad  { color: #E11D48; }
+.app-table .none { color: var(--sl-400); }
+.app-table .total .ok { color: #047857; }
+
+.tree { display: inline-flex; align-items: center; gap: 8px; }
+.tree .caret { width: 12px; color: var(--sl-400); font-size: 10px; }
+.tree.d1 { padding-left: 22px; }
+.tree.d2 { padding-left: 44px; }
+.tree.d3 { padding-left: 66px; }
+
+/* ---------- Окно-мокап из юзергайда (guide-*) ---------- */
+
+.gw-outer {
+  border: 1px solid rgba(216, 226, 238, .95);
+  border-radius: 26px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .98), rgba(248, 250, 252, .94));
+  padding: 14px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, .08);
+}
+
+.gw {
+  overflow: hidden;
+  border: 1px solid rgba(216, 226, 238, .95);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, .98);
+}
+
+.gw-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid rgba(226, 232, 240, .9);
+  background: linear-gradient(180deg, rgba(248, 250, 252, .98), rgba(241, 245, 249, .92));
+  color: var(--sl-600);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.gw-dots { display: inline-flex; gap: 6px; }
+.gw-dots i { width: 8px; height: 8px; border-radius: 999px; background: var(--sl-300); display: block; }
+.gw-body { padding: 16px; }
+.gw-body > * + * { margin-top: 12px; }
+
+.g-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid rgba(226, 232, 240, .95);
+  border-radius: 18px;
+  background: #fff;
+  padding: 13px 14px;
+}
+.g-title { color: var(--sl-900); font-size: 13.5px; font-weight: 700; }
+.g-meta { margin-top: 4px; color: var(--sl-500); font-size: 12px; }
+.g-hours { font-size: 13.5px; font-weight: 700; }
+.g-hours.pos { color: #0F766E; }
+.g-hours.neg { color: #E11D48; }
+
+.g-soft {
+  border: 1px solid rgba(226, 232, 240, .95);
+  border-radius: 18px;
+  background: var(--sl-50);
+  padding: 14px;
+}
+.g-soft > * + * { margin-top: 12px; }
+
+.g-grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.g-field { display: grid; gap: 6px; }
+.g-label { color: var(--sl-500); font-size: 12px; font-weight: 600; }
+.g-input, .g-area {
+  border: 1px solid rgba(216, 226, 238, .95);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--sl-900);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+}
+.g-area { min-height: 62px; }
+.g-input.muted { color: var(--sl-400); }
+
+.g-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(216, 226, 238, .95);
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px 12px;
+  color: var(--sl-900);
+  font-size: 13px;
   font-weight: 600;
 }
-.mock-btn.ghost { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
-.mock-btn.grey  { background: #EDF1F5; color: var(--ink-2); border: 1px solid var(--line); }
-.mock-spacer { margin-left: auto; }
+.g-switch { position: relative; width: 36px; height: 20px; border-radius: 999px; background: var(--sl-300); flex: 0 0 auto; }
+.g-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 999px; background: #fff;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, .15);
+}
+.g-switch.on { background: var(--app-accent); }
+.g-switch.on::after { left: 18px; }
 
-/* KPI-строка внутри мокапа */
-.mock-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
-.mock-kpi {
-  background: var(--bg-soft);
-  border-radius: 9px;
-  padding: 12px 14px;
-}
-.mock-kpi .k-v { font-size: 21px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
-.mock-kpi .k-l { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
-.mock-kpi.danger { background: var(--danger-lt); }
-.mock-kpi.danger .k-v { color: var(--danger); }
-.mock-kpi.ok { background: var(--ok-lt); }
-.mock-kpi.ok .k-v { color: var(--ok); }
-.mock-kpi.accent { background: var(--accent-lt); }
-.mock-kpi.accent .k-v { color: var(--accent); }
-
-/* Таблицы мокапов */
-.mock-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.mock-table th {
-  text-align: left;
-  font-size: 11px;
-  font-weight: 650;
-  text-transform: uppercase;
-  letter-spacing: .045em;
-  color: var(--muted);
-  padding: 9px 10px;
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
-}
-.mock-table td {
-  padding: 9px 10px;
-  border-bottom: 1px solid var(--line-soft);
-  vertical-align: middle;
-}
-.mock-table tr:last-child td { border-bottom: none; }
-.mock-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mock-table .money { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
-.mock-table tr.lvl-0 > td { background: #F7FAFD; font-weight: 650; }
-.mock-table tr.lvl-1 > td:first-child { padding-left: 28px; }
-.mock-table tr.lvl-2 > td:first-child { padding-left: 48px; color: var(--ink-2); }
-.mock-table tr.total > td {
-  background: var(--accent-lt);
+.g-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-size: 12px;
   font-weight: 700;
-  border-top: 1px solid var(--accent);
-  border-bottom: none;
 }
-.mock-table tr.danger-row > td { background: var(--danger-lt); }
+.g-pill.blue { background: var(--app-accent); color: #fff; }
+.g-pill.grey { background: var(--sl-200); color: var(--sl-700); }
+.g-pill.ghost { border: 1px solid rgba(216, 226, 238, .95); background: #fff; color: var(--sl-500); }
+.g-pills { display: flex; flex-wrap: wrap; gap: 8px; }
 
-.tw { display: inline-flex; align-items: center; gap: 7px; }
-.tw-caret { color: var(--muted); font-size: 10px; width: 8px; display: inline-block; }
-.tw-ico {
-  width: 18px; height: 18px; border-radius: 5px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 700;
-  flex: 0 0 auto;
+/* ---------- Вкладка «Учет часов» (embedded.vue) ---------- */
+
+.emb-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
 }
-.tw-ico.p { background: var(--accent-lt); color: var(--accent); }
-.tw-ico.t { background: #EEF1F4; color: #6B7A89; }
-.tw-ico.s { background: #F4F6F8; color: #93A1AF; }
+.emb-summary { display: flex; gap: 10px; }
+.emb-sum {
+  border: 1px solid var(--sl-200);
+  border-radius: 14px;
+  background: #fff;
+  padding: 9px 13px;
+  min-width: 132px;
+}
+.emb-sum .s-l { font-size: 11px; color: var(--sl-500); }
+.emb-sum .s-v { margin-top: 3px; font-size: 15px; font-weight: 700; color: var(--sl-900); }
 
-/* Бейджи */
-.badge {
+.emb-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 14px; align-items: start; }
+
+.emb-pane {
+  border: 1px solid var(--sl-200);
+  border-radius: 18px;
+  background: #fff;
+  overflow: hidden;
+}
+.emb-pane-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--sl-200);
+  background: var(--sl-50);
+}
+.emb-pane-head b { display: block; font-size: 14px; font-weight: 600; color: var(--sl-900); }
+.emb-pane-head span { display: block; margin-top: 3px; font-size: 11.5px; color: var(--sl-500); }
+.emb-pane-body { padding: 13px 14px; }
+.emb-pane-body > * + * { margin-top: 9px; }
+
+.emb-node { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.emb-node .n-name { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--sl-800); }
+.emb-node.lvl1 { padding-left: 18px; }
+.emb-node.lvl2 { padding-left: 36px; }
+.emb-node .n-h { font-size: 13px; font-weight: 700; color: var(--sl-800); font-variant-numeric: tabular-nums; }
+.emb-node.head .n-name { font-weight: 700; color: var(--sl-900); }
+.emb-node + .emb-node { border-top: 1px solid var(--sl-100); }
+
+.emb-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--sl-200);
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px 12px;
+}
+.emb-entry.sel { border-color: var(--app-accent); background: var(--app-accent-soft); }
+.emb-entry .e-t { font-size: 13px; color: var(--sl-800); }
+.emb-entry .e-m { margin-top: 3px; font-size: 11.5px; color: var(--sl-500); }
+
+.emb-split {
+  border: 1px solid var(--sl-200);
+  border-radius: 16px;
+  background: var(--sl-50);
+  padding: 13px;
+}
+.emb-split b { font-size: 13px; font-weight: 600; color: var(--sl-900); }
+.emb-split p { margin: 6px 0 10px; font-size: 11.5px; line-height: 1.5; color: var(--sl-500); }
+.emb-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--sl-700); }
+.emb-box { width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--sl-300); background: #fff; flex: 0 0 auto; }
+
+.emb-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--sl-200); }
+
+/* ---------- Доска проектов ---------- */
+
+.pb { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.pb-col { background: rgba(248, 250, 252, .9); border: 1px solid var(--sl-200); border-radius: 16px; padding: 11px; }
+.pb-col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.pb-col-head h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--sl-900); }
+.pb-col-head .cnt { background: var(--sl-200); color: var(--sl-600); border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
+
+.pb-card {
+  background: #fff;
+  border: 1px solid var(--sl-200);
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+}
+.pb-card + .pb-card { margin-top: 9px; }
+.pb-card.sel { border-color: var(--app-accent); box-shadow: 0 0 0 1px var(--app-accent); }
+.pb-name { font-size: 13px; font-weight: 700; color: var(--sl-900); line-height: 1.35; }
+.pb-client { margin-top: 3px; font-size: 11.5px; color: var(--sl-500); }
+.pb-money { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.pb-money .m-l { font-size: 11px; color: var(--sl-400); }
+.pb-money .m-v { margin-top: 2px; font-size: 12.5px; font-weight: 600; color: var(--sl-800); }
+.pb-bar { margin-top: 10px; height: 6px; border-radius: 999px; background: var(--sl-100); overflow: hidden; }
+.pb-bar > i { display: block; height: 100%; border-radius: 999px; background: var(--app-accent); }
+.pb-bar > i.warn { background: #F59E0B; }
+.pb-bar > i.over { background: #E11D48; }
+.pb-foot { margin-top: 7px; display: flex; justify-content: space-between; font-size: 11px; color: var(--sl-500); }
+
+/* ---------- Потери выручки: панели с барами ---------- */
+
+.app-panel {
+  border: 1px solid var(--sl-200);
+  border-radius: 16px;
+  background: #fff;
+  padding: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+}
+.app-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.app-panel-head h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--sl-900); }
+.app-panel-head span { font-size: 11.5px; color: var(--sl-500); }
+
+.loss-row + .loss-row { margin-top: 13px; }
+.loss-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.loss-name { font-size: 13px; font-weight: 500; color: var(--sl-900); }
+.loss-meta { margin-top: 2px; font-size: 11.5px; color: var(--sl-500); }
+.loss-badge { border-radius: 999px; padding: 3px 10px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.loss-badge.hi  { background: #FEE2E2; color: #B91C1C; }
+.loss-badge.mid { background: #FEF3C7; color: #B45309; }
+.loss-badge.low { background: #D1FAE5; color: #047857; }
+.loss-track { margin-top: 7px; height: 11px; border-radius: 999px; background: var(--sl-100); overflow: hidden; }
+.loss-track > i { display: block; height: 100%; border-radius: 999px; background: #EF4444; }
+
+/* ---------- Табель (шахматка) ---------- */
+
+.chess { width: 100%; border-collapse: collapse; }
+.chess th {
+  padding: 9px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--sl-500);
+  text-align: center;
+  background: var(--sl-50);
+}
+.chess th.who { text-align: left; padding-left: 14px; }
+.chess td { padding: 7px 6px; text-align: center; border-top: 1px solid var(--sl-200); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.chess td.who { text-align: left; padding-left: 14px; color: var(--sl-800); }
+.chess .cell { display: inline-block; min-width: 42px; padding: 4px 0; border-radius: 8px; font-size: 12px; font-weight: 600; }
+.cell.c0 { background: var(--sl-100); color: var(--sl-400); }
+.cell.c1 { background: #ECFDF5; color: #059669; }
+.cell.c2 { background: #D1FAE5; color: #047857; }
+.cell.c3 { background: #FEF3C7; color: #B45309; }
+.chess tr.total td { background: var(--sl-100); font-weight: 700; color: var(--sl-700); }
+
+/* ---------- Маппинг полей ---------- */
+
+.map-row {
+  display: grid;
+  grid-template-columns: 1fr 20px 1fr 76px;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--sl-100);
+  font-size: 13px;
+}
+.map-row:first-child { border-top: none; }
+.map-l { color: var(--sl-600); }
+.map-l b { color: var(--sl-900); font-weight: 600; }
+.map-arrow { color: var(--sl-400); text-align: center; }
+.map-r {
+  display: flex; align-items: center; justify-content: space-between;
+  border: 1px solid var(--sl-200); border-radius: 12px; background: #fff;
+  padding: 7px 11px; color: var(--sl-800); font-size: 12.5px;
+}
+.map-r::after { content: "▾"; color: var(--sl-400); font-size: 10px; }
+
+/* ---------- Общие мелочи мокапов ---------- */
+
+.tag {
   display: inline-block;
-  padding: 2.5px 8px;
-  border-radius: 5px;
-  font-size: 10.5px;
-  font-weight: 650;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
   white-space: nowrap;
 }
-.badge.bill  { background: var(--ok-lt);     color: var(--ok); }
-.badge.int   { background: #EEF1F4;          color: #6B7A89; }
-.badge.warn  { background: var(--warn-lt);   color: var(--warn); }
-.badge.dang  { background: var(--danger-lt); color: var(--danger); }
-.badge.acc   { background: var(--accent-lt); color: var(--accent); }
+.tag.ok   { background: #D1FAE5; color: #047857; }
+.tag.no   { background: var(--sl-200); color: var(--sl-600); }
+.tag.warn { background: #FEF3C7; color: #B45309; }
+.tag.bad  { background: #FEE2E2; color: #B91C1C; }
+.tag.acc  { background: var(--app-accent-soft); color: #0058C0; }
 
-/* Аватары */
 .ava {
-  width: 22px; height: 22px;
-  border-radius: 50%;
+  width: 24px; height: 24px; border-radius: 999px;
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 9.5px; font-weight: 700;
-  color: #fff;
-  flex: 0 0 auto;
+  font-size: 10px; font-weight: 700; color: #fff; flex: 0 0 auto;
 }
 .ava.a1 { background: #4A8FD4; } .ava.a2 { background: #6EA95F; }
 .ava.a3 { background: #C98A3E; } .ava.a4 { background: #A868B8; }
 .ava.a5 { background: #4FA9A0; } .ava.a6 { background: #C96A72; }
-.who { display: inline-flex; align-items: center; gap: 8px; }
+.who-cell { display: inline-flex; align-items: center; gap: 9px; }
 
-/* Полоски прогресса в таблице */
-.bar { height: 6px; border-radius: 3px; background: #EDF1F5; overflow: hidden; min-width: 68px; }
-.bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
-.bar > i.ok { background: var(--ok); }
-.bar > i.warn { background: var(--warn); }
-.bar > i.dang { background: var(--danger); }
-.bar-wrap { display: flex; align-items: center; gap: 9px; }
-.bar-val { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 34px; }
-
-/* Вкладка учёта в задаче */
-.entry-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 11px;
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  background: #FCFDFE;
-  margin-bottom: 7px;
-  font-size: 12.5px;
-}
-.entry-row .e-desc { flex: 1 1 auto; color: var(--ink-2); }
-.entry-row .e-h { font-weight: 650; font-variant-numeric: tabular-nums; }
-
-.add-form {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
-  border: 1px dashed var(--accent);
-  border-radius: 9px;
-  background: var(--accent-lt);
-  margin-top: 12px;
-}
-.add-input {
-  padding: 7px 11px;
-  border: 1px solid #C6D9EC;
-  border-radius: 7px;
-  background: #fff;
-  font-size: 12px;
-  color: var(--ink);
-}
-.add-input.grow { flex: 1 1 auto; color: var(--muted); }
-
-/* Split-модалка */
-.mock-modal {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: var(--shadow-lg);
-  background: #fff;
-  overflow: hidden;
-}
-.modal-head {
-  padding: 15px 18px;
-  border-bottom: 1px solid var(--line);
-  font-size: 15px;
-  font-weight: 650;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.modal-head .x { color: var(--muted); font-size: 15px; }
-.modal-body { padding: 16px 18px; }
-.modal-foot {
-  padding: 13px 18px;
-  border-top: 1px solid var(--line);
-  background: #FAFCFD;
-  display: flex;
-  gap: 9px;
-  justify-content: flex-end;
-}
-
-.split-src {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 12px 14px;
-  background: var(--bg-soft);
-  border-radius: 9px;
-  margin-bottom: 6px;
-  font-size: 12.5px;
-}
-.split-arrow { text-align: center; color: var(--muted); font-size: 15px; padding: 5px 0; }
-.split-part {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 14px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  margin-bottom: 8px;
-  font-size: 12.5px;
-}
-.split-part.bill { border-color: #A9DCC6; background: var(--ok-lt); }
-.split-part.int  { border-color: var(--line); background: #FAFBFC; }
-.split-part .p-h { font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
-.split-part .p-d { flex: 1 1 auto; color: var(--ink-2); }
-
-/* Доска проектов */
-.board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-.board-col { background: var(--bg-soft); border-radius: 10px; padding: 10px; }
-.board-col-head {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
-  color: var(--muted); margin-bottom: 9px; padding: 0 2px;
-}
-.board-col-head .cnt {
-  background: #E3E9EF; color: var(--ink-2);
-  border-radius: 20px; padding: 1px 7px; font-size: 10.5px;
-}
-.board-card {
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 11px;
-  margin-bottom: 8px;
-  box-shadow: 0 1px 2px rgba(20,33,44,.05);
-}
-.board-card:last-child { margin-bottom: 0; }
-.board-card .bc-name { font-size: 12.5px; font-weight: 650; line-height: 1.35; margin-bottom: 3px; }
-.board-card .bc-client { font-size: 11px; color: var(--muted); margin-bottom: 9px; }
-.board-card .bc-row { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; color: var(--ink-2); }
-.board-card .bc-h { font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
-.board-card.accent { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-
-/* Шахматка */
-.chess { width: 100%; border-collapse: collapse; font-size: 12px; }
-.chess th {
-  font-size: 10.5px; font-weight: 650; color: var(--muted);
-  text-transform: uppercase; letter-spacing: .04em;
-  padding: 7px 4px; text-align: center; border-bottom: 1px solid var(--line);
-}
-.chess th.who-col { text-align: left; padding-left: 10px; }
-.chess td {
-  padding: 5px 4px; text-align: center;
-  border-bottom: 1px solid var(--line-soft);
-  font-variant-numeric: tabular-nums;
-}
-.chess td.who-col { text-align: left; padding-left: 10px; }
-.chess .cell {
-  display: inline-block;
-  min-width: 40px;
-  padding: 4px 0;
-  border-radius: 6px;
-  font-size: 11.5px;
-  font-weight: 600;
-}
-.cell.c0 { background: #F4F6F8; color: #B4BEC8; }
-.cell.c1 { background: #E9F3EC; color: #4A8A66; }
-.cell.c2 { background: #D3E9DC; color: #2C7551; }
-.cell.c3 { background: #B5DCC7; color: #1E5F41; }
-.cell.over { background: var(--warn-lt); color: var(--warn); }
-.chess tr.total td { font-weight: 700; border-top: 1px solid var(--line); background: #FAFCFD; }
+.app-note { margin-top: 12px; font-size: 11.5px; color: var(--sl-500); line-height: 1.5; }
 
 /* Excel-выгрузка */
-.xls { border: 1px solid #CFDCE6; border-radius: 8px; overflow: hidden; font-size: 11.5px; }
-.xls-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; background: #217346; color: #fff;
-  font-size: 12px; font-weight: 650;
-}
-.xls table { width: 100%; border-collapse: collapse; }
-.xls th {
-  background: #EDF3F7; font-size: 10.5px; font-weight: 700; color: #4A5A69;
-  padding: 7px 9px; text-align: left; border: 1px solid #DCE6EE; white-space: nowrap;
-}
-.xls td { padding: 6px 9px; border: 1px solid #E8EEF3; white-space: nowrap; }
+.xls { border: 1px solid #CFDCE6; border-radius: 14px; overflow: hidden; }
+.xls-head { display: flex; align-items: center; gap: 8px; padding: 9px 13px; background: #217346; color: #fff; font-size: 12.5px; font-weight: 600; }
+.xls table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.xls th { background: #EDF3F7; font-size: 11px; font-weight: 700; color: var(--sl-600); padding: 7px 9px; text-align: left; border: 1px solid #DCE6EE; white-space: nowrap; }
+.xls td { padding: 6px 9px; border: 1px solid #E8EEF3; white-space: nowrap; color: var(--sl-700); }
 .xls td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .xls tr:nth-child(even) td { background: #FAFCFD; }
-.xls .inn { color: var(--accent); font-weight: 600; }
+.xls .inn { color: var(--app-accent); font-weight: 600; }
 
-/* Маппинг полей */
-.map-row {
-  display: grid;
-  grid-template-columns: 1fr 22px 1fr 78px;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--line-soft);
-  font-size: 12.5px;
-}
-.map-row:last-child { border-bottom: none; }
-.map-l { color: var(--ink-2); }
-.map-l b { color: var(--ink); font-weight: 600; }
-.map-arrow { color: var(--muted); text-align: center; }
-.map-r {
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--ink);
-  display: flex; align-items: center; justify-content: space-between;
-}
-.map-r::after { content: "▾"; color: var(--muted); font-size: 10px; }
-.map-st { text-align: right; }
-
-/* Подпись под мокапом */
-.mock-caption {
-  margin-top: 12px;
-  font-size: 13.5px;
-  color: var(--muted);
-  line-height: 1.5;
-}
+/* Подпись и выноски рядом с мокапом */
+.mock-caption { margin-top: 12px; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
 .mock-caption b { color: var(--ink-2); font-weight: 600; }
 
-/* Выноски рядом с мокапом */
 .callouts { display: grid; gap: 13px; align-content: center; }
-.callout {
-  padding: 15px 17px;
-  background: var(--bg-soft);
-  border-radius: 11px;
-  border-left: 3px solid var(--accent);
-}
+.callout { padding: 15px 17px; background: var(--bg-soft); border-radius: 11px; border-left: 3px solid var(--accent); }
 .callout b { display: block; font-size: 15.5px; font-weight: 650; margin-bottom: 4px; }
 .callout span { font-size: 14px; line-height: 1.5; color: var(--ink-2); }
 .callout.danger { border-left-color: var(--danger); background: var(--danger-lt); }
@@ -992,6 +1133,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
 /* Ужимает крупный мокап под высоту слайда — zoom меняет и раскладку */
 .z95 { zoom: .95; } .z90 { zoom: .90; } .z85 { zoom: .85; }
 .z80 { zoom: .80; } .z75 { zoom: .75; } .z70 { zoom: .70; } .z65 { zoom: .65; }
+.z60 { zoom: .60; } .z55 { zoom: .55; } .z50 { zoom: .50; }
 
 .mt0 { margin-top: 0; } .mt8 { margin-top: 8px; } .mt16 { margin-top: 16px; } .mt24 { margin-top: 24px; }
 .mb0 { margin-bottom: 0; } .mb8 { margin-bottom: 8px; } .mb16 { margin-bottom: 16px; }
@@ -1034,7 +1176,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
   <p class="kicker">Для агентств и студий</p>
   <h1>Сколько часов вы не выставили клиенту в этом месяце</h1>
-  <p class="lead">Приложение считает работу по каждому клиенту в часах и деньгах, отделяет оплачиваемое от подаренного и готовит детализацию к счёту — внутри Битрикс24.</p>
+  <p class="lead">Приложение считает работу по каждому клиенту в часах, отделяет учитываемое от подаренного и готовит детализацию к счёту — внутри Битрикс24.</p>
   <div class="cover-badge">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="#7CC0F5"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>
     Разбор одного месяца биллинга — бесплатно
@@ -1094,18 +1236,18 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   <div class="slide-body">
     <div class="grid g-1-2 align-center" style="gap:44px">
       <div>
-        <div class="bignum danger">512 ч</div>
-        <p class="lead mt16" style="margin-bottom:0">Отработано на клиентских проектах и не попало ни в один счёт. По ставкам этих же проектов — <b style="color:#fff">1 301 480 ₽</b>.</p>
+        <div class="bignum danger">1 228 ч</div>
+        <p class="lead mt16" style="margin-bottom:0">Столько часов за месяц не попало в учитываемые. Это 21% работы команды — и до отчёта никто не знает, что там.</p>
       </div>
       <div class="metrics g2 grid">
-        <div class="metric is-danger"><div class="m-val">1,3 млн ₽</div><div class="m-lbl">недовыставлено за месяц</div></div>
-        <div class="metric"><div class="m-val">11,1%</div><div class="m-lbl">от месячной выручки агентства</div></div>
-        <div class="metric"><div class="m-val">214 ч</div><div class="m-lbl">на одном только крупном клиенте</div></div>
+        <div class="metric is-danger"><div class="m-val">21%</div><div class="m-lbl">доля неучтённых часов</div></div>
+        <div class="metric"><div class="m-val">30,2%</div><div class="m-lbl">потери на худшем клиенте — виден первой строкой</div></div>
+        <div class="metric"><div class="m-val">2,9 млн ₽</div><div class="m-lbl">эти часы по ставке 2 400 ₽/ч</div></div>
         <div class="metric"><div class="m-val">2,4 дня</div><div class="m-lbl">проходит до внесения часов — детали уже забыты</div></div>
       </div>
     </div>
   </div>
-  <div class="slide-foot">Внутренние часы — обучение, пресейл, администрирование — в этот расчёт не входят. Это именно клиентская работа.</div>
+  <div class="slide-foot">В неучтённые попадает и законно внутреннее — обучение, пресейл, администрирование. Отчёт показывает, сколько именно и на каком клиенте.</div>
 </section>
 
 <!-- 4. Что это -->
@@ -1113,78 +1255,113 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   <div class="slide-head">
     <p class="kicker">Что это такое</p>
     <h2>Учёт часов по клиентам внутри Битрикс24</h2>
-    <p class="lead">Сотрудник списывает время в карточке задачи и сразу помечает: это оплачиваемая работа или внутренняя. Дальше всё считается само.</p>
   </div>
   <div class="slide-body">
-    <div class="z85">
-<div class="mock">
-  <div class="mock-bar">
-    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
-    <span class="mock-title">Задача · Спринт 12: главная страница</span>
-    <span class="mock-crumbs">Ромашка — редизайн сайта</span>
-  </div>
-  <div class="mock-tabs">
-    <div class="mock-tab">Обсуждение</div>
-    <div class="mock-tab">Чек-лист</div>
-    <div class="mock-tab on">Учёт часов</div>
-    <div class="mock-tab">Затраченное время</div>
-  </div>
-  <div class="mock-body">
-    <table class="mock-table" style="margin-bottom:14px">
-      <thead>
-        <tr>
-          <th>Проект · задача · подзадача</th>
-          <th class="num">Часы</th>
-          <th class="num">Оплач.</th>
-          <th class="money">Сумма</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr class="lvl-0">
-          <td><span class="tw"><span class="tw-caret">▾</span><span class="tw-ico p">П</span>Ромашка — редизайн сайта</span></td>
-          <td class="num">1&nbsp;084</td><td class="num">1&nbsp;084</td>
-          <td class="money">2&nbsp;601&nbsp;600 ₽</td>
-        </tr>
-        <tr class="lvl-1">
-          <td><span class="tw"><span class="tw-caret">▾</span><span class="tw-ico t">З</span>Спринт 12: главная страница</span></td>
-          <td class="num">86</td><td class="num">78</td>
-          <td class="money">187&nbsp;200 ₽</td>
-        </tr>
-        <tr class="lvl-2"><td>Вёрстка hero-блока</td><td class="num">24</td><td class="num">24</td><td class="money">57&nbsp;600 ₽</td></tr>
-        <tr class="lvl-2"><td>Адаптив под мобильные</td><td class="num">18</td><td class="num">18</td><td class="money">43&nbsp;200 ₽</td></tr>
-        <tr class="lvl-2"><td>Правки после ревью <span class="badge int">внутренние</span></td><td class="num">12</td><td class="num">4</td><td class="money">9&nbsp;600 ₽</td></tr>
-      </tbody>
-    </table>
-
-    <div style="font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.045em;color:#8896A5;margin-bottom:9px">Записи по этой задаче</div>
-    <div class="entry-row">
-      <span class="who"><span class="ava a1">ПС</span>Петров С.</span>
-      <span class="e-desc">Вёрстка hero-блока, десктоп</span>
-      <span class="badge bill">оплачиваемая</span>
-      <span style="color:#8896A5">12.06</span>
-      <span class="e-h">8 ч</span>
-    </div>
-    <div class="entry-row">
-      <span class="who"><span class="ava a4">СА</span>Соколова А.</span>
-      <span class="e-desc">Макет главной, второй заход</span>
-      <span class="badge bill">оплачиваемая</span>
-      <span style="color:#8896A5">12.06</span>
-      <span class="e-h">6 ч</span>
-    </div>
-    <div class="entry-row">
-      <span class="who"><span class="ava a2">СД</span>Смирнов Д.</span>
-      <span class="e-desc">Переделка после ревью — наша ошибка</span>
-      <span class="badge int">внутренняя</span>
-      <span style="color:#8896A5">11.06</span>
-      <span class="e-h">4 ч</span>
+    <div class="z65">
+<div class="app">
+  <div class="app-card">
+    <div class="app-card-head">
+      <div class="app-head-row">
+        <div>
+          <h2 class="app-h2">Учет часов</h2>
+          <p class="app-sub">Учет трудозатрат по иерархии задач.</p>
+        </div>
+        <div class="emb-summary">
+          <div class="emb-sum"><div class="s-l">Стоимость часа</div><div class="s-v">2 400 ₽</div></div>
+          <div class="emb-sum"><div class="s-l">Сумма для клиента</div><div class="s-v">187 200 ₽</div></div>
+          <span class="b24-btn primary" style="align-self:center">Отразить</span>
+        </div>
+      </div>
+      <div class="app-filters">
+        <div class="app-field"><span class="app-field-label">Сотрудник</span><span class="app-input caret">Все сотрудники</span></div>
+        <div class="app-field"><span class="app-field-label">Дата от</span><span class="app-input">01.06.2026</span></div>
+        <div class="app-field"><span class="app-field-label">Дата до</span><span class="app-input">30.06.2026</span></div>
+      </div>
     </div>
 
-    <div class="add-form">
-      <span class="add-input" style="width:78px">2,5 ч</span>
-      <span class="add-input" style="width:96px">13.06.2026</span>
-      <span class="add-input grow">Что делали…</span>
-      <span class="add-input" style="color:#1E9C6B">Оплачиваемая ▾</span>
-      <span class="mock-btn">Списать</span>
+    <div class="app-card-body">
+      <div class="emb-grid">
+        <div class="emb-pane">
+          <div class="emb-pane-head">
+            <b>Дерево задач и записи</b>
+            <span>Проект → задача → подзадача, часы суммируются снизу вверх</span>
+          </div>
+          <div class="emb-pane-body">
+            <div class="emb-node head">
+              <span class="n-name">▾ Ромашка — редизайн сайта</span>
+              <span class="n-h">1 252 ч</span>
+            </div>
+            <div class="emb-node lvl1">
+              <span class="n-name">▾ Спринт 12: главная страница</span>
+              <span class="n-h">86 ч</span>
+            </div>
+            <div class="emb-node lvl2"><span class="n-name">Вёрстка hero-блока</span><span class="n-h">24 ч</span></div>
+            <div class="emb-node lvl2"><span class="n-name">Правки после ревью</span><span class="n-h">12 ч</span></div>
+
+            <div class="emb-entry sel" style="margin-top:12px">
+              <div>
+                <div class="e-t">Вёрстка hero-блока, десктоп</div>
+                <div class="e-m">Петров С. · 12.06.2026</div>
+              </div>
+              <div style="text-align:right">
+                <div class="g-hours pos">8.00 ч</div>
+                <div class="e-m">учтено</div>
+              </div>
+            </div>
+            <div class="emb-entry">
+              <div>
+                <div class="e-t">Макет главной, второй заход</div>
+                <div class="e-m">Соколова А. · 12.06.2026</div>
+              </div>
+              <div style="text-align:right">
+                <div class="g-hours pos">6.00 ч</div>
+                <div class="e-m">учтено</div>
+              </div>
+            </div>
+            <div class="emb-entry">
+              <div>
+                <div class="e-t">Переделка после ревью</div>
+                <div class="e-m">Смирнов Д. · 11.06.2026</div>
+              </div>
+              <div style="text-align:right">
+                <div class="g-hours neg">4.00 ч</div>
+                <div class="e-m">не учтено</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="emb-pane">
+          <div class="emb-pane-head">
+            <b>Редактирование</b>
+            <span>Поля записи и дополнительные действия.</span>
+          </div>
+          <div class="emb-pane-body">
+            <div class="g-field"><span class="g-label">Описание</span><span class="g-input">Вёрстка hero-блока, десктоп</span></div>
+            <div class="g-field"><span class="g-label">Сотрудник</span><span class="g-input">Петров Сергей</span></div>
+            <div class="g-grid">
+              <div class="g-field"><span class="g-label">Дата</span><span class="g-input">12.06.2026</span></div>
+              <div class="g-field"><span class="g-label">Часы</span><span class="g-input">8</span></div>
+            </div>
+            <div class="g-toggle"><span>Учитывать в аналитике</span><span class="g-switch on"></span></div>
+
+            <div class="emb-split">
+              <b>Разделение</b>
+              <p>Отделите часть времени в новую запись, если нужно разнести ее отдельно.</p>
+              <div class="g-grid">
+                <span class="g-input muted">0</span>
+                <span class="b24-btn ghost">Выполнить разделение</span>
+              </div>
+              <div class="emb-check" style="margin-top:10px"><span class="emb-box"></span>Инвертировать признак «Учитывать»</div>
+            </div>
+
+            <div class="emb-foot">
+              <span class="b24-btn default">Отмена</span>
+              <span class="b24-btn primary">Сохранить</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1203,15 +1380,15 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
       <div class="step">
         <div class="step-n">1</div>
         <div class="step-b">
-          <b>Исполнитель списывает час и помечает его <span class="step-time">10 секунд</span></b>
-          <span>Оплачиваемая работа по ТЗ или внутренняя переделка — решает тот, кто работал, пока помнит детали.</span>
+          <b>Исполнитель списывает час и ставит признак <span class="step-time">10 секунд</span></b>
+          <span>Переключатель «Учитывать в аналитике»: работа по ТЗ или переделка по своей вине — решает тот, кто работал, пока помнит детали.</span>
         </div>
       </div>
       <div class="step">
         <div class="step-n">2</div>
         <div class="step-b">
-          <b>Смешанную работу делит пополам</b>
-          <span>Восемь часов превращаются в шесть оплачиваемых и два внутренних. Клиент платит за работу, а не за вашу ошибку.</span>
+          <b>Смешанную работу разделяет</b>
+          <span>Из восьми часов отделяются два с обратным признаком: шесть учтено, два — нет. Клиент платит за работу, а не за вашу ошибку.</span>
         </div>
       </div>
       <div class="step">
@@ -1243,44 +1420,61 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
 <section class="slide">
   <div class="slide-head">
     <p class="kicker">Ключевая механика</p>
-    <h2>Что клиенту, а что за свой счёт</h2>
+    <h2>Что учитываем, а что за свой счёт</h2>
   </div>
   <div class="slide-body">
     <div class="grid g-2-1 align-center" style="gap:34px">
       <div class="z95">
-<div class="mock-modal">
-  <div class="modal-head">Разделить запись времени <span class="x">✕</span></div>
-  <div class="modal-body">
-    <div class="split-src">
-      <span class="who"><span class="ava a1">ПС</span>Петров С.</span>
-      <span style="flex:1 1 auto;color:#45566A">Работа по главной странице, 12.06.2026</span>
-      <span style="font-weight:700;font-size:15px">8 ч</span>
+<div class="gw-outer">
+  <div class="gw">
+    <div class="gw-bar"><span>Разделение записи</span><span class="gw-dots"><i></i><i></i><i></i></span></div>
+    <div class="gw-body">
+      <div class="g-item">
+        <div>
+          <div class="g-title">Работа по главной странице</div>
+          <div class="g-meta">Петров С. · 12.06.2026 · учтено</div>
+        </div>
+        <div style="text-align:right">
+          <div class="g-hours pos">8.00 ч</div>
+          <div class="g-meta">исходная запись</div>
+        </div>
+      </div>
+
+      <div class="g-soft">
+        <div class="g-grid">
+          <div class="g-field"><span class="g-label">Часы для отделения</span><span class="g-input">2</span></div>
+          <div class="g-field"><span class="g-label">Остаток в записи</span><span class="g-input muted">6</span></div>
+        </div>
+        <div class="g-toggle"><span>Инвертировать признак «Учитывать»</span><span class="g-switch on"></span></div>
+      </div>
+
+      <div class="g-item">
+        <div>
+          <div class="g-title">Останется в исходной записи</div>
+          <div class="g-meta">Работа по ТЗ — идёт клиенту</div>
+        </div>
+        <div style="text-align:right"><div class="g-hours pos">6.00 ч</div><div class="g-meta">учтено</div></div>
+      </div>
+      <div class="g-item">
+        <div>
+          <div class="g-title">Новая запись</div>
+          <div class="g-meta">Переделка по своей вине</div>
+        </div>
+        <div style="text-align:right"><div class="g-hours neg">2.00 ч</div><div class="g-meta">не учтено</div></div>
+      </div>
+
+      <div class="g-pills">
+        <span class="g-pill blue">Выполнить разделение</span>
+        <span class="g-pill grey">Отмена</span>
+      </div>
     </div>
-    <div class="split-arrow">↓</div>
-    <div class="split-part bill">
-      <span class="p-h">6 ч</span>
-      <span class="p-d">Вёрстка hero-блока по ТЗ</span>
-      <span class="badge bill">оплачиваемая · 14 400 ₽</span>
-    </div>
-    <div class="split-part int">
-      <span class="p-h">2 ч</span>
-      <span class="p-d">Переделка после ревью — наша ошибка</span>
-      <span class="badge int">внутренняя · 0 ₽</span>
-    </div>
-    <div style="margin-top:12px;padding:10px 13px;background:#F5F8FB;border-radius:8px;font-size:12px;color:#45566A">
-      Остаток к распределению: <b style="color:#1E9C6B">0 ч</b> — всё разнесено
-    </div>
-  </div>
-  <div class="modal-foot">
-    <span class="mock-btn grey">Отмена</span>
-    <span class="mock-btn">Сохранить разделение</span>
   </div>
 </div>
       </div>
       <div class="callouts">
         <div class="callout">
           <b>Без разделения работают два сценария</b>
-          <span>Либо в счёт идёт всё — и клиент спорит по акту. Либо не идёт ничего — и агентство молча дарит десятки часов.</span>
+          <span>Либо учитывается вся запись — и клиент спорит по акту. Либо не учитывается ничего — и агентство молча дарит десятки часов.</span>
         </div>
         <div class="callout ok">
           <b>Решает исполнитель, в моменте</b>
@@ -1288,7 +1482,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
         </div>
         <div class="callout danger">
           <b>Цена вопроса</b>
-          <span>512 часов клиентской работы вне счёта за месяц — 1,3 млн ₽ на агентстве в 42 человека.</span>
+          <span>1 228 часов в «не учтено» за месяц — 21% работы агентства в 42 человека.</span>
         </div>
       </div>
     </div>
@@ -1299,73 +1493,78 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Детализация к счёту</p>
-    <h2>Каждый клиент — в задачах, часах и деньгах</h2>
+    <h2>Каждый клиент — в задачах и часах</h2>
   </div>
   <div class="slide-body">
-    <div class="z90">
-<div class="mock">
-  <div class="mock-bar">
-    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
-    <span class="mock-title">Отчёт · Учёт по проектам и задачам</span>
-    <span class="mock-crumbs">01.06.2026 — 30.06.2026</span>
-  </div>
-  <div class="mock-filters">
-    <span class="mock-field">Период: <b>июнь 2026</b></span>
-    <span class="mock-field">Проект: <b>все</b></span>
-    <span class="mock-field">Сотрудник: <b>все</b></span>
-    <span class="mock-spacer"></span>
-    <span class="mock-btn ghost">Выгрузить в Excel</span>
-    <span class="mock-btn">Сформировать</span>
-  </div>
-  <div class="mock-body">
-    <div class="mock-kpis">
-      <div class="mock-kpi"><div class="k-v">5 840 ч</div><div class="k-l">Списано за период</div></div>
-      <div class="mock-kpi ok"><div class="k-v">4 612 ч</div><div class="k-l">Оплачиваемых · 79%</div></div>
-      <div class="mock-kpi accent"><div class="k-v">11,73 млн ₽</div><div class="k-l">Выручка по списаниям</div></div>
-      <div class="mock-kpi danger"><div class="k-v">1,30 млн ₽</div><div class="k-l">Не выставлено клиентам</div></div>
+    <div class="z70">
+<div class="app">
+  <span class="app-back">‹ Назад</span>
+  <div class="app-card">
+    <div class="app-card-head">
+      <div class="app-head-row">
+        <div>
+          <h2 class="app-h2">Учет по проектам/задачам</h2>
+          <p class="app-sub">Группировка: Проект → Задача → Подзадача → Сотрудник → Метки времени</p>
+        </div>
+        <div class="btn-row">
+          <span class="b24-btn success">Скачать Excel</span>
+          <span class="b24-btn primary">Сформировать</span>
+        </div>
+      </div>
+      <div class="app-filters">
+        <div class="app-field"><span class="app-field-label">Период</span><span class="app-input">01.06.2026 — 30.06.2026</span></div>
+        <div class="app-field"><span class="app-field-label">Сотрудники</span><span class="app-input caret">Все</span></div>
+        <div class="app-field"><span class="app-field-label">Проекты</span><span class="app-input caret">Все</span></div>
+      </div>
     </div>
-    <table class="mock-table">
-      <thead>
-        <tr>
-          <th>Проект · задача</th>
-          <th class="num">Ставка</th>
-          <th class="num">Часы</th>
-          <th class="num">Оплач.</th>
-          <th class="money">Сумма</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr class="lvl-0">
-          <td><span class="tw"><span class="tw-caret">▾</span><span class="tw-ico p">П</span>СеверСталь-Логистика — внедрение CRM</span></td>
-          <td class="num">3 200 ₽</td><td class="num">1 854</td><td class="num">1 640</td>
-          <td class="money">5 248 000 ₽</td>
-        </tr>
-        <tr class="lvl-1"><td>Миграция справочников</td><td class="num">3 200 ₽</td><td class="num">512</td><td class="num">468</td><td class="money">1 497 600 ₽</td></tr>
-        <tr class="lvl-1"><td>Настройка воронок продаж</td><td class="num">3 200 ₽</td><td class="num">436</td><td class="num">392</td><td class="money">1 254 400 ₽</td></tr>
-        <tr class="lvl-1"><td>Обучение пользователей</td><td class="num">3 200 ₽</td><td class="num">298</td><td class="num">274</td><td class="money">876 800 ₽</td></tr>
-        <tr class="lvl-1"><td style="color:#8896A5">ещё 9 задач</td><td class="num">3 200 ₽</td><td class="num">608</td><td class="num">506</td><td class="money">1 619 200 ₽</td></tr>
-        <tr class="lvl-0">
-          <td><span class="tw"><span class="tw-caret">▸</span><span class="tw-ico p">П</span>Ромашка — редизайн сайта</span></td>
-          <td class="num">2 400 ₽</td><td class="num">1 252</td><td class="num">1 084</td>
-          <td class="money">2 601 600 ₽</td>
-        </tr>
-        <tr class="lvl-0">
-          <td><span class="tw"><span class="tw-caret">▸</span><span class="tw-ico p">П</span>Технопарк — техподдержка</span></td>
-          <td class="num">1 800 ₽</td><td class="num">1 018</td><td class="num">926</td>
-          <td class="money">1 666 800 ₽</td>
-        </tr>
-        <tr class="lvl-0">
-          <td><span class="tw"><span class="tw-caret">▸</span><span class="tw-ico p">П</span>Прочие 8 проектов</span></td>
-          <td class="num">~2 300 ₽</td><td class="num">1 716</td><td class="num">962</td>
-          <td class="money">2 212 600 ₽</td>
-        </tr>
-        <tr class="total">
-          <td>Итого · 11 проектов</td><td class="num">—</td>
-          <td class="num">5 840</td><td class="num">4 612</td>
-          <td class="money">11 729 000 ₽</td>
-        </tr>
-      </tbody>
-    </table>
+
+    <div class="app-card-body">
+      <div class="kpi-grid k4" style="margin-bottom:16px">
+        <div class="kpi"><div class="k-l">Всего часов</div><div class="k-v">5 840</div></div>
+        <div class="kpi success"><div class="k-l">Учтено</div><div class="k-v">4 612</div></div>
+        <div class="kpi danger"><div class="k-l">Не учтено</div><div class="k-v">1 228</div></div>
+        <div class="kpi info"><div class="k-l">% Учтённости</div><div class="k-v">79%</div></div>
+      </div>
+
+      <div class="app-table-shell">
+        <table class="app-table">
+          <thead>
+            <tr>
+              <th>Название</th>
+              <th class="r">Всего, ч</th>
+              <th class="r">Учтено, ч</th>
+              <th class="r">Не учтено, ч</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="project">
+              <td><span class="tree"><span class="caret">▾</span>СеверСталь-Логистика — внедрение CRM</span></td>
+              <td class="r">1 854</td><td class="r ok">1 640</td><td class="r bad">214</td>
+            </tr>
+            <tr><td><span class="tree d1">Миграция справочников</span></td><td class="r">512</td><td class="r ok">468</td><td class="r bad">44</td></tr>
+            <tr><td><span class="tree d1">Настройка воронок продаж</span></td><td class="r">436</td><td class="r ok">392</td><td class="r bad">44</td></tr>
+            <tr><td><span class="tree d2">Петров Сергей</span></td><td class="r">184</td><td class="r ok">168</td><td class="r bad">16</td></tr>
+            <tr><td><span class="tree d1">Обучение пользователей</span></td><td class="r">298</td><td class="r ok">274</td><td class="r bad">24</td></tr>
+            <tr class="project">
+              <td><span class="tree"><span class="caret">▸</span>Ромашка — редизайн сайта</span></td>
+              <td class="r">1 252</td><td class="r ok">1 084</td><td class="r bad">168</td>
+            </tr>
+            <tr class="project">
+              <td><span class="tree"><span class="caret">▸</span>Технопарк — техподдержка</span></td>
+              <td class="r">1 018</td><td class="r ok">926</td><td class="r bad">92</td>
+            </tr>
+            <tr class="project">
+              <td><span class="tree"><span class="caret">▸</span>Прочие 8 проектов</span></td>
+              <td class="r">1 716</td><td class="r ok">962</td><td class="r bad">754</td>
+            </tr>
+            <tr class="total">
+              <td>ИТОГО</td>
+              <td class="r">5 840</td><td class="r ok">4 612</td><td class="r bad">1 228</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
     </div>
@@ -1376,67 +1575,82 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Главный отчёт агентства</p>
-    <h2>Какой клиент забирает больше, чем платит</h2>
+    <h2>На каком клиенте теряется больше всего часов</h2>
   </div>
   <div class="slide-body">
-    <div class="z95">
-<div class="mock">
-  <div class="mock-bar">
-    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
-    <span class="mock-title">Отчёт · Потери выручки</span>
-    <span class="mock-crumbs">июнь 2026</span>
-  </div>
-  <div class="mock-body">
-    <div class="mock-kpis" style="grid-template-columns:repeat(3,1fr)">
-      <div class="mock-kpi danger"><div class="k-v">512 ч</div><div class="k-l">Отработано на клиентских проектах, но не выставлено</div></div>
-      <div class="mock-kpi danger"><div class="k-v">1 301 480 ₽</div><div class="k-l">Столько это стоит по ставкам проектов</div></div>
-      <div class="mock-kpi"><div class="k-v">11,1%</div><div class="k-l">Доля от выручки за месяц</div></div>
+    <div class="z75">
+<div class="app">
+  <span class="app-back">‹ Назад</span>
+  <div class="app-card">
+    <div class="app-card-head">
+      <div class="app-head-row">
+        <div>
+          <h2 class="app-h2">Потери выручки</h2>
+          <p class="app-sub">Где команда теряет учитываемые часы по проектам и сотрудникам</p>
+        </div>
+        <div class="btn-row">
+          <span class="b24-btn success">Скачать Excel</span>
+          <span class="b24-btn primary">Сформировать</span>
+        </div>
+      </div>
     </div>
-    <table class="mock-table">
-      <thead>
-        <tr>
-          <th>Проект</th><th>Клиент</th>
-          <th class="num">Ставка</th><th class="num">Часы вне счёта</th>
-          <th class="money">Потери</th><th style="width:120px">Доля проекта</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr class="danger-row">
-          <td><b>СеверСталь-Логистика — внедрение CRM</b></td>
-          <td style="color:#45566A">СеверСталь-Логистика</td>
-          <td class="num">3 200 ₽</td><td class="num">214 ч</td>
-          <td class="money">684 800 ₽</td>
-          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:53%"></i></div><span class="bar-val">53%</span></div></td>
-        </tr>
-        <tr>
-          <td><b>Ромашка — редизайн сайта</b></td>
-          <td style="color:#45566A">Ромашка</td>
-          <td class="num">2 400 ₽</td><td class="num">168 ч</td>
-          <td class="money">403 200 ₽</td>
-          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:31%"></i></div><span class="bar-val">31%</span></div></td>
-        </tr>
-        <tr>
-          <td><b>Технопарк — техподдержка</b></td>
-          <td style="color:#45566A">Технопарк</td>
-          <td class="num">1 800 ₽</td><td class="num">92 ч</td>
-          <td class="money">165 600 ₽</td>
-          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:13%"></i></div><span class="bar-val">13%</span></div></td>
-        </tr>
-        <tr>
-          <td style="color:#8896A5">Прочие 8 проектов</td>
-          <td style="color:#45566A">—</td>
-          <td class="num">~1 260 ₽</td><td class="num">38 ч</td>
-          <td class="money">47 880 ₽</td>
-          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:3%"></i></div><span class="bar-val">3%</span></div></td>
-        </tr>
-        <tr class="total">
-          <td>Итого</td><td></td><td class="num">—</td>
-          <td class="num">512 ч</td><td class="money">1 301 480 ₽</td><td></td>
-        </tr>
-      </tbody>
-    </table>
-    <div style="margin-top:12px;font-size:11.5px;color:#8896A5">
-      Внутренние часы (обучение, пресейл, административные — 716 ч) в потери не попадают: это не «недовыставленное», а сознательная инвестиция.
+
+    <div class="app-card-body">
+      <div class="kpi-grid" style="margin-bottom:16px">
+        <div class="kpi"><div class="k-l">Всего часов</div><div class="k-v">5 840</div></div>
+        <div class="kpi success"><div class="k-l">Учтено</div><div class="k-v">4 612</div></div>
+        <div class="kpi danger"><div class="k-l">Не учтено</div><div class="k-v">1 228</div></div>
+        <div class="kpi warning"><div class="k-l">Доля потерь</div><div class="k-v">21,0%</div></div>
+        <div class="kpi"><div class="k-l">Проектов</div><div class="k-v">11</div><div class="k-c">с данными за период</div></div>
+        <div class="kpi info"><div class="k-l">Зона риска</div><div class="k-v">2 / 5</div><div class="k-c">проекты / сотрудники</div></div>
+      </div>
+
+      <div class="app-panel">
+        <div class="app-panel-head">
+          <h3>Потери по проектам</h3>
+          <span>по неучтенным часам</span>
+        </div>
+        <div class="loss-row">
+          <div class="loss-top">
+            <div>
+              <div class="loss-name">Ориент — интеграция с 1С</div>
+              <div class="loss-meta">194 ч не учтено из 642 ч</div>
+            </div>
+            <span class="loss-badge hi">30,2%</span>
+          </div>
+          <div class="loss-track"><i style="width:100%"></i></div>
+        </div>
+        <div class="loss-row">
+          <div class="loss-top">
+            <div>
+              <div class="loss-name">Ромашка — редизайн сайта</div>
+              <div class="loss-meta">168 ч не учтено из 1 252 ч</div>
+            </div>
+            <span class="loss-badge mid">13,4%</span>
+          </div>
+          <div class="loss-track"><i style="width:44%"></i></div>
+        </div>
+        <div class="loss-row">
+          <div class="loss-top">
+            <div>
+              <div class="loss-name">СеверСталь-Логистика — внедрение CRM</div>
+              <div class="loss-meta">214 ч не учтено из 1 854 ч</div>
+            </div>
+            <span class="loss-badge mid">11,5%</span>
+          </div>
+          <div class="loss-track"><i style="width:38%"></i></div>
+        </div>
+        <div class="loss-row">
+          <div class="loss-top">
+            <div>
+              <div class="loss-name">Технопарк — техподдержка</div>
+              <div class="loss-meta">92 ч не учтено из 1 018 ч</div>
+            </div>
+            <span class="loss-badge low">9,0%</span>
+          </div>
+          <div class="loss-track"><i style="width:30%"></i></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1452,57 +1666,73 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
     <p class="lead">Чем позже сотрудник вносит время, тем хуже помнит детали — и тем больше работы теряется по дороге к счёту.</p>
   </div>
   <div class="slide-body">
-    <div class="z95">
-<div class="mock">
-  <div class="mock-bar">
-    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
-    <span class="mock-title">Отчёт · Дисциплина внесения</span>
-    <span class="mock-crumbs">июнь 2026</span>
-  </div>
-  <div class="mock-body">
-    <div class="mock-kpis">
-      <div class="mock-kpi ok"><div class="k-v">31</div><div class="k-l">Вносят в день работы</div></div>
-      <div class="mock-kpi"><div class="k-v">8</div><div class="k-l">Вносят с опозданием</div></div>
-      <div class="mock-kpi danger"><div class="k-v">3</div><div class="k-l">Не вносят совсем</div></div>
-      <div class="mock-kpi"><div class="k-v">2,4 дня</div><div class="k-l">Средняя задержка внесения</div></div>
+    <div class="z70">
+<div class="app">
+  <span class="app-back">‹ Назад</span>
+  <div class="app-card">
+    <div class="app-card-head">
+      <div class="app-head-row">
+        <div>
+          <h2 class="app-h2">Дисциплина внесения времени</h2>
+          <p class="app-sub">Через сколько дней после работы сотрудник вносит часы</p>
+        </div>
+        <div class="btn-row">
+          <span class="b24-btn success">Скачать Excel</span>
+          <span class="b24-btn primary">Сформировать</span>
+        </div>
+      </div>
     </div>
-    <table class="mock-table">
-      <thead>
-        <tr>
-          <th>Сотрудник</th><th class="num">Дней с записями</th>
-          <th class="num">Средняя задержка</th><th class="num">Пропущено дней</th><th>Статус</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><span class="who"><span class="ava a2">СД</span>Смирнов Дмитрий</span></td>
-          <td class="num">21 из 21</td><td class="num">0,2 дня</td><td class="num">0</td>
-          <td><span class="badge bill">вовремя</span></td>
-        </tr>
-        <tr>
-          <td><span class="who"><span class="ava a1">ПС</span>Петров Сергей</span></td>
-          <td class="num">21 из 21</td><td class="num">0,4 дня</td><td class="num">0</td>
-          <td><span class="badge bill">вовремя</span></td>
-        </tr>
-        <tr>
-          <td><span class="who"><span class="ava a4">СА</span>Соколова Анна</span></td>
-          <td class="num">18 из 21</td><td class="num">2,1 дня</td><td class="num">3</td>
-          <td><span class="badge warn">с опозданием</span></td>
-        </tr>
-        <tr>
-          <td><span class="who"><span class="ava a3">ИА</span>Иванов Алексей</span></td>
-          <td class="num">16 из 21</td><td class="num">3,8 дня</td><td class="num">5</td>
-          <td><span class="badge warn">с опозданием</span></td>
-        </tr>
-        <tr class="danger-row">
-          <td><span class="who"><span class="ava a6">ЛК</span>Лебедев Кирилл</span></td>
-          <td class="num">4 из 21</td><td class="num">9,5 дня</td><td class="num">17</td>
-          <td><span class="badge dang">не вносит</span></td>
-        </tr>
-      </tbody>
-    </table>
-    <div style="margin-top:12px;font-size:11.5px;color:#8896A5">
-      Чем позже вносят часы, тем хуже они помнят детали — и тем больше работы уходит из счёта клиенту.
+
+    <div class="app-card-body">
+      <div class="kpi-grid" style="margin-bottom:16px">
+        <div class="kpi"><div class="k-l">Всего записей</div><div class="k-v">1 284</div></div>
+        <div class="kpi success"><div class="k-l">День-в-день</div><div class="k-v">62%</div></div>
+        <div class="kpi info"><div class="k-l">+1 день</div><div class="k-v">21%</div></div>
+        <div class="kpi warning"><div class="k-l">2+ дней</div><div class="k-v">17%</div></div>
+        <div class="kpi danger"><div class="k-l">Средний лаг</div><div class="k-v">2,4 дн</div></div>
+        <div class="kpi"><div class="k-l">Красная зона</div><div class="k-v">3</div><div class="k-c">сотрудников</div></div>
+      </div>
+
+      <div class="app-table-shell">
+        <table class="app-table">
+          <thead>
+            <tr>
+              <th>Сотрудник</th>
+              <th class="r">Записей</th><th class="r">День-в-день</th><th class="r">Ср. лаг</th>
+              <th class="r">Late 2+</th><th class="r">Макс.</th>
+              <th>Последняя поздняя запись</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="who-cell"><span class="ava a2">СД</span>Смирнов Дмитрий</span></td>
+              <td class="r">48</td><td class="r ok">94%</td><td class="r">0,2 дн</td>
+              <td class="r">1</td><td class="r">2 дн</td><td>03.06.2026</td>
+            </tr>
+            <tr>
+              <td><span class="who-cell"><span class="ava a1">ПС</span>Петров Сергей</span></td>
+              <td class="r">52</td><td class="r ok">88%</td><td class="r">0,4 дн</td>
+              <td class="r">2</td><td class="r">3 дн</td><td>09.06.2026</td>
+            </tr>
+            <tr>
+              <td><span class="who-cell"><span class="ava a4">СА</span>Соколова Анна</span></td>
+              <td class="r">41</td><td class="r">61%</td><td class="r">2,1 дн</td>
+              <td class="r">9</td><td class="r">6 дн</td><td>24.06.2026</td>
+            </tr>
+            <tr>
+              <td><span class="who-cell"><span class="ava a3">ИА</span>Иванов Алексей</span></td>
+              <td class="r">34</td><td class="r">44%</td><td class="r">3,8 дн</td>
+              <td class="r">14</td><td class="r">9 дн</td><td>26.06.2026</td>
+            </tr>
+            <tr>
+              <td><span class="who-cell"><span class="ava a6">ЛК</span>Лебедев Кирилл</span></td>
+              <td class="r">11</td><td class="r bad">18%</td><td class="r bad">9,5 дн</td>
+              <td class="r">9</td><td class="r">17 дн</td><td>29.06.2026</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="app-note">Чем позже вносятся часы, тем хуже сотрудник помнит детали — и тем больше работы теряется по дороге к счёту.</div>
     </div>
   </div>
 </div>
@@ -1520,36 +1750,34 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
     <div class="grid g-2-1 align-center" style="gap:30px">
       <div class="z95">
 <div class="xls">
-  <div class="xls-head">
-    <span>▦</span> Выгрузка трудозатрат · июнь 2026.xlsx
-  </div>
+  <div class="xls-head"><span>▦</span> Выгрузка трудозатрат · июнь 2026.xlsx</div>
   <table>
     <thead>
       <tr>
         <th>Дата</th><th>Сотрудник</th><th>Проект</th><th>Задача</th>
-        <th>Часы</th><th>Тип</th><th>Наш ИНН</th><th>ИНН клиента</th><th>Сумма, ₽</th>
+        <th>Часы</th><th>Учитываем</th><th>Наш ИНН</th><th>ИНН клиента</th>
       </tr>
     </thead>
     <tbody>
       <tr>
         <td>12.06.2026</td><td>Петров С.</td><td>Ромашка — редизайн сайта</td><td>Вёрстка hero-блока</td>
-        <td class="n">8</td><td>оплач.</td><td class="inn">7736207543</td><td class="inn">7701234567</td><td class="n">19 200</td>
+        <td class="n">8</td><td>да</td><td class="inn">7736207543</td><td class="inn">7701234567</td>
       </tr>
       <tr>
         <td>12.06.2026</td><td>Соколова А.</td><td>Ромашка — редизайн сайта</td><td>Макет главной</td>
-        <td class="n">6</td><td>оплач.</td><td class="inn">7736207543</td><td class="inn">7701234567</td><td class="n">14 400</td>
+        <td class="n">6</td><td>да</td><td class="inn">7736207543</td><td class="inn">7701234567</td>
       </tr>
       <tr>
         <td>12.06.2026</td><td>Кузнецова М.</td><td>СеверСталь-Логистика — CRM</td><td>Миграция справочников</td>
-        <td class="n">8</td><td>оплач.</td><td class="inn">7736207543</td><td class="inn">7842991005</td><td class="n">25 600</td>
+        <td class="n">8</td><td>да</td><td class="inn">7736207543</td><td class="inn">7842991005</td>
       </tr>
       <tr>
         <td>11.06.2026</td><td>Смирнов Д.</td><td>Ромашка — редизайн сайта</td><td>Правки после ревью</td>
-        <td class="n">4</td><td>внутр.</td><td class="inn">7736207543</td><td class="inn">7701234567</td><td class="n">0</td>
+        <td class="n">4</td><td>нет</td><td class="inn">7736207543</td><td class="inn">7701234567</td>
       </tr>
       <tr>
         <td>11.06.2026</td><td>Волков И.</td><td>Технопарк — техподдержка</td><td>Регресс-тестирование</td>
-        <td class="n">7</td><td>оплач.</td><td class="inn">7736207543</td><td class="inn">5024118820</td><td class="n">12 600</td>
+        <td class="n">7</td><td>да</td><td class="inn">7736207543</td><td class="inn">5024118820</td>
       </tr>
     </tbody>
   </table>
@@ -1618,7 +1846,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
         <div class="rm-head"><span class="rm-dot"></span><b>Уже работает</b><span class="rm-when">в проде</span></div>
         <ul>
           <li>Учёт времени в карточке задачи</li>
-          <li>Оплачиваемые и внутренние часы, разделение записи</li>
+          <li>Учитываемые и неучитываемые часы, разделение записи</li>
           <li>Дерево «проект → задача → подзадача»</li>
           <li>Отчёт по потерям выручки</li>
           <li>Дисциплина внесения</li>
@@ -1663,7 +1891,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
         <div class="plan-note">Бессрочно, подключение из Маркетплейса</div>
         <ul>
           <li>Учёт времени по клиентам и проектам</li>
-          <li>Оплачиваемые и внутренние часы</li>
+          <li>Учитываемые и неучитываемые часы</li>
           <li>Разделение записи (Split)</li>
           <li>Отчёт по потерям выручки</li>
           <li>Дисциплина внесения</li>
