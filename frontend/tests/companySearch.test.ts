@@ -9,6 +9,8 @@ import {
   companySearchNoticeText,
   createCompanySearchGate,
   isRateLimitError,
+  limitVisibleSuggestions,
+  MAX_VISIBLE_SUGGESTIONS,
   normalizeCompanyQuery,
   pendingCompanyDisplayLabel,
   shouldOfferCompanyCreation,
@@ -298,4 +300,67 @@ test('shouldOfferCompanyCreation: пустой и пробельный запр�
 test('companyCreationActionLabel: показывает обрезанное введённое название в кавычках', () => {
   assert.equal(companyCreationActionLabel('Лютик'), 'Создать компанию «Лютик»')
   assert.equal(companyCreationActionLabel('  Лютик  '), 'Создать компанию «Лютик»')
+})
+
+// --- limitVisibleSuggestions ---
+//
+// Требование 4 брифа инлайн-версии (.superpowers/sdd/2026-07-28-create-project-button/
+// inline-list-brief.md): список подсказок SearchableSelect больше не всплывает
+// в отдельной прокручиваемой панели, а рисуется в потоке документа под полем —
+// см. SearchableSelect.vue. Сервер сегодня отдаёт до 50 компаний на короткий
+// запрос (serverTruncated) — все 50 строк в потоке растянули бы форму на
+// несколько экранов, и листать их всё равно никто не станет: дальше двух
+// символов люди дописывают буквы запроса, а не скроллят. Поэтому в потоке
+// показывается не больше MAX_VISIBLE_SUGGESTIONS вариантов, а под ними —
+// строка с числом остатка и подсказкой уточнить запрос.
+
+test('limitVisibleSuggestions: список короче потолка — возвращается целиком, остатка нет', () => {
+  const result = limitVisibleSuggestions(['a', 'b', 'c'])
+  assert.deepEqual(result.visible, ['a', 'b', 'c'])
+  assert.equal(result.remainderCount, 0)
+  assert.equal(result.remainderText, '')
+})
+
+test('limitVisibleSuggestions: список ровно равен потолку — виден целиком, остатка нет', () => {
+  const options = Array.from({ length: MAX_VISIBLE_SUGGESTIONS }, (_, i) => i)
+  const result = limitVisibleSuggestions(options)
+  assert.deepEqual(result.visible, options)
+  assert.equal(result.remainderCount, 0)
+  assert.equal(result.remainderText, '')
+})
+
+test('limitVisibleSuggestions: типичный ответ поиска компаний (50) — обрезается, остаток посчитан и назван в тексте', () => {
+  const options = Array.from({ length: 50 }, (_, i) => i)
+  const result = limitVisibleSuggestions(options)
+  assert.equal(result.visible.length, MAX_VISIBLE_SUGGESTIONS)
+  assert.deepEqual(result.visible, options.slice(0, MAX_VISIBLE_SUGGESTIONS))
+  assert.equal(result.remainderCount, 50 - MAX_VISIBLE_SUGGESTIONS)
+  assert.match(result.remainderText, new RegExp(String(50 - MAX_VISIBLE_SUGGESTIONS)))
+  assert.match(result.remainderText, /уточните запрос/i)
+})
+
+test('limitVisibleSuggestions: пустой список — пусто, остатка нет', () => {
+  const result = limitVisibleSuggestions([])
+  assert.deepEqual(result.visible, [])
+  assert.equal(result.remainderCount, 0)
+  assert.equal(result.remainderText, '')
+})
+
+test('limitVisibleSuggestions: на единицу больше потолка — остаток ровно 1, а не 0', () => {
+  const options = Array.from({ length: MAX_VISIBLE_SUGGESTIONS + 1 }, (_, i) => i)
+  const result = limitVisibleSuggestions(options)
+  assert.equal(result.visible.length, MAX_VISIBLE_SUGGESTIONS)
+  assert.equal(result.remainderCount, 1)
+  assert.match(result.remainderText, /ещё 1\b/)
+})
+
+test('limitVisibleSuggestions: явно переданный потолок переопределяет значение по умолчанию', () => {
+  const result = limitVisibleSuggestions([1, 2, 3, 4, 5], 2)
+  assert.deepEqual(result.visible, [1, 2])
+  assert.equal(result.remainderCount, 3)
+  assert.match(result.remainderText, /ещё 3\b/)
+})
+
+test('MAX_VISIBLE_SUGGESTIONS: в границах, которые просит бриф (не больше 5-7)', () => {
+  assert.ok(MAX_VISIBLE_SUGGESTIONS >= 5 && MAX_VISIBLE_SUGGESTIONS <= 7)
 })

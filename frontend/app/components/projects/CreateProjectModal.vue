@@ -183,29 +183,52 @@ async function loadReferences() {
 }
 
 // Поле компании подключено к уже готовому серверному режиму SearchableSelect
-// (frontend/app/utils/companySearch.ts) — тем же способом, что и на доске
-// проектов (ProjectBoardDrawer.vue::searchCompanyOptions). Подсказка
-// "начните вводить...", отметка "показаны первые 50" и уведомления о сбое/
-// лимитере — целиком его забота, здесь ничего не дублируется.
+// (frontend/app/utils/companySearch.ts), в inline-режиме брифа "список
+// перестаёт всплывать" (.superpowers/sdd/2026-07-28-create-project-button/
+// inline-list-brief.md) — тот же серверный поиск, что и на доске проектов
+// (ProjectBoardDrawer.vue::searchCompanyOptions), но список рисуется в
+// потоке формы, а не во всплывающей панели. Отметка "показаны первые 50" и
+// уведомления о сбое/лимитере — целиком забота SearchableSelect, здесь
+// ничего не дублируется.
 //
 // Единственное отличие от ProjectBoardDrawer: форма создания обязана
 // использовать введённый, но ничему не сопоставленный текст как имя НОВОЙ
-// компании (§5 спеки) — form.company_name синхронизируется с каждым запросом
-// поиска, а update:selected перекрывает его каноничным именем найденной.
+// компании (§5 спеки) — form.company_name синхронизируется с каждым
+// нажатием клавиши (см. handleCompanyQueryChanged ниже, событие
+// 'query-changed' SearchableSelect.vue), а update:selected перекрывает его
+// каноничным именем найденной.
 //
 // Важное 3 финального ревью: company_id обнуляется той же операцией
 // (companyFieldsForQuery, frontend/app/utils/companySearch.ts) — раньше
 // оставался от прошлого выбора, пока company_name уже перезаписывался новым
 // текстом, и на отправку могла уехать пара id одной компании и имени
-// другой (выбрал «АО Ромашка», передумал, набрал «Лютик», закрыл список не
-// выбирая, нажал «Создать»). handleCompanySelected ниже восстанавливает
+// другой (выбрал «АО Ромашка», передумал, набрал «Лютик», не выбирая
+// закрыл поле, нажал «Создать»). handleCompanySelected ниже восстанавливает
 // согласованную пару, если пользователь всё же выберет вариант из списка.
-async function searchCompanyOptions(query: string) {
+function syncCompanyFieldsFromQuery(query: string) {
   const fields = companyFieldsForQuery(query)
   form.value.company_id = fields.company_id
   form.value.company_name = fields.company_name
+}
+
+async function searchCompanyOptions(query: string) {
   const found = await apiStore.searchCompanies(query)
   return { options: found.companies, truncated: found.truncated, failed: found.failed }
+}
+
+// Требование 3 брифа инлайн-версии — "текст человека и есть значение поля":
+// SearchableSelect эмитит 'query-changed' на КАЖДОЕ нажатие клавиши, не
+// дожидаясь debounce серверного поиска (см. её докстринг в
+// SearchableSelect.vue). Раньше company_name синхронизировался только в
+// момент реально стартовавшего (после 300ms и прошедшего createCompanySearchGate)
+// поиска — searchCompanyOptions делал это сам, и если человек печатал и уходил
+// с поля быстрее debounce, набранный текст никогда не долетал до формы
+// ("введённое название не сохраняется", исходная жалоба, см. брифа "Зачем").
+// searchCompanyOptions больше сам поля не трогает (см. выше) — эта функция
+// единственная точка синхронизации, вызывается чаще и не привязана к тому,
+// действительно ли поиск успел стартовать.
+function handleCompanyQueryChanged(query: string) {
+  syncCompanyFieldsFromQuery(query)
 }
 
 function handleCompanySelected(option: ProjectBoardDirectoryOption | null) {
@@ -220,15 +243,11 @@ function handleCompanySelected(option: ProjectBoardDirectoryOption | null) {
 //
 // Пишем company_id/company_name ОДНОЙ операцией через companyFieldsForQuery —
 // тот же приём и по той же причине (Важное 3 финального ревью), что и в
-// searchCompanyOptions выше. Берём query из события, а не полагаемся на уже
-// имеющийся form.company_name: он синхронизируется только на реально
-// стартовавший (прошедший debounce) поиск, и человек мог допечатать текст
-// уже после того, как пришёл пустой ответ — событие несёт то значение,
-// которое он видел в кнопке действия в момент клика.
+// handleCompanyQueryChanged выше. Берём query из события, а не полагаемся на
+// уже имеющийся form.company_name: событие несёт то значение, которое
+// человек видел в кнопке действия в момент клика.
 function handleCompanyCreationRequested(query: string) {
-  const fields = companyFieldsForQuery(query)
-  form.value.company_id = fields.company_id
-  form.value.company_name = fields.company_name
+  syncCompanyFieldsFromQuery(query)
 }
 
 function resetForm() {
@@ -346,6 +365,7 @@ function closeModal() {
           <span class="font-medium text-slate-700">Компания <span class="text-rose-500">*</span></span>
           <SearchableSelect
             v-model="form.company_id"
+            inline
             empty-label="Компания не выбрана"
             search-placeholder="Поиск по названию или ИНН"
             :options="EMPTY_OPTIONS"
@@ -353,6 +373,7 @@ function closeModal() {
             :pending-company-name="form.company_name"
             @update:selected="handleCompanySelected"
             @create-requested="handleCompanyCreationRequested"
+            @query-changed="handleCompanyQueryChanged"
           />
           <span class="text-xs text-slate-400">Не нашли компанию в поиске — нажмите «Создать компанию» в списке, чтобы завести новую с введённым названием.</span>
           <span v-if="missing.includes('company')" class="text-xs text-rose-600">Выберите компанию или впишите название новой.</span>
@@ -362,6 +383,7 @@ function closeModal() {
           <span class="font-medium text-slate-700">Наше юрлицо <span class="text-rose-500">*</span></span>
           <SearchableSelect
             v-model="form.our_legal_entity_id"
+            inline
             empty-label="Не выбрано"
             search-placeholder="Поиск юрлица"
             :options="legalEntities"
