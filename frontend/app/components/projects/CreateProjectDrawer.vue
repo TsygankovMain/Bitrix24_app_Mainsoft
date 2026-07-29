@@ -182,7 +182,10 @@ const canSubmit = computed(() =>
   // === false) условие не участвует — тот же приём, что и ниже для юрлица.
   && (!creatingNewCompany.value || isValidInn(form.value.inn))
   && (!needsLegalEntityChoice.value || Boolean(form.value.our_legal_entity_id))
-  && Boolean(form.value.hourly_rate.trim())
+  // Ставки на форме больше нет (решение заказчика 29.07.2026), поэтому она не
+  // может блокировать отправку: сотруднику нечем было бы разблокировать
+  // кнопку. Значение подставляется из настроек портала; если его там нет,
+  // об этом скажет бэкенд через missing_fields, а не молчащая кнопка.
 )
 
 const footerLabel = computed(() => (result.value ? 'Повторить' : 'Создать'))
@@ -519,7 +522,16 @@ function closeModal() {
           </label>
         </div>
 
-        <div class="grid grid-cols-3 gap-4">
+        <!--
+          Поле «Ставка, ₽/ч» убрано с формы по решению заказчика 29.07.2026.
+          Ставка по-прежнему уходит в карточку: loadReferences() подставляет её
+          из настроек портала в form.hourly_rate, поле просто не показывается.
+          Если в настройках портала ставки нет, бэкенд вернёт её в
+          missing_fields, и сотрудник увидит это общим сообщением о нехватке
+          данных (см. unslottedMissingFields) — точечной подсказки у поля
+          больше нет, потому что нет и самого поля.
+        -->
+        <div class="grid grid-cols-2 gap-4">
           <label class="grid gap-1 text-sm">
             <span class="font-medium text-slate-700">Бюджет, часы</span>
             <input
@@ -530,17 +542,6 @@ function closeModal() {
               placeholder="не задан"
               class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             >
-          </label>
-          <label class="grid gap-1 text-sm">
-            <span class="font-medium text-slate-700">Ставка, ₽/ч <span class="text-rose-500">*</span></span>
-            <input
-              v-model="form.hourly_rate"
-              type="number"
-              min="0"
-              step="100"
-              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-            >
-            <span v-if="missing.includes('hourly_rate')" class="text-xs text-rose-600">Ставка не задана — введите значение больше нуля.</span>
           </label>
           <label class="grid gap-1 text-sm">
             <span class="font-medium text-slate-700">Плановая сумма</span>
