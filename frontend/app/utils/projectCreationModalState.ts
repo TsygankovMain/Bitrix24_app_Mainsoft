@@ -81,7 +81,10 @@ export function shouldRefetchLegalEntities(missingFields: string[], legalEntitie
  * Если бэкенд когда-нибудь начнёт присылать missing_fields с ключом без
  * своего слота на экране — тот же класс бага, что и находка 2, просто для
  * другого поля. */
-const SLOTTED_MISSING_FIELDS = ['project_name', 'company', 'inn', 'our_legal_entity_id', 'hourly_rate']
+// hourly_rate убран из списка вместе с самим полем на форме (решение
+// заказчика 29.07.2026): точечной подсказки у него больше нет, значит его
+// нехватку обязано показать общее сообщение — иначе бэкенд откажет молча.
+const SLOTTED_MISSING_FIELDS = ['project_name', 'company', 'inn', 'our_legal_entity_id']
 
 /** Запасной путь на случай будущего поля без своего слота: то, что не
  * покрыто ни одной точечной подсказкой на форме, показываем одним общим

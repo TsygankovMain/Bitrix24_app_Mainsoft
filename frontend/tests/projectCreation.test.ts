@@ -147,11 +147,20 @@ test('shouldRefetchLegalEntities: юрлицо не упомянуто сред�
 // Более широкий вопрос из находки 2: то же расхождение может случиться с
 // любым другим полем из missing_fields, для которого на форме нет
 // отдельного слота. Запасной путь — общее сообщение обо всём необъяснённом.
-test('unslottedMissingFields: все пять известных сегодня полей уже имеют слот на форме', () => {
+test('unslottedMissingFields: четыре поля со своими подсказками на форме не дублируются в общем сообщении', () => {
   assert.deepEqual(
-    unslottedMissingFields(['project_name', 'company', 'inn', 'our_legal_entity_id', 'hourly_rate']),
+    unslottedMissingFields(['project_name', 'company', 'inn', 'our_legal_entity_id']),
     []
   )
+})
+
+// Поле «Ставка» убрано с формы 29.07.2026 по решению заказчика. Своей
+// подсказки у него больше нет, поэтому его нехватка ОБЯЗАНА попадать в общее
+// сообщение: иначе бэкенд откажет в создании, а на экране не будет ни слова
+// о причине. Тест закрепляет именно это — вернуть hourly_rate в список
+// «полей со слотом», не вернув само поле, значит сделать отказ молчаливым.
+test('unslottedMissingFields: ставка попадает в общее сообщение — своего поля на форме у неё нет', () => {
+  assert.deepEqual(unslottedMissingFields(['hourly_rate']), ['hourly_rate'])
 })
 
 // inn-frontend-brief.md: ИНН — пятое поле с собственной подсказкой на форме
@@ -164,7 +173,7 @@ test('unslottedMissingFields: inn — у него есть слот на фор�
 })
 
 test('unslottedMissingFields: неизвестное поле остаётся для общего сообщения', () => {
-  assert.deepEqual(unslottedMissingFields(['hourly_rate', 'stage']), ['stage'])
+  assert.deepEqual(unslottedMissingFields(['our_legal_entity_id', 'stage']), ['stage'])
 })
 
 test('unslottedMissingFields: пустой список ничего не роняет', () => {
