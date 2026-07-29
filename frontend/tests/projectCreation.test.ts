@@ -106,25 +106,23 @@ test('shouldResetFormOnOpen: предыдущая попытка оборвал�
   assert.equal(shouldResetFormOnOpen({ done: false } as never), false)
 })
 
-// Находка 2: поле выбора юрлица и подсказка о его нехватке лежали за одним
-// клиентским условием (legalEntities.length > 1), а бэкенд решает
-// необходимость поля независимо на каждой отправке. Блок обязан появляться
-// по любой из двух оценок, иначе сотрудник видит три "пропущено" без
-// единого объяснения (см. фикс-раунд ревью задачи 8, находка 2).
-test('shouldShowLegalEntityBlock: клиент сам видит несколько юрлиц', () => {
-  assert.equal(shouldShowLegalEntityBlock(true, []), true)
+// Блок «Наше юрлицо» показывается ВСЕГДА. Раньше он прятался, когда юрлицо
+// на портале одно, — это прямо противоречило спеке §5: «Автозначения
+// подставляются в форму ДО отправки и видны сотруднику — он может их
+// изменить. Это не скрытые дефолты на бэкенде: человек видит, что уйдёт в
+// карточку.» Сотрудник не видел, от какого юрлица заводится проект, и не мог
+// это поменять. Тесты закрепляют безусловность: любое возвращение условия
+// «показывать, только если юрлиц несколько» обязано их уронить.
+test('shouldShowLegalEntityBlock: блок показывается, когда юрлицо на портале одно', () => {
+  assert.equal(shouldShowLegalEntityBlock(), true)
 })
 
-test('shouldShowLegalEntityBlock: бэкенд явно сообщил о нехватке юрлица, хотя клиент так не считает', () => {
-  assert.equal(shouldShowLegalEntityBlock(false, ['our_legal_entity_id']), true)
-})
-
-test('shouldShowLegalEntityBlock: ни клиент, ни бэкенд не считают юрлицо нужным', () => {
-  assert.equal(shouldShowLegalEntityBlock(false, ['hourly_rate']), false)
-})
-
-test('shouldShowLegalEntityBlock: пустой missing_fields не роняет интерфейс', () => {
-  assert.equal(shouldShowLegalEntityBlock(false, []), false)
+test('shouldShowLegalEntityBlock: решение не зависит ни от каких аргументов', () => {
+  const fn = shouldShowLegalEntityBlock as unknown as (...args: unknown[]) => boolean
+  assert.equal(fn(false, []), true)
+  assert.equal(fn(false, ['hourly_rate']), true)
+  assert.equal(fn(true, ['our_legal_entity_id']), true)
+  assert.equal(fn(undefined, undefined), true)
 })
 
 // Показать блок мало — если список юрлиц на клиенте не догрузился, поле
