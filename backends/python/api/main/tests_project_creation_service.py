@@ -484,7 +484,7 @@ class EnsureRequisiteTest(_ServiceTestCase):
     решает применимость по company_id/inn (см. test_blank_*_is_skipped_
     ниже) — тот же приём, что и у ensure_card с entity_type_id/mapping.
 
-    Выбор шаблона реквизита (ре-ревью координатора после сверки с
+    Выбор шаблона реквизита (два раунда ре-ревью координатора после сверки с
     документацией Битрикса, см. inn-backend-report.md): у
     crm.requisite.preset.list НЕТ признака "по умолчанию" — полный список
     полей шаблона: ID, ENTITY_TYPE_ID, COUNTRY_ID, DATE_CREATE, DATE_MODIFY,
@@ -493,7 +493,16 @@ class EnsureRequisiteTest(_ServiceTestCase):
     ОБЯЗАТЕЛЬНО проверяется поддержка поля RQ_INN конкретным шаблоном через
     crm.requisite.preset.field.list — состав полей шаблона настраиваемый,
     без этой проверки crm.requisite.add мог бы молча создать реквизит без
-    ИНН (шаг отчитался бы успехом, ИНН потерян)."""
+    ИНН (шаг отчитался бы успехом, ИНН потерян).
+
+    Второй раунд (см. test_field_list_request_uses_preset_object_not_scalar_id):
+    запрос crm.requisite.preset.field.list — {"preset": {"ID": ...}}, НЕ
+    {"id": ...}; форма ответа ПОДТВЕРЖДЕНА — result это список объектов с
+    кодом поля в FIELD_NAME (словарь по кодам — не основной, а лишь
+    защитный вариант для этого метода); метод постраничный, обходим все
+    страницы курсором "next" (см. test_rq_inn_on_second_page_is_found_via_
+    pagination) — решение осознанное, задокументировано в докстринге
+    _requisite_preset_supports_inn."""
 
     VALID_INN = "7707083893"
 
@@ -514,10 +523,44 @@ class EnsureRequisiteTest(_ServiceTestCase):
         row.update(overrides)
         return row
 
-    def _field_list_response(self, codes):
-        """Форма по умолчанию в тестах — словарь, ключи которого коды полей
-        (основной вариант, см. докстринг _extract_preset_field_codes)."""
+    def _field_list_response(self, codes, next_start=None):
+        """Форма ответа crm.requisite.preset.field.list по умолчанию в
+        тестах — список объектов-описаний поля с кодом в FIELD_NAME.
+        ПОДТВЕРЖДЕНО документацией Битрикса (см. докстринг
+        _extract_preset_field_codes) — основной вариант, не один из
+        нескольких равновероятных."""
+        payload = {"result": [{"FIELD_NAME": code} for code in codes]}
+        if next_start is not None:
+            payload["next"] = next_start
+        return payload
+
+    def _field_list_dict_response(self, codes):
+        """Второй, ЗАЩИТНЫЙ вариант формы ответа — словарь, ключи которого
+        коды полей (семейство crm.*.fields; для ЭТОГО метода документацией
+        не подтверждён, см. докстринг _extract_preset_field_codes)."""
         return {"result": {code: {} for code in codes}}
+
+    def test_field_list_request_uses_preset_object_not_scalar_id(self):
+        """Регрессия ре-ревью координатора: первая версия слала {"id": ...}
+        вместо {"preset": {"ID": ...}} — метод не отрабатывал вовсе,
+        поддержка RQ_INN не подтверждалась НИ ДЛЯ ОДНОГО шаблона, кнопка
+        «Создать проект» переставала работать целиком на ветке новой
+        компании. Это ровно тот случай, где ошибка не видна в разборе
+        ответа (разбор был написан и протестирован верно) и ловится только
+        проверкой структуры самого запроса."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
+            "crm.requisite.add": {"result": 501},
+        })
+        self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        field_list_call = next(c for c in client.calls if c[0] == "crm.requisite.preset.field.list")
+        params = field_list_call[1]
+        self.assertNotIn("id", params)
+        self.assertEqual(params["preset"], {"ID": 5})
+        self.assertEqual(params["start"], 0)
 
     def test_creates_requisite_with_single_qualifying_preset(self):
         client = _FakeClient({
@@ -531,10 +574,6 @@ class EnsureRequisiteTest(_ServiceTestCase):
         self.assertEqual(result.status, "created")
         self.assertEqual(result.id, "501")
 
-        # crm.requisite.preset.field.list вызван с правильным id шаблона.
-        field_list_call = next(c for c in client.calls if c[0] == "crm.requisite.preset.field.list")
-        self.assertEqual(field_list_call[1]["id"], 5)
-
         method, params = client.calls[-1]
         self.assertEqual(method, "crm.requisite.add")
         req_fields = params["fields"]
@@ -543,6 +582,67 @@ class EnsureRequisiteTest(_ServiceTestCase):
         self.assertEqual(req_fields["ENTITY_ID"], 77)
         self.assertEqual(req_fields["RQ_INN"], self.VALID_INN)
         self.assertEqual(req_fields["NAME"], "АО Ромашка")
+
+    def test_rq_inn_on_second_page_is_found_via_pagination(self):
+        """Первая страница не содержит RQ_INN, но отдаёт курсор "next" —
+        вторая страница содержит RQ_INN. Обрезанная (только первая
+        страница) проверка дала бы ложное "не поддерживает" для рабочего
+        шаблона (см. докстринг _requisite_preset_supports_inn)."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": [
+                self._field_list_response(["RQ_COMPANY_NAME"], next_start=50),
+                self._field_list_response(["RQ_INN"]),
+            ],
+            "crm.requisite.add": {"result": 501},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+        field_list_calls = [c for c in client.calls if c[0] == "crm.requisite.preset.field.list"]
+        self.assertEqual([c[1]["start"] for c in field_list_calls], [0, 50])
+
+    def test_no_rq_inn_across_all_pages_is_the_same_as_no_template_error(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": [
+                self._field_list_response(["RQ_COMPANY_NAME"], next_start=50),
+                self._field_list_response(["RQ_COMPANY_FULL_NAME"]),  # без "next" — последняя страница
+            ],
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("crm.requisite.add", client.methods_called())
+        field_list_calls = [c for c in client.calls if c[0] == "crm.requisite.preset.field.list"]
+        self.assertEqual(len(field_list_calls), 2)
+
+    def test_pagination_page_cap_prevents_infinite_loop(self):
+        """_REQUISITE_PRESET_FIELD_LIST_MAX_PAGES — защита от зацикливания
+        на не продвигающемся курсоре "next", не ожидаемый рабочий предел
+        (см. докстринг _requisite_preset_supports_inn). Патчим константу на
+        2, чтобы не городить фикстуру на 20 страниц ради теста именно этой
+        защиты — третья "страница" с RQ_INN нарочно не должна быть
+        запрошена."""
+        responses = [
+            self._field_list_response(["RQ_COMPANY_NAME"], next_start=50),
+            self._field_list_response(["RQ_COMPANY_FULL_NAME"], next_start=100),
+            self._field_list_response(["RQ_INN"]),
+        ]
+        client = _FakeClient({
+            "crm.requisite.list": {"result": []},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
+            "crm.requisite.preset.field.list": responses,
+        })
+        with patch("main.project_creation_service._REQUISITE_PRESET_FIELD_LIST_MAX_PAGES", 2):
+            result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(
+            client.methods_called().count("crm.requisite.preset.field.list"), 2
+        )
 
     def test_preset_list_request_uses_active_filter_and_deterministic_order(self):
         client = _FakeClient({
@@ -598,7 +698,7 @@ class EnsureRequisiteTest(_ServiceTestCase):
         self.assertEqual(params["fields"]["PRESET_ID"], 6)
         # Оба шаблона были проверены на RQ_INN — не только первый.
         self.assertEqual(
-            [c[1]["id"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
+            [c[1]["preset"]["ID"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
             [5, 6],
         )
 
@@ -637,7 +737,7 @@ class EnsureRequisiteTest(_ServiceTestCase):
         self.assertEqual(params["fields"]["PRESET_ID"], 6)
         # Неактивный шаблон не должен даже дойти до проверки RQ_INN.
         self.assertEqual(
-            [c[1]["id"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
+            [c[1]["preset"]["ID"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
             [6],
         )
 
@@ -672,7 +772,7 @@ class EnsureRequisiteTest(_ServiceTestCase):
         self.assertEqual(params["fields"]["PRESET_ID"], 6)
         # ID=9 (чужой ENTITY_TYPE_ID) не должен даже дойти до проверки RQ_INN.
         self.assertEqual(
-            [c[1]["id"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
+            [c[1]["preset"]["ID"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
             [6],
         )
 
@@ -690,17 +790,17 @@ class EnsureRequisiteTest(_ServiceTestCase):
 
         self.assertEqual(result.status, "created")
 
-    def test_preset_field_list_response_as_list_of_descriptors_is_parsed(self):
-        """Второй правдоподобный вариант формы ответа
-        crm.requisite.preset.field.list — список объектов-описаний поля
-        (форма, в которой отдают данные все остальные ...list в этом же
-        приложении), а не словарь, ключи которого коды полей."""
+    def test_preset_field_list_dict_shaped_response_is_still_parsed_defensively(self):
+        """Второй, ЗАЩИТНЫЙ вариант формы ответа — словарь по кодам полей
+        (семейство crm.*.fields). Для ЭТОГО метода документацией не
+        подтверждён (основной и подтверждённый — список с FIELD_NAME, см.
+        test_creates_requisite_with_single_qualifying_preset и докстринг
+        _extract_preset_field_codes), но разбор всё равно его переживает —
+        чистая защита на случай расхождения версии/локали портала."""
         client = _FakeClient({
             "crm.requisite.list": {"result": []},
             "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
-            "crm.requisite.preset.field.list": {
-                "result": [{"FIELD_NAME": "RQ_INN"}, {"FIELD_NAME": "RQ_COMPANY_NAME"}]
-            },
+            "crm.requisite.preset.field.list": self._field_list_dict_response(["RQ_INN", "RQ_COMPANY_NAME"]),
             "crm.requisite.add": {"result": 501},
         })
         result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)

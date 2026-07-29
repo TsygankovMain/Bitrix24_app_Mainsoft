@@ -38,6 +38,15 @@ REQUISITE_ENTITY_TYPE_ID = 4
 # меняющийся" справочник). Отрицательный результат (подходящего шаблона нет /
 # сбой) не кэшируется вовсе — см. докстринг _resolve_requisite_preset_id.
 REQUISITE_PRESET_CACHE_TTL = 60 * 60 * 6
+# crm.requisite.preset.field.list постраничный, как и прочие ...list в
+# Битриксе (курсор "next", см. _extract_next_page_start) — реальный шаблон
+# реквизита практически никогда не превышает одну страницу (~50 полей на
+# страницу; полный набор полей компании/юрлица в Битриксе — несколько
+# десятков), так что предел здесь ЗАЩИТА ОТ ЗАЦИКЛИВАНИЯ на не продвигающемся
+# курсоре "next", а не ожидаемый рабочий лимит (см. докстринг
+# _requisite_preset_supports_inn — решение об обходе всех страниц, а не
+# только первой, принято осознанно).
+_REQUISITE_PRESET_FIELD_LIST_MAX_PAGES = 20
 
 
 @dataclass
@@ -180,36 +189,38 @@ def _extract_created_id(response: Any) -> Optional[str]:
 
 
 def _extract_preset_field_codes(response: Any) -> Optional[set]:
-    """Извлекает набор кодов полей, включённых в шаблон реквизита, из ответа
-    crm.requisite.preset.field.list.
+    """Извлекает набор кодов полей, включённых в шаблон реквизита, со ОДНОЙ
+    страницы ответа crm.requisite.preset.field.list.
 
-    Форма ответа этого метода не проверена на живом портале (в этой среде нет
-    сетевого доступа к Битриксу) — разбор нарочно защитный и поддерживает оба
-    правдоподобных варианта:
-    - result — словарь, ключи которого и есть коды полей
-      (`{"RQ_INN": {...}, "RQ_COMPANY_NAME": {...}}`) — форма, в которой
-      Битрикс отдаёт описания полей у всего семейства `crm.*.fields`
-      (crm.deal.fields и т.п.);
-    - result — список объектов-описаний поля (форма любого другого `...list`
-      в этом же приложении, включая crm.requisite.list), где код поля лежит
-      в одном из вероятных ключей (FIELD_NAME/CODE/NAME) или сам элемент —
-      просто код поля строкой.
+    Форма ответа ПОДТВЕРЖДЕНА документацией Битрикса (сверено координатором
+    задачи после первоначальной неверной догадки — см. inn-backend-report.md,
+    "Правка после ре-ревью" x2): result — СПИСОК объектов-описаний поля, код
+    лежит в FIELD_NAME:
+        {"result": [
+          {"ID": 1, "FIELD_NAME": "RQ_INN", "FIELD_TITLE": "", "IN_SHORT_LIST": "Y", "SORT": 510},
+          {"ID": 2, "FIELD_NAME": "RQ_COMPANY_NAME", ...}
+        ]}
+    Это ОСНОВНОЙ и единственный документированный вариант для ЭТОГО метода —
+    не один из нескольких равновероятных.
+
+    Вариант "result — словарь, ключи которого коды полей" (форма семейства
+    crm.*.fields, например crm.deal.fields) документацией для ЭТОГО метода
+    НЕ подтверждён. Разбор ниже всё равно его поддерживает — чистая
+    защита на случай расхождения версии/локали портала, а не ожидание, что
+    он встретится на практике; за это отвечает отдельная ветка ниже, а не
+    основной путь.
 
     Возвращает `None`, если форма ответа не подошла ни под один вариант —
     вызывающий код (_requisite_preset_supports_inn) трактует это как "нельзя
-    подтвердить поддержку RQ_INN" и пропускает шаблон, а не рискует потерять
-    ИНН молча (см. докстринг _requisite_preset_supports_inn: RQ_INN не
-    гарантирован в каждом шаблоне — состав полей настраиваемый).
+    подтвердить поддержку RQ_INN" на этой странице и уходит в error, а не
+    рискует потерять ИНН молча (RQ_INN не гарантирован в каждом шаблоне —
+    состав полей настраиваемый).
     """
     if not isinstance(response, dict):
         return None
     result = response.get("result")
     if result is None:
         return None
-
-    if isinstance(result, dict):
-        codes = {_clean_str(key).upper() for key in result.keys() if _clean_str(key)}
-        return codes or None
 
     if isinstance(result, list):
         codes = set()
@@ -227,7 +238,34 @@ def _extract_preset_field_codes(response: Any) -> Optional[set]:
                     break
         return codes or None
 
+    if isinstance(result, dict):
+        # Не подтверждённый для ЭТОГО метода вариант (см. докстринг выше) —
+        # только защита, не ожидаемый путь.
+        codes = {_clean_str(key).upper() for key in result.keys() if _clean_str(key)}
+        return codes or None
+
     return None
+
+
+def _extract_next_page_start(response: Any) -> Optional[int]:
+    """Извлекает курсор следующей страницы ("next") из ответа списочного
+    метода Битрикса — тот же приём, что и _extract_items_from_response в
+    project_board_service.py: Битрикс кладёт "next" на верхнем уровне
+    ответа, иногда — вложенным в result, если result сам словарь.
+    `None`, если следующей страницы нет или значение не разбирается в int."""
+    if not isinstance(response, dict):
+        return None
+    next_value = response.get("next")
+    if next_value is None:
+        result = response.get("result")
+        if isinstance(result, dict):
+            next_value = result.get("next")
+    if next_value in (None, "", False):
+        return None
+    try:
+        return int(next_value)
+    except (TypeError, ValueError):
+        return None
 
 
 class ProjectCreationService:
@@ -425,31 +463,75 @@ class ProjectCreationService:
         просто не сохранить его — шаг отчитался бы success, компания и
         реквизит были бы созданы, а ИНН потерян без единой ошибки.
 
-        Любая неопределённость (сбой сети, неразбираемый ответ) трактуется
-        как "не подтверждено" -> False, а не как "наверное поддерживает":
-        безопаснее пропустить рабочий шаблон, чем один раз молча потерять
-        ИНН.
-        """
-        try:
-            response = self._call(
-                "crm.requisite.preset.field.list",
-                {"id": self._to_bitrix_id(preset_id)},
-            )
-        except Exception as exc:
-            logger.warning(
-                "_requisite_preset_supports_inn: crm.requisite.preset.field.list failed for preset %s: %s",
-                preset_id, exc,
-            )
-            return False
+        Запрос — {"preset": {"ID": <id>}}, НЕ {"id": <id>}. Первая версия
+        этого метода использовала скалярный "id" — из-за этого вызов не
+        отрабатывал как надо, поддержка RQ_INN не подтверждалась НИ ДЛЯ
+        ОДНОГО шаблона, _resolve_requisite_preset_id всегда возвращал None,
+        шаг реквизита ВСЕГДА уходил в error, done никогда не становился
+        истинным — кнопка «Создать проект» переставала работать целиком на
+        ветке новой компании (найдено ре-ревью координатора после сверки с
+        документацией — см. inn-backend-report.md). Защитный разбор ответа
+        сработал правильно (честный отказ вместо молчаливой потери ИНН), но
+        отказ вышел глухим на 100% случаев из-за неверного запроса — само
+        по себе устойчивое падение НЕ является доказательством корректности
+        разбора ответа.
 
-        field_codes = _extract_preset_field_codes(response)
-        if field_codes is None:
-            logger.warning(
-                "_requisite_preset_supports_inn: crm.requisite.preset.field.list returned unexpected format for preset %s",
-                preset_id,
-            )
-            return False
-        return "RQ_INN" in field_codes
+        Пагинация — метод постраничный, как и прочие ...list в Битриксе
+        (курсор "next", тот же приём, что и в _fetch_paginated в
+        project_board_service.py). Решение ОСОЗНАННОЕ — обходим страницы
+        полностью, а не ограничиваемся первой: обрезанная проверка не
+        "иногда не находит", а даёт ЛОЖНОЕ "не поддерживает" для шаблона,
+        который на самом деле подходит (RQ_INN может лежать на второй
+        странице) — шаг ошибочно уйдёт в "нет подходящего шаблона" на
+        портале, где подходящий шаблон есть. Не потеря данных (безопасное
+        направление отказа сохраняется), но лишний неверный отказ. Цена
+        обхода приемлема: результат в любом случае кэшируется на
+        REQUISITE_PRESET_CACHE_TTL — разовая, а не на каждое нажатие кнопки.
+        _REQUISITE_PRESET_FIELD_LIST_MAX_PAGES — просто защита от
+        зацикливания на не продвигающемся курсоре, не ожидаемый предел.
+
+        Любая неопределённость (сбой сети, неразбираемый ответ, исчерпан
+        лимит страниц) трактуется как "не подтверждено" -> False, а не как
+        "наверное поддерживает": безопаснее пропустить рабочий шаблон, чем
+        один раз молча потерять ИНН.
+        """
+        start = 0
+        for _ in range(_REQUISITE_PRESET_FIELD_LIST_MAX_PAGES):
+            try:
+                response = self._call(
+                    "crm.requisite.preset.field.list",
+                    {"preset": {"ID": self._to_bitrix_id(preset_id)}, "start": start},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "_requisite_preset_supports_inn: crm.requisite.preset.field.list "
+                    "failed for preset %s (start=%s): %s",
+                    preset_id, start, exc,
+                )
+                return False
+
+            field_codes = _extract_preset_field_codes(response)
+            if field_codes is None:
+                logger.warning(
+                    "_requisite_preset_supports_inn: crm.requisite.preset.field.list "
+                    "returned unexpected format for preset %s (start=%s)",
+                    preset_id, start,
+                )
+                return False
+            if "RQ_INN" in field_codes:
+                return True
+
+            next_start = _extract_next_page_start(response)
+            if next_start is None or next_start <= start:
+                return False
+            start = next_start
+
+        logger.warning(
+            "_requisite_preset_supports_inn: preset %s exceeded %d pages without "
+            "resolving RQ_INN support — treating as unsupported.",
+            preset_id, _REQUISITE_PRESET_FIELD_LIST_MAX_PAGES,
+        )
+        return False
 
     def _resolve_requisite_preset_id(self) -> Optional[str]:
         """Шаблон реквизита для компаний (ENTITY_TYPE_ID=4), поддерживающий
