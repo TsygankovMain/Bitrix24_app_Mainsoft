@@ -1,0 +1,611 @@
+<!-- ============================================================
+     Библиотека мокапов. Один экземпляр на три презентации.
+     Вставляется в трек маркером <!--mockup:КЛЮЧ-->
+     Демоданные — по docs/superpowers/specs/2026-07-29-product-presentation-design.md
+     ============================================================ -->
+
+<!--@mockup:task-tab-->
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Задача · Спринт 12: главная страница</span>
+    <span class="mock-crumbs">Ромашка — редизайн сайта</span>
+  </div>
+  <div class="mock-tabs">
+    <div class="mock-tab">Обсуждение</div>
+    <div class="mock-tab">Чек-лист</div>
+    <div class="mock-tab on">Учёт часов</div>
+    <div class="mock-tab">Затраченное время</div>
+  </div>
+  <div class="mock-body">
+    <table class="mock-table" style="margin-bottom:14px">
+      <thead>
+        <tr>
+          <th>Проект · задача · подзадача</th>
+          <th class="num">Часы</th>
+          <th class="num">Оплач.</th>
+          <th class="money">Сумма</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▾</span><span class="tw-ico p">П</span>Ромашка — редизайн сайта</span></td>
+          <td class="num">1&nbsp;084</td><td class="num">1&nbsp;084</td>
+          <td class="money">2&nbsp;601&nbsp;600 ₽</td>
+        </tr>
+        <tr class="lvl-1">
+          <td><span class="tw"><span class="tw-caret">▾</span><span class="tw-ico t">З</span>Спринт 12: главная страница</span></td>
+          <td class="num">86</td><td class="num">78</td>
+          <td class="money">187&nbsp;200 ₽</td>
+        </tr>
+        <tr class="lvl-2"><td>Вёрстка hero-блока</td><td class="num">24</td><td class="num">24</td><td class="money">57&nbsp;600 ₽</td></tr>
+        <tr class="lvl-2"><td>Адаптив под мобильные</td><td class="num">18</td><td class="num">18</td><td class="money">43&nbsp;200 ₽</td></tr>
+        <tr class="lvl-2"><td>Правки после ревью <span class="badge int">внутренние</span></td><td class="num">12</td><td class="num">4</td><td class="money">9&nbsp;600 ₽</td></tr>
+      </tbody>
+    </table>
+
+    <div style="font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.045em;color:#8896A5;margin-bottom:9px">Записи по этой задаче</div>
+    <div class="entry-row">
+      <span class="who"><span class="ava a1">ПС</span>Петров С.</span>
+      <span class="e-desc">Вёрстка hero-блока, десктоп</span>
+      <span class="badge bill">оплачиваемая</span>
+      <span style="color:#8896A5">12.06</span>
+      <span class="e-h">8 ч</span>
+    </div>
+    <div class="entry-row">
+      <span class="who"><span class="ava a4">СА</span>Соколова А.</span>
+      <span class="e-desc">Макет главной, второй заход</span>
+      <span class="badge bill">оплачиваемая</span>
+      <span style="color:#8896A5">12.06</span>
+      <span class="e-h">6 ч</span>
+    </div>
+    <div class="entry-row">
+      <span class="who"><span class="ava a2">СД</span>Смирнов Д.</span>
+      <span class="e-desc">Переделка после ревью — наша ошибка</span>
+      <span class="badge int">внутренняя</span>
+      <span style="color:#8896A5">11.06</span>
+      <span class="e-h">4 ч</span>
+    </div>
+
+    <div class="add-form">
+      <span class="add-input" style="width:78px">2,5 ч</span>
+      <span class="add-input" style="width:96px">13.06.2026</span>
+      <span class="add-input grow">Что делали…</span>
+      <span class="add-input" style="color:#1E9C6B">Оплачиваемая ▾</span>
+      <span class="mock-btn">Списать</span>
+    </div>
+  </div>
+</div>
+<!--@end-->
+
+<!--@mockup:split-->
+<div class="mock-modal">
+  <div class="modal-head">Разделить запись времени <span class="x">✕</span></div>
+  <div class="modal-body">
+    <div class="split-src">
+      <span class="who"><span class="ava a1">ПС</span>Петров С.</span>
+      <span style="flex:1 1 auto;color:#45566A">Работа по главной странице, 12.06.2026</span>
+      <span style="font-weight:700;font-size:15px">8 ч</span>
+    </div>
+    <div class="split-arrow">↓</div>
+    <div class="split-part bill">
+      <span class="p-h">6 ч</span>
+      <span class="p-d">Вёрстка hero-блока по ТЗ</span>
+      <span class="badge bill">оплачиваемая · 14 400 ₽</span>
+    </div>
+    <div class="split-part int">
+      <span class="p-h">2 ч</span>
+      <span class="p-d">Переделка после ревью — наша ошибка</span>
+      <span class="badge int">внутренняя · 0 ₽</span>
+    </div>
+    <div style="margin-top:12px;padding:10px 13px;background:#F5F8FB;border-radius:8px;font-size:12px;color:#45566A">
+      Остаток к распределению: <b style="color:#1E9C6B">0 ч</b> — всё разнесено
+    </div>
+  </div>
+  <div class="modal-foot">
+    <span class="mock-btn grey">Отмена</span>
+    <span class="mock-btn">Сохранить разделение</span>
+  </div>
+</div>
+<!--@end-->
+
+<!--@mockup:project-board-->
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Проекты</span>
+    <span class="mock-crumbs">11 активных · июнь 2026</span>
+  </div>
+  <div class="mock-filters">
+    <span class="mock-field">Куратор: <b>все</b></span>
+    <span class="mock-field">Клиент: <b>все</b></span>
+    <span class="mock-field no-caret">🔍 Поиск</span>
+    <span class="mock-spacer"></span>
+    <span class="mock-btn ghost">Синхронизировать</span>
+    <span class="mock-btn">Создать проект</span>
+  </div>
+  <div class="mock-body soft">
+    <div class="board">
+      <div class="board-col">
+        <div class="board-col-head">Пресейл <span class="cnt">2</span></div>
+        <div class="board-card">
+          <div class="bc-name">Аудит складского учёта</div>
+          <div class="bc-client">ТД «Ориент»</div>
+          <div class="bc-row"><span>Оценка 120 ч</span><span class="bc-h">18 ч</span></div>
+        </div>
+        <div class="board-card">
+          <div class="bc-name">Портал для дилеров</div>
+          <div class="bc-client">Технопарк</div>
+          <div class="bc-row"><span>Оценка 340 ч</span><span class="bc-h">6 ч</span></div>
+        </div>
+      </div>
+      <div class="board-col">
+        <div class="board-col-head">В работе <span class="cnt">5</span></div>
+        <div class="board-card accent">
+          <div class="bc-name">Внедрение CRM</div>
+          <div class="bc-client">СеверСталь-Логистика</div>
+          <div class="bc-row"><span>3 200 ₽/ч</span><span class="bc-h">1 640 ч</span></div>
+        </div>
+        <div class="board-card">
+          <div class="bc-name">Редизайн сайта</div>
+          <div class="bc-client">Ромашка</div>
+          <div class="bc-row"><span>2 400 ₽/ч</span><span class="bc-h">1 084 ч</span></div>
+        </div>
+        <div class="board-card">
+          <div class="bc-name">Интеграция с 1С</div>
+          <div class="bc-client">ТД «Ориент»</div>
+          <div class="bc-row"><span>2 600 ₽/ч</span><span class="bc-h">412 ч</span></div>
+        </div>
+      </div>
+      <div class="board-col">
+        <div class="board-col-head">На согласовании <span class="cnt">2</span></div>
+        <div class="board-card">
+          <div class="bc-name">Техподдержка</div>
+          <div class="bc-client">Технопарк</div>
+          <div class="bc-row"><span>1 800 ₽/ч</span><span class="bc-h">926 ч</span></div>
+        </div>
+        <div class="board-card">
+          <div class="bc-name">Личный кабинет</div>
+          <div class="bc-client">Ромашка</div>
+          <div class="bc-row"><span>2 400 ₽/ч</span><span class="bc-h">288 ч</span></div>
+        </div>
+      </div>
+      <div class="board-col">
+        <div class="board-col-head">Завершение <span class="cnt">2</span></div>
+        <div class="board-card">
+          <div class="bc-name">Миграция почты</div>
+          <div class="bc-client">СеверСталь-Логистика</div>
+          <div class="bc-row"><span>3 200 ₽/ч</span><span class="bc-h">164 ч</span></div>
+        </div>
+        <div class="board-card">
+          <div class="bc-name">Обучение отдела продаж</div>
+          <div class="bc-client">ТД «Ориент»</div>
+          <div class="bc-row"><span>2 200 ₽/ч</span><span class="bc-h">98 ч</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!--@end-->
+
+<!--@mockup:project-task-->
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Отчёт · Учёт по проектам и задачам</span>
+    <span class="mock-crumbs">01.06.2026 — 30.06.2026</span>
+  </div>
+  <div class="mock-filters">
+    <span class="mock-field">Период: <b>июнь 2026</b></span>
+    <span class="mock-field">Проект: <b>все</b></span>
+    <span class="mock-field">Сотрудник: <b>все</b></span>
+    <span class="mock-spacer"></span>
+    <span class="mock-btn ghost">Выгрузить в Excel</span>
+    <span class="mock-btn">Сформировать</span>
+  </div>
+  <div class="mock-body">
+    <div class="mock-kpis">
+      <div class="mock-kpi"><div class="k-v">5 840 ч</div><div class="k-l">Списано за период</div></div>
+      <div class="mock-kpi ok"><div class="k-v">4 612 ч</div><div class="k-l">Оплачиваемых · 79%</div></div>
+      <div class="mock-kpi accent"><div class="k-v">11,73 млн ₽</div><div class="k-l">Выручка по списаниям</div></div>
+      <div class="mock-kpi danger"><div class="k-v">1,30 млн ₽</div><div class="k-l">Не выставлено клиентам</div></div>
+    </div>
+    <table class="mock-table">
+      <thead>
+        <tr>
+          <th>Проект · задача</th>
+          <th class="num">Ставка</th>
+          <th class="num">Часы</th>
+          <th class="num">Оплач.</th>
+          <th class="money">Сумма</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▾</span><span class="tw-ico p">П</span>СеверСталь-Логистика — внедрение CRM</span></td>
+          <td class="num">3 200 ₽</td><td class="num">1 854</td><td class="num">1 640</td>
+          <td class="money">5 248 000 ₽</td>
+        </tr>
+        <tr class="lvl-1"><td>Миграция справочников</td><td class="num">3 200 ₽</td><td class="num">512</td><td class="num">468</td><td class="money">1 497 600 ₽</td></tr>
+        <tr class="lvl-1"><td>Настройка воронок продаж</td><td class="num">3 200 ₽</td><td class="num">436</td><td class="num">392</td><td class="money">1 254 400 ₽</td></tr>
+        <tr class="lvl-1"><td>Обучение пользователей</td><td class="num">3 200 ₽</td><td class="num">298</td><td class="num">274</td><td class="money">876 800 ₽</td></tr>
+        <tr class="lvl-1"><td style="color:#8896A5">ещё 9 задач</td><td class="num">3 200 ₽</td><td class="num">608</td><td class="num">506</td><td class="money">1 619 200 ₽</td></tr>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▸</span><span class="tw-ico p">П</span>Ромашка — редизайн сайта</span></td>
+          <td class="num">2 400 ₽</td><td class="num">1 252</td><td class="num">1 084</td>
+          <td class="money">2 601 600 ₽</td>
+        </tr>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▸</span><span class="tw-ico p">П</span>Технопарк — техподдержка</span></td>
+          <td class="num">1 800 ₽</td><td class="num">1 018</td><td class="num">926</td>
+          <td class="money">1 666 800 ₽</td>
+        </tr>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▸</span><span class="tw-ico p">П</span>Прочие 8 проектов</span></td>
+          <td class="num">~2 300 ₽</td><td class="num">1 716</td><td class="num">962</td>
+          <td class="money">2 212 600 ₽</td>
+        </tr>
+        <tr class="total">
+          <td>Итого · 11 проектов</td><td class="num">—</td>
+          <td class="num">5 840</td><td class="num">4 612</td>
+          <td class="money">11 729 000 ₽</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<!--@end-->
+
+<!--@mockup:employee-->
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Отчёт · По сотрудникам</span>
+    <span class="mock-crumbs">июнь 2026 · норма 168 ч</span>
+  </div>
+  <div class="mock-body">
+    <table class="mock-table">
+      <thead>
+        <tr>
+          <th>Сотрудник</th>
+          <th>Роль</th>
+          <th class="num">Списано</th>
+          <th class="num">Оплач.</th>
+          <th style="width:150px">Загрузка к норме</th>
+          <th class="money">Выручка</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="who"><span class="ava a1">ПС</span>Петров Сергей</span></td>
+          <td style="color:#45566A">Разработка</td>
+          <td class="num">172 ч</td><td class="num">149 ч</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="warn" style="width:100%"></i></div><span class="bar-val">102%</span></div></td>
+          <td class="money">428 000 ₽</td>
+        </tr>
+        <tr>
+          <td><span class="who"><span class="ava a2">СД</span>Смирнов Дмитрий</span></td>
+          <td style="color:#45566A">Разработка</td>
+          <td class="num">168 ч</td><td class="num">152 ч</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="ok" style="width:100%"></i></div><span class="bar-val">100%</span></div></td>
+          <td class="money">437 000 ₽</td>
+        </tr>
+        <tr>
+          <td><span class="who"><span class="ava a5">КМ</span>Кузнецова Мария</span></td>
+          <td style="color:#45566A">Аналитика</td>
+          <td class="num">164 ч</td><td class="num">141 ч</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="ok" style="width:98%"></i></div><span class="bar-val">98%</span></div></td>
+          <td class="money">395 000 ₽</td>
+        </tr>
+        <tr>
+          <td><span class="who"><span class="ava a3">ИА</span>Иванов Алексей</span></td>
+          <td style="color:#45566A">Руководитель проекта</td>
+          <td class="num">160 ч</td><td class="num">96 ч</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="ok" style="width:95%"></i></div><span class="bar-val">95%</span></div></td>
+          <td class="money">268 000 ₽</td>
+        </tr>
+        <tr>
+          <td><span class="who"><span class="ava a4">СА</span>Соколова Анна</span></td>
+          <td style="color:#45566A">Дизайн</td>
+          <td class="num">156 ч</td><td class="num">118 ч</td>
+          <td><div class="bar-wrap"><div class="bar"><i style="width:93%"></i></div><span class="bar-val">93%</span></div></td>
+          <td class="money">312 000 ₽</td>
+        </tr>
+        <tr>
+          <td><span class="who"><span class="ava a6">ВИ</span>Волков Игорь</span></td>
+          <td style="color:#45566A">Тестирование</td>
+          <td class="num">148 ч</td><td class="num">132 ч</td>
+          <td><div class="bar-wrap"><div class="bar"><i style="width:88%"></i></div><span class="bar-val">88%</span></div></td>
+          <td class="money">356 000 ₽</td>
+        </tr>
+        <tr class="total">
+          <td>Итого · 42 сотрудника</td><td></td>
+          <td class="num">5 840 ч</td><td class="num">4 612 ч</td>
+          <td></td>
+          <td class="money">11 729 000 ₽</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<!--@end-->
+
+<!--@mockup:daily-->
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Отчёт · Ежедневная нагрузка</span>
+    <span class="mock-crumbs">08.06 — 12.06.2026</span>
+  </div>
+  <div class="mock-body">
+    <table class="chess">
+      <thead>
+        <tr>
+          <th class="who-col">Сотрудник</th>
+          <th>Пн 08.06</th><th>Вт 09.06</th><th>Ср 10.06</th><th>Чт 11.06</th><th>Пт 12.06</th>
+          <th>Итого</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="who-col"><span class="who"><span class="ava a1">ПС</span>Петров С.</span></td>
+          <td><span class="cell c2">8</span></td><td><span class="cell c2">8</span></td>
+          <td><span class="cell over">9</span></td><td><span class="cell c2">8</span></td>
+          <td><span class="cell c2">8</span></td><td><b>41</b></td>
+        </tr>
+        <tr>
+          <td class="who-col"><span class="who"><span class="ava a2">СД</span>Смирнов Д.</span></td>
+          <td><span class="cell c2">8</span></td><td><span class="cell c2">8</span></td>
+          <td><span class="cell c2">8</span></td><td><span class="cell c1">7</span></td>
+          <td><span class="cell c2">8</span></td><td><b>39</b></td>
+        </tr>
+        <tr>
+          <td class="who-col"><span class="who"><span class="ava a5">КМ</span>Кузнецова М.</span></td>
+          <td><span class="cell c2">8</span></td><td><span class="cell c1">7</span></td>
+          <td><span class="cell c2">8</span></td><td><span class="cell c2">8</span></td>
+          <td><span class="cell c1">7</span></td><td><b>38</b></td>
+        </tr>
+        <tr>
+          <td class="who-col"><span class="who"><span class="ava a3">ИА</span>Иванов А.</span></td>
+          <td><span class="cell c1">6</span></td><td><span class="cell c2">8</span></td>
+          <td><span class="cell c2">8</span></td><td><span class="cell c1">7</span></td>
+          <td><span class="cell c2">8</span></td><td><b>37</b></td>
+        </tr>
+        <tr>
+          <td class="who-col"><span class="who"><span class="ava a4">СА</span>Соколова А.</span></td>
+          <td><span class="cell c2">8</span></td><td><span class="cell c2">8</span></td>
+          <td><span class="cell c1">6</span></td><td><span class="cell c2">8</span></td>
+          <td><span class="cell c1">7</span></td><td><b>37</b></td>
+        </tr>
+        <tr>
+          <td class="who-col"><span class="who"><span class="ava a6">ВИ</span>Волков И.</span></td>
+          <td><span class="cell c1">7</span></td><td><span class="cell c2">8</span></td>
+          <td><span class="cell c2">8</span></td><td><span class="cell c2">8</span></td>
+          <td><span class="cell c1">6</span></td><td><b>37</b></td>
+        </tr>
+        <tr class="total">
+          <td class="who-col">Итого за день</td>
+          <td>45</td><td>47</td><td>47</td><td>46</td><td>44</td><td>229</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="margin-top:12px;font-size:11.5px;color:#8896A5">
+      Показаны 6 сотрудников из 42. <span class="badge warn">9</span> — превышение нормы дня, видно сразу.
+    </div>
+  </div>
+</div>
+<!--@end-->
+
+<!--@mockup:revenue-leakage-->
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Отчёт · Потери выручки</span>
+    <span class="mock-crumbs">июнь 2026</span>
+  </div>
+  <div class="mock-body">
+    <div class="mock-kpis" style="grid-template-columns:repeat(3,1fr)">
+      <div class="mock-kpi danger"><div class="k-v">512 ч</div><div class="k-l">Отработано на клиентских проектах, но не выставлено</div></div>
+      <div class="mock-kpi danger"><div class="k-v">1 301 480 ₽</div><div class="k-l">Столько это стоит по ставкам проектов</div></div>
+      <div class="mock-kpi"><div class="k-v">11,1%</div><div class="k-l">Доля от выручки за месяц</div></div>
+    </div>
+    <table class="mock-table">
+      <thead>
+        <tr>
+          <th>Проект</th><th>Клиент</th>
+          <th class="num">Ставка</th><th class="num">Часы вне счёта</th>
+          <th class="money">Потери</th><th style="width:120px">Доля проекта</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="danger-row">
+          <td><b>СеверСталь-Логистика — внедрение CRM</b></td>
+          <td style="color:#45566A">СеверСталь-Логистика</td>
+          <td class="num">3 200 ₽</td><td class="num">214 ч</td>
+          <td class="money">684 800 ₽</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:53%"></i></div><span class="bar-val">53%</span></div></td>
+        </tr>
+        <tr>
+          <td><b>Ромашка — редизайн сайта</b></td>
+          <td style="color:#45566A">Ромашка</td>
+          <td class="num">2 400 ₽</td><td class="num">168 ч</td>
+          <td class="money">403 200 ₽</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:31%"></i></div><span class="bar-val">31%</span></div></td>
+        </tr>
+        <tr>
+          <td><b>Технопарк — техподдержка</b></td>
+          <td style="color:#45566A">Технопарк</td>
+          <td class="num">1 800 ₽</td><td class="num">92 ч</td>
+          <td class="money">165 600 ₽</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:13%"></i></div><span class="bar-val">13%</span></div></td>
+        </tr>
+        <tr>
+          <td style="color:#8896A5">Прочие 8 проектов</td>
+          <td style="color:#45566A">—</td>
+          <td class="num">~1 260 ₽</td><td class="num">38 ч</td>
+          <td class="money">47 880 ₽</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:3%"></i></div><span class="bar-val">3%</span></div></td>
+        </tr>
+        <tr class="total">
+          <td>Итого</td><td></td><td class="num">—</td>
+          <td class="num">512 ч</td><td class="money">1 301 480 ₽</td><td></td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="margin-top:12px;font-size:11.5px;color:#8896A5">
+      Внутренние часы (обучение, пресейл, административные — 716 ч) в потери не попадают: это не «недовыставленное», а сознательная инвестиция.
+    </div>
+  </div>
+</div>
+<!--@end-->
+
+<!--@mockup:discipline-->
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Отчёт · Дисциплина внесения</span>
+    <span class="mock-crumbs">июнь 2026</span>
+  </div>
+  <div class="mock-body">
+    <div class="mock-kpis">
+      <div class="mock-kpi ok"><div class="k-v">31</div><div class="k-l">Вносят в день работы</div></div>
+      <div class="mock-kpi"><div class="k-v">8</div><div class="k-l">Вносят с опозданием</div></div>
+      <div class="mock-kpi danger"><div class="k-v">3</div><div class="k-l">Не вносят совсем</div></div>
+      <div class="mock-kpi"><div class="k-v">2,4 дня</div><div class="k-l">Средняя задержка внесения</div></div>
+    </div>
+    <table class="mock-table">
+      <thead>
+        <tr>
+          <th>Сотрудник</th><th class="num">Дней с записями</th>
+          <th class="num">Средняя задержка</th><th class="num">Пропущено дней</th><th>Статус</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="who"><span class="ava a2">СД</span>Смирнов Дмитрий</span></td>
+          <td class="num">21 из 21</td><td class="num">0,2 дня</td><td class="num">0</td>
+          <td><span class="badge bill">вовремя</span></td>
+        </tr>
+        <tr>
+          <td><span class="who"><span class="ava a1">ПС</span>Петров Сергей</span></td>
+          <td class="num">21 из 21</td><td class="num">0,4 дня</td><td class="num">0</td>
+          <td><span class="badge bill">вовремя</span></td>
+        </tr>
+        <tr>
+          <td><span class="who"><span class="ava a4">СА</span>Соколова Анна</span></td>
+          <td class="num">18 из 21</td><td class="num">2,1 дня</td><td class="num">3</td>
+          <td><span class="badge warn">с опозданием</span></td>
+        </tr>
+        <tr>
+          <td><span class="who"><span class="ava a3">ИА</span>Иванов Алексей</span></td>
+          <td class="num">16 из 21</td><td class="num">3,8 дня</td><td class="num">5</td>
+          <td><span class="badge warn">с опозданием</span></td>
+        </tr>
+        <tr class="danger-row">
+          <td><span class="who"><span class="ava a6">ЛК</span>Лебедев Кирилл</span></td>
+          <td class="num">4 из 21</td><td class="num">9,5 дня</td><td class="num">17</td>
+          <td><span class="badge dang">не вносит</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="margin-top:12px;font-size:11.5px;color:#8896A5">
+      Чем позже вносят часы, тем хуже они помнят детали — и тем больше работы уходит из счёта клиенту.
+    </div>
+  </div>
+</div>
+<!--@end-->
+
+<!--@mockup:mapping-->
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Настройки · Маппинг полей</span>
+    <span class="mock-crumbs">разовая настройка</span>
+  </div>
+  <div class="mock-body">
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:14px">
+      <span class="mock-field">Смарт-процесс списаний: <b>Учёт трудозатрат</b></span>
+      <span class="mock-btn ghost">Подгрузить поля</span>
+      <span class="mock-spacer"></span>
+      <span class="badge bill">12 из 12 полей сопоставлено</span>
+    </div>
+    <div class="map-row">
+      <div class="map-l"><b>ID задачи</b> — к какой задаче относится час</div>
+      <div class="map-arrow">→</div>
+      <div class="map-r">UF_CRM_5_TASK_ID</div>
+      <div class="map-st"><span class="badge bill">ок</span></div>
+    </div>
+    <div class="map-row">
+      <div class="map-l"><b>Сотрудник</b></div>
+      <div class="map-arrow">→</div>
+      <div class="map-r">UF_CRM_5_EMPLOYEE</div>
+      <div class="map-st"><span class="badge bill">ок</span></div>
+    </div>
+    <div class="map-row">
+      <div class="map-l"><b>Количество часов</b></div>
+      <div class="map-arrow">→</div>
+      <div class="map-r">UF_CRM_5_HOURS</div>
+      <div class="map-st"><span class="badge bill">ок</span></div>
+    </div>
+    <div class="map-row">
+      <div class="map-l"><b>Учитываемая запись</b> — оплачиваемая или внутренняя</div>
+      <div class="map-arrow">→</div>
+      <div class="map-r">UF_CRM_5_BILLABLE</div>
+      <div class="map-st"><span class="badge bill">ок</span></div>
+    </div>
+    <div class="map-row">
+      <div class="map-l"><b>Наш ИНН</b> — для выгрузки в 1С</div>
+      <div class="map-arrow">→</div>
+      <div class="map-r">UF_CRM_5_OUR_INN</div>
+      <div class="map-st"><span class="badge bill">ок</span></div>
+    </div>
+    <div class="map-row">
+      <div class="map-l"><b>ИНН клиента</b></div>
+      <div class="map-arrow">→</div>
+      <div class="map-r">UF_CRM_5_CLIENT_INN</div>
+      <div class="map-st"><span class="badge bill">ок</span></div>
+    </div>
+    <div style="margin-top:14px;padding:11px 14px;background:#E8F1FA;border-radius:8px;font-size:12px;color:#174B84">
+      Нет смарт-процесса? Кнопка <b>«Создать смарт-процесс»</b> заводит его вместе со всеми полями и заполняет маппинг сама.
+    </div>
+  </div>
+</div>
+<!--@end-->
+
+<!--@mockup:excel-1c-->
+<div class="xls">
+  <div class="xls-head">
+    <span>▦</span> Выгрузка трудозатрат · июнь 2026.xlsx
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Дата</th><th>Сотрудник</th><th>Проект</th><th>Задача</th>
+        <th>Часы</th><th>Тип</th><th>Наш ИНН</th><th>ИНН клиента</th><th>Сумма, ₽</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>12.06.2026</td><td>Петров С.</td><td>Ромашка — редизайн сайта</td><td>Вёрстка hero-блока</td>
+        <td class="n">8</td><td>оплач.</td><td class="inn">7736207543</td><td class="inn">7701234567</td><td class="n">19 200</td>
+      </tr>
+      <tr>
+        <td>12.06.2026</td><td>Соколова А.</td><td>Ромашка — редизайн сайта</td><td>Макет главной</td>
+        <td class="n">6</td><td>оплач.</td><td class="inn">7736207543</td><td class="inn">7701234567</td><td class="n">14 400</td>
+      </tr>
+      <tr>
+        <td>12.06.2026</td><td>Кузнецова М.</td><td>СеверСталь-Логистика — CRM</td><td>Миграция справочников</td>
+        <td class="n">8</td><td>оплач.</td><td class="inn">7736207543</td><td class="inn">7842991005</td><td class="n">25 600</td>
+      </tr>
+      <tr>
+        <td>11.06.2026</td><td>Смирнов Д.</td><td>Ромашка — редизайн сайта</td><td>Правки после ревью</td>
+        <td class="n">4</td><td>внутр.</td><td class="inn">7736207543</td><td class="inn">7701234567</td><td class="n">0</td>
+      </tr>
+      <tr>
+        <td>11.06.2026</td><td>Волков И.</td><td>Технопарк — техподдержка</td><td>Регресс-тестирование</td>
+        <td class="n">7</td><td>оплач.</td><td class="inn">7736207543</td><td class="inn">5024118820</td><td class="n">12 600</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<!--@end-->

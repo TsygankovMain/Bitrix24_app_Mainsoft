@@ -1,0 +1,1608 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Учёт трудозатрат в Битрикс24 — куда уходят часы вашей команды</title>
+<style>
+/* ============================================================
+   Презентация «Учёт трудозатрат» — общие стили
+   Правится в одном месте, инлайнится в три файла через build.py
+   ============================================================ */
+
+:root {
+  --ink:        #14212C;
+  --ink-2:      #45566A;
+  --muted:      #8896A5;
+  --line:       #E4EAF0;
+  --line-soft:  #EFF3F7;
+  --bg:         #FFFFFF;
+  --bg-soft:    #F5F8FB;
+  --accent:     #2066B0;
+  --accent-dk:  #174B84;
+  --accent-lt:  #E8F1FA;
+  --ok:         #1E9C6B;
+  --ok-lt:      #E6F5EF;
+  --warn:       #D98324;
+  --warn-lt:    #FCF3E6;
+  --danger:     #CE3F58;
+  --danger-lt:  #FBEBEE;
+  --shadow:     0 1px 2px rgba(20,33,44,.06), 0 8px 24px rgba(20,33,44,.08);
+  --shadow-lg:  0 2px 6px rgba(20,33,44,.08), 0 24px 60px rgba(20,33,44,.14);
+  --radius:     14px;
+  --font:       -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0E1721;
+  font-family: var(--font);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Каркас: слайд 1280×720, масштабируется под окно ---------- */
+
+#stage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.slide {
+  position: absolute;
+  width: 1280px;
+  height: 720px;
+  background: var(--bg);
+  transform-origin: center center;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  padding: 62px 76px;
+  display: flex;
+  flex-direction: column;
+}
+
+.slide.is-active {
+  opacity: 1;
+  pointer-events: auto;
+  animation: slide-in .32s cubic-bezier(.2, .7, .3, 1);
+}
+
+@keyframes slide-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Служебный слой ---------- */
+
+#hud {
+  position: fixed;
+  right: 22px;
+  bottom: 18px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, .55);
+  user-select: none;
+}
+
+#hud b { color: #fff; font-weight: 600; }
+
+#hud .hud-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, .32);
+}
+
+#progress {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent), #4FA3E8);
+  z-index: 61;
+  transition: width .3s ease;
+}
+
+.edge-nav {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 12%;
+  z-index: 55;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.edge-nav.prev { left: 0; }
+.edge-nav.next { right: 0; }
+
+/* ---------- Типографика слайда ---------- */
+
+.kicker {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 14px;
+}
+
+.kicker.muted { color: var(--muted); }
+
+h1 {
+  font-size: 62px;
+  line-height: 1.06;
+  letter-spacing: -.025em;
+  font-weight: 700;
+  margin: 0 0 22px;
+}
+
+h2 {
+  font-size: 40px;
+  line-height: 1.14;
+  letter-spacing: -.02em;
+  font-weight: 700;
+  margin: 0 0 10px;
+}
+
+h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
+
+.lead {
+  font-size: 21px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 0 0 26px;
+  max-width: 62ch;
+}
+
+.slide-head { flex: 0 0 auto; margin-bottom: 26px; }
+.slide-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: center; }
+.slide-foot { flex: 0 0 auto; margin-top: 22px; font-size: 15px; color: var(--muted); }
+
+.accent { color: var(--accent); }
+.danger { color: var(--danger); }
+.ok     { color: var(--ok); }
+.nowrap { white-space: nowrap; }
+
+/* ---------- Титульный слайд ---------- */
+
+.slide.cover {
+  background:
+    radial-gradient(1100px 620px at 78% 12%, rgba(79, 163, 232, .22), transparent 62%),
+    linear-gradient(148deg, #0E2A47 0%, #123A63 46%, #174B84 100%);
+  color: #fff;
+  justify-content: center;
+  padding: 62px 88px;
+}
+
+.slide.cover h1 { color: #fff; max-width: 20ch; }
+.slide.cover .lead { color: rgba(255, 255, 255, .78); max-width: 54ch; }
+.slide.cover .kicker { color: #7CC0F5; }
+
+.cover-brand {
+  position: absolute;
+  top: 54px;
+  left: 88px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: rgba(255, 255, 255, .82);
+}
+
+.cover-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .1);
+  border: 1px solid rgba(255, 255, 255, .2);
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.cover-foot {
+  position: absolute;
+  left: 88px;
+  right: 88px;
+  bottom: 52px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  font-size: 14px;
+  color: rgba(255, 255, 255, .55);
+}
+
+/* Тёмный слайд-акцент (цена вопроса) */
+.slide.dark {
+  background: linear-gradient(150deg, #14212C 0%, #1B2E3E 100%);
+  color: #fff;
+}
+.slide.dark h2, .slide.dark h1 { color: #fff; }
+.slide.dark .lead { color: rgba(255, 255, 255, .72); }
+.slide.dark .kicker { color: #7CC0F5; }
+.slide.dark .slide-foot { color: rgba(255, 255, 255, .45); }
+
+/* ---------- Сетки ---------- */
+
+.grid { display: grid; gap: 18px; }
+.g2 { grid-template-columns: repeat(2, 1fr); }
+.g3 { grid-template-columns: repeat(3, 1fr); }
+.g4 { grid-template-columns: repeat(4, 1fr); }
+.g-2-1 { grid-template-columns: 1.6fr 1fr; }
+.g-1-2 { grid-template-columns: 1fr 1.6fr; }
+.align-center { align-items: center; }
+
+/* ---------- Карточки ---------- */
+
+.card {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+}
+
+.card.soft { background: var(--bg-soft); border-color: transparent; }
+.card.raised { box-shadow: var(--shadow); border-color: var(--line-soft); }
+
+.card h3 { margin-bottom: 7px; }
+.card p { margin: 0; font-size: 15.5px; line-height: 1.55; color: var(--ink-2); }
+
+.card-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--accent-lt);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 14px;
+}
+
+.slide.dark .card {
+  background: rgba(255, 255, 255, .05);
+  border-color: rgba(255, 255, 255, .12);
+}
+.slide.dark .card p { color: rgba(255, 255, 255, .68); }
+.slide.dark .card h3 { color: #fff; }
+
+/* ---------- Боли ---------- */
+
+.pain {
+  display: flex;
+  gap: 15px;
+  padding: 19px 21px;
+  background: var(--bg-soft);
+  border-radius: 12px;
+  border-left: 3px solid var(--danger);
+}
+
+.pain-icon {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--danger-lt);
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pain-text { font-size: 16px; line-height: 1.5; }
+.pain-text b { display: block; margin-bottom: 3px; font-size: 16.5px; font-weight: 650; }
+.pain-text span { color: var(--ink-2); }
+
+/* Боль → решение */
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 26px 1fr;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.pair:last-child { border-bottom: none; }
+.pair-arrow { color: var(--muted); text-align: center; font-size: 17px; }
+.pair-l { font-size: 16px; color: var(--ink-2); }
+.pair-l b { color: var(--ink); font-weight: 650; }
+.pair-r {
+  font-size: 16px;
+  background: var(--ok-lt);
+  border-radius: 9px;
+  padding: 11px 15px;
+  color: #14654A;
+}
+.pair-r b { font-weight: 650; }
+
+/* ---------- Метрики ---------- */
+
+.metrics { display: grid; gap: 16px; }
+
+.metric {
+  background: var(--bg-soft);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+}
+.metric .m-val {
+  font-size: 42px;
+  font-weight: 700;
+  letter-spacing: -.03em;
+  line-height: 1;
+  margin-bottom: 8px;
+}
+.metric .m-lbl { font-size: 14.5px; color: var(--ink-2); line-height: 1.45; }
+.metric.is-danger { background: var(--danger-lt); }
+.metric.is-danger .m-val { color: var(--danger); }
+.metric.is-ok { background: var(--ok-lt); }
+.metric.is-ok .m-val { color: var(--ok); }
+.metric.is-accent { background: var(--accent-lt); }
+.metric.is-accent .m-val { color: var(--accent); }
+
+.slide.dark .metric { background: rgba(255, 255, 255, .06); }
+.slide.dark .metric .m-lbl { color: rgba(255, 255, 255, .6); }
+.slide.dark .metric .m-val { color: #fff; }
+.slide.dark .metric.is-danger { background: rgba(206, 63, 88, .16); }
+.slide.dark .metric.is-danger .m-val { color: #FF8FA3; }
+
+.bignum {
+  font-size: 108px;
+  font-weight: 700;
+  letter-spacing: -.045em;
+  line-height: .95;
+}
+
+/* ---------- Шаги сценария ---------- */
+
+.steps { display: grid; gap: 0; }
+
+.step {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  gap: 18px;
+  padding: 17px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.step:last-child { border-bottom: none; }
+
+.step-n {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 15px;
+}
+.step-b b { display: block; font-size: 17px; font-weight: 650; margin-bottom: 4px; }
+.step-b span { font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
+.step-time {
+  display: inline-block;
+  margin-left: 9px;
+  padding: 2px 9px;
+  border-radius: 6px;
+  background: var(--accent-lt);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  vertical-align: 2px;
+}
+
+/* Роли */
+.role-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.role-ico {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  background: var(--accent-lt);
+  display: flex; align-items: center; justify-content: center;
+}
+.role-ico svg { width: 17px; height: 17px; fill: var(--accent); }
+.role-head b { font-size: 16.5px; font-weight: 650; }
+.role-list { margin: 0; padding-left: 18px; }
+.role-list li { font-size: 15px; line-height: 1.6; color: var(--ink-2); margin-bottom: 4px; }
+
+/* ---------- Список с галочками / крестами ---------- */
+
+.checks { display: grid; gap: 11px; }
+.check { display: flex; gap: 12px; align-items: flex-start; font-size: 16px; line-height: 1.5; }
+.check-ico {
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+  margin-top: 1px;
+}
+.check.yes .check-ico { background: var(--ok-lt); color: var(--ok); }
+.check.no  .check-ico { background: var(--danger-lt); color: var(--danger); }
+.check.info .check-ico { background: var(--accent-lt); color: var(--accent); }
+.check b { font-weight: 650; }
+.check span { color: var(--ink-2); }
+
+/* ---------- Сравнение с альтернативами ---------- */
+
+.compare { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.compare-col {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+.compare-col.is-us { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.compare-col h3 { font-size: 17px; margin-bottom: 4px; }
+.compare-col .c-sub { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+.compare-col ul { margin: 0; padding: 0; list-style: none; }
+.compare-col li {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  padding: 7px 0 7px 21px;
+  position: relative;
+  border-top: 1px solid var(--line-soft);
+}
+.compare-col li:first-child { border-top: none; }
+.compare-col li::before {
+  content: "—";
+  position: absolute;
+  left: 0;
+  color: var(--muted);
+}
+.compare-col li.y::before { content: "✓"; color: var(--ok); font-weight: 700; }
+.compare-col li.n::before { content: "✕"; color: var(--danger); font-weight: 700; }
+.compare-tag {
+  display: inline-block;
+  align-self: flex-start;
+  margin-bottom: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+/* ---------- Роадмап ---------- */
+
+.roadmap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; position: relative; }
+
+.rm-col {
+  border-radius: var(--radius);
+  padding: 22px;
+  border: 1px solid var(--line);
+}
+.rm-col.now    { background: var(--ok-lt);     border-color: transparent; }
+.rm-col.next   { background: var(--accent-lt); border-color: transparent; }
+.rm-col.later  { background: var(--bg-soft);   border-color: transparent; }
+
+.rm-head { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
+.rm-dot { width: 9px; height: 9px; border-radius: 50%; }
+.rm-col.now   .rm-dot { background: var(--ok); }
+.rm-col.next  .rm-dot { background: var(--accent); }
+.rm-col.later .rm-dot { background: var(--muted); }
+.rm-head b { font-size: 17px; font-weight: 650; }
+.rm-head .rm-when { font-size: 12.5px; color: var(--ink-2); margin-left: auto; }
+
+.rm-col ul { margin: 0; padding-left: 17px; }
+.rm-col li { font-size: 14.5px; line-height: 1.6; color: var(--ink-2); margin-bottom: 5px; }
+
+.draft-note {
+  margin-top: 16px;
+  padding: 11px 16px;
+  border-radius: 9px;
+  background: var(--warn-lt);
+  border-left: 3px solid var(--warn);
+  font-size: 13.5px;
+  color: #7A4E12;
+}
+
+/* ---------- Тарифы ---------- */
+
+.plans { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+.plan {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 26px 28px;
+}
+.plan.is-paid { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.plan-name { font-size: 15px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+.plan-price { font-size: 34px; font-weight: 700; letter-spacing: -.02em; margin-bottom: 4px; }
+.plan-price.tbd { color: var(--muted); font-size: 26px; font-weight: 600; }
+.plan-note { font-size: 13.5px; color: var(--muted); margin-bottom: 18px; }
+.plan ul { margin: 0; padding: 0; list-style: none; }
+.plan li {
+  font-size: 15px;
+  line-height: 1.45;
+  padding: 8px 0 8px 24px;
+  position: relative;
+  color: var(--ink-2);
+  border-top: 1px solid var(--line-soft);
+}
+.plan li:first-child { border-top: none; }
+.plan li::before { content: "✓"; position: absolute; left: 0; color: var(--ok); font-weight: 700; }
+.plan li.soon::before { content: "◷"; color: var(--warn); }
+
+/* ---------- Требования и ограничения ---------- */
+
+.req-limit { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.req-box { border-radius: var(--radius); padding: 24px 26px; }
+.req-box.req { background: var(--ok-lt); }
+.req-box.lim { background: var(--warn-lt); }
+.req-box h3 { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; font-size: 18px; }
+.req-box ul { margin: 0; padding-left: 19px; }
+.req-box li { font-size: 15px; line-height: 1.55; margin-bottom: 9px; }
+.req-box.req li { color: #17583F; }
+.req-box.lim li { color: #6E4712; }
+
+/* ---------- CTA ---------- */
+
+.cta-box {
+  background: linear-gradient(135deg, var(--accent-dk), var(--accent));
+  border-radius: 18px;
+  padding: 38px 42px;
+  color: #fff;
+}
+.cta-box h2 { color: #fff; margin-bottom: 10px; }
+.cta-box p { font-size: 18px; line-height: 1.55; color: rgba(255, 255, 255, .82); margin: 0 0 22px; max-width: 56ch; }
+.cta-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.cta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 20px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .14);
+  border: 1px solid rgba(255, 255, 255, .22);
+  font-size: 15.5px;
+  font-weight: 600;
+}
+.cta-chip.solid { background: #fff; color: var(--accent-dk); border-color: #fff; }
+
+/* ============================================================
+   МОКАПЫ — окно Bitrix24
+   ============================================================ */
+
+.mock {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.mock-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #EDF1F5;
+  border-bottom: 1px solid var(--line);
+}
+.mock-dot { width: 9px; height: 9px; border-radius: 50%; background: #C9D3DD; }
+.mock-title {
+  margin-left: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #5A6A7A;
+}
+.mock-crumbs { margin-left: auto; font-size: 11.5px; color: var(--muted); }
+
+.mock-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 14px;
+  background: #F7F9FB;
+  border-bottom: 1px solid var(--line);
+}
+.mock-tab {
+  padding: 11px 15px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink-2);
+  border-bottom: 2px solid transparent;
+}
+.mock-tab.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 650; }
+
+.mock-body { padding: 16px 18px; background: #fff; }
+.mock-body.soft { background: var(--bg-soft); }
+
+/* Панель фильтров */
+.mock-filters {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  background: #FCFDFE;
+}
+.mock-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.mock-field b { color: var(--ink); font-weight: 600; }
+.mock-field::after { content: "▾"; color: var(--muted); font-size: 10px; }
+.mock-field.no-caret::after { content: ""; }
+.mock-btn {
+  padding: 7px 15px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.mock-btn.ghost { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
+.mock-btn.grey  { background: #EDF1F5; color: var(--ink-2); border: 1px solid var(--line); }
+.mock-spacer { margin-left: auto; }
+
+/* KPI-строка внутри мокапа */
+.mock-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.mock-kpi {
+  background: var(--bg-soft);
+  border-radius: 9px;
+  padding: 12px 14px;
+}
+.mock-kpi .k-v { font-size: 21px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+.mock-kpi .k-l { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+.mock-kpi.danger { background: var(--danger-lt); }
+.mock-kpi.danger .k-v { color: var(--danger); }
+.mock-kpi.ok { background: var(--ok-lt); }
+.mock-kpi.ok .k-v { color: var(--ok); }
+.mock-kpi.accent { background: var(--accent-lt); }
+.mock-kpi.accent .k-v { color: var(--accent); }
+
+/* Таблицы мокапов */
+.mock-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mock-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .045em;
+  color: var(--muted);
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.mock-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
+}
+.mock-table tr:last-child td { border-bottom: none; }
+.mock-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mock-table .money { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.mock-table tr.lvl-0 > td { background: #F7FAFD; font-weight: 650; }
+.mock-table tr.lvl-1 > td:first-child { padding-left: 28px; }
+.mock-table tr.lvl-2 > td:first-child { padding-left: 48px; color: var(--ink-2); }
+.mock-table tr.total > td {
+  background: var(--accent-lt);
+  font-weight: 700;
+  border-top: 1px solid var(--accent);
+  border-bottom: none;
+}
+.mock-table tr.danger-row > td { background: var(--danger-lt); }
+
+.tw { display: inline-flex; align-items: center; gap: 7px; }
+.tw-caret { color: var(--muted); font-size: 10px; width: 8px; display: inline-block; }
+.tw-ico {
+  width: 18px; height: 18px; border-radius: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700;
+  flex: 0 0 auto;
+}
+.tw-ico.p { background: var(--accent-lt); color: var(--accent); }
+.tw-ico.t { background: #EEF1F4; color: #6B7A89; }
+.tw-ico.s { background: #F4F6F8; color: #93A1AF; }
+
+/* Бейджи */
+.badge {
+  display: inline-block;
+  padding: 2.5px 8px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.badge.bill  { background: var(--ok-lt);     color: var(--ok); }
+.badge.int   { background: #EEF1F4;          color: #6B7A89; }
+.badge.warn  { background: var(--warn-lt);   color: var(--warn); }
+.badge.dang  { background: var(--danger-lt); color: var(--danger); }
+.badge.acc   { background: var(--accent-lt); color: var(--accent); }
+
+/* Аватары */
+.ava {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9.5px; font-weight: 700;
+  color: #fff;
+  flex: 0 0 auto;
+}
+.ava.a1 { background: #4A8FD4; } .ava.a2 { background: #6EA95F; }
+.ava.a3 { background: #C98A3E; } .ava.a4 { background: #A868B8; }
+.ava.a5 { background: #4FA9A0; } .ava.a6 { background: #C96A72; }
+.who { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Полоски прогресса в таблице */
+.bar { height: 6px; border-radius: 3px; background: #EDF1F5; overflow: hidden; min-width: 68px; }
+.bar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.bar > i.ok { background: var(--ok); }
+.bar > i.warn { background: var(--warn); }
+.bar > i.dang { background: var(--danger); }
+.bar-wrap { display: flex; align-items: center; gap: 9px; }
+.bar-val { font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 34px; }
+
+/* Вкладка учёта в задаче */
+.entry-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #FCFDFE;
+  margin-bottom: 7px;
+  font-size: 12.5px;
+}
+.entry-row .e-desc { flex: 1 1 auto; color: var(--ink-2); }
+.entry-row .e-h { font-weight: 650; font-variant-numeric: tabular-nums; }
+
+.add-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--accent);
+  border-radius: 9px;
+  background: var(--accent-lt);
+  margin-top: 12px;
+}
+.add-input {
+  padding: 7px 11px;
+  border: 1px solid #C6D9EC;
+  border-radius: 7px;
+  background: #fff;
+  font-size: 12px;
+  color: var(--ink);
+}
+.add-input.grow { flex: 1 1 auto; color: var(--muted); }
+
+/* Split-модалка */
+.mock-modal {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  background: #fff;
+  overflow: hidden;
+}
+.modal-head {
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-head .x { color: var(--muted); font-size: 15px; }
+.modal-body { padding: 16px 18px; }
+.modal-foot {
+  padding: 13px 18px;
+  border-top: 1px solid var(--line);
+  background: #FAFCFD;
+  display: flex;
+  gap: 9px;
+  justify-content: flex-end;
+}
+
+.split-src {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 14px;
+  background: var(--bg-soft);
+  border-radius: 9px;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+}
+.split-arrow { text-align: center; color: var(--muted); font-size: 15px; padding: 5px 0; }
+.split-part {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+}
+.split-part.bill { border-color: #A9DCC6; background: var(--ok-lt); }
+.split-part.int  { border-color: var(--line); background: #FAFBFC; }
+.split-part .p-h { font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
+.split-part .p-d { flex: 1 1 auto; color: var(--ink-2); }
+
+/* Доска проектов */
+.board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.board-col { background: var(--bg-soft); border-radius: 10px; padding: 10px; }
+.board-col-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin-bottom: 9px; padding: 0 2px;
+}
+.board-col-head .cnt {
+  background: #E3E9EF; color: var(--ink-2);
+  border-radius: 20px; padding: 1px 7px; font-size: 10.5px;
+}
+.board-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 11px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 2px rgba(20,33,44,.05);
+}
+.board-card:last-child { margin-bottom: 0; }
+.board-card .bc-name { font-size: 12.5px; font-weight: 650; line-height: 1.35; margin-bottom: 3px; }
+.board-card .bc-client { font-size: 11px; color: var(--muted); margin-bottom: 9px; }
+.board-card .bc-row { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; color: var(--ink-2); }
+.board-card .bc-h { font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+.board-card.accent { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* Шахматка */
+.chess { width: 100%; border-collapse: collapse; font-size: 12px; }
+.chess th {
+  font-size: 10.5px; font-weight: 650; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: 7px 4px; text-align: center; border-bottom: 1px solid var(--line);
+}
+.chess th.who-col { text-align: left; padding-left: 10px; }
+.chess td {
+  padding: 5px 4px; text-align: center;
+  border-bottom: 1px solid var(--line-soft);
+  font-variant-numeric: tabular-nums;
+}
+.chess td.who-col { text-align: left; padding-left: 10px; }
+.chess .cell {
+  display: inline-block;
+  min-width: 40px;
+  padding: 4px 0;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.cell.c0 { background: #F4F6F8; color: #B4BEC8; }
+.cell.c1 { background: #E9F3EC; color: #4A8A66; }
+.cell.c2 { background: #D3E9DC; color: #2C7551; }
+.cell.c3 { background: #B5DCC7; color: #1E5F41; }
+.cell.over { background: var(--warn-lt); color: var(--warn); }
+.chess tr.total td { font-weight: 700; border-top: 1px solid var(--line); background: #FAFCFD; }
+
+/* Excel-выгрузка */
+.xls { border: 1px solid #CFDCE6; border-radius: 8px; overflow: hidden; font-size: 11.5px; }
+.xls-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: #217346; color: #fff;
+  font-size: 12px; font-weight: 650;
+}
+.xls table { width: 100%; border-collapse: collapse; }
+.xls th {
+  background: #EDF3F7; font-size: 10.5px; font-weight: 700; color: #4A5A69;
+  padding: 7px 9px; text-align: left; border: 1px solid #DCE6EE; white-space: nowrap;
+}
+.xls td { padding: 6px 9px; border: 1px solid #E8EEF3; white-space: nowrap; }
+.xls td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.xls tr:nth-child(even) td { background: #FAFCFD; }
+.xls .inn { color: var(--accent); font-weight: 600; }
+
+/* Маппинг полей */
+.map-row {
+  display: grid;
+  grid-template-columns: 1fr 22px 1fr 78px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+}
+.map-row:last-child { border-bottom: none; }
+.map-l { color: var(--ink-2); }
+.map-l b { color: var(--ink); font-weight: 600; }
+.map-arrow { color: var(--muted); text-align: center; }
+.map-r {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.map-r::after { content: "▾"; color: var(--muted); font-size: 10px; }
+.map-st { text-align: right; }
+
+/* Подпись под мокапом */
+.mock-caption {
+  margin-top: 12px;
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.mock-caption b { color: var(--ink-2); font-weight: 600; }
+
+/* Выноски рядом с мокапом */
+.callouts { display: grid; gap: 13px; align-content: center; }
+.callout {
+  padding: 15px 17px;
+  background: var(--bg-soft);
+  border-radius: 11px;
+  border-left: 3px solid var(--accent);
+}
+.callout b { display: block; font-size: 15.5px; font-weight: 650; margin-bottom: 4px; }
+.callout span { font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+.callout.danger { border-left-color: var(--danger); background: var(--danger-lt); }
+.callout.danger span { color: #8C2D3F; }
+.callout.ok { border-left-color: var(--ok); background: var(--ok-lt); }
+.callout.ok span { color: #17583F; }
+
+/* ---------- Утилиты ---------- */
+
+/* Слайд, где главное — мокап: поля уже, заголовок компактнее */
+.slide.showcase { padding: 44px 58px; }
+.slide.showcase .slide-head { margin-bottom: 16px; }
+.slide.showcase h2 { font-size: 33px; margin-bottom: 6px; }
+.slide.showcase .lead { font-size: 17px; margin-bottom: 0; }
+.slide.showcase .kicker { margin-bottom: 9px; }
+
+/* Ужимает крупный мокап под высоту слайда — zoom меняет и раскладку */
+.z95 { zoom: .95; } .z90 { zoom: .90; } .z85 { zoom: .85; }
+.z80 { zoom: .80; } .z75 { zoom: .75; } .z70 { zoom: .70; } .z65 { zoom: .65; }
+
+.mt0 { margin-top: 0; } .mt8 { margin-top: 8px; } .mt16 { margin-top: 16px; } .mt24 { margin-top: 24px; }
+.mb0 { margin-bottom: 0; } .mb8 { margin-bottom: 8px; } .mb16 { margin-bottom: 16px; }
+.tight { max-width: 54ch; }
+
+/* ---------- Печать: один слайд — одна страница ---------- */
+
+@page { size: 1280px 720px; margin: 0; }
+
+@media print {
+  html, body { overflow: visible; background: #fff; height: auto; }
+  #hud, #progress, .edge-nav { display: none !important; }
+  #stage { position: static; display: block; }
+  .slide {
+    position: relative !important;
+    opacity: 1 !important;
+    transform: none !important;
+    page-break-after: always;
+    break-after: page;
+    animation: none !important;
+    box-shadow: none;
+  }
+  .slide:last-child { page-break-after: auto; }
+}
+
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div class="edge-nav prev"></div>
+<div class="edge-nav next"></div>
+<div id="stage">
+<!-- ХОЛОДНЫЙ ТРЕК · цель — довести до 20-минутного демо -->
+
+<!-- 1. Титул -->
+<section class="slide cover is-active">
+  <div class="cover-brand">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#7CC0F5" stroke-width="2"/><path d="M12 6.6V12l3.6 2.2" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+    Учёт трудозатрат и ресурсов · приложение для Битрикс24
+  </div>
+  <p class="kicker">Для проектных компаний</p>
+  <h1>Куда уходят часы вашей команды</h1>
+  <p class="lead">Приложение показывает, сколько времени и денег реально стоит каждый проект — прямо внутри Битрикс24, без отдельных таблиц и внешних трекеров.</p>
+  <div class="cover-badge">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="#7CC0F5"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>
+    Данные остаются в вашем Битрикс24
+  </div>
+  <div class="cover-foot">
+    <span>mainsoft.su</span>
+    <span>Демонстрация — 20 минут</span>
+  </div>
+</section>
+
+<!-- 2. Боли -->
+<section class="slide">
+  <div class="slide-head">
+    <p class="kicker">Знакомо?</p>
+    <h2>Четыре симптома, которые стоят денег</h2>
+  </div>
+  <div class="slide-body">
+    <div class="grid g2">
+      <div class="pain">
+        <div class="pain-icon">?</div>
+        <div class="pain-text">
+          <b>Месяц закрыт — а куда ушли часы, неизвестно</b>
+          <span>Время оседает в комментариях к задачам, чатах и головах сотрудников. Собрать картину можно только вручную.</span>
+        </div>
+      </div>
+      <div class="pain">
+        <div class="pain-icon">₽</div>
+        <div class="pain-text">
+          <b>Проект выглядит прибыльным, но денег нет</b>
+          <span>Бюджет известен, себестоимость по факту — нет. Убыточный проект видно только постфактум, когда он уже закрыт.</span>
+        </div>
+      </div>
+      <div class="pain">
+        <div class="pain-icon">!</div>
+        <div class="pain-text">
+          <b>Клиент спорит по счёту, а подтвердить нечем</b>
+          <span>«Мы столько не заказывали». Детализации по задачам и людям нет, и спор решается скидкой.</span>
+        </div>
+      </div>
+      <div class="pain">
+        <div class="pain-icon">⏳</div>
+        <div class="pain-text">
+          <b>Сводка по часам — это два дня в Excel</b>
+          <span>Руководитель просит отчёт, кто-то вручную сводит выгрузки. К моменту готовности данные уже устарели.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 3. Цена вопроса -->
+<section class="slide dark">
+  <div class="slide-head">
+    <p class="kicker">Цена вопроса</p>
+    <h2>Часы, которые никто не посчитал, — это не «мелочь»</h2>
+  </div>
+  <div class="slide-body">
+    <div class="grid g-1-2 align-center" style="gap:44px">
+      <div>
+        <div class="bignum danger">1,3 млн ₽</div>
+        <p class="lead mt16" style="margin-bottom:0">Столько проектная компания на 42 человека не выставила клиентам за <b style="color:#fff">один месяц</b> — просто потому, что часы не были размечены.</p>
+      </div>
+      <div class="metrics g2 grid">
+        <div class="metric is-danger"><div class="m-val">512 ч</div><div class="m-lbl">отработано на клиентских проектах и не попало в счёт</div></div>
+        <div class="metric"><div class="m-val">21%</div><div class="m-lbl">всех списанных часов не помечены как оплачиваемые</div></div>
+        <div class="metric"><div class="m-val">11,1%</div><div class="m-lbl">от месячной выручки — размер утечки</div></div>
+        <div class="metric"><div class="m-val">2,4 дня</div><div class="m-lbl">средняя задержка внесения часов: детали уже забыты</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-foot">Цифры демонстрационной компании «Меркурий Про». У вас они другие — но они есть.</div>
+</section>
+
+<!-- 4. Что это -->
+<section class="slide showcase">
+  <div class="slide-head">
+    <p class="kicker">Что это такое</p>
+    <h2>Вкладка учёта времени прямо в карточке задачи</h2>
+    <p class="lead">Сотрудник списывает часы там, где работает. Приложение само собирает дерево «проект → задача → подзадача» и суммирует часы и деньги снизу вверх.</p>
+  </div>
+  <div class="slide-body">
+    <div class="z85">
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Задача · Спринт 12: главная страница</span>
+    <span class="mock-crumbs">Ромашка — редизайн сайта</span>
+  </div>
+  <div class="mock-tabs">
+    <div class="mock-tab">Обсуждение</div>
+    <div class="mock-tab">Чек-лист</div>
+    <div class="mock-tab on">Учёт часов</div>
+    <div class="mock-tab">Затраченное время</div>
+  </div>
+  <div class="mock-body">
+    <table class="mock-table" style="margin-bottom:14px">
+      <thead>
+        <tr>
+          <th>Проект · задача · подзадача</th>
+          <th class="num">Часы</th>
+          <th class="num">Оплач.</th>
+          <th class="money">Сумма</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▾</span><span class="tw-ico p">П</span>Ромашка — редизайн сайта</span></td>
+          <td class="num">1&nbsp;084</td><td class="num">1&nbsp;084</td>
+          <td class="money">2&nbsp;601&nbsp;600 ₽</td>
+        </tr>
+        <tr class="lvl-1">
+          <td><span class="tw"><span class="tw-caret">▾</span><span class="tw-ico t">З</span>Спринт 12: главная страница</span></td>
+          <td class="num">86</td><td class="num">78</td>
+          <td class="money">187&nbsp;200 ₽</td>
+        </tr>
+        <tr class="lvl-2"><td>Вёрстка hero-блока</td><td class="num">24</td><td class="num">24</td><td class="money">57&nbsp;600 ₽</td></tr>
+        <tr class="lvl-2"><td>Адаптив под мобильные</td><td class="num">18</td><td class="num">18</td><td class="money">43&nbsp;200 ₽</td></tr>
+        <tr class="lvl-2"><td>Правки после ревью <span class="badge int">внутренние</span></td><td class="num">12</td><td class="num">4</td><td class="money">9&nbsp;600 ₽</td></tr>
+      </tbody>
+    </table>
+
+    <div style="font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.045em;color:#8896A5;margin-bottom:9px">Записи по этой задаче</div>
+    <div class="entry-row">
+      <span class="who"><span class="ava a1">ПС</span>Петров С.</span>
+      <span class="e-desc">Вёрстка hero-блока, десктоп</span>
+      <span class="badge bill">оплачиваемая</span>
+      <span style="color:#8896A5">12.06</span>
+      <span class="e-h">8 ч</span>
+    </div>
+    <div class="entry-row">
+      <span class="who"><span class="ava a4">СА</span>Соколова А.</span>
+      <span class="e-desc">Макет главной, второй заход</span>
+      <span class="badge bill">оплачиваемая</span>
+      <span style="color:#8896A5">12.06</span>
+      <span class="e-h">6 ч</span>
+    </div>
+    <div class="entry-row">
+      <span class="who"><span class="ava a2">СД</span>Смирнов Д.</span>
+      <span class="e-desc">Переделка после ревью — наша ошибка</span>
+      <span class="badge int">внутренняя</span>
+      <span style="color:#8896A5">11.06</span>
+      <span class="e-h">4 ч</span>
+    </div>
+
+    <div class="add-form">
+      <span class="add-input" style="width:78px">2,5 ч</span>
+      <span class="add-input" style="width:96px">13.06.2026</span>
+      <span class="add-input grow">Что делали…</span>
+      <span class="add-input" style="color:#1E9C6B">Оплачиваемая ▾</span>
+      <span class="mock-btn">Списать</span>
+    </div>
+  </div>
+</div>
+    </div>
+  </div>
+</section>
+
+<!-- 5. Отчёт по проектам и задачам -->
+<section class="slide showcase">
+  <div class="slide-head">
+    <p class="kicker">Что видит руководитель</p>
+    <h2>Каждый проект — в часах и в деньгах</h2>
+  </div>
+  <div class="slide-body">
+    <div class="z90">
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Отчёт · Учёт по проектам и задачам</span>
+    <span class="mock-crumbs">01.06.2026 — 30.06.2026</span>
+  </div>
+  <div class="mock-filters">
+    <span class="mock-field">Период: <b>июнь 2026</b></span>
+    <span class="mock-field">Проект: <b>все</b></span>
+    <span class="mock-field">Сотрудник: <b>все</b></span>
+    <span class="mock-spacer"></span>
+    <span class="mock-btn ghost">Выгрузить в Excel</span>
+    <span class="mock-btn">Сформировать</span>
+  </div>
+  <div class="mock-body">
+    <div class="mock-kpis">
+      <div class="mock-kpi"><div class="k-v">5 840 ч</div><div class="k-l">Списано за период</div></div>
+      <div class="mock-kpi ok"><div class="k-v">4 612 ч</div><div class="k-l">Оплачиваемых · 79%</div></div>
+      <div class="mock-kpi accent"><div class="k-v">11,73 млн ₽</div><div class="k-l">Выручка по списаниям</div></div>
+      <div class="mock-kpi danger"><div class="k-v">1,30 млн ₽</div><div class="k-l">Не выставлено клиентам</div></div>
+    </div>
+    <table class="mock-table">
+      <thead>
+        <tr>
+          <th>Проект · задача</th>
+          <th class="num">Ставка</th>
+          <th class="num">Часы</th>
+          <th class="num">Оплач.</th>
+          <th class="money">Сумма</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▾</span><span class="tw-ico p">П</span>СеверСталь-Логистика — внедрение CRM</span></td>
+          <td class="num">3 200 ₽</td><td class="num">1 854</td><td class="num">1 640</td>
+          <td class="money">5 248 000 ₽</td>
+        </tr>
+        <tr class="lvl-1"><td>Миграция справочников</td><td class="num">3 200 ₽</td><td class="num">512</td><td class="num">468</td><td class="money">1 497 600 ₽</td></tr>
+        <tr class="lvl-1"><td>Настройка воронок продаж</td><td class="num">3 200 ₽</td><td class="num">436</td><td class="num">392</td><td class="money">1 254 400 ₽</td></tr>
+        <tr class="lvl-1"><td>Обучение пользователей</td><td class="num">3 200 ₽</td><td class="num">298</td><td class="num">274</td><td class="money">876 800 ₽</td></tr>
+        <tr class="lvl-1"><td style="color:#8896A5">ещё 9 задач</td><td class="num">3 200 ₽</td><td class="num">608</td><td class="num">506</td><td class="money">1 619 200 ₽</td></tr>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▸</span><span class="tw-ico p">П</span>Ромашка — редизайн сайта</span></td>
+          <td class="num">2 400 ₽</td><td class="num">1 252</td><td class="num">1 084</td>
+          <td class="money">2 601 600 ₽</td>
+        </tr>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▸</span><span class="tw-ico p">П</span>Технопарк — техподдержка</span></td>
+          <td class="num">1 800 ₽</td><td class="num">1 018</td><td class="num">926</td>
+          <td class="money">1 666 800 ₽</td>
+        </tr>
+        <tr class="lvl-0">
+          <td><span class="tw"><span class="tw-caret">▸</span><span class="tw-ico p">П</span>Прочие 8 проектов</span></td>
+          <td class="num">~2 300 ₽</td><td class="num">1 716</td><td class="num">962</td>
+          <td class="money">2 212 600 ₽</td>
+        </tr>
+        <tr class="total">
+          <td>Итого · 11 проектов</td><td class="num">—</td>
+          <td class="num">5 840</td><td class="num">4 612</td>
+          <td class="money">11 729 000 ₽</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+    </div>
+  </div>
+</section>
+
+<!-- 6. Потери выручки -->
+<section class="slide showcase">
+  <div class="slide-head">
+    <p class="kicker">Главный отчёт</p>
+    <h2>Сколько работы ушло клиенту бесплатно</h2>
+  </div>
+  <div class="slide-body">
+    <div class="z95">
+<div class="mock">
+  <div class="mock-bar">
+    <span class="mock-dot"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+    <span class="mock-title">Отчёт · Потери выручки</span>
+    <span class="mock-crumbs">июнь 2026</span>
+  </div>
+  <div class="mock-body">
+    <div class="mock-kpis" style="grid-template-columns:repeat(3,1fr)">
+      <div class="mock-kpi danger"><div class="k-v">512 ч</div><div class="k-l">Отработано на клиентских проектах, но не выставлено</div></div>
+      <div class="mock-kpi danger"><div class="k-v">1 301 480 ₽</div><div class="k-l">Столько это стоит по ставкам проектов</div></div>
+      <div class="mock-kpi"><div class="k-v">11,1%</div><div class="k-l">Доля от выручки за месяц</div></div>
+    </div>
+    <table class="mock-table">
+      <thead>
+        <tr>
+          <th>Проект</th><th>Клиент</th>
+          <th class="num">Ставка</th><th class="num">Часы вне счёта</th>
+          <th class="money">Потери</th><th style="width:120px">Доля проекта</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="danger-row">
+          <td><b>СеверСталь-Логистика — внедрение CRM</b></td>
+          <td style="color:#45566A">СеверСталь-Логистика</td>
+          <td class="num">3 200 ₽</td><td class="num">214 ч</td>
+          <td class="money">684 800 ₽</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:53%"></i></div><span class="bar-val">53%</span></div></td>
+        </tr>
+        <tr>
+          <td><b>Ромашка — редизайн сайта</b></td>
+          <td style="color:#45566A">Ромашка</td>
+          <td class="num">2 400 ₽</td><td class="num">168 ч</td>
+          <td class="money">403 200 ₽</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:31%"></i></div><span class="bar-val">31%</span></div></td>
+        </tr>
+        <tr>
+          <td><b>Технопарк — техподдержка</b></td>
+          <td style="color:#45566A">Технопарк</td>
+          <td class="num">1 800 ₽</td><td class="num">92 ч</td>
+          <td class="money">165 600 ₽</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:13%"></i></div><span class="bar-val">13%</span></div></td>
+        </tr>
+        <tr>
+          <td style="color:#8896A5">Прочие 8 проектов</td>
+          <td style="color:#45566A">—</td>
+          <td class="num">~1 260 ₽</td><td class="num">38 ч</td>
+          <td class="money">47 880 ₽</td>
+          <td><div class="bar-wrap"><div class="bar"><i class="dang" style="width:3%"></i></div><span class="bar-val">3%</span></div></td>
+        </tr>
+        <tr class="total">
+          <td>Итого</td><td></td><td class="num">—</td>
+          <td class="num">512 ч</td><td class="money">1 301 480 ₽</td><td></td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="margin-top:12px;font-size:11.5px;color:#8896A5">
+      Внутренние часы (обучение, пресейл, административные — 716 ч) в потери не попадают: это не «недовыставленное», а сознательная инвестиция.
+    </div>
+  </div>
+</div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. Сценарий -->
+<section class="slide">
+  <div class="slide-head">
+    <p class="kicker">Как это работает</p>
+    <h2>Четыре шага, из которых три — автоматические</h2>
+  </div>
+  <div class="slide-body">
+    <div class="steps">
+      <div class="step">
+        <div class="step-n">1</div>
+        <div class="step-b">
+          <b>Сотрудник списывает часы в задаче <span class="step-time">10 секунд</span></b>
+          <span>Вкладка уже внутри задачи Битрикс24. Часы, описание и пометка «оплачиваемая / внутренняя» — и всё.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">2</div>
+        <div class="step-b">
+          <b>Запись попадает в смарт-процесс вашего портала</b>
+          <span>Не в наше облако — в ваш Битрикс24. Это обычный смарт-процесс, данные всегда под вашим контролем.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">3</div>
+        <div class="step-b">
+          <b>Руководитель проекта видит проект в разрезе задач, часов и денег</b>
+          <span>Дерево собирается само: подзадачи суммируются в задачи, задачи — в проект, по ставке проекта считается сумма.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">4</div>
+        <div class="step-b">
+          <b>Отчёт формируется за секунды и выгружается в Excel <span class="step-time">1 клик</span></b>
+          <span>Семь готовых отчётов: по сотрудникам, по проектам, табель по дням, потери выручки, дисциплина внесения и другие.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 8. Требования и честные ограничения -->
+<section class="slide">
+  <div class="slide-head">
+    <p class="kicker">Что нужно, чтобы начать</p>
+    <h2>Установка из Маркетплейса и 15 минут настройки</h2>
+  </div>
+  <div class="slide-body">
+    <div class="grid g3 mb16">
+      <div class="card soft">
+        <div class="card-num">1</div>
+        <h3>Битрикс24 со смарт-процессами</h3>
+        <p>Облако или коробка. Приложение ставится из Маркетплейса, права администратора нужны только на установку.</p>
+      </div>
+      <div class="card soft">
+        <div class="card-num">2</div>
+        <h3>Мастер настройки в один клик</h3>
+        <p>Смарт-процесс и все нужные поля создаются кнопкой, маппинг заполняется автоматически. Разработчик не нужен.</p>
+      </div>
+      <div class="card soft">
+        <div class="card-num">3</div>
+        <h3>Данные — в вашем портале</h3>
+        <p>Записи времени лежат в вашем смарт-процессе. Захотите уйти — данные останутся у вас.</p>
+      </div>
+    </div>
+    <div class="callout">
+      <b>Честно об ограничениях</b>
+      <span>Отчёты строятся по локальной копии данных и обновляются синхронизацией, то есть показывают состояние на момент синка. Финансовый контур — бюджет проекта и план-факт — сейчас в разработке. Полный список ограничений разбираем на демо.</span>
+    </div>
+  </div>
+</section>
+
+<!-- 9. Роадмап -->
+<section class="slide">
+  <div class="slide-head">
+    <p class="kicker">Куда движется продукт</p>
+    <h2>Роадмап</h2>
+  </div>
+  <div class="slide-body">
+    <div class="roadmap">
+      <div class="rm-col now">
+        <div class="rm-head"><span class="rm-dot"></span><b>Уже работает</b><span class="rm-when">в проде</span></div>
+        <ul>
+          <li>Учёт времени в карточке задачи</li>
+          <li>Дерево «проект → задача → подзадача»</li>
+          <li>Разделение часов на оплачиваемые и внутренние</li>
+          <li>Семь управленческих отчётов</li>
+          <li>Доска проектов</li>
+          <li>Выгрузка в Excel и в 1С по ИНН</li>
+        </ul>
+      </div>
+      <div class="rm-col next">
+        <div class="rm-head"><span class="rm-dot"></span><b>Ближайшее</b><span class="rm-when">в разработке</span></div>
+        <ul>
+          <li>Бюджет проекта: план и факт</li>
+          <li>Доходы и расходы по проекту</li>
+          <li>Рентабельность в реальном времени</li>
+          <li>Связь проектов со сделками CRM</li>
+        </ul>
+      </div>
+      <div class="rm-col later">
+        <div class="rm-head"><span class="rm-dot"></span><b>Дальше</b><span class="rm-when">в планах</span></div>
+        <ul>
+          <li>Напоминания о незаполненных часах</li>
+          <li>Ставки по ролям и сотрудникам</li>
+          <li>Тёмная тема</li>
+          <li>Мобильный сценарий списания</li>
+        </ul>
+      </div>
+    </div>
+    <div class="draft-note">Черновик — раздел заполняется актуальным роадмапом продукта.</div>
+  </div>
+</section>
+
+<!-- 10. Тарифы -->
+<section class="slide">
+  <div class="slide-head">
+    <p class="kicker">Сколько это стоит</p>
+    <h2>Начать можно бесплатно</h2>
+  </div>
+  <div class="slide-body">
+    <div class="plans">
+      <div class="plan">
+        <div class="plan-name">Free</div>
+        <div class="plan-price">0 ₽</div>
+        <div class="plan-note">Бессрочно, подключение из Маркетплейса</div>
+        <ul>
+          <li>Учёт времени в задачах</li>
+          <li>Дерево проектов и задач</li>
+          <li>Оплачиваемые и внутренние часы</li>
+          <li>Базовые отчёты и табель</li>
+          <li>Доска проектов</li>
+          <li>Выгрузка в Excel</li>
+        </ul>
+      </div>
+      <div class="plan is-paid">
+        <div class="plan-name">Расширенный</div>
+        <div class="plan-price tbd">Стоимость уточняется</div>
+        <div class="plan-note">Фиксированная цена за портал, не за пользователя</div>
+        <ul>
+          <li>Всё из бесплатного тарифа</li>
+          <li class="soon">Бюджет проекта: план и факт</li>
+          <li class="soon">Доходы и расходы</li>
+          <li class="soon">Рентабельность проектов</li>
+          <li class="soon">Связь со сделками CRM</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="slide-foot">Функции с меткой ◷ находятся в разработке — сроки обсуждаем на демо.</div>
+</section>
+
+<!-- 11. Следующий шаг -->
+<section class="slide">
+  <div class="slide-body">
+    <div class="cta-box">
+      <p class="kicker" style="color:rgba(255,255,255,.7)">Следующий шаг</p>
+      <h2>Двадцать минут — и вы увидите свои цифры</h2>
+      <p>Покажем приложение на вашем портале, разберём один реальный проект и посчитаем, сколько часов у вас сейчас уходит из счёта. Без подготовки с вашей стороны.</p>
+      <div class="cta-row">
+        <span class="cta-chip solid">Telegram: @Tsygank0v</span>
+        <span class="cta-chip">Приложение — в Маркетплейсе Битрикс24</span>
+        <span class="cta-chip">mainsoft.su</span>
+      </div>
+    </div>
+    <div class="grid g3 mt24">
+      <div class="card soft"><h3>Установка</h3><p>Из Маркетплейса, без участия разработчиков</p></div>
+      <div class="card soft"><h3>Настройка</h3><p>15 минут: смарт-процесс и поля создаются кнопкой</p></div>
+      <div class="card soft"><h3>Первый отчёт</h3><p>В тот же день, как команда начнёт списывать часы</p></div>
+    </div>
+  </div>
+</section>
+</div>
+<div id="hud"></div>
+<script>
+/* ============================================================
+   Презентация «Учёт трудозатрат» — движок слайдов
+   Слайд 1280×720 масштабируется под окно, поэтому вёрстка
+   выглядит одинаково на любом экране и корректно печатается.
+   ============================================================ */
+(function () {
+  'use strict';
+
+  var W = 1280, H = 720;
+  var slides = [].slice.call(document.querySelectorAll('.slide'));
+  var idx = 0;
+  var hud, bar;
+
+  function fit() {
+    var k = Math.min(window.innerWidth / W, window.innerHeight / H);
+    for (var i = 0; i < slides.length; i++) {
+      slides[i].style.transform = 'scale(' + k + ')';
+    }
+  }
+
+  function render() {
+    for (var i = 0; i < slides.length; i++) {
+      slides[i].classList.toggle('is-active', i === idx);
+    }
+    if (hud) hud.innerHTML = '<b>' + (idx + 1) + '</b> / ' + slides.length +
+      '<span class="hud-hint">← → листать · P печать</span>';
+    if (bar) bar.style.width = ((idx + 1) / slides.length * 100) + '%';
+    if (history.replaceState) history.replaceState(null, '', '#' + (idx + 1));
+  }
+
+  function go(n) {
+    var next = Math.max(0, Math.min(slides.length - 1, n));
+    if (next === idx) return;
+    idx = next;
+    render();
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    switch (e.key) {
+      case 'ArrowRight': case 'ArrowDown': case ' ': case 'PageDown': case 'Enter':
+        e.preventDefault(); go(idx + 1); break;
+      case 'ArrowLeft': case 'ArrowUp': case 'PageUp': case 'Backspace':
+        e.preventDefault(); go(idx - 1); break;
+      case 'Home': e.preventDefault(); go(0); break;
+      case 'End':  e.preventDefault(); go(slides.length - 1); break;
+      case 'p': case 'P': case 'р': case 'Р':
+        e.preventDefault(); window.print(); break;
+    }
+  });
+
+  var wheelLock = 0;
+  window.addEventListener('wheel', function (e) {
+    var now = Date.now();
+    if (now - wheelLock < 480) return;
+    if (Math.abs(e.deltaY) < 12) return;
+    wheelLock = now;
+    go(idx + (e.deltaY > 0 ? 1 : -1));
+  }, { passive: true });
+
+  var touchY = null;
+  window.addEventListener('touchstart', function (e) { touchY = e.touches[0].clientY; }, { passive: true });
+  window.addEventListener('touchend', function (e) {
+    if (touchY === null) return;
+    var dy = touchY - e.changedTouches[0].clientY;
+    if (Math.abs(dy) > 45) go(idx + (dy > 0 ? 1 : -1));
+    touchY = null;
+  }, { passive: true });
+
+  window.addEventListener('resize', fit);
+
+  document.addEventListener('DOMContentLoaded', function () {
+    hud = document.getElementById('hud');
+    bar = document.getElementById('progress');
+
+    var prev = document.querySelector('.edge-nav.prev');
+    var next = document.querySelector('.edge-nav.next');
+    if (prev) prev.addEventListener('click', function () { go(idx - 1); });
+    if (next) next.addEventListener('click', function () { go(idx + 1); });
+
+    var start = parseInt((location.hash || '').replace('#', ''), 10);
+    if (start > 0 && start <= slides.length) idx = start - 1;
+
+    fit();
+    render();
+  });
+})();
+
+</script>
+</body>
+</html>
