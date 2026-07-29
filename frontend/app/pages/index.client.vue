@@ -5,7 +5,7 @@ import { buildReportRouteLocation, type ReportRouteName, type ReportRoutePayload
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
-import CreateProjectModal from '~/components/projects/CreateProjectModal.vue'
+import CreateProjectDrawer from '~/components/projects/CreateProjectDrawer.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
 import { CREATE_PROJECT_BUTTON_ENABLED } from '~/utils/featureFlags'
 
@@ -639,6 +639,6 @@ onMounted(async () => {
       @open-spa="openSpa"
     />
 
-    <CreateProjectModal v-if="CREATE_PROJECT_BUTTON_ENABLED" v-model:open="createProjectOpen" @created="onProjectCreated" />
+    <CreateProjectDrawer v-if="CREATE_PROJECT_BUTTON_ENABLED" v-model:open="createProjectOpen" @created="onProjectCreated" />
   </B24Container>
 </template>

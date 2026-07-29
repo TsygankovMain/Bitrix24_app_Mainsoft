@@ -22,10 +22,35 @@ import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project
 import type { ProjectBoardDirectoryOption } from '~/types/project-board'
 
 /**
- * Модальное окно кнопки «Создать проект» (§5-6 спеки
- * docs/superpowers/specs/2026-07-28-create-project-button-design.md).
+ * Боковая панель кнопки «Создать проект» (§5-6 спеки
+ * docs/superpowers/specs/2026-07-28-create-project-button-design.md; оболочка —
+ * .superpowers/sdd/2026-07-28-create-project-button/side-panel-brief.md).
  * Компонент общий для доски проектов и главного экрана (подключение кнопок —
  * отдельная задача 9 плана, здесь только форма).
+ *
+ * До этой правки форма жила в B24Modal и за два дня в проде ломалась четыре
+ * раза — каждый раз из-за поведения библиотечного диалога, а не самой формы
+ * (обрезающие контейнеры, захват фокуса, закрытие по клику мимо/Escape).
+ * Разметка панели — калька с frontend/app/components/projects/ProjectBoardDrawer.vue
+ * (fixed-оверлей, aside шириной max-w-[460px], шапка/прокручиваемое тело/подвал
+ * с кнопками) — единственная другая боковая панель приложения, работающая без
+ * нареканий с первого дня. Одно сознательное отличие от неё: оверлей здесь НЕ
+ * закрывает панель по клику — заказчик прямо просил убрать это поведение,
+ * форма с введёнными данными не должна пропадать от случайного клика. Escape
+ * тоже не обрабатывается (тот же мотив — не изобретать закрытие, которого не
+ * просили; ProjectBoardDrawer.vue его тоже не обрабатывает). Закрыть панель
+ * можно только явно — крестиком в шапке или кнопкой «Отмена»/«Закрыть» в
+ * подвале, обе ведут в closeModal(), которая уже блокирует закрытие во время
+ * отправки (раньше это делал проп :close="!submitting" самого B24Modal).
+ *
+ * Второе требование заказчика — «больше статики»: ни один элемент формы не
+ * должен рисовать список в отдельном всплывающем слое. Тип проекта и выбор
+ * компании при неоднозначном совпадении (result.company.status === 'ambiguous')
+ * раньше были B24Select (Reka UI SelectPortal — тот же класс поведения, что и
+ * у диалога), теперь оба — статичные элементы в общем потоке формы. Поля
+ * компании и юрлица уже используют SearchableSelect в inline-режиме
+ * (inline-list-brief.md) и не тронуты — это единственный режим этого
+ * компонента, лично проверенный заказчиком.
  *
  * Правило заказчика: пустых полей не остаётся. У каждого поля источник —
  * либо автоматика (видна и редактируема сотрудником ДО отправки), либо сам
@@ -211,7 +236,7 @@ async function loadReferences() {
     // Справочники не догрузились — форму всё равно показываем: названия
     // компании и проекта можно ввести руками, бэкенд их найдёт или создаст.
     loadError.value = 'Не удалось загрузить справочники. Заполните поля вручную.'
-    console.error('CreateProjectModal: failed to load references', error)
+    console.error('CreateProjectDrawer: failed to load references', error)
   }
 }
 
@@ -357,7 +382,7 @@ async function submit() {
     loadError.value = isRateLimitError(error)
       ? RATE_LIMIT_NOTICE_TEXT
       : (error instanceof Error ? error.message : 'Не удалось создать проект.')
-    console.error('CreateProjectModal: create failed', error)
+    console.error('CreateProjectDrawer: create failed', error)
   } finally {
     submitting.value = false
   }
@@ -387,9 +412,27 @@ function closeModal() {
 </script>
 
 <template>
-  <B24Modal v-model:open="open" title="Создать проект" :close="!submitting">
-    <template #body>
-      <div class="space-y-4">
+  <!-- Оверлей намеренно без @click-закрытия — см. докстринг компонента выше:
+       заказчик прямо просил убрать закрытие по клику мимо. -->
+  <div v-if="open" class="fixed inset-0 z-[9999] flex justify-end bg-slate-900/40 backdrop-blur-sm">
+    <aside class="flex h-full w-full max-w-[460px] flex-col border-l border-slate-200 bg-white shadow-2xl">
+      <div class="border-b border-slate-200 px-5 py-4">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="truncate text-lg font-semibold text-slate-900">Создать проект</div>
+          </div>
+          <button
+            type="button"
+            class="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-40"
+            :disabled="submitting"
+            @click="closeModal"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <div class="flex-1 space-y-4 overflow-y-auto px-5 py-5">
         <div v-if="resumedNotice" class="ms-note ms-note-info">
           Это незавершённая попытка с прошлого раза, не новая форма — данные и статус шагов ниже сохранены.
         </div>
@@ -513,10 +556,30 @@ function closeModal() {
         </div>
 
         <div class="grid grid-cols-2 gap-4">
-          <label class="grid gap-1 text-sm">
+          <div class="grid gap-1 text-sm">
             <span class="font-medium text-slate-700">Тип проекта</span>
-            <B24Select v-model="form.project_type" :items="PROJECT_TYPE_ITEMS" class="w-full" />
-          </label>
+            <!-- Было B24Select (Reka UI SelectPortal, всплывающий слой) —
+                 вариантов всего два, статичный переключатель в потоке формы
+                 вместо списка (side-panel-brief.md, §2). -->
+            <div class="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Тип проекта">
+              <button
+                v-for="item in PROJECT_TYPE_ITEMS"
+                :key="item.value"
+                type="button"
+                role="radio"
+                :aria-checked="form.project_type === item.value"
+                :class="[
+                  'rounded-lg border px-3 py-2 text-sm font-medium transition',
+                  form.project_type === item.value
+                    ? 'border-[#0075ff] bg-blue-50 text-[#0075ff]'
+                    : 'border-slate-300 text-slate-600 hover:border-slate-400'
+                ]"
+                @click="form.project_type = item.value"
+              >
+                {{ item.label }}
+              </button>
+            </div>
+          </div>
           <label class="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm">
             <span class="font-medium text-slate-700">Проект на поддержке</span>
             <B24Switch v-model="form.is_support" />
@@ -540,7 +603,26 @@ function closeModal() {
 
           <div v-if="result.company.status === 'ambiguous'" class="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
             <p class="text-xs text-amber-800">Нашлось несколько компаний с таким названием — выберите нужную:</p>
-            <B24Select v-model="selectedCandidateId" :items="companyCandidateItems" placeholder="Выберите компанию" class="w-full" />
+            <!-- Было B24Select — та же причина, что и у "Тип проекта" выше:
+                 конечный список кандидатов, всплывающая панель ему не нужна. -->
+            <div class="grid gap-1" role="radiogroup" aria-label="Выберите компанию">
+              <button
+                v-for="candidate in companyCandidateItems"
+                :key="candidate.value"
+                type="button"
+                role="radio"
+                :aria-checked="selectedCandidateId === candidate.value"
+                :class="[
+                  'w-full rounded-lg border px-3 py-2 text-left text-sm transition',
+                  selectedCandidateId === candidate.value
+                    ? 'border-[#0075ff] bg-blue-50 text-slate-900'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                ]"
+                @click="selectedCandidateId = candidate.value"
+              >
+                {{ candidate.label }}
+              </button>
+            </div>
             <B24Button
               label="Повторить с выбранной компанией"
               color="primary"
@@ -569,11 +651,13 @@ function closeModal() {
           </div>
         </div>
       </div>
-    </template>
 
-    <template #footer>
-      <B24Button :label="result?.done ? 'Закрыть' : 'Отмена'" color="link" :disabled="submitting" @click="closeModal" />
-      <B24Button :label="footerLabel" color="success" :loading="submitting" :disabled="footerDisabled" @click="retry" />
-    </template>
-  </B24Modal>
+      <div class="border-t border-slate-200 px-5 py-4">
+        <div class="flex flex-wrap gap-2">
+          <B24Button :label="result?.done ? 'Закрыть' : 'Отмена'" color="link" :disabled="submitting" @click="closeModal" />
+          <B24Button :label="footerLabel" color="success" :loading="submitting" :disabled="footerDisabled" @click="retry" />
+        </div>
+      </div>
+    </aside>
+  </div>
 </template>
