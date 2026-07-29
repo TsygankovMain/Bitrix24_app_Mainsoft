@@ -1499,12 +1499,18 @@ class CreateOrchestrationTest(_ServiceTestCase):
             self.assertNotIn(method, client.methods_called())
 
     def test_invalid_inn_stops_before_any_bitrix_call(self):
-        # 7707083894 — валидная по длине и составу, но контрольная сумма
-        # испорчена намеренно (последняя цифра); см. tests_inn_validation.py.
+        # "٧٧٠٧٠٨٣٨٩٣" — аравийско-индийские цифры того же числа 7707083893,
+        # что и валидный ИНН по умолчанию в _form() выше: та же ловушка, что
+        # и в tests_inn_validation.test_unicode_digit_lookalikes_are_rejected_
+        # not_crash, но здесь проверяется сквозной путь (значит, ASCII-
+        # ограничение реально останавливает Bitrix-вызовы, а не только сам
+        # validate_inn). Контрольная сумма сознательно не проверяется
+        # (см. докстринг inn_validation.py) — поэтому пример невалидности
+        # обязан быть про состав символов, не про контрольную цифру.
         client = self._client()
         result = self._create(
             client,
-            form={"project_name": "Портал", "company_name": "АО Ромашка", "inn": "7707083894"},
+            form={"project_name": "Портал", "company_name": "АО Ромашка", "inn": "٧٧٠٧٠٨٣٨٩٣"},
         )
 
         self.assertIn("inn", result["missing_fields"])

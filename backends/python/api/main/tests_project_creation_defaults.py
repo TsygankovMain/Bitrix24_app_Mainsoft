@@ -224,9 +224,19 @@ class InnRequirementTest(SimpleTestCase):
         _, missing = _resolve({"project_name": "П", "company_name": "АО Ромашка"})
         self.assertIn("inn", missing)
 
-    def test_invalid_checksum_inn_blocks_new_company_creation(self):
+    def test_non_ascii_digit_inn_blocks_new_company_creation(self):
+        # Контрольная сумма ИНН сознательно не проверяется (см. докстринг
+        # inn_validation.py) — "٧٧٠٧٠٨٣٨٩٣" (аравийско-индийские цифры того
+        # же числа 7707083893, что и VALID_INN этого класса) проверяет то, что
+        # реально осталось главной защитой этого модуля: состав символов.
+        # Без неё такая строка выглядела бы валидным ИНН и дошла бы до
+        # реквизита в CRM клиента, не находясь потом обычным поиском (см.
+        # tests_inn_validation.test_unicode_digit_lookalikes_are_rejected_
+        # not_crash) — эта проверка убеждается, что защита реально
+        # прокидывается через resolve_project_fields, а не работает только
+        # внутри validate_inn самого по себе.
         _, missing = _resolve(
-            {"project_name": "П", "company_name": "АО Ромашка", "inn": "7707083894"}
+            {"project_name": "П", "company_name": "АО Ромашка", "inn": "٧٧٠٧٠٨٣٨٩٣"}
         )
         self.assertIn("inn", missing)
 
