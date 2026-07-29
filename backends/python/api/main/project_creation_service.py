@@ -573,28 +573,52 @@ class ProjectCreationService:
             and _clean_str(row.get("ACTIVE") or row.get("active")).upper() == "Y"
         ]
 
-        # confirmed_absent: хотя бы один кандидат успешно проверен и
-        # подтверждённо не поддерживает RQ_INN (см. докстринг выше).
-        confirmed_absent = False
         for preset in presets:
             preset_id = _clean_str(preset.get("ID") or preset.get("id"))
-            if not preset_id:
-                continue
-            supports = self._requisite_preset_supports_inn(preset_id)
-            if supports:
+            if preset_id:
                 cache.set(cache_key, preset_id, REQUISITE_PRESET_CACHE_TTL)
                 return preset_id, True
-            if supports is False:
-                confirmed_absent = True
-            # supports is None -> сбой/неразборчивый ответ для ЭТОГО
-            # кандидата — ни подтверждает, ни опровергает, идём к следующему.
 
-        # Кандидатов не было вовсе (в том числе активных шаблонов на портале
-        # нет) — отсутствие подтверждено. Кандидаты были, но подтвердить
-        # отсутствие RQ_INN удалось хотя бы для одного — тоже подтверждено
-        # (см. докстринг выше). Кандидаты были, но ПРОВЕРКА не отработала ни
-        # для одного — не подтверждено.
-        return None, confirmed_absent or not presets
+        return None, True
+
+    def _preset_id_from_existing_requisites(self) -> Optional[str]:
+        """Шаблон, которым на ЭТОМ портале уже записан хотя бы один ИНН.
+
+        Самый надёжный источник: не наши догадки о том, какой шаблон
+        «подходит», а факт — какой шаблон портал реально использует для
+        компаний с заполненным ИНН.
+
+        Появился после провала проверки через crm.requisite.preset.field.list
+        (29.07.2026, прод). Тот метод возвращает только поля, ДОБАВЛЕННЫЕ в
+        шаблон вручную; на портале, где шаблон не настраивали, список пуст —
+        и проверка честно отвечала «RQ_INN не поддерживается». При этом на
+        портале лежало 16 395 реквизитов, и ИНН в них читался нашим же кодом.
+        То есть проверка отвергала шаблон, которым эти ИНН и записаны.
+        """
+        try:
+            response = self._call(
+                "crm.requisite.list",
+                {
+                    "filter": {"ENTITY_TYPE_ID": REQUISITE_ENTITY_TYPE_ID},
+                    "select": ["ID", "PRESET_ID", "RQ_INN"],
+                    "order": {"ID": "DESC"},
+                },
+            )
+            rows, parsed_ok = _extract_rows(response)
+        except Exception as exc:
+            logger.warning("_preset_id_from_existing_requisites: crm.requisite.list failed: %s", exc)
+            return None
+
+        if not parsed_ok:
+            return None
+
+        for row in rows:
+            inn = _clean_str(row.get("RQ_INN") or row.get("rqInn"))
+            preset_id = _clean_str(row.get("PRESET_ID") or row.get("presetId"))
+            if inn and preset_id:
+                return preset_id
+
+        return None
 
     def ensure_requisite(self, company_id: str, company_name: str, inn: str) -> StepResult:
         """Шаг реквизита (ИНН) — вызывается ТОЛЬКО для новой компании: при
@@ -673,7 +697,14 @@ class ProjectCreationService:
                 existing_id = _clean_str(row.get("ID") or row.get("id"))
                 return StepResult(status="found", id=existing_id, name=inn)
 
-        preset_id, confirmed = self._resolve_requisite_preset_id()
+        # Порядок источников: сначала ФАКТ (каким шаблоном на этом портале
+        # уже записаны ИНН), потом справочник активных шаблонов. Факт
+        # надёжнее: он не зависит от того, настраивал ли администратор состав
+        # полей шаблона вручную (см. _preset_id_from_existing_requisites).
+        preset_id = self._preset_id_from_existing_requisites()
+        confirmed = True
+        if not preset_id:
+            preset_id, confirmed = self._resolve_requisite_preset_id()
         if not preset_id:
             if confirmed:
                 # Отсутствие подходящего шаблона ПОДТВЕРЖДЕНО — явно "это

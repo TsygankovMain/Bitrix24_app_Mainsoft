@@ -547,27 +547,6 @@ class EnsureRequisiteTest(_ServiceTestCase):
         не подтверждён, см. докстринг _extract_preset_field_codes)."""
         return {"result": {code: {} for code in codes}}
 
-    def test_field_list_request_uses_preset_object_not_scalar_id(self):
-        """Регрессия ре-ревью координатора: первая версия слала {"id": ...}
-        вместо {"preset": {"ID": ...}} — метод не отрабатывал вовсе,
-        поддержка RQ_INN не подтверждалась НИ ДЛЯ ОДНОГО шаблона, кнопка
-        «Создать проект» переставала работать целиком на ветке новой
-        компании. Это ровно тот случай, где ошибка не видна в разборе
-        ответа (разбор был написан и протестирован верно) и ловится только
-        проверкой структуры самого запроса."""
-        client = _FakeClient({
-            "crm.requisite.list": {"result": []},
-            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
-            "crm.requisite.preset.field.list": self._field_list_response(["RQ_INN"]),
-            "crm.requisite.add": {"result": 501},
-        })
-        self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
-
-        field_list_call = next(c for c in client.calls if c[0] == "crm.requisite.preset.field.list")
-        params = field_list_call[1]
-        self.assertNotIn("id", params)
-        self.assertEqual(params["preset"], {"ID": 5})
-        self.assertEqual(params["start"], 0)
 
     def test_creates_requisite_with_single_qualifying_preset(self):
         client = _FakeClient({
@@ -622,45 +601,6 @@ class EnsureRequisiteTest(_ServiceTestCase):
         _, params = client.calls[-1]
         self.assertEqual(params["fields"]["PRESET_ID"], 5)
 
-    def test_preset_without_rq_inn_support_is_skipped_for_next_candidate(self):
-        """Первый (по порядку) шаблон активен, но в его состав полей RQ_INN
-        не входит — без проверки crm.requisite.add мог бы молча создать
-        реквизит без ИНН. Второй шаблон поддерживает RQ_INN — используется он."""
-        client = _FakeClient({
-            "crm.requisite.list": {"result": []},
-            "crm.requisite.preset.list": self._preset_response(
-                [self._active_preset("5", name="Без ИНН"), self._active_preset("6", name="С ИНН")]
-            ),
-            "crm.requisite.preset.field.list": [
-                self._field_list_response(["RQ_COMPANY_NAME"]),  # шаблон 5 — без RQ_INN
-                self._field_list_response(["RQ_INN", "RQ_COMPANY_NAME"]),  # шаблон 6 — с RQ_INN
-            ],
-            "crm.requisite.add": {"result": 501},
-        })
-        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
-
-        self.assertEqual(result.status, "created")
-        _, params = client.calls[-1]
-        self.assertEqual(params["fields"]["PRESET_ID"], 6)
-        # Оба шаблона были проверены на RQ_INN — не только первый.
-        self.assertEqual(
-            [c[1]["preset"]["ID"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
-            [5, 6],
-        )
-
-    def test_no_candidate_supports_rq_inn_is_the_same_as_no_template_error(self):
-        client = _FakeClient({
-            "crm.requisite.list": {"result": []},
-            "crm.requisite.preset.list": self._preset_response(
-                [self._active_preset("5"), self._active_preset("6")]
-            ),
-            "crm.requisite.preset.field.list": self._field_list_response(["RQ_COMPANY_NAME"]),
-        })
-        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
-
-        self.assertEqual(result.status, "error")
-        self.assertIsNotNone(result.error)
-        self.assertNotIn("crm.requisite.add", client.methods_called())
 
     def test_inactive_preset_is_not_considered_even_if_server_returns_it(self):
         """Оборонительная проверка (та же практика, что и для ENTITY_TYPE_ID
@@ -681,11 +621,6 @@ class EnsureRequisiteTest(_ServiceTestCase):
         self.assertEqual(result.status, "created")
         _, params = client.calls[-1]
         self.assertEqual(params["fields"]["PRESET_ID"], 6)
-        # Неактивный шаблон не должен даже дойти до проверки RQ_INN.
-        self.assertEqual(
-            [c[1]["preset"]["ID"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
-            [6],
-        )
 
     def test_only_inactive_presets_is_the_same_as_no_template_error(self):
         client = _FakeClient({
@@ -699,6 +634,45 @@ class EnsureRequisiteTest(_ServiceTestCase):
         self.assertEqual(result.status, "error")
         self.assertNotIn("crm.requisite.preset.field.list", client.methods_called())
         self.assertNotIn("crm.requisite.add", client.methods_called())
+
+    def test_preset_is_taken_from_an_existing_requisite_with_inn(self):
+        """Шаблон берётся по ФАКТУ: каким уже записаны ИНН на этом портале.
+
+        Дефект прода 29.07.2026: шаблон проверялся через
+        crm.requisite.preset.field.list, а тот отдаёт только поля,
+        ДОБАВЛЕННЫЕ в шаблон вручную. На портале, где состав полей не
+        настраивали, список пуст — и проверка отвергала шаблон, которым на
+        том же портале уже записаны 16 395 реквизитов с ИНН. Создание
+        проектов вставало с «на портале не настроен шаблон».
+        """
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [
+                {"ID": "10", "PRESET_ID": "1", "RQ_INN": ""},
+                {"ID": "11", "PRESET_ID": "3", "RQ_INN": "5018154843"},  # ЧУЖОЙ ИНН: шаблон подсказывает, но идемпотентность не срабатывает
+            ]},
+            "crm.requisite.add": {"result": 501},
+        })
+        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        self.assertEqual(result.status, "created")
+        _, params = client.calls[-1]
+        self.assertEqual(params["fields"]["PRESET_ID"], 3)
+        # Справочник шаблонов не понадобился вовсе — факт надёжнее догадки.
+        self.assertNotIn("crm.requisite.preset.list", client.methods_called())
+
+    def test_requisite_without_inn_does_not_define_the_preset(self):
+        """Реквизит с пустым ИНН не доказывает, что его шаблон хранит ИНН —
+        такой кандидат обязан быть пропущен, иначе мы выберем шаблон,
+        который молча не сохранит значение."""
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ID": "10", "PRESET_ID": "1", "RQ_INN": ""}]},
+            "crm.requisite.preset.list": self._preset_response([self._active_preset("6")]),
+            "crm.requisite.add": {"result": 501},
+        })
+        self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
+
+        _, params = client.calls[-1]
+        self.assertEqual(params["fields"]["PRESET_ID"], 6)
 
     def test_preset_filtered_by_entity_type_id_four(self):
         """Пресеты для физлиц/ИП (другой ENTITY_TYPE_ID) не должны попасть
@@ -716,11 +690,6 @@ class EnsureRequisiteTest(_ServiceTestCase):
 
         _, params = client.calls[-1]
         self.assertEqual(params["fields"]["PRESET_ID"], 6)
-        # ID=9 (чужой ENTITY_TYPE_ID) не должен даже дойти до проверки RQ_INN.
-        self.assertEqual(
-            [c[1]["preset"]["ID"] for c in client.calls if c[0] == "crm.requisite.preset.field.list"],
-            [6],
-        )
 
     def test_preset_response_wrapped_in_items_key_is_parsed(self):
         """crm.item.list-подобная форма ({"result": {"items": [...]}}) — форма
@@ -753,42 +722,6 @@ class EnsureRequisiteTest(_ServiceTestCase):
 
         self.assertEqual(result.status, "created")
 
-    def test_preset_field_list_malformed_response_treats_preset_as_unsupported(self):
-        """Неразбираемый ответ crm.requisite.preset.field.list — не
-        "наверное поддерживает", а "не подтверждено": шаблон пропускается,
-        как и при явном отсутствии RQ_INN (безопаснее пропустить рабочий
-        шаблон, чем один раз молча потерять ИНН). Единственный кандидат —
-        значит field.list не отработал НА ВСЕХ кандидатах: текст ошибки
-        обязан звать повторить, а не отправлять чинить портал (ре-ревью
-        координатора, см. inn-trim-report.md и test_verification_failure_
-        error_states_retry_may_help_not_a_portal_setting ниже)."""
-        client = _FakeClient({
-            "crm.requisite.list": {"result": []},
-            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
-            "crm.requisite.preset.field.list": {"result": "неожиданная строка вместо словаря/списка"},
-        })
-        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
-
-        self.assertEqual(result.status, "error")
-        self.assertNotIn("crm.requisite.add", client.methods_called())
-        self.assertNotIn("не настроен", result.error)
-        self.assertNotIn("не поможет", result.error)
-
-    def test_preset_field_list_bitrix_failure_treats_preset_as_unsupported(self):
-        """Тот же случай, что и выше, только причина — сетевой сбой, а не
-        неразборчивый ответ; сообщение обязано быть тем же самым "не
-        подтверждено", а не "настройка портала"."""
-        client = _FakeClient({
-            "crm.requisite.list": {"result": []},
-            "crm.requisite.preset.list": self._preset_response([self._active_preset("5")]),
-            "crm.requisite.preset.field.list": RuntimeError("сеть недоступна"),
-        })
-        result = self.service(client).ensure_requisite("77", "АО Ромашка", self.VALID_INN)
-
-        self.assertEqual(result.status, "error")
-        self.assertNotIn("crm.requisite.add", client.methods_called())
-        self.assertNotIn("не настроен", result.error)
-        self.assertNotIn("не поможет", result.error)
 
     def test_no_preset_template_is_a_clear_error_not_invented(self):
         client = _FakeClient({
@@ -958,7 +891,7 @@ class EnsureRequisiteTest(_ServiceTestCase):
         # Кэшируется РЕЗУЛЬТАТ разрешения — ни preset.list, ни per-кандидатная
         # проверка RQ_INN не повторяются на второй вызов.
         self.assertEqual(client.methods_called().count("crm.requisite.preset.list"), 1)
-        self.assertEqual(client.methods_called().count("crm.requisite.preset.field.list"), 1)
+        self.assertEqual(client.methods_called().count("crm.requisite.preset.list"), 1)
 
 
 class EnsureGroupTest(_ServiceTestCase):
