@@ -748,31 +748,31 @@ onBeforeUnmount(() => {
           {{ serverNoticeText }}
         </div>
 
-        <div class="p-2">
-          <button
-            v-if="showCreateAction"
-            type="button"
-            class="w-full rounded-xl px-3 py-3 text-left text-sm font-medium text-[#0075ff] transition hover:bg-blue-50"
-            @click="requestCompanyCreation"
-          >
-            {{ companyCreationActionLabel(query) }}
-          </button>
+        <!--
+          Найденные компании и действие «создать» — НЕ взаимоисключающие.
 
+          До 29.07.2026 они стояли в одной цепочке v-if/v-else-if, и это было
+          безобидно, пока showCreateAction означал «не нашлось ничего»: список
+          в этот момент и так был пуст. После перевода правила на «нет ТОЧНОГО
+          совпадения названия» условие стало истинным почти всегда — и цепочка
+          начала прятать все найденные компании за кнопкой создания. Человек
+          вводил «ЗИ», в портале было 50 совпадений, а на экране была одна
+          кнопка «Создать компанию «ЗИ»»: выбрать существующую можно было
+          только набрав её название дословно.
+
+          Поэтому здесь два независимых блока, а не ветки одного условия:
+          сверху найденное, снизу создание. Решение остаётся за человеком —
+          он видит и то, и другое.
+        -->
+        <div class="p-2">
           <div
-            v-else-if="!visibleOptions.length && isServerSearchMode && isSearching"
+            v-if="!visibleOptions.length && isServerSearchMode && isSearching"
             class="px-3 py-3 text-left text-sm text-slate-400"
           >
             Идёт поиск…
           </div>
 
-          <div
-            v-else-if="!visibleOptions.length"
-            class="px-3 py-3 text-left text-sm text-slate-400"
-          >
-            Ничего не найдено
-          </div>
-
-          <template v-else>
+          <template v-else-if="visibleOptions.length">
             <button
               v-for="option in limitedSuggestions.visible"
               :key="option.id"
@@ -792,6 +792,27 @@ onBeforeUnmount(() => {
               {{ limitedSuggestions.remainderText }}
             </p>
           </template>
+
+          <!-- «Ничего не найдено» — только когда и создавать нечего:
+               иначе кнопка создания сама по себе и есть ответ. -->
+          <div
+            v-else-if="!showCreateAction"
+            class="px-3 py-3 text-left text-sm text-slate-400"
+          >
+            Ничего не найдено
+          </div>
+
+          <button
+            v-if="showCreateAction"
+            type="button"
+            :class="[
+              'w-full rounded-xl px-3 py-3 text-left text-sm font-medium text-[#0075ff] transition hover:bg-blue-50',
+              visibleOptions.length ? 'mt-1 border-t border-slate-100 pt-3' : ''
+            ]"
+            @click="requestCompanyCreation"
+          >
+            {{ companyCreationActionLabel(query) }}
+          </button>
         </div>
       </div>
     </template>
