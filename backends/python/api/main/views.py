@@ -585,6 +585,40 @@ def _apply_created_at_filters(queryset, created_from, created_to):
     return queryset
 
 
+def _build_export_date_filter(date_type, date_from, date_to, fields_mapping):
+    """Фильтр периода для crm.item.list в выгрузке export_raw_data.
+
+    Верхняя граница — «строго меньше начала следующего дня», как в
+    _apply_created_at_filters выше. Через "<=date_to" её задавать нельзя:
+    Битрикс читает строку-дату без времени как НАЧАЛО суток, и всё созданное
+    в последний день периода молча выпадало из выгрузки (пользователь просит
+    «по 30.07 включительно» — получает по 29.07). Для CREATED_TIME это било
+    всегда, для даты отражения — если портал завёл поле как datetime.
+    """
+    from datetime import date as date_cls, timedelta
+
+    # FIX: frontend sends "creation", not "created"
+    if date_type == "creation":
+        field = "CREATED_TIME"
+    else:
+        # FIX: the reflection date field key in config is "data", not "date_reflection"
+        field = (fields_mapping or {}).get("data", "CREATED_TIME")
+
+    crm_filter = {}
+    if date_from:
+        crm_filter[f">={field}"] = date_from
+    if date_to:
+        try:
+            next_day = date_cls.fromisoformat(str(date_to)[:10]) + timedelta(days=1)
+        except (TypeError, ValueError):
+            # Неразбираемое значение отдаём Битриксу как есть — это его 400,
+            # а не наш 500 на разборе пользовательского ввода.
+            crm_filter[f"<={field}"] = date_to
+        else:
+            crm_filter[f"<{field}"] = next_day.isoformat()
+    return crm_filter
+
+
 def _serialize_support_status(payload):
     return {
         "configured": bool(payload.get("configured")),
@@ -2542,22 +2576,9 @@ def export_raw_data(request: AuthorizedRequest):
         selected_fields = [f["id"] for f in fields_meta]
 
     # Build Bitrix24 filter based on date_type
-    crm_filter = {}
-    # FIX: frontend sends "creation", not "created"
-    if date_type == "creation":
-        date_field_from = ">=CREATED_TIME"
-        date_field_to = "<=CREATED_TIME"
-    else:
-        # FIX: the reflection date field key in config is "data", not "date_reflection"
-        fields_mapping = config.get("fields_mapping", {})
-        reflection_field = fields_mapping.get("data", "CREATED_TIME")
-        date_field_from = f">={reflection_field}"
-        date_field_to = f"<={reflection_field}"
-
-    if date_from:
-        crm_filter[date_field_from] = date_from
-    if date_to:
-        crm_filter[date_field_to] = date_to
+    crm_filter = _build_export_date_filter(
+        date_type, date_from, date_to, config.get("fields_mapping", {})
+    )
 
     # ---------------------------------------------------------------------------
     # Helpers — локальные, не зависят от Django/request
