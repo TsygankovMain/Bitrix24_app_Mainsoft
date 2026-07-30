@@ -228,8 +228,13 @@ class TimesheetSyncService:
         items_a = self._fetch_all_pages_batched(filter_a)
         logger.info("Scoped fetch A (%s) returned %s items", fdate, len(items_a))
 
-        # Выборка B: по createdTime
-        filter_b = {">=createdTime": date_from, "<=createdTime": date_to}
+        # Выборка B: по createdTime — БЕЗ верхней границы.
+        # Битрикс сравнивает datetime-поле со строкой-датой без времени как с
+        # началом суток, поэтому "<=createdTime: date_to" отсекал всё созданное
+        # сегодня — то есть ровно те записи, ради которых выборка B и нужна:
+        # внесённые задним числом за дату старше окна (их не видит фильтр A).
+        # Верхняя граница здесь и не нужна: записей из будущего не бывает.
+        filter_b = {">=createdTime": date_from}
         items_b = self._fetch_all_pages_batched(filter_b)
         logger.info("Scoped fetch B (createdTime) returned %s items", len(items_b))
 

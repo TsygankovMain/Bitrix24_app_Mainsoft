@@ -7,6 +7,7 @@ import sys
 import os
 import types
 import unittest
+from datetime import datetime
 from unittest.mock import MagicMock, patch, call
 
 # ---------------------------------------------------------------------------
@@ -329,10 +330,89 @@ class TestScopedFilters(unittest.TestCase):
         filter_a = calls_filters[0]
         self.assertIn(">=UF_DATE_REFLECTION", filter_a)
         self.assertIn("<=UF_DATE_REFLECTION", filter_a)
-        # Фильтр B: по createdTime
+        # Фильтр B: по createdTime, только нижняя граница. Верхняя отсекала бы
+        # всё созданное сегодня (Битрикс читает дату без времени как начало
+        # суток) — см. TestScopedCreatedTimeBoundary.
         filter_b = calls_filters[1]
         self.assertIn(">=createdTime", filter_b)
-        self.assertIn("<=createdTime", filter_b)
+        self.assertNotIn("<=createdTime", filter_b)
+
+
+class TestScopedCreatedTimeBoundary(unittest.TestCase):
+    """Граница суток в фильтре по createdTime.
+
+    Битрикс сравнивает datetime-поле со строкой-датой без времени как с
+    НАЧАЛОМ этих суток. Поэтому верхняя граница вида "<=createdTime: сегодня"
+    отсекает всё, что создано сегодня в течение дня, — а это ровно те записи,
+    ради которых выборка B и существует: внесённые задним числом за дату
+    старше окна. Боевой случай: 31 запись за 01–22.07 внесена 30.07 и не
+    доехала до отчёта (см. docs/incidents).
+    """
+
+    # Портальная таймзона в тесте фиксирована: важна не она, а то, что у
+    # createdTime есть время суток, а у значения фильтра — нет.
+    TZ = "+03:00"
+
+    def _bitrix_filter(self, items, filter_dict):
+        """Мини-модель crm.item.list: применяет фильтр по правилам Битрикса."""
+        def _dt(value):
+            text = str(value)
+            if len(text) == 10:  # "2026-07-30" -> начало суток
+                text = f"{text}T00:00:00{self.TZ}"
+            return datetime.fromisoformat(text)
+
+        matched = []
+        for item in items:
+            ok = True
+            for key, expected in filter_dict.items():
+                op, field = key[:2], key[2:]
+                actual = item.get(field)
+                if actual is None:
+                    ok = False
+                    break
+                if op == ">=" and not _dt(actual) >= _dt(expected):
+                    ok = False
+                    break
+                if op == "<=" and not _dt(actual) <= _dt(expected):
+                    ok = False
+                    break
+            if ok:
+                matched.append(item)
+        return matched
+
+    def test_retroactive_entry_created_today_is_synced(self):
+        """Запись, внесённая сегодня за дату старше окна, попадает в синк."""
+        date_from, date_to = "2026-07-23", "2026-07-30"
+        created_today = f"2026-07-30T15:04:00{self.TZ}"
+
+        portal_items = [
+            # Внесена сегодня задним числом: фильтр A её не видит (03.07 вне
+            # окна), поймать может только выборка B по createdTime.
+            {"id": 20329, "UF_DATE_REFLECTION": "2026-07-03", "createdTime": created_today},
+            # Контроль: дата отражения в окне -> проходит фильтром A. Если
+            # свалится и она, значит сломан харнесс, а не граница суток.
+            {"id": 20303, "UF_DATE_REFLECTION": "2026-07-23", "createdTime": created_today},
+        ]
+
+        service = _make_service()
+        service._call_with_retry = lambda method, params: {
+            "result": {"items": self._bitrix_filter(portal_items, params["filter"])},
+            "total": len(self._bitrix_filter(portal_items, params["filter"])),
+        }
+        saved = []
+        service._save_batch = lambda chunk: saved.extend(chunk) or []
+        service._autofill_inn = MagicMock()
+        service._delete_scoped_orphans = MagicMock()
+
+        service._sync_scoped(date_from, date_to, "UF_DATE_REFLECTION")
+
+        saved_ids = {row["id_elem"] for row in saved}
+        self.assertIn(
+            "20329", saved_ids,
+            "запись, внесённая сегодня за 03.07, не доехала: верхняя граница "
+            "по createdTime отсекла всё созданное сегодня",
+        )
+        self.assertIn("20303", saved_ids, "контрольная запись в окне тоже потерялась")
 
 
 if __name__ == "__main__":
