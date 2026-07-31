@@ -20,10 +20,13 @@ settings.USE_PORTAL_SCOPING (_account_scoped_sync_accounts()), потому чт
 
   Project: полный синк проектов (ProjectSyncService.sync()), раз в 3 часа.
   Параметр `full` игнорируется.
-  Timesheet: инкремент — TimesheetSyncService.sync_all() с окном
-  date_from/date_to, фоновый цикл каждые 20 минут. С full=True — полная
-  сверка без окна дат (-> _sync_full), фоновый цикл раз в сутки — ловит
-  удаления/пропуски, которые инкремент не видит. Параметр `full`
+  Timesheet: инкремент — TimesheetSyncService.sync_all() БЕЗ дат, режим
+  выбирает сам сервис по маркеру last_timesheet_synced_at (спека
+  2026-07-31: выборка по ">=updatedTime" от маркера минус 5 минут, без
+  верхней границы). Фоновый цикл каждые 20 минут. С full=True — полная
+  сверка (-> _sync_full), фоновый цикл раз в сутки: только она ловит
+  удаления, которых инкремент не видит в принципе (запись просто
+  отсутствует в выдаче), отключать её нельзя. Параметр `full`
   используется только в этой ветке (для project/users игнорируется).
   Users: UserSyncService.sync() — полный синк справочника сотрудников, без
   инкремента (см. UserSyncService), часовой фоновый цикл (start.sh).
@@ -213,8 +216,13 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
     run = SyncRun.objects.create(scope=scope, status="running", window_days=days)
 
     now = timezone.now()
-    date_to = now.date().isoformat()
-    date_from = (now - timedelta(days=days)).date().isoformat()
+
+    # date_from/date_to здесь больше НЕ вычисляются: инкремент таймшитов ходит
+    # по updatedTime от маркера (спека 2026-07-31), а не окном по дате
+    # отражения. Окно в 7 дней не видело записей, внесённых задним числом, и
+    # пристроенная к нему выборка по createdTime теряла всё созданное сегодня
+    # (боевой баг 2fcd176). DEFAULT_WINDOW_DAYS остаётся только параметром
+    # --days management-команды и полем журнала SyncRun.window_days.
 
     # Множество одинаково для всех скоупов и зависит только от
     # USE_PORTAL_SCOPING (fixwave CRITICAL #1, см. _account_scoped_sync_accounts):
@@ -292,14 +300,23 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                 try:
                     with account_sync_lock(account, scope="timesheet"):
                         service = TimesheetSyncService(account.client, account, config)
-                        if full:
-                            count = service.sync_all()  # без дат → _sync_full (ночная сверка)
-                        else:
-                            count = service.sync_all(date_from=date_from, date_to=date_to)
+                        # started_at снимается ДО обхода (спека 2026-07-31, §4.3):
+                        # правка, случившаяся во время обхода, имеет
+                        # updatedTime >= started_at и гарантированно попадёт в
+                        # следующую выборку. Маркер «сейчас после обхода» её бы
+                        # проглотил — обход длится минуты.
+                        started_at = timezone.now()
+                        # Без дат: режим выбирает сам сервис (resolve_sync_mode) —
+                        # маркер есть → инкремент по updatedTime, маркера нет →
+                        # первый полный синк. full=True → ночная полная сверка.
+                        count = service.sync_all(full=full)
                         # Маркер «данные свежи на» для индикатора отчёта (гейт в timesheet_sync,
                         # задача 2.2) — иначе фоновые синки его не двигают, и виджет всегда
                         # показывал бы устаревшее время, пока пользователь не откроет отчёт сам.
-                        sync_marker = timezone.now()
+                        # Проставляется только здесь, после успешного обхода: любой сбой
+                        # оставляет маркер на месте, и следующий запуск перекрывает
+                        # пропущенный интервал целиком (§4.3 — дыр не образуется).
+                        sync_marker = started_at
                         if portal_scoping_enabled() and account.portal_id:
                             # Под portal-скоупингом синкает один представитель, но данные
                             # общие на портал -> маркер получают ВСЕ аккаунты портала,

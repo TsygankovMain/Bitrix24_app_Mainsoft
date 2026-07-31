@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
+import DataFreshnessIndicator from '../../components/common/DataFreshnessIndicator.vue'
 import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
@@ -103,6 +104,14 @@ async function fetchReport() {
   }
 }
 
+// Кнопка «Обновить» синхронизирует read-model; отчёт перестраиваем только если он уже построен,
+// чтобы не запускать генерацию за пользователя.
+function handleDataRefreshed() {
+  if (hasGenerated.value) {
+    void fetchReport()
+  }
+}
+
 async function handleExportExcel() {
   progress.begin('Excel: «Потери выручки»', 0, 'Готовим файл выгрузки')
   try {
@@ -171,9 +180,12 @@ onMounted(async () => {
               <ProseH2 class="!text-slate-900">Потери выручки</ProseH2>
               <p class="mt-1 text-xs text-slate-500">Где команда теряет учитываемые часы по проектам и сотрудникам</p>
             </div>
-            <div class="flex gap-2">
-              <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-              <B24Button label="Сформировать" loading-auto @click="fetchReport" />
+            <div class="flex flex-wrap items-center justify-end gap-3">
+              <DataFreshnessIndicator @refreshed="handleDataRefreshed" />
+              <div class="flex gap-2">
+                <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
+                <B24Button label="Сформировать" loading-auto @click="fetchReport" />
+              </div>
             </div>
           </div>
 

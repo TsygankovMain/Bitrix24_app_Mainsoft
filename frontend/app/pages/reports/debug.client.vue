@@ -4,6 +4,7 @@ import { onMounted } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import EmployeeProjectTable from '../../components/reports/EmployeeProjectTable.vue'
 import ProjectEmployeeTable from '../../components/reports/ProjectEmployeeTable.vue'
+import DataFreshnessIndicator from '../../components/common/DataFreshnessIndicator.vue'
 import type { HierarchicalReportNode } from '~/types/report'
 
 interface DebugTimesheetRow {
@@ -46,7 +47,6 @@ const reportData = ref<HierarchicalReportNode[]>([])
 const dateFrom = ref('') // YYYY-MM-DD
 const isInit = ref(false)
 
-const isSyncing = ref(false)
 const timesheetItems = ref<DebugTimesheetRow[]>([])
 const itemsPage = ref(1)
 const itemsTotal = ref(0)
@@ -81,18 +81,20 @@ async function fetchTimesheetList(page = 1) {
     itemsPages.value = result.pages
 }
 
-async function handleSync() {
-    isSyncing.value = true
+// Синк выполняет DataFreshnessIndicator (без периода — инкремент глобален),
+// странице остаётся перечитать локальные данные.
+async function handleDataRefreshed(result: { count: number }) {
+    toast.add({ title: `Синхронизировано ${result.count} записей!`, color: 'air-primary-success' })
+    if (activeTab.value !== 'raw-data') {
+        return
+    }
+    isLoading.value = true
     try {
-        const result = await apiStore.syncTimesheets()
-        toast.add({ title: `Синхронизировано ${result.count} записей!`, color: 'air-primary-success' })
-        if (activeTab.value === 'raw-data') {
-            await fetchTimesheetList()
-        }
+        await fetchTimesheetList(itemsPage.value)
     } catch (e) {
-         processErrorGlobal(e)
+        processErrorGlobal(e)
     } finally {
-        isSyncing.value = false
+        isLoading.value = false
     }
 }
 
@@ -146,10 +148,12 @@ onMounted(async () => {
                   <ProseH2 class="!text-slate-900">Диагностика отчетов</ProseH2>
                   <p class="mt-1 text-sm text-slate-500">Технический экран для сверки агрегатов и локальных данных.</p>
                 </div>
-                <div class="flex gap-2 items-center">
-                    <B24Button v-if="activeTab === 'raw-data'" label="Синхронизировать с Б24" :loading="isSyncing" color="success" class="mr-2" @click="handleSync" />
-                    <input v-model="dateFrom" type="date" class="px-2 py-1" @change="fetchReport" >
-                    <B24Button label="Refresh" loading-auto @click="fetchReport" />
+                <div class="flex flex-wrap gap-3 items-center justify-end">
+                    <DataFreshnessIndicator @refreshed="handleDataRefreshed" />
+                    <div class="flex gap-2 items-center">
+                        <input v-model="dateFrom" type="date" class="px-2 py-1" @change="fetchReport" >
+                        <B24Button label="Refresh" loading-auto @click="fetchReport" />
+                    </div>
                 </div>
             </div>
           </template>

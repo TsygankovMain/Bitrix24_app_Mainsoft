@@ -218,10 +218,11 @@ class RunScheduledSyncTest(TestCase):
         self.assertEqual(run.portals_synced, 1)
         self.assertEqual(run.items_synced, 42)
         self.assertIsNotNone(run.finished_at)
-        # sync_all вызван с окном дат (инкремент), не пустой
+        # sync_all вызван БЕЗ дат: режим (инкремент по updatedTime или первый
+        # полный синк) выбирает сам сервис по маркеру — см. resolve_sync_mode.
         args, kwargs = mock_svc.sync_all.call_args
-        self.assertTrue(kwargs.get("date_from"))
-        self.assertTrue(kwargs.get("date_to"))
+        self.assertIsNone(kwargs.get("date_from"))
+        self.assertIsNone(kwargs.get("date_to"))
 
     @patch("main.sync_scheduler_service.TimesheetSyncService")
     @patch("main.sync_scheduler_service.ConfigurationService")
@@ -278,15 +279,24 @@ class RunScheduledSyncTest(TestCase):
 
         run_scheduled_sync(days=7, scope="timesheet", full=True)
 
-        # full → без date_from/date_to (ночная полная сверка, _sync_full)
+        # full → без date_from/date_to и с явным full=True: без него sync_all
+        # при живом маркере ушёл бы в инкремент, и ночная сверка (единственный
+        # жнец удалений) молча перестала бы быть полной.
         _, kwargs = mock_svc.sync_all.call_args
         self.assertIsNone(kwargs.get("date_from"))
         self.assertIsNone(kwargs.get("date_to"))
+        self.assertTrue(kwargs.get("full"))
 
     @patch("main.sync_scheduler_service.TimesheetSyncService")
     @patch("main.sync_scheduler_service.ConfigurationService")
-    def test_incremental_mode_still_passes_dates(self, mock_cfg_cls, mock_svc_cls):
-        _account("m1", master=True)
+    def test_incremental_mode_calls_sync_all_without_dates(self, mock_cfg_cls, mock_svc_cls):
+        """Инкремент ходит по updatedTime от маркера, а не окном по дате
+        отражения (спека 2026-07-31). Окно в 7 дней не видело записей,
+        внесённых задним числом, а пристроенная к нему выборка по createdTime
+        теряла всё созданное сегодня — боевой баг 2fcd176."""
+        account = _account("m1", master=True)
+        account.last_timesheet_synced_at = timezone.now() - timedelta(minutes=20)
+        account.save(update_fields=["last_timesheet_synced_at"])
         mock_cfg = MagicMock()
         mock_cfg.get_configuration_sync.return_value = {
             "sp_entity_type_id": 1, "fields_mapping": {"data": "createdTime"},
@@ -300,8 +310,9 @@ class RunScheduledSyncTest(TestCase):
         run_scheduled_sync(days=7, scope="timesheet", full=False)
 
         _, kwargs = mock_svc.sync_all.call_args
-        self.assertTrue(kwargs.get("date_from"))
-        self.assertTrue(kwargs.get("date_to"))
+        self.assertIsNone(kwargs.get("date_from"))
+        self.assertIsNone(kwargs.get("date_to"))
+        self.assertFalse(kwargs.get("full"))
 
     @patch("main.sync_scheduler_service.TimesheetSyncService")
     @patch("main.sync_scheduler_service.ConfigurationService")

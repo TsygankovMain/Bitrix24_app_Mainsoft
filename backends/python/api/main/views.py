@@ -31,6 +31,7 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
+from .timesheet_sync_service import resolve_sync_mode
 from .tenant_scoping import scope_to_tenant
 from .employee_ids import extract_bitrix_user_id
 from .perf import ReportProfiler
@@ -1819,6 +1820,9 @@ def timesheet_sync(request: AuthorizedRequest):
     date_to = body.get("date_to")
     is_scoped = bool(date_from and date_to)
 
+    # started_at: снимается ДО обхода (спека 2026-07-31, §4.3) и только им
+    # двигается маркер ниже — правка, случившаяся во время обхода, имеет
+    # updatedTime >= started_at и попадёт в следующую выборку.
     now = timezone.now()
     if not is_scoped and should_skip_timesheet_sync(request.bitrix24_account, now):
         db_count = TimesheetItem.objects.filter(**scope_to_tenant(request.bitrix24_account)).count()
@@ -1830,13 +1834,22 @@ def timesheet_sync(request: AuthorizedRequest):
             "last_synced_at": request.bitrix24_account.last_timesheet_synced_at.isoformat(),
         })
 
+    # Режим синка (спека 2026-07-31, §4.1) вычисляем здесь же, чтобы решить
+    # судьбу refresh_writeoff_stats: сам выбор дублируется внутри sync_all.
+    mode = resolve_sync_mode(
+        marker=request.bitrix24_account.last_timesheet_synced_at,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    profiler.set_metric("mode", mode)
     service = TimesheetSyncService(request.bitrix24_account.client, request.bitrix24_account, config)
     try:
         with profiler.stage("sync_all"):
             count = service.sync_all(date_from=date_from, date_to=date_to)
-        # refresh_writeoff_stats нужен только для доски проектов (полный синк).
-        # При scoped-запросе (отчёт за период) пропускаем — экономит время.
-        if not is_scoped:
+        # refresh_writeoff_stats нужен доске проектов, не отчёту, и стоит
+        # заметного времени. Считаем его только на полном синке: при scoped
+        # (отчёт за период) и при инкременте — пропускаем (§5 спеки).
+        if mode == "full":
             with profiler.stage("refresh_writeoff_stats"):
                 project_card_service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
                 project_card_service.refresh_writeoff_stats()

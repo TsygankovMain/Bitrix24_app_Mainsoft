@@ -3,6 +3,7 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import InnBackfillPanel from '../../components/reports/InnBackfillPanel.vue'
+import DataFreshnessIndicator from '../../components/common/DataFreshnessIndicator.vue'
 import { useProgress } from '~/composables/useProgress'
 
 const { locales: localesI18n, setLocale } = useI18n()
@@ -51,7 +52,6 @@ interface SpField {
 // Report State
 const activeTab = ref<'export' | 'inn'>('export')
 const isInit = ref(false)
-const isSyncing = ref(false)
 const timesheetItems = ref<TimesheetItem[]>([])
 const itemsPage = ref(1)
 const itemsTotal = ref(0)
@@ -209,17 +209,18 @@ async function resetFilter() {
 }
 
 
-async function handleSync() {
-    progress.begin('Синхронизация с Bitrix24', 0, 'Обновляем списания времени')
-    isSyncing.value = true
+// Синк выполняет DataFreshnessIndicator (без периода — инкремент глобален),
+// странице остаётся перечитать локальный список.
+async function handleDataRefreshed(result: { count: number }) {
+    toast.add({ title: `Синхронизировано ${result.count} записей!`, color: 'air-primary-success' })
+    progress.begin('Загрузка данных', 0, 'Перечитываем список после синхронизации...')
+    isLoading.value = true
     try {
-        const result = await apiStore.syncTimesheets()
-        toast.add({ title: `Синхронизировано ${result.count} записей!`, color: 'air-primary-success' })
-        await fetchTimesheetList()
+        await fetchTimesheetList(itemsPage.value)
     } catch (e) {
-         processErrorGlobal(e)
+        processErrorGlobal(e)
     } finally {
-        isSyncing.value = false
+        isLoading.value = false
         progress.end()
     }
 }
@@ -278,8 +279,8 @@ onMounted(async () => {
     >
       <template #links>
         <template v-if="activeTab === 'export'">
-          <B24Button label="Синхронизировать с Б24" :loading="isSyncing" color="success" @click="handleSync" />
-          <B24Button label="Обновить" loading-auto @click="() => fetchTimesheetList(itemsPage)" />
+          <DataFreshnessIndicator @refreshed="handleDataRefreshed" />
+          <B24Button label="Обновить список" loading-auto @click="() => fetchTimesheetList(itemsPage)" />
         </template>
         <B24Button label="Назад в настройки" color="link" @click="$router.push('/settings')" />
       </template>

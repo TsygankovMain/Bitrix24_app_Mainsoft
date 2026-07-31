@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { ref, onMounted, computed } from 'vue'
+import DataFreshnessIndicator from '../../components/common/DataFreshnessIndicator.vue'
 import type { ProjectBoardCardRecord } from '~/types/project-board'
 
 const { initApp, processErrorGlobal } = useAppInit('ProjectReport')
@@ -10,7 +11,6 @@ const { locales: localesI18n, setLocale } = useI18n()
 let $b24: null | B24Frame = null
 const fieldConfigStore = useFieldConfigStore()
 const apiStore = useApiStore()
-const toast = useToast()
 
 // --- STATE ---
 const isLoading = ref(true)
@@ -24,8 +24,6 @@ const isModalOpen = ref(false)
 const modalError = ref<string | null>(null)
 const isSaving = ref(false)
 const projectCardCache = new Map<string, ProjectBoardCardRecord>()
-const lastSyncedAt = ref<string | null>(null)
-const isRefreshing = ref(false)
 
 useHead({
   title: 'Отчет по проекту'
@@ -81,7 +79,6 @@ onMounted(async () => {
         currentGroupId.value = groupId
 
         await loadUser()
-        void loadSyncStatus()
         await fetchData()
 
     } catch (e: unknown) {
@@ -157,34 +154,10 @@ async function fetchData() {
     }
 }
 
-async function loadSyncStatus() {
-    try {
-        lastSyncedAt.value = (await apiStore.getTimesheetSyncStatus()).last_synced_at
-    } catch {
-        // индикатор не критичен для работы страницы
-    }
-}
-
-async function refreshTimesheets() {
-    if (isRefreshing.value) return
-    isRefreshing.value = true
-    try {
-        const to = new Date()
-        const from = new Date()
-        from.setDate(from.getDate() - 30)
-        const iso = (d: Date) => d.toISOString().slice(0, 10)
-        // scoped-синк за 30 дней → быстрый путь + гейт свежести (Task 2). Бэкенд всегда
-        // кладёт last_synced_at в ответ — отдельный GET getTimesheetSyncStatus не нужен.
-        const result = await apiStore.syncTimesheets(iso(from), iso(to))
-        if (result.last_synced_at) {
-            lastSyncedAt.value = result.last_synced_at
-        }
-        await fetchData()
-    } catch (e: unknown) {
-        toast.add({ title: 'Ошибка обновления данных: ' + (e as { message?: string }).message, color: 'air-primary-alert' })
-    } finally {
-        isRefreshing.value = false
-    }
+// Индикатор возраста данных и сам синк живут в DataFreshnessIndicator (без периода —
+// инкремент по updatedTime глобален). Странице остаётся перечитать таблицу.
+async function handleDataRefreshed() {
+    await fetchData()
 }
 
 const openModal = () => {
@@ -418,12 +391,7 @@ const handleSaveMeeting = async () => {
                 <p v-if="currentGroupId" class="text-xs text-slate-500 mt-1">ID Проекта: {{ currentGroupId }}</p>
             </div>
             <div class="flex items-center gap-3">
-                <div class="flex items-center gap-2 text-xs text-slate-500">
-                    <span v-if="lastSyncedAt">данные на {{ new Date(lastSyncedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }}</span>
-                    <button :disabled="isRefreshing" class="px-2 py-1 border rounded hover:bg-slate-50 disabled:opacity-50" @click="refreshTimesheets">
-                        {{ isRefreshing ? 'Обновляю…' : 'Обновить' }}
-                    </button>
-                </div>
+                <DataFreshnessIndicator @refreshed="handleDataRefreshed" />
                 <button class="p-2 text-slate-500 hover:text-blue-600 transition-colors rounded-full hover:bg-blue-50" @click="fetchData">
                     <span class="material-symbols-outlined">refresh</span>
                 </button>

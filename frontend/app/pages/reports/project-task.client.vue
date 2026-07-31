@@ -6,6 +6,7 @@ import ProjectTaskReportTable from '../../components/reports/ProjectTaskReportTa
 import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
 import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
 import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
+import DataFreshnessIndicator from '../../components/common/DataFreshnessIndicator.vue'
 import { readProjectReportPreset } from '~/utils/reportNavigation'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import { PROJECT_TASK_LABEL_KEY } from '~/composables/useProjectTaskLabel'
@@ -134,6 +135,14 @@ async function fetchReport() {
     }
 }
 
+// Кнопка «Обновить» синхронизирует read-model; отчёт перестраиваем только если он уже построен,
+// чтобы не запускать генерацию за пользователя.
+function handleDataRefreshed() {
+    if (hasGenerated.value) {
+        void fetchReport()
+    }
+}
+
 async function handleExportExcel() {
     progress.begin('Excel: «По проектам/задачам»', 0, 'Готовим файл выгрузки')
     try {
@@ -232,9 +241,12 @@ watch(
                 <ProseH2 class="!text-slate-900">Учет по проектам/задачам</ProseH2>
                 <p class="mt-1 text-xs text-slate-500">Группировка: Проект → Задача → Подзадача → Сотрудник → Метки времени</p>
               </div>
-              <div class="flex gap-2">
-                <B24Button label="Скачать Excel" color="success" :disabled="!hasGenerated || reportData.length === 0" loading-auto @click="handleExportExcel" />
-                <B24Button label="Сформировать" loading-auto @click="fetchReport" />
+              <div class="flex flex-wrap items-center justify-end gap-3">
+                <DataFreshnessIndicator @refreshed="handleDataRefreshed" />
+                <div class="flex gap-2">
+                  <B24Button label="Скачать Excel" color="success" :disabled="!hasGenerated || reportData.length === 0" loading-auto @click="handleExportExcel" />
+                  <B24Button label="Сформировать" loading-auto @click="fetchReport" />
+                </div>
               </div>
             </div>
 

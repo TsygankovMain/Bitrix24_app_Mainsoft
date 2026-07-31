@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from b24pysdk import Client
@@ -12,6 +13,59 @@ from .tenant_scoping import scope_to_tenant
 
 
 logger = logging.getLogger(__name__)
+
+
+# Перекрытие границы инкремента (спека 2026-07-31, §4.2). Родительская спека
+# называла ~2 минуты; расширено до 5, потому что часы портала и приложения
+# могут расходиться. Цена перекрытия — несколько повторно забранных записей,
+# которые пишутся идемпотентным upsert'ом (_save_batch).
+INCREMENTAL_OVERLAP = timedelta(minutes=5)
+
+
+def resolve_sync_mode(
+    marker: Optional[datetime] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    full: bool = False,
+) -> str:
+    """Выбор режима синка таймшитов (спека 2026-07-31, §4.1).
+
+    | full=True                 | "full"        | ночная сверка              |
+    | заданы обе даты           | "scoped"      | ручные задачи бэкофиса     |
+    | маркер есть, дат нет      | "incremental" | расписание/кнопка/досинк   |
+    | маркера нет               | "full"        | первый синк портала        |
+
+    Ключевое изменение: вызов без дат и без full БОЛЬШЕ НЕ означает полный
+    синк — при живом маркере выполняется инкремент по updatedTime.
+
+    Маркером считается только настоящий datetime: из него вычитается overlap и
+    берётся isoformat(), поэтому мусорное значение дало бы мусорную границу
+    фильтра. Нет валидного маркера — нет и инкремента, идём в полный синк.
+    """
+    if full:
+        return "full"
+    if date_from and date_to:
+        return "scoped"
+    if isinstance(marker, datetime):
+        return "incremental"
+    return "full"
+
+
+def incremental_since(marker: datetime, overlap: timedelta = INCREMENTAL_OVERLAP) -> datetime:
+    """Нижняя граница выборки инкремента: маркер минус перекрытие (§4.2)."""
+    return marker - overlap
+
+
+def build_incremental_filter(since: datetime) -> Dict[str, str]:
+    """Фильтр crm.item.list для инкремента: ТОЛЬКО нижняя граница (§4.2).
+
+    Верхней границы нет и быть не должно. Битрикс сравнивает datetime-поле со
+    строкой-датой без времени как с началом суток — именно так верхняя граница
+    по createdTime молча теряла всё созданное сегодня (боевой баг 2fcd176,
+    31 запись на 99.5 ч). Записей из будущего не бывает, ограничивать сверху
+    нечего. Значение — полный ISO с таймзоной, а не дата.
+    """
+    return {">=updatedTime": since.isoformat()}
 
 
 class TimesheetSyncService:
@@ -72,23 +126,43 @@ class TimesheetSyncService:
                     continue
                 raise
 
-    def sync_all(self, date_from: Optional[str] = None, date_to: Optional[str] = None) -> int:
+    def sync_all(
+        self,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        full: bool = False,
+    ) -> int:
         """Синхронизация записей трудозатрат из Битрикс24.
 
-        Если переданы обе даты и маппинг поля даты задан — выполняется быстрый
-        scoped-синк только по периоду (два фильтра + батч-офсеты). При ошибке
-        в scoped-пути автоматически выполняется полный синк (фолбэк).
+        Режим выбирает resolve_sync_mode (спека 2026-07-31, §4.1):
+          - full=True            -> _sync_full (ночная сверка);
+          - обе даты             -> _sync_scoped (ручные задачи бэкофиса),
+                                    при ошибке — фолбэк на полный синк;
+          - маркер, дат нет      -> _sync_incremental по updatedTime;
+          - маркера нет          -> _sync_full (первый синк портала).
+
+        Вызов без аргументов БОЛЬШЕ НЕ означает полный синк: при живом маркере
+        last_timesheet_synced_at выполняется дешёвый инкремент — ровно то, ради
+        чего синк и убирали с критпути (полный обход занимал 10–17 минут).
+
+        Фолбэка «инкремент упал -> полный синк» намеренно нет: полный обход
+        стоит те самые минуты, а сбой инкремента не двигает маркер, и следующий
+        запуск перекроет пропущенный интервал целиком (§4.3, §6).
         """
-        logger.info("Starting sync for account %s (date_from=%s, date_to=%s)", self.account.pk, date_from, date_to)
+        marker = getattr(self.account, "last_timesheet_synced_at", None)
+        mode = resolve_sync_mode(marker=marker, date_from=date_from, date_to=date_to, full=full)
+        logger.info(
+            "Starting sync for account %s (mode=%s, date_from=%s, date_to=%s, full=%s)",
+            self.account.pk, mode, date_from, date_to, full,
+        )
 
         if not self.entity_type_id:
             logger.error("No SP Entity Type ID configured cannot sync.")
             return 0
 
         fdate = self.processing_service.mapping.get("data")
-        scoped = bool(date_from and date_to and fdate and self.entity_type_id)
 
-        if scoped:
+        if mode == "scoped" and fdate:
             try:
                 return self._sync_scoped(date_from, date_to, fdate)
             except Exception as exc:
@@ -98,6 +172,10 @@ class TimesheetSyncService:
                     date_to,
                     exc,
                 )
+                return self._sync_full()
+
+        if mode == "incremental":
+            return self._sync_incremental(incremental_since(marker))
 
         return self._sync_full()
 
@@ -209,6 +287,85 @@ class TimesheetSyncService:
         self._autofill_inn(all_new_cards)
 
         logger.info("Sync complete. Total items: %s", total_fetched)
+        return total_fetched
+
+    def _sync_incremental(self, since: datetime) -> int:
+        """Инкремент по updatedTime от границы `since` (спека 2026-07-31, §4.2).
+
+        Keyset по id (start=-1, ">id": last_id) поверх постоянного фильтра
+        {">=updatedTime": since}. Нормализация и сохранение — существующим
+        конвейером normalize_items -> _save_batch (идемпотентный upsert).
+
+        НИЧЕГО НЕ УДАЛЯЕТ. Это §4.5 спеки, а не забывчивость: _sync_scoped
+        рядом вызывает _delete_scoped_orphans и выглядит готовым шаблоном для
+        копирования, но у него есть окно дат, а у инкремента окна нет и выдача
+        — единицы записей. Та же логика здесь снесла бы почти всю таблицу.
+        Единственный жнец удалений — ночной _sync_full с его порогом
+        DELETE_SAFETY_RATIO.
+
+        Исключение пробрасывается наружу: маркер свежести двигает вызывающий,
+        и только после полностью успешного обхода (§4.3).
+        """
+        base_filter = build_incremental_filter(since)
+        logger.info(
+            "Running incremental sync for account %s since %s (SPA %s)",
+            self.account.pk, base_filter[">=updatedTime"], self.entity_type_id,
+        )
+
+        last_id = 0
+        page_size = 50
+        total_fetched = 0
+        all_new_cards: List[Dict[str, Any]] = []
+
+        while True:
+            response = self._call_with_retry(
+                "crm.item.list",
+                {
+                    "entityTypeId": self.entity_type_id,
+                    "select": ["*", "UF_*"],
+                    "order": {"id": "ASC"},
+                    "filter": {**base_filter, ">id": last_id},
+                    "start": -1,
+                },
+            )
+
+            items = self._extract_items(response)
+            if not items:
+                break
+
+            # Курсор keyset-пагинации — максимальный id пачки.
+            batch_max_id = last_id
+            for raw in items:
+                try:
+                    rid = int(raw.get("id"))
+                except (TypeError, ValueError):
+                    continue
+                if rid > batch_max_id:
+                    batch_max_id = rid
+
+            normalized_items = self.processing_service.normalize_items(items)
+            all_new_cards.extend(self._save_batch(normalized_items))
+
+            count = len(items)
+            total_fetched += count
+
+            # Защита от зацикливания, если курсор не продвинулся.
+            if batch_max_id <= last_id:
+                logger.warning(
+                    "Incremental: cursor did not advance (last_id=%s, batch=%s items); stopping.",
+                    last_id, count,
+                )
+                break
+            last_id = batch_max_id
+
+            if count < page_size:
+                break
+
+            time.sleep(self.THROTTLE_DELAY)
+
+        self._autofill_inn(all_new_cards)
+
+        logger.info("Incremental sync complete. Total items: %s", total_fetched)
         return total_fetched
 
     def _sync_scoped(self, date_from: str, date_to: str, fdate: str) -> int:
