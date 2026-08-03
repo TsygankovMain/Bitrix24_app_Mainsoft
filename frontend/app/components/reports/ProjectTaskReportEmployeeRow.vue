@@ -58,14 +58,21 @@ function toggle() {
       :key="idx"
       class="border-b border-slate-100/60 bg-slate-50/60 text-xs"
     >
+      <!--
+        Строка списания показывает ОПИСАНИЕ, а не название задачи. Название
+        задачи здесь избыточно: задача — родительская строка прямо над этой
+        группой, и повторять её у каждого списания значит прятать
+        единственное, что их различает. Порядок был обратным до 29.07.2026.
+        Название остаётся запасным вариантом на случай пустого описания.
+      -->
       <td class="px-4 py-1.5 text-left">
         <div class="flex items-center gap-2" :style="indent(depth + 1)">
           <span
             v-if="labelClickable && item.id_elem"
             class="cursor-pointer text-[#0075ff] hover:text-blue-700 hover:underline"
             @click.stop="labelCtx!.onClick(item.id_elem)"
-          >{{ item.nazvanie_zadachi || item.opisanie || 'Без названия' }}</span>
-          <span v-else class="text-slate-500">{{ item.nazvanie_zadachi || item.opisanie || 'Без названия' }}</span>
+          >{{ item.opisanie || item.nazvanie_zadachi || 'Без описания' }}</span>
+          <span v-else class="text-slate-500">{{ item.opisanie || item.nazvanie_zadachi || 'Без описания' }}</span>
           <span class="text-slate-400">{{ formatReportDate(item.data) }}</span>
         </div>
       </td>

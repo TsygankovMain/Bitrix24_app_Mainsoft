@@ -149,7 +149,11 @@ def _format_iso_date(value: Any) -> str:
 
 
 def _write_item(ws: Worksheet, row: int, item: Dict[str, Any], depth: int) -> None:
-    name = item.get("nazvanie_zadachi") or item.get("opisanie") or "Без названия"
+    # Строка списания в выгрузке показывает ОПИСАНИЕ, а не название задачи —
+    # тот же порядок, что и на экране (ProjectTaskReportEmployeeRow.vue).
+    # Название задачи повторяется у каждого списания группы и прячет то
+    # единственное, чем они отличаются. Порядок был обратным до 29.07.2026.
+    name = item.get("opisanie") or item.get("nazvanie_zadachi") or "Без описания"
     formatted_date = _format_iso_date(item.get("data"))
     if formatted_date:
         name = f"{name} · {formatted_date}"
