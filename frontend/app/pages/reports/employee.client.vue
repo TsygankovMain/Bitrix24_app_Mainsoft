@@ -90,6 +90,7 @@ async function fetchReport() {
 // Кнопка «Обновить» синхронизирует read-model; отчёт перестраиваем только если он уже построен,
 // чтобы не запускать генерацию за пользователя.
 function handleDataRefreshed() {
+    void loadFilterOptions(true)
     if (hasGenerated.value) {
         void fetchReport()
     }

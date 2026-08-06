@@ -66,7 +66,7 @@ def build_filtered_timesheet_queryset(account: Bitrix24Account, params: Mapping[
     project_ids = _normalize_multi_value(params.get("project_ids") or params.get("project_ids[]"))
     project_mode = str(params.get("project_mode") or "include")
     if project_ids:
-        project_q = Q(project_item_id__in=project_ids) | Q(project_id__in=project_ids) | Q(project_title__in=project_ids)
+        project_q = _build_project_match_q(account, project_ids)
         if project_mode == "exclude":
             queryset = queryset.exclude(project_q)
         else:
@@ -75,8 +75,123 @@ def build_filtered_timesheet_queryset(account: Bitrix24Account, params: Mapping[
     return queryset
 
 
+def _build_project_match_q(account: Bitrix24Account, project_ids: Sequence[str]) -> Q:
+    """Разворачивает выбранную опцию в полный набор ключей её карточки.
+
+    Опция несёт один идентификатор (id группы), а строка списания привязана к
+    проекту одним из трёх ключей — project_item_id, project_id, project_title.
+    Без разворота выбор проекта, чьи списания привязаны через элемент
+    смарт-процесса, давал пустой отчёт.
+
+    Каждый ключ матчится СО СВОЕЙ колонкой. Раньше выбранное значение шло во
+    все три колонки разом, а id группы и id элемента смарт-процесса живут в
+    одном числовом пространстве: id группы одного проекта мог совпасть с id
+    элемента другого и затащить в отчёт чужие строки. Поэтому сырое значение
+    кладём только в project_id/project_title (именно их несут опции), а в
+    project_item_id — только то, что пришло из найденной карточки.
+    """
+    selected = set(project_ids)
+    item_ids: set = set()
+    group_ids: set = set(selected)
+    titles: set = set(selected)
+
+    matched_cards = (
+        get_project_card_queryset(account)
+        .filter(Q(project_id__in=selected) | Q(project_name__in=selected))
+        .values("project_item_id", "project_id", "project_name")
+    )
+    for card in matched_cards:
+        item_id = _clean_key(card.get("project_item_id"))
+        group_id = _clean_key(card.get("project_id"))
+        title = _clean_key(card.get("project_name"))
+        if item_id:
+            item_ids.add(item_id)
+        if group_id:
+            group_ids.add(group_id)
+        if title:
+            titles.add(title)
+
+    project_q = Q(project_id__in=group_ids) | Q(project_title__in=titles)
+    if item_ids:
+        project_q |= Q(project_item_id__in=item_ids)
+    return project_q
+
+
 def materialize_rows(queryset, fields: Sequence[str]) -> List[Dict[str, Any]]:
     return list(queryset.values(*fields).iterator())
+
+
+def build_project_filter_options(account: Bitrix24Account) -> List[Dict[str, str]]:
+    """Опции фильтра «Проекты» — из реестра карточек, а не из строк списаний.
+
+    Раньше список собирался обходом timesheet_item, а реестр работал только
+    отсечкой. Активная карточка без подходящих строк в список не попадала
+    никогда: у нового проекта списаний ещё нет, а у старого они могут быть
+    привязаны через project_item_id, который здесь не смотрели вовсе (доска
+    смотрит — ProjectCardService.refresh_writeoff_stats, и сам запрос отчёта
+    смотрит — build_filtered_timesheet_queryset). Отсюда боевая жалоба
+    06.08.2026: проект виден в рабочем пространстве, в фильтре — «Ничего не
+    найдено».
+
+    Имя опции — project_name карточки, тем же именем проект подписан в теле
+    отчёта (resolve_project_name_for_row) и в рабочем пространстве. Сырой
+    project_title из списания сюда больше не попадает: он мог разойтись с
+    карточкой, и человек искал имя, которое видит везде.
+    """
+    cards = get_project_card_queryset(account)
+    active_rows = list(cards.filter(is_archived=False).values("project_item_id", "project_id", "project_name"))
+
+    if not active_rows:
+        # Пустой реестр (свежая установка, либо таблица карточек недоступна и
+        # get_project_card_queryset вернул .none()) — падаем на прежний путь,
+        # иначе фильтр остался бы пустым, а это хуже сегодняшнего. Именно
+        # «карточек нет вообще», а не «нет активных»: если все карточки в
+        # архиве, фильтру нечего предлагать — строки архивных проектов
+        # build_filtered_timesheet_queryset и так выкидывает из всех отчётов.
+        if cards.exists():
+            return []
+        return _build_project_filter_options_from_timesheets(account)
+
+    options: List[Dict[str, str]] = []
+    seen_ids = set()
+
+    for row in active_rows:
+        option_id = _clean_key(row.get("project_id")) or _clean_key(row.get("project_item_id"))
+        if not option_id or option_id in seen_ids:
+            continue
+        seen_ids.add(option_id)
+        options.append({
+            "id": option_id,
+            "name": _clean_key(row.get("project_name")) or "Без названия",
+        })
+
+    return sorted(options, key=lambda item: item["name"])
+
+
+def _build_project_filter_options_from_timesheets(account: Bitrix24Account) -> List[Dict[str, str]]:
+    rows = (
+        TimesheetItem.objects.filter(**scope_to_tenant(account))
+        .values("project_id", "project_title")
+        .distinct()
+    )
+
+    options: List[Dict[str, str]] = []
+    seen_ids = set()
+
+    for row in rows:
+        project_id = _clean_key(row.get("project_id"))
+        project_title = _clean_key(row.get("project_title"))
+        final_id = project_id or project_title
+        if not final_id or final_id in seen_ids:
+            continue
+        seen_ids.add(final_id)
+        options.append({"id": final_id, "name": project_title or "Без названия"})
+
+    return sorted(options, key=lambda item: item["name"])
+
+
+def _clean_key(value: Any) -> str:
+    return str(value or "").strip()
 
 
 def build_project_title_lookups(account: Bitrix24Account) -> tuple[Dict[str, str], Dict[str, str]]:

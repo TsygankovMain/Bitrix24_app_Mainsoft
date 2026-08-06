@@ -91,6 +91,14 @@ export function useReportFilters(reportKey = 'default') {
     mode: projectFilterMode.value
   }))
 
+  /**
+   * forceRefresh=true обходит браузерный кэш опций (localStorage, 20 минут —
+   * browserCacheTtl.filters в stores/api.ts). Нужен на кнопке «Обновить»:
+   * она синхронизирует read-model, и вместе с ней могли приехать проекты и
+   * сотрудники, которых на момент прогрева кэша не существовало. Без этого
+   * только что созданный проект не появлялся бы в фильтре до истечения TTL,
+   * и обновить список было бы нечем — кнопка перестраивала только отчёт.
+   */
   async function loadFilterOptions(forceRefresh = false) {
     const [employeesResult, projectsResult] = await Promise.allSettled([
       apiStore.getFilterEmployees(forceRefresh),

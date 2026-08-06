@@ -27,7 +27,6 @@ from .services import (
     ProjectCardService,
     ProjectSyncService,
     ProjectStageAutomationService,
-    get_project_card_queryset,
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
@@ -38,6 +37,7 @@ from .perf import ReportProfiler
 from .report_queries import (
     TREE_REPORT_FIELDS,
     build_filtered_timesheet_queryset,
+    build_project_filter_options,
     build_project_title_lookups,
     build_tree_report_items,
     materialize_rows,
@@ -266,38 +266,7 @@ def _build_employee_filter_options(request: AuthorizedRequest):
 
 
 def _build_project_filter_options(request: AuthorizedRequest):
-    queryset = TimesheetItem.objects.filter(**scope_to_tenant(request.bitrix24_account))
-    active_project_rows = list(
-        get_project_card_queryset(request.bitrix24_account)
-        .filter(is_archived=False)
-        .values("project_id", "project_name")
-    )
-    active_project_ids = {row["project_id"] for row in active_project_rows if row.get("project_id")}
-    active_project_names = {row["project_name"] for row in active_project_rows if row.get("project_name")}
-    projs = queryset.values("project_id", "project_title").distinct()
-    projects = []
-    seen_ids = set()
-
-    for project in projs:
-        project_id = project['project_id']
-        project_title = project['project_title']
-
-        if not project_id and not project_title:
-            continue
-
-        final_id = str(project_id) if project_id else str(project_title)
-        if (active_project_ids or active_project_names) and final_id not in active_project_ids and (project_title or "") not in active_project_names:
-            continue
-        if final_id in seen_ids:
-            continue
-
-        projects.append({
-            "id": final_id,
-            "name": project_title or "Без названия"
-        })
-        seen_ids.add(final_id)
-
-    return sorted(projects, key=lambda item: item["name"])
+    return build_project_filter_options(request.bitrix24_account)
 
 
 PROJECT_SPA_REQUIRED_MAPPING = {
