@@ -138,6 +138,6 @@ export default defineNuxtConfig({
     strategy: 'no_prefix',
     langDir: 'locales',
     locales: contentLocales,
-    defaultLocale: 'en'
+    defaultLocale: 'ru'
   }
 })
