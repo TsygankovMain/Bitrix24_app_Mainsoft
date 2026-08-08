@@ -1,48 +1,66 @@
-# Bitrix24 Starter Kit Guide
+# Учёт трудозатрат — руководство для агента
 
-This project is a starter kit for building Bitrix24 applications with a Nuxt 3 frontend and a choice of PHP, Python, or Node.js backend.
+Приложение для Bitrix24: учёт времени внутри карточки задачи + управленческая отчётность.
+Связка **Nuxt 4 (SPA, ssr: false) + Django + PostgreSQL**.
 
-## Commands
+Проект вырос из стартер-кита `bitrix-tools/b24-ai-starter`, но от него остался только каркас.
+Бэкенд один — Python/Django. PHP- и Node-бэкендов в проекте нет.
 
-- **Start Environment**:
-  - `make dev-php`: Start with PHP backend
-  - `make dev-python`: Start with Python backend
-  - `make dev-node`: Start with Node.js backend
-- **Stop Environment**: `make down`
-- **Logs**: `make logs`
-- **Security**: `make security-tests`
+## Git: важное
 
-## Architecture
+- `origin` указывает на **чужой апстрим** `bitrix-tools/b24-ai-starter`. Туда не пушить никогда.
+- Настоящий репозиторий — remote `user-repo` (`TsygankovMain/Bitrix24_app_Mainsoft`).
+- Боевая ветка — `prod_2026`. Пуш в неё = выкатка в прод, только по явной команде.
 
-- **Frontend**: `frontend/` (Nuxt 3, Vue 3, Bitrix24 UI Kit)
-- **Backend**:
-  - `backends/php/` (Symfony 7)
-  - `backends/python/` (Django)
-  - `backends/node/` (Express)
-- **Infrastructure**: `docker-compose.yml`, `infrastructure/`
+## Команды
 
-## Development Guidelines
+- `make dev-python` — поднять локальный контур (frontend + Django + PostgreSQL).
+- `make dev-front` — только frontend.
+- `make down` / `make clean` — остановка и полная очистка Docker.
+- `make security-scan`, `make security-tests` — проверки безопасности.
 
-1.  **Frontend**:
-    - Use `@bitrix24/b24ui-nuxt` components (prefix `B24`).
-    - Pages must end in `.client.vue`.
-    - Use `useApiStore` for backend calls.
-2.  **Backend**:
-    - Implement API endpoints in the chosen backend.
-    - Use the provided SDKs for Bitrix24 interaction.
-    - Ensure endpoints are secured with JWT (except `/install` and `/getToken`).
-3.  **Bitrix24**:
-    - Use `placement.bind` for Widgets.
-    - Use `bizproc.robot.add` for Robots.
-    - Use `event.bind` for Events.
+### Тесты
 
-## Skills
+- Бэкенд: `cd backends/python/api && python manage.py test main --settings=test_settings`
+  (тесты идут на sqlite, PostgreSQL не нужен).
+- Фронтенд: `cd frontend && pnpm test` (node:test + tsx, юнит-тесты утилит и композаблов).
 
-Refer to `.cursor/skills/` for detailed guides:
-- `manage-b24-environment`: DevOps & Docker
-- `develop-b24-frontend`: Frontend Development
-- `develop-b24-php`: PHP Backend
-- `develop-b24-python`: Python Backend
-- `develop-b24-node`: Node.js Backend
-- `bitrix24-static-local-app`: Static local applications
-- `implement-b24-features`: Widgets, Robots, Events
+## Архитектура
+
+- `frontend/` — Nuxt 4, Vue 3, Bitrix24 UI Kit (`@bitrix24/b24ui-nuxt`), Pinia, i18n.
+- `backends/python/api/` — Django-проект, приложение `main`.
+- `infrastructure/database/` — init-скрипты БД.
+- `local-dev.yaml` — docker compose для локальной разработки (профили `frontend`, `python`, `cloudpub`, `db-postgres`).
+- `Dockerfile` (корневой) — production: собирает фронт статикой и кладёт его в backend-образ,
+  Django отдаёт и API, и SPA с одного домена.
+
+## Правила разработки
+
+### Frontend
+
+- Компоненты Bitrix24 UI Kit с префиксом `B24`.
+- Страницы, работающие внутри Bitrix24, оканчиваются на `.client.vue`.
+- Запросы к бэкенду — только через `useApiStore` (`app/stores/api.ts`).
+- Маршрутизация по placement'ам делается на клиенте: `index.client.vue` смотрит
+  `placement.info()` и редиректит на `/task` или `/reports/project-report`.
+
+### Backend
+
+- Эндпоинты — в `main/views.py`, маршруты в `main/urls.py`.
+- Все эндпоинты закрыты JWT, кроме `/install` и `/getToken`.
+- Работа с Bitrix24 — через `b24pysdk`.
+- Изменения модели — обязательно миграцией.
+
+### Bitrix24
+
+- Placement'ы биндятся в `main/installation_service.py`:
+  `TASK_VIEW_TAB`, `SONET_GROUP_DETAIL_TAB`, `CRM_DEAL_DETAIL_TAB`.
+- После смены production-домена нужен ре-бинд placement'ов (переустановка приложения).
+
+## Документация
+
+- `README.md` — быстрый старт и production-сборка.
+- `DEPLOY_README.md`, `docs/PRODUCTION_ROLLOUT_GUIDE.md` — выкатка.
+- `docs/TECHNICAL_DOCUMENTATION.md` — архитектура и ключевые модули.
+- `docs/architecture/` — карта фич и спеки.
+- `.claude/skills/` — навыки под этот проект.
