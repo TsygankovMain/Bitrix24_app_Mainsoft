@@ -25,7 +25,6 @@ const appSettings = useAppSettingsStore()
 const user = useUserStore()
 const { $initializeB24Frame } = useNuxtApp()
 let $b24: null | B24Frame = null
-const { track } = useTelemetry()
 
 const someList = ref([
   15, 30, 60, 90, 120, 180
@@ -65,7 +64,6 @@ function initData() {
 }
 
 async function makeSave() {
-  track('ui_button_click', { 'ui.button_id': 'app_options_save' })
   try {
     isLoading.value = true
 
@@ -129,7 +127,6 @@ async function makeClose() {
 }
 
 async function makeCancel() {
-  track('ui_button_click', { 'ui.button_id': 'app_options_cancel' })
   await $b24?.parent.closeApplication()
 }
 // endregion ////
