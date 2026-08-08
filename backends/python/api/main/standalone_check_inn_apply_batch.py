@@ -33,12 +33,12 @@ for _name in _DJANGO_STUBS:
 
 # Лёгкие заглушки для прямых зависимостей сервиса.
 # Используем специальные фиктивные имена, чтобы не конфликтовать
-# с реальным пакетом api.main на диске.
+# с реальным пакетом main на диске.
 _PKG_NAME = '_test_inn_pkg'
 _MOD_NAME = f'{_PKG_NAME}.inn_backfill_service'
 
 _pkg = types.ModuleType(_PKG_NAME)
-_pkg.__path__ = ['api/main']
+_pkg.__path__ = ['main']
 _pkg.__package__ = _PKG_NAME
 sys.modules[_PKG_NAME] = _pkg
 
@@ -54,7 +54,7 @@ import importlib.util as _ilu
 
 _spec = _ilu.spec_from_file_location(
     _MOD_NAME,
-    'api/main/inn_backfill_service.py',
+    'main/inn_backfill_service.py',
     submodule_search_locations=[],
 )
 _mod = _ilu.module_from_spec(_spec)

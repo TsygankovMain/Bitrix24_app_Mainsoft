@@ -5,7 +5,7 @@
     cd backends/python
     python3 -m pytest api/main/tests_fetch_paginated_batch.py -v
   или
-    python3 -m unittest api.main.tests_fetch_paginated_batch -v
+    python3 -m unittest main.tests_fetch_paginated_batch -v
 """
 import sys
 import types
@@ -58,10 +58,10 @@ b24pysdk_mod.Client = MagicMock()
 
 # Внутренние зависимости проекта
 for _dep in (
-    "api.main.bitrix_data_access",
-    "api.main.configuration_service",
-    "api.main.models",
-    "api.main.project_board_shared",
+    "main.bitrix_data_access",
+    "main.configuration_service",
+    "main.models",
+    "main.project_board_shared",
 ):
     dep_mod = _make_stub_module(_dep)
     # stub для всего, что импортируется из project_board_shared
@@ -89,13 +89,13 @@ for _dep in (
     dep_mod.TimesheetItem = MagicMock()
 
 # Нужные конкретные имена для from ... import
-sys.modules["api.main.bitrix_data_access"].BitrixDataService = MagicMock()
-sys.modules["api.main.configuration_service"].ConfigurationService = MagicMock()
+sys.modules["main.bitrix_data_access"].BitrixDataService = MagicMock()
+sys.modules["main.configuration_service"].ConfigurationService = MagicMock()
 
 # ---------------------------------------------------------------------------
 # Теперь можно импортировать тестируемый модуль
 # ---------------------------------------------------------------------------
-from api.main.project_board_service import ProjectCardService  # noqa: E402
+from main.project_board_service import ProjectCardService  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

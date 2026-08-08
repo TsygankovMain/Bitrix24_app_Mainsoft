@@ -51,23 +51,23 @@ _conf.settings = _settings_stub
 
 # Local sub-modules (заглушки, чтобы не тянуть реальные пакеты)
 _stub("api")
-_stub("api.main")
-_stub("api.main.bitrix_data_access")
-_stub("api.main.configuration_service")
-_stub("api.main.models")
-_stub("api.main.project_board_service")
-_stub("api.main.project_board_shared")
-_stub("api.main.stage_automation_service")
+_stub("main")
+_stub("main.bitrix_data_access")
+_stub("main.configuration_service")
+_stub("main.models")
+_stub("main.project_board_service")
+_stub("main.project_board_shared")
+_stub("main.stage_automation_service")
 
-sys.modules["api.main.models"].Bitrix24Account = object
-sys.modules["api.main.models"].ProjectCard = MagicMock()
-sys.modules["api.main.models"].TimesheetItem = MagicMock()
+sys.modules["main.models"].Bitrix24Account = object
+sys.modules["main.models"].ProjectCard = MagicMock()
+sys.modules["main.models"].TimesheetItem = MagicMock()
 
-sys.modules["api.main.bitrix_data_access"].BitrixDataService = MagicMock()
-sys.modules["api.main.configuration_service"].ConfigurationService = MagicMock()
-sys.modules["api.main.project_board_service"].ProjectCardService = MagicMock()
+sys.modules["main.bitrix_data_access"].BitrixDataService = MagicMock()
+sys.modules["main.configuration_service"].ConfigurationService = MagicMock()
+sys.modules["main.project_board_service"].ProjectCardService = MagicMock()
 
-_shared = sys.modules["api.main.project_board_shared"]
+_shared = sys.modules["main.project_board_shared"]
 _shared.PROJECT_STAGE_IN_WORK = "in_work"
 _shared.PROJECT_STAGE_NEW = "new"
 _shared.build_local_project_groups = MagicMock(return_value=[])
@@ -75,13 +75,13 @@ _shared.ensure_project_card_schema = MagicMock(return_value=True)
 _shared.get_project_card_queryset = MagicMock(return_value=[])
 _shared.invalidate_project_runtime_caches = MagicMock()
 
-sys.modules["api.main.stage_automation_service"].ProjectStageAutomationService = MagicMock()
+sys.modules["main.stage_automation_service"].ProjectStageAutomationService = MagicMock()
 
 # Загружаем tenant_scoping через importlib (нужен project_sync_service после правок 4.3)
 _TENANT_SCOPING_FILE = Path(__file__).with_name("tenant_scoping.py")
-_ts_spec = importlib.util.spec_from_file_location("api.main.tenant_scoping", _TENANT_SCOPING_FILE)
+_ts_spec = importlib.util.spec_from_file_location("main.tenant_scoping", _TENANT_SCOPING_FILE)
 _ts_module = importlib.util.module_from_spec(_ts_spec)
-sys.modules["api.main.tenant_scoping"] = _ts_module
+sys.modules["main.tenant_scoping"] = _ts_module
 _ts_spec.loader.exec_module(_ts_module)
 
 # ---------------------------------------------------------------------------
@@ -90,10 +90,10 @@ _ts_spec.loader.exec_module(_ts_module)
 # ---------------------------------------------------------------------------
 _SERVICE_FILE = Path(__file__).with_name("project_sync_service.py")
 _spec = importlib.util.spec_from_file_location(
-    "api.main.project_sync_service", _SERVICE_FILE
+    "main.project_sync_service", _SERVICE_FILE
 )
 _module = importlib.util.module_from_spec(_spec)
-sys.modules["api.main.project_sync_service"] = _module
+sys.modules["main.project_sync_service"] = _module
 _spec.loader.exec_module(_module)
 
 ProjectSyncService = _module.ProjectSyncService
