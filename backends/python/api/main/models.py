@@ -20,6 +20,11 @@ class Bitrix24Account(models.Model, AbstractBitrixToken):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     b24_user_id = models.IntegerField()
     is_b24_user_admin = models.BooleanField(default=False)
+    # Когда флаг администратора последний раз сверялся с Bitrix (user.admin).
+    # См. views._refresh_admin_flag: раньше сверка шла на КАЖДЫЙ /api/getToken,
+    # то есть блокирующий REST-вызов на каждое монтирование страницы. Права
+    # администратора меняются крайне редко, поэтому сверяем по TTL.
+    admin_flag_checked_at = models.DateTimeField(null=True, blank=True)
     member_id = models.CharField(max_length=255)
     is_master_account = models.BooleanField(null=True)
     domain_url = models.CharField(max_length=255)
