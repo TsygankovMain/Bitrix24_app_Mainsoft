@@ -4,34 +4,11 @@
 
 Важно:
 
-- production rollout приложения больше не строится вокруг CloudPub;
-- scripts из этой папки не считаются production release pipeline;
+- production rollout приложения не строится вокруг CloudPub;
+- скрипты из этой папки не считаются production release pipeline;
 - основная production-сборка описана в [DEPLOY_README.md](../DEPLOY_README.md).
 
-## Что здесь может использоваться
-
-### `dev-init.sh`
-
-Локальная инициализация dev-контура.
-
-Сценарий:
-
-- подготовка `.env`;
-- запуск локальных контейнеров;
-- при необходимости работа с tunnel для Bitrix24 local dev.
-
-### `test-cloudpub.sh`
-
-Только dev-диагностика tunnel-сценария.
-
-Использовать, если:
-
-- нужно понять, выдает ли CloudPub внешний домен;
-- нужно проверить, почему локальная версия не открывается внутри Bitrix24.
-
-### `fix-php.sh`
-
-Legacy-скрипт для старого PHP-контура. К production-модели текущего Django/Nuxt-приложения не относится.
+## Что здесь есть
 
 ### `release-readiness-check.sh`
 
@@ -48,6 +25,32 @@ Legacy-скрипт для старого PHP-контура. К production-мо
 ```bash
 ./scripts/release-readiness-check.sh
 ```
+
+### `security-scan.sh`
+
+Аудит уязвимостей в зависимостях. Запускается через `make security-scan`.
+
+### `security-tests.sh`
+
+Оркестрованный набор security-тестов. Запускается через `make security-tests`.
+
+### `probe-backend.sh`
+
+Диагностика backend-эндпоинтов: проверяет, отвечает ли API и с какими кодами.
+
+### `test-cloudpub.sh`
+
+Только dev-диагностика tunnel-сценария.
+
+Использовать, если:
+
+- нужно понять, выдаёт ли CloudPub внешний домен;
+- нужно проверить, почему локальная версия не открывается внутри Bitrix24.
+
+### `create-version.sh` / `delete-version.sh`
+
+Клонирование текущего проекта в `versions/<name>` и удаление такой копии.
+Вызываются через `make create-version VERSION=<name>` и `make delete-version VERSION=<name>`.
 
 ## Что не нужно делать через scripts
 

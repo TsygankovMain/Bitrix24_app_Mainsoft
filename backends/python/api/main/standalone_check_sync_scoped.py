@@ -32,9 +32,9 @@ sys.modules["b24pysdk"] = b24pysdk_mod
 
 # report_services
 report_services_mod = types.ModuleType(
-    "api.main.report_services"
-    if "api.main.report_services" in sys.modules
-    else "backends.python.api.main.report_services"
+    "main.report_services"
+    if "main.report_services" in sys.modules
+    else "backends.python.main.report_services"
 )
 
 

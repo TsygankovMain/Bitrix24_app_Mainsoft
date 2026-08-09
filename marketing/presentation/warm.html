@@ -1139,6 +1139,121 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
 .mb0 { margin-bottom: 0; } .mb8 { margin-bottom: 8px; } .mb16 { margin-bottom: 16px; }
 .tight { max-width: 54ch; }
 
+/* ---------- CJM: путь часа по ролям ---------- */
+
+.cjm { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+
+.cjm-col {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.cjm-top {
+  padding: 12px 15px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--line);
+}
+.cjm-n {
+  display: inline-block;
+  min-width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 21px;
+  text-align: center;
+  margin-bottom: 7px;
+}
+.cjm-role { font-size: 16px; font-weight: 650; line-height: 1.25; }
+.cjm-when { margin-top: 3px; font-size: 12.5px; color: var(--muted); }
+
+.cjm-body { padding: 13px 15px; flex: 1; display: flex; flex-direction: column; gap: 9px; }
+.cjm-do { font-size: 14px; color: var(--ink-2); line-height: 1.45; }
+/* прижимает «как становится» к низу карточки — иначе колонки заканчиваются вразнобой */
+.cjm-fix { margin-top: auto; }
+
+.cjm-gap,
+.cjm-fix { border-radius: 10px; padding: 9px 11px; font-size: 13px; line-height: 1.42; }
+.cjm-gap { background: var(--danger-lt); color: #8E2A3C; }
+.cjm-fix { background: var(--ok-lt); color: #14684A; }
+.cjm-gap b,
+.cjm-fix b {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  margin-bottom: 3px;
+  opacity: .7;
+}
+
+/* ---------- Карта болей: боль → лечение → экран ---------- */
+
+.painmap { display: grid; gap: 7px; }
+
+.painmap-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.3fr .85fr;
+  gap: 16px;
+  align-items: center;
+  padding: 9px 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.painmap-row.is-head { border: 0; padding: 0 15px 1px; }
+.painmap-row.is-head span {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--muted);
+}
+.pm-pain { font-size: 14.5px; font-weight: 620; color: var(--ink); line-height: 1.35; }
+.pm-fix { font-size: 14px; color: var(--ink-2); line-height: 1.4; }
+.pm-where { font-size: 13px; color: var(--accent); font-weight: 600; }
+
+/* ---------- Стоимость внедрения ---------- */
+
+.price { display: grid; grid-template-columns: 1.4fr 1fr; gap: 30px; align-items: start; }
+
+.price-rows { display: grid; gap: 0; }
+.price-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 15px;
+}
+.price-row span { color: var(--ink-2); line-height: 1.4; }
+.price-row b { color: var(--ink); font-weight: 650; white-space: nowrap; }
+.price-row.is-total {
+  border-bottom: 0;
+  border-top: 2px solid var(--ink);
+  margin-top: 5px;
+  padding-top: 12px;
+  font-size: 16.5px;
+}
+.price-row.is-total span { color: var(--ink); font-weight: 650; }
+
+.price-box { border-radius: var(--radius); background: var(--accent-lt); padding: 26px 24px; }
+.price-box .p-formula { font-size: 15px; color: var(--accent-dk); font-weight: 600; }
+.price-box .p-sum {
+  font-size: 54px;
+  font-weight: 700;
+  letter-spacing: -.04em;
+  line-height: 1;
+  color: var(--accent-dk);
+  margin: 11px 0 14px;
+}
+.price-box .p-note { font-size: 14px; color: var(--ink-2); line-height: 1.5; }
+.price-box .p-note + .p-note { margin-top: 10px; }
+
 /* ---------- Печать: один слайд — одна страница ---------- */
 
 @page { size: 1280px 720px; margin: 0; }
@@ -1376,7 +1491,68 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 6. Вкладка в задаче -->
+<!-- 6. CJM: путь часа по ролям -->
+<section class="slide">
+  <div class="slide-head">
+    <p class="kicker">Путь часа внутри компании</p>
+    <h2>Один час проходит через четыре роли — и рвётся на каждом стыке</h2>
+  </div>
+  <div class="slide-body">
+    <div class="cjm">
+      <div class="cjm-col">
+        <div class="cjm-top">
+          <span class="cjm-n">1</span>
+          <div class="cjm-role">Менеджер продаж</div>
+          <div class="cjm-when">Продал объём работ</div>
+        </div>
+        <div class="cjm-body">
+          <div class="cjm-do">Договорился с клиентом на 120 часов и передал проект в работу.</div>
+          <div class="cjm-gap"><b>Где рвётся</b>Проданный объём остаётся в письме и в голове. Сравнить с фактом нечем.</div>
+          <div class="cjm-fix"><b>Как становится</b>Бюджет часов и ставка живут в карточке проекта с первого дня.</div>
+        </div>
+      </div>
+      <div class="cjm-col">
+        <div class="cjm-top">
+          <span class="cjm-n">2</span>
+          <div class="cjm-role">Специалист</div>
+          <div class="cjm-when">Сделал работу</div>
+        </div>
+        <div class="cjm-body">
+          <div class="cjm-do">Отработал день по задачам проекта, часть времени ушла на переделки.</div>
+          <div class="cjm-gap"><b>Где рвётся</b>Часы вспоминаются в конце месяца. Восстановленные по памяти всегда занижены.</div>
+          <div class="cjm-fix"><b>Как становится</b>Списание внутри задачи за десять секунд, признак «учитывать» ставит тот, кто работал.</div>
+        </div>
+      </div>
+      <div class="cjm-col">
+        <div class="cjm-top">
+          <span class="cjm-n">3</span>
+          <div class="cjm-role">Руководитель группы</div>
+          <div class="cjm-when">Следит за ходом</div>
+        </div>
+        <div class="cjm-body">
+          <div class="cjm-do">Ведёт несколько проектов сразу и отвечает за то, чтобы они уложились.</div>
+          <div class="cjm-gap"><b>Где рвётся</b>Перерасход виден постфактум — когда проект уже закрыт и переговорить не о чем.</div>
+          <div class="cjm-fix"><b>Как становится</b>Часы по проекту и дисциплина внесения видны на этой неделе, а не на закрытии.</div>
+        </div>
+      </div>
+      <div class="cjm-col">
+        <div class="cjm-top">
+          <span class="cjm-n">4</span>
+          <div class="cjm-role">Собственник</div>
+          <div class="cjm-when">Считает результат</div>
+        </div>
+        <div class="cjm-body">
+          <div class="cjm-do">Хочет знать, что компания заработала за месяц и на чём потеряла.</div>
+          <div class="cjm-gap"><b>Где рвётся</b>Картина сводится руками по выгрузкам и приходит к двадцатому числу следующего месяца.</div>
+          <div class="cjm-fix"><b>Как становится</b>Потери выручки и загрузка команды — одной кнопкой, выгрузка для 1С оттуда же.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-foot">Приложение не добавляет ролям новой работы — оно убирает ручную сборку данных между ними.</div>
+</section>
+
+<!-- 7. Вкладка в задаче -->
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Экран исполнителя</p>
@@ -1495,7 +1671,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 7. Split -->
+<!-- 8. Split -->
 <section class="slide">
   <div class="slide-head">
     <p class="kicker">Ключевая механика</p>
@@ -1568,7 +1744,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 8. Доска проектов -->
+<!-- 9. Доска проектов -->
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Экран руководителя проекта</p>
@@ -1677,7 +1853,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 9. Отчёт по проектам и задачам -->
+<!-- 10. Отчёт по проектам и задачам -->
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Главный управленческий отчёт</p>
@@ -1759,7 +1935,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 10. Загрузка команды -->
+<!-- 11. Загрузка команды -->
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Отчёт по сотрудникам</p>
@@ -1838,7 +2014,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 11. Табель по дням -->
+<!-- 12. Табель по дням -->
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Ежедневная нагрузка</p>
@@ -1925,7 +2101,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 12. Потери выручки -->
+<!-- 13. Потери выручки -->
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Отчёт, ради которого ставят приложение</p>
@@ -2012,7 +2188,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 13. Дисциплина -->
+<!-- 14. Дисциплина -->
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Отчёт для внедрения</p>
@@ -2094,7 +2270,59 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 14. Выгрузка в 1С -->
+<!-- 15. Карта болей -->
+<section class="slide">
+  <div class="slide-head">
+    <p class="kicker">Итог по экранам</p>
+    <h2>С какой болью в какой отчёт идти</h2>
+  </div>
+  <div class="slide-body">
+    <div class="painmap">
+      <div class="painmap-row is-head">
+        <span>Боль</span>
+        <span>Что с ней делает приложение</span>
+        <span>Где смотреть</span>
+      </div>
+      <div class="painmap-row">
+        <div class="pm-pain">Часы вспоминают в конце месяца</div>
+        <div class="pm-fix">Списание внутри задачи плюс отчёт о том, с какой задержкой команда вносит часы</div>
+        <div class="pm-where">Дисциплина внесения</div>
+      </div>
+      <div class="painmap-row">
+        <div class="pm-pain">Непонятно, сколько ушло на проект</div>
+        <div class="pm-fix">Дерево «проект → задача → сотрудник» с суммированием часов снизу вверх</div>
+        <div class="pm-where">Учёт по проектам и задачам</div>
+      </div>
+      <div class="painmap-row">
+        <div class="pm-pain">Работа уходит клиенту бесплатно</div>
+        <div class="pm-fix">Признак «Учитывать в аналитике» и разделение смешанной записи на две</div>
+        <div class="pm-where">Вкладка задачи · Потери выручки</div>
+      </div>
+      <div class="painmap-row">
+        <div class="pm-pain">Кто перегружен, а кто простаивает</div>
+        <div class="pm-fix">Табель по дням с сопоставлением с нормой месяца</div>
+        <div class="pm-where">Ежедневная нагрузка</div>
+      </div>
+      <div class="painmap-row">
+        <div class="pm-pain">Человек размазан по семи проектам</div>
+        <div class="pm-fix">Распределение часов сотрудника между проектами за период</div>
+        <div class="pm-where">Фокус и распыление</div>
+      </div>
+      <div class="painmap-row">
+        <div class="pm-pain">Проект тихо остановился</div>
+        <div class="pm-fix">Стадии «нет списаний месяц» и «нет списаний три месяца» выставляются сами</div>
+        <div class="pm-where">Доска проектов</div>
+      </div>
+      <div class="painmap-row">
+        <div class="pm-pain">Бухгалтерия переносит часы в 1С руками</div>
+        <div class="pm-fix">Выгрузка со своим ИНН и ИНН клиента в каждой строке списания</div>
+        <div class="pm-where">Выгрузка в Excel</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 16. Выгрузка в 1С -->
 <section class="slide">
   <div class="slide-head">
     <p class="kicker">Закрытие месяца</p>
@@ -2155,7 +2383,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 15. Требования и ограничения -->
+<!-- 17. Требования и ограничения -->
 <section class="slide">
   <div class="slide-head">
     <p class="kicker">Условия запуска</p>
@@ -2188,7 +2416,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   <div class="slide-foot">Ставка сохраняется снимком в каждой записи — изменение ставки не переписывает историю прошлых месяцев.</div>
 </section>
 
-<!-- 16. Внедрение -->
+<!-- 18. Внедрение -->
 <section class="slide showcase">
   <div class="slide-head">
     <p class="kicker">Как проходит запуск</p>
@@ -2273,7 +2501,96 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 17. Роадмап -->
+<!-- 19. CJM: путь клиента -->
+<section class="slide">
+  <div class="slide-head">
+    <p class="kicker">Путь от разговора до работающего учёта</p>
+    <h2>Четыре шага, из которых платный — один</h2>
+  </div>
+  <div class="slide-body">
+    <div class="steps">
+      <div class="step">
+        <div class="step-n">1</div>
+        <div class="step-b">
+          <b>Демо на ваших вопросах <span class="step-time">40 минут</span></b>
+          <span>Показываем экраны на демоданных и разбираем, где у вас сейчас теряются часы. По итогам вы решаете, стоит ли это вообще трогать. Бесплатно.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">2</div>
+        <div class="step-b">
+          <b>Пилот на одном проекте <span class="step-time">2 недели</span></b>
+          <span>Ставим приложение, настраиваем поля и запускаем одну команду. В конце вы смотрите первый отчёт по своим реальным часам, а не по нашим примерам. Бесплатно.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">3</div>
+        <div class="step-b">
+          <b>Внедрение на всю компанию <span class="step-time">25 часов</span></b>
+          <span>Настройка под вашу структуру проектов, перенос всех действующих проектов, обучение каждой роли отдельно и сопровождение первого закрытия месяца. Состав работ — на следующем слайде.</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-n">4</div>
+        <div class="step-b">
+          <b>Эксплуатация <span class="step-time">дальше сами</span></b>
+          <span>Приложение работает в вашем портале, данные лежат в вашем смарт-процессе. Обновления приходят автоматически, доработки под вашу специфику обсуждаются отдельными задачами.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 20. Стоимость внедрения -->
+<section class="slide">
+  <div class="slide-head">
+    <p class="kicker">Коммерческие условия внедрения</p>
+    <h2>Из чего складываются 25 часов</h2>
+  </div>
+  <div class="slide-body">
+    <div class="price">
+      <div class="price-rows">
+        <div class="price-row">
+          <span>Установка, создание смарт-процессов и маппинг полей</span>
+          <b>3 ч</b>
+        </div>
+        <div class="price-row">
+          <span>Проектный контур: стадии, ставки, бюджеты часов</span>
+          <b>4 ч</b>
+        </div>
+        <div class="price-row">
+          <span>Перенос действующих проектов и справочников, простановка ИНН</span>
+          <b>4 ч</b>
+        </div>
+        <div class="price-row">
+          <span>Настройка отчётов под вашу структуру и формат выгрузки в 1С</span>
+          <b>3 ч</b>
+        </div>
+        <div class="price-row">
+          <span>Обучение по ролям: специалисты, руководители групп, собственник</span>
+          <b>6 ч</b>
+        </div>
+        <div class="price-row">
+          <span>Сопровождение первого месяца: разбор отчётов и донастройка</span>
+          <b>5 ч</b>
+        </div>
+        <div class="price-row is-total">
+          <span>Итого</span>
+          <b>25 ч</b>
+        </div>
+      </div>
+      <div class="price-box">
+        <div class="p-formula">25 часов × 3 500 ₽</div>
+        <div class="p-sum">87 500 ₽</div>
+        <div class="p-note">Фиксированная стоимость запуска. Часы, потраченные сверх плана по нашей вине, не оплачиваются.</div>
+        <div class="p-note">Внедряет та же команда, которая приложение разрабатывает: доработка под вашу специфику — задача внутри проекта, а не обращение к стороннему вендору.</div>
+      </div>
+    </div>
+  </div>
+  <div class="slide-foot">Демо и двухнедельный пилот в стоимость не входят — они бесплатны и ни к чему не обязывают.</div>
+</section>
+
+<!-- 21. Роадмап -->
 <section class="slide">
   <div class="slide-head">
     <p class="kicker">Куда движется продукт</p>
@@ -2316,7 +2633,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   </div>
 </section>
 
-<!-- 18. Тарифы -->
+<!-- 22. Тарифы -->
 <section class="slide">
   <div class="slide-head">
     <p class="kicker">Коммерческие условия</p>
@@ -2355,7 +2672,7 @@ h3 { font-size: 21px; line-height: 1.3; font-weight: 650; margin: 0 0 8px; }
   <div class="slide-foot">Функции с меткой ◷ находятся в разработке. Оплата за портал не зависит от числа сотрудников.</div>
 </section>
 
-<!-- 19. Следующий шаг -->
+<!-- 23. Следующий шаг -->
 <section class="slide">
   <div class="slide-body">
     <div class="cta-box">

@@ -34,14 +34,9 @@ venv/
 !.env.example
 !.env.dev.example
 !.env.prod.example
-!backends/php/.env*
 
-# dev/build outputs
-backend/php/vendor
-
-
-# Valid for b24-ai-starter
-index_test.html
+# Node compile cache (tsx)
+node-compile-cache/
 
 # Internal planning docs
 docs/internal/

@@ -47,28 +47,6 @@ services:
         aliases:
           - database
 
-  # (~) RabbitMQ
-  rabbitmq:
-    profiles: ["queue"]
-    image: rabbitmq:3.13-management-alpine
-    container_name: rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-queue_user}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-queue_password}
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-      - ./logs/rabbitmq:/var/log/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - internal-net
-
   # (~) Frontend
   frontend:
     profiles: [ "frontend" ]
@@ -81,7 +59,6 @@ services:
     environment:
       NUXT_PUBLIC_APP_URL: ${VIRTUAL_HOST}
       NUXT_PUBLIC_API_URL: ${VIRTUAL_HOST}
-      NUXT_PUBLIC_TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-false}
       HTTP: frontend:3000
     expose:
       - '3000'
@@ -111,70 +88,7 @@ services:
     networks:
       - internal-net
 
-  # (~) API servers (selected via profile)
-  api-php:
-    profiles: ["php"]
-    build:
-      context: ./backends/php
-      dockerfile: docker/php-fpm/Dockerfile
-    container_name: api
-    env_file: .env
-    environment:
-      DB_HOST: database
-      NODE_ENV: ${NODE_ENV:-development}
-      NUXT_PUBLIC_API_URL: ${VIRTUAL_HOST}
-      BITRIX24_PHP_SDK_APPLICATION_CLIENT_ID: ${CLIENT_ID:-enter_your_b24_app_client_id}
-      BITRIX24_PHP_SDK_APPLICATION_CLIENT_SECRET: ${CLIENT_SECRET:-enter_your_b24_app_secret}
-      BITRIX24_PHP_SDK_APPLICATION_SCOPE: ${SCOPE:-enter_your_b24_app_scope}
-    expose:
-      - "8000"
-    ports:
-      - "8000:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./backends/php/:/var/www
-      - ./logs/php:/var/log/php
-    depends_on:
-      database-postgres:
-        condition: service_healthy
-        required: false
-      database-mysql:
-        condition: service_healthy
-        required: false
-    networks:
-      - internal-net
-
-  php-cli:
-    profiles: ["php", "php-cli"]
-    build:
-      context: ./backends/php
-      dockerfile: docker/php-cli/Dockerfile
-    container_name: php-cli
-    env_file: .env
-    environment:
-      DB_HOST: database
-      NODE_ENV: ${NODE_ENV:-development}
-      NUXT_PUBLIC_API_URL: ${VIRTUAL_HOST}
-      BITRIX24_PHP_SDK_APPLICATION_CLIENT_ID: ${CLIENT_ID:-enter_your_b24_app_client_id}
-      BITRIX24_PHP_SDK_APPLICATION_CLIENT_SECRET: ${CLIENT_SECRET:-enter_your_b24_app_secret}
-      BITRIX24_PHP_SDK_APPLICATION_SCOPE: ${SCOPE:-enter_your_b24_app_scope}
-    volumes:
-      - ./backends/php/:/var/www
-      - ./logs/php:/var/log/php
-    depends_on:
-      database-postgres:
-        condition: service_healthy
-        required: false
-      database-mysql:
-        condition: service_healthy
-        required: false
-    networks:
-      - internal-net
-    stdin_open: true
-    tty: true
-
-
+  # (~) API server
   api-python:
     profiles: ["python"]
     build:
@@ -204,36 +118,6 @@ services:
     networks:
       - internal-net
 
-  api-node:
-    profiles: ["node"]
-    container_name: api
-    build:
-      context: ./backends/node/api
-      dockerfile: Dockerfile
-      target: ${BUILD_TARGET:-dev}
-    env_file: .env
-    environment:
-      DB_HOST: database
-      NODE_ENV: ${NODE_ENV:-development}
-      NUXT_PUBLIC_API_URL: ${VIRTUAL_HOST}
-      PORT: 8000
-    expose:
-      - "8000"
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backends/node/api:/app
-      - ./logs/node:/var/log/node
-    depends_on:
-      database-postgres:
-        condition: service_healthy
-        required: false
-      database-mysql:
-        condition: service_healthy
-        required: false
-    networks:
-      - internal-net
-
 networks:
   internal-net:
     driver: bridge
@@ -242,4 +126,3 @@ volumes:
   postgres_data:
   mysql_data:
   cloudpub-config:
-  rabbitmq_data:

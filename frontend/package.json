@@ -11,8 +11,7 @@
     "preview": "nuxt preview",
     "test": "node --import tsx --test tests/**/*.test.ts",
     "lint": "eslint app/utils app/composables --max-warnings=0",
-    "lint:fix": "eslint --fix app/utils app/composables",
-    "translate-ui": "tsx tools/translate.ui.ts"
+    "lint:fix": "eslint --fix app/utils app/composables"
   },
   "dependencies": {
     "@bitrix24/b24icons-vue": "^2.0.4",
@@ -31,6 +30,7 @@
     "@types/luxon": "^3.7.1",
     "@nuxt/eslint": "^1.9.0",
     "eslint": "^9.38.0",
+    "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   }
 }
