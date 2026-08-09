@@ -231,129 +231,103 @@ export function useTaskTreeLoader() {
       const missingEmployeeIds = new Set<string>()
       const pendingFallbackItems: TaskWorkspaceItem[] = []
 
-      for (let index = 0; index < allTaskIds.length; index += 50) {
-        const chunk = allTaskIds.slice(index, index + 50)
-        const batch: Record<string, { method: string; params: Record<string, unknown> }> = {}
+      const itemSelect = ['id', 'createdTime', fieldTaskId, fieldEmployee, fieldHours, fieldIsConsidered, fieldDescription, 'TITLE', fieldDate]
 
-        for (const currentTaskId of chunk) {
-          batch[`items_${currentTaskId}`] = {
-            method: 'crm.item.list',
-            params: {
-              entityTypeId: smartProcessId,
-              filter: { [fieldTaskId]: Number(currentTaskId) },
-              select: ['id', 'createdTime', fieldTaskId, fieldEmployee, fieldHours, fieldIsConsidered, fieldDescription, 'TITLE', fieldDate],
-              start: 0,
-              limit: 50
-            }
-          }
+      const appendItem = (item: CrmItemRaw) => {
+        const itemId = String(item.id)
+        if (seenItemIds.has(itemId)) {
+          return
         }
+        seenItemIds.add(itemId)
 
-        const chunkResponse = await client.callBatch(batch)
-        const chunkData = chunkResponse.getData()
-        const tasksNeedingMore: string[] = []
+        // Задача берётся из самого элемента: мы фильтровали по этому полю, значит
+        // оно заполнено. Раньше здесь был запасной вариант «взять из ключа батча»,
+        // но ключ больше не соответствует одной задаче — фильтр общий на пачку.
+        const taskIdValue = String(item[fieldTaskId] ?? '')
+        const employeeId = String(item[fieldEmployee] || '')
+        const user = usersMap.value[employeeId]
+        const employeeName = user ? `${user.NAME || ''} ${user.LAST_NAME || ''}`.trim() : `User ${employeeId}`
+        const date = (item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')) as string
 
-        for (const [key, response] of Object.entries(chunkData) as Array<[string, RawRecord]>) {
-          if (response?.error) {
-            continue
+        const taskItem: TaskWorkspaceItem = {
+          id: itemId,
+          title: item.title || item.TITLE || '',
+          createdTime: item.createdTime,
+          hours: parseFloat(item[fieldHours] as string) || 0,
+          isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
+          description: (item[fieldDescription] || '') as string,
+          employeeId,
+          employeeName,
+          date
+        }
+        if (!user && employeeId) {
+          missingEmployeeIds.add(employeeId)
+          pendingFallbackItems.push(taskItem)
+        }
+        taskItems.push({ taskId: taskIdValue, item: taskItem })
+      }
+
+      // Списания забираются ОДНИМ crm.item.list на пачку задач через IN-фильтр
+      // (`@поле: [id, ...]`, apidocs.bitrix24.ru/api-reference/crm/universal/crm-item-list.html),
+      // а не по вызову на каждую задачу.
+      //
+      // Зачем: операционный лимит Bitrix (480 с на скользящие 10 минут) считается
+      // ОТДЕЛЬНО ПО КАЖДОМУ методу и общий на всё приложение, причём внешний batch
+      // в него не входит — то есть T вложенных crm.item.list стоили как T вызовов,
+      // сколько их ни упаковывай. Фильтр по UF-полю смарт-процесса идёт по
+      // b_uts_crm_dynamic_* без индекса, поэтому цена каждого росла с объёмом
+      // списаний на портале. Дерево из 20 задач съедало ~6 с общего бюджета, то
+      // есть ~80 открытий вкладки на весь портал за 10 минут — дальше метод
+      // блокировался у всех сразу (инцидент 2026-07-27).
+      //
+      // Пагинация — keyset (order id asc + фильтр `>id`), как в бэкендовом синке:
+      // offset-пагинация на больших выборках дорожает с ростом start, а страницы
+      // могут «поехать» при параллельной записи. Прежний код листал каждую задачу
+      // отдельно и строго последовательно.
+      const TASK_IDS_PER_QUERY = 50
+      const PAGE_SIZE = 50
+      const MAX_PAGES_PER_CHUNK = 200 // страховка от бесконечного цикла: 10 000 списаний на пачку
+
+      for (let index = 0; index < allTaskIds.length; index += TASK_IDS_PER_QUERY) {
+        const chunk = allTaskIds.slice(index, index + TASK_IDS_PER_QUERY).map(Number)
+        let lastId = 0
+        let pageCount = 0
+
+        while (pageCount < MAX_PAGES_PER_CHUNK) {
+          const response = await client.callMethod('crm.item.list', {
+            entityTypeId: smartProcessId,
+            filter: {
+              [`@${fieldTaskId}`]: chunk,
+              '>id': lastId
+            },
+            order: { id: 'ASC' },
+            select: itemSelect
+          })
+
+          const items = extractItemList(response.getData())
+          if (!items.length) {
+            break
           }
 
-          const items = extractItemList(response)
           for (const item of items) {
-            const itemId = String(item.id)
-            if (seenItemIds.has(itemId)) {
-              continue
-            }
-            seenItemIds.add(itemId)
-            const taskIdValue = String(item[fieldTaskId] ?? key.replace('items_', ''))
-            const employeeId = String(item[fieldEmployee] || '')
-            const user = usersMap.value[employeeId]
-            const employeeName = user ? `${user.NAME || ''} ${user.LAST_NAME || ''}`.trim() : `User ${employeeId}`
-            const date = (item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')) as string
-
-            const taskItem: TaskWorkspaceItem = {
-              id: itemId,
-              title: item.title || item.TITLE || '',
-              createdTime: item.createdTime,
-              hours: parseFloat(item[fieldHours] as string) || 0,
-              isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
-              description: (item[fieldDescription] || '') as string,
-              employeeId,
-              employeeName,
-              date
-            }
-            if (!user && employeeId) {
-              missingEmployeeIds.add(employeeId)
-              pendingFallbackItems.push(taskItem)
-            }
-            taskItems.push({ taskId: taskIdValue, item: taskItem })
+            appendItem(item)
           }
 
-          if (items.length >= 50) {
-            tasksNeedingMore.push(key.replace('items_', ''))
+          const lastItem = items[items.length - 1]
+          const nextId = Number(lastItem?.id)
+          if (!Number.isFinite(nextId) || nextId <= lastId) {
+            break // защита от зацикливания, если Bitrix вернул неожиданный порядок
+          }
+          lastId = nextId
+          pageCount += 1
+
+          if (items.length < PAGE_SIZE) {
+            break
           }
         }
 
-        for (const currentTaskId of tasksNeedingMore) {
-          let start = 50
-          let pageCount = 0
-
-          while (pageCount < 50) {
-            const extraBatch = {
-              [`extra_${currentTaskId}_${start}`]: {
-                method: 'crm.item.list',
-                params: {
-                  entityTypeId: smartProcessId,
-                  filter: { [fieldTaskId]: Number(currentTaskId) },
-                  select: ['id', 'createdTime', fieldTaskId, fieldEmployee, fieldHours, fieldIsConsidered, fieldDescription, 'TITLE', fieldDate],
-                  start,
-                  limit: 50
-                }
-              }
-            }
-
-            const extraResponse = await client.callBatch(extraBatch)
-            const extraData = extraResponse.getData()
-            const extraItems = extractItemList(extraData[`extra_${currentTaskId}_${start}`])
-            let newCount = 0
-
-            for (const item of extraItems) {
-              const itemId = String(item.id)
-              if (seenItemIds.has(itemId)) {
-                break
-              }
-
-              seenItemIds.add(itemId)
-              newCount += 1
-              const employeeId = String(item[fieldEmployee] || '')
-              const user = usersMap.value[employeeId]
-              const employeeName = user ? `${user.NAME || ''} ${user.LAST_NAME || ''}`.trim() : `User ${employeeId}`
-              const date = (item[fieldDate] || (item.createdTime ? String(item.createdTime).split('T')[0] : '')) as string
-
-              const taskItem: TaskWorkspaceItem = {
-                id: itemId,
-                title: item.title || item.TITLE || '',
-                createdTime: item.createdTime,
-                hours: parseFloat(item[fieldHours] as string) || 0,
-                isConsidered: item[fieldIsConsidered] === 'Y' || item[fieldIsConsidered] === true,
-                description: (item[fieldDescription] || '') as string,
-                employeeId,
-                employeeName,
-                date
-              }
-              if (!user && employeeId) {
-                missingEmployeeIds.add(employeeId)
-                pendingFallbackItems.push(taskItem)
-              }
-              taskItems.push({ taskId: String(item[fieldTaskId] ?? currentTaskId), item: taskItem })
-            }
-
-            pageCount += 1
-            if (newCount < 50) {
-              break
-            }
-
-            start += 50
-          }
+        if (pageCount >= MAX_PAGES_PER_CHUNK) {
+          console.warn('useTaskTreeLoader: достигнут предел страниц списаний для пачки задач — часть данных может быть не показана')
         }
       }
 

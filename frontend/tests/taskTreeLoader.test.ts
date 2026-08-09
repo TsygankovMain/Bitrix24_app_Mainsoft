@@ -201,16 +201,55 @@ test('loadConfigAndUsers: не фильтрует /api/users по active — у�
   assert.equal(inactiveUser?.NAME, 'Уволенный', 'неактивный сотрудник из /api/users обязан попасть в usersMap')
 })
 
+interface ItemListCall {
+  filter: Record<string, unknown>
+  order?: Record<string, unknown>
+}
+
+/**
+ * Заглушка Bitrix-клиента для дерева задачи.
+ *
+ * Списания отдаются через callMethod('crm.item.list') с IN-фильтром по полю
+ * задачи и keyset-пагинацией (`>id`) — ровно так, как их теперь запрашивает
+ * useTaskTreeLoader. Заглушка честно исполняет оба условия фильтра, поэтому
+ * тест поймает и неверный оператор, и зацикливание пагинации.
+ */
 function makeTreeB24Stub(options: {
   items: Record<string, unknown>[]
+  taskField?: string
   userGetResponses?: Record<string, { NAME: string; LAST_NAME: string }>
   userGetThrows?: boolean
+  itemListCalls?: ItemListCall[]
+  subtasksByParent?: Record<string, Array<Record<string, unknown>>>
 }) {
+  const taskField = options.taskField || 'ufCrm87_TASK_ID'
+  const PAGE_SIZE = 50
+
   return {
-    callMethod: async (method: string) => {
+    callMethod: async (method: string, params?: Record<string, unknown>) => {
       if (method === 'tasks.task.get') {
         return { getData: () => ({ result: { task: { id: '1', title: 'Root' } } }) }
       }
+
+      if (method === 'crm.item.list') {
+        const filter = (params?.filter || {}) as Record<string, unknown>
+        options.itemListCalls?.push({ filter, order: params?.order as Record<string, unknown> })
+
+        const inKey = `@${taskField}`
+        const allowedTaskIds = (filter[inKey] as unknown[] | undefined)?.map(String)
+        if (!allowedTaskIds) {
+          throw new Error(`crm.item.list вызван без IN-фильтра ${inKey}`)
+        }
+        const afterId = Number(filter['>id'] ?? 0)
+
+        const matching = options.items
+          .filter(item => allowedTaskIds.includes(String(item[taskField])))
+          .filter(item => Number(item.id) > afterId)
+          .sort((a, b) => Number(a.id) - Number(b.id))
+
+        return { getData: () => ({ result: { items: matching.slice(0, PAGE_SIZE) } }) }
+      }
+
       throw new Error(`unexpected callMethod: ${method}`)
     },
     callBatch: async (calls: Record<string, { method: string; params?: Record<string, unknown> }>) => {
@@ -222,9 +261,8 @@ function makeTreeB24Stub(options: {
       const data: Record<string, unknown> = {}
       for (const [key, call] of Object.entries(calls)) {
         if (call.method === 'tasks.task.list') {
-          data[key] = { result: { tasks: [] } }
-        } else if (call.method === 'crm.item.list') {
-          data[key] = { result: { items: key === 'items_1' ? options.items : [] } }
+          const parentId = String((call.params?.filter as Record<string, unknown> | undefined)?.PARENT_ID)
+          data[key] = { result: { tasks: options.subtasksByParent?.[parentId] || [] } }
         } else if (call.method === 'user.get') {
           const id = String((call.params as Record<string, unknown> | undefined)?.ID)
           const user = options.userGetResponses?.[id]
@@ -280,4 +318,82 @@ test('loadTaskTree: сбой Bitrix-фоллбэка по сотрудникам
   assert.equal(loader.error.value, null, 'сбой Bitrix-фоллбэка не должен ронять дерево задачи целиком')
   const allItems = loader.taskTree.value.flatMap(node => node.items)
   assert.equal(allItems[0]?.employeeName, 'User 30', 'при сбое фоллбэка сотрудник остаётся с плейсхолдером')
+})
+
+test('loadTaskTree: списания забираются одним запросом на всё дерево, а не по вызову на задачу', async () => {
+  fieldConfigStub = makeConfigStub(87)
+
+  // Дерево из трёх задач: 1 -> 2, 1 -> 3. Раньше это давало три crm.item.list.
+  const items = [
+    { id: '100', createdTime: '2026-07-01T00:00:00', ufCrm87_TASK_ID: '1', ufCrm87_EMPLOYEE: '10', ufCrm87_HOURS: '1', ufCrm87_IS_CONSIDERED: 'Y', ufCrm87_DESCRIPTION: 'a', ufCrm87_DATE: '2026-07-01' },
+    { id: '101', createdTime: '2026-07-01T00:00:00', ufCrm87_TASK_ID: '2', ufCrm87_EMPLOYEE: '10', ufCrm87_HOURS: '2', ufCrm87_IS_CONSIDERED: 'Y', ufCrm87_DESCRIPTION: 'b', ufCrm87_DATE: '2026-07-01' },
+    { id: '102', createdTime: '2026-07-01T00:00:00', ufCrm87_TASK_ID: '3', ufCrm87_EMPLOYEE: '10', ufCrm87_HOURS: '4', ufCrm87_IS_CONSIDERED: 'Y', ufCrm87_DESCRIPTION: 'c', ufCrm87_DATE: '2026-07-01' }
+  ]
+
+  const itemListCalls: ItemListCall[] = []
+  const b24 = makeTreeB24Stub({
+    items,
+    itemListCalls,
+    subtasksByParent: {
+      '1': [
+        { ID: '2', TITLE: 'Подзадача 2', PARENT_ID: '1' },
+        { ID: '3', TITLE: 'Подзадача 3', PARENT_ID: '1' }
+      ]
+    }
+  })
+
+  const loader = useTaskTreeLoader()
+  loader.usersMap.value = { '10': { ID: '10', NAME: 'Иван', LAST_NAME: 'Петров' } }
+
+  await loader.loadTaskTree(b24 as never, '1')
+
+  assert.equal(loader.error.value, null)
+  assert.equal(itemListCalls.length, 1, 'на дерево из трёх задач должен уйти ОДИН crm.item.list')
+
+  const filter = itemListCalls[0]!.filter
+  const inValues = (filter['@ufCrm87_TASK_ID'] as unknown[]).map(String).sort()
+  assert.deepEqual(inValues, ['1', '2', '3'], 'IN-фильтр обязан содержать все задачи дерева')
+  assert.deepEqual(itemListCalls[0]!.order, { id: 'ASC' }, 'keyset-пагинация требует сортировки по id ASC')
+
+  // Часы разложились по своим задачам, а не свалились в корень.
+  const flatten = (node: { taskId: string | number, items: Array<{ hours: number }>, children: never[] }): Array<[string, number]> => [
+    [String(node.taskId), node.items.reduce((sum, i) => sum + i.hours, 0)],
+    ...node.children.flatMap(flatten)
+  ]
+  const byTask = new Map(loader.taskTree.value.flatMap(node => flatten(node as never)))
+  assert.equal(byTask.get('1'), 1)
+  assert.equal(byTask.get('2'), 2)
+  assert.equal(byTask.get('3'), 4)
+})
+
+test('loadTaskTree: страницы списаний добираются keyset-пагинацией без дублей', async () => {
+  fieldConfigStub = makeConfigStub(87)
+
+  // 120 списаний на одной задаче -> три страницы: 50, 50, 20.
+  const items = Array.from({ length: 120 }, (_, index) => ({
+    id: String(1000 + index),
+    createdTime: '2026-07-01T00:00:00',
+    ufCrm87_TASK_ID: '1',
+    ufCrm87_EMPLOYEE: '10',
+    ufCrm87_HOURS: '1',
+    ufCrm87_IS_CONSIDERED: 'Y',
+    ufCrm87_DESCRIPTION: 'x',
+    ufCrm87_DATE: '2026-07-01'
+  }))
+
+  const itemListCalls: ItemListCall[] = []
+  const b24 = makeTreeB24Stub({ items, itemListCalls })
+
+  const loader = useTaskTreeLoader()
+  loader.usersMap.value = { '10': { ID: '10', NAME: 'Иван', LAST_NAME: 'Петров' } }
+
+  await loader.loadTaskTree(b24 as never, '1')
+
+  assert.equal(loader.error.value, null)
+  assert.equal(itemListCalls.length, 3, 'три страницы по 50 записей')
+  assert.equal(Number(itemListCalls[1]!.filter['>id']), 1049, 'вторая страница начинается после последнего id первой')
+
+  const allItems = loader.taskTree.value.flatMap(node => node.items)
+  assert.equal(allItems.length, 120, 'все списания собраны')
+  assert.equal(new Set(allItems.map(i => i.id)).size, 120, 'дублей нет')
 })
