@@ -22,6 +22,13 @@ python manage.py migrate --noinput
 # в образ от root — прав на запись рядом с файлами нет. Ошибка пряталась за `|| echo`,
 # и бандлы месяц уезжали в браузер несжатыми незамеченными.
 
+# Таблица кэша (django_cache, см. CACHES в settings.py). Команда идемпотентна:
+# если таблица уже есть, она просто сообщает об этом и выходит с кодом 0.
+# Отдельной миграцией это не сделать штатным способом — Django предлагает
+# именно createcachetable.
+echo -e "${GREEN}Ensuring cache table...${NC}"
+python manage.py createcachetable
+
 echo -e "${GREEN}Collecting static files...${NC}"
 python manage.py collectstatic --noinput || echo "ERROR: collectstatic failed. Continuing..."
 
