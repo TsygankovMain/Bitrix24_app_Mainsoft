@@ -7,7 +7,7 @@ import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import CreateProjectDrawer from '~/components/projects/CreateProjectDrawer.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
-import { CREATE_PROJECT_BUTTON_ENABLED } from '~/utils/featureFlags'
+import { CREATE_PROJECT_BUTTON_ENABLED, TASK_TAB_ROUTE } from '~/utils/featureFlags'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -31,24 +31,16 @@ const apiStore = useApiStore()
 const fieldConfigStore = useFieldConfigStore()
 
 /**
- * Куда вести из placement'а TASK_VIEW_TAB.
+ * Куда вести из placement'а TASK_VIEW_TAB — см. TASK_TAB_ROUTE в utils/featureFlags.ts.
  *
  * installation_service биндит TASK_VIEW_TAB на КОРЕНЬ приложения и рассчитывает,
  * что маршрут выберет клиент (см. комментарий там же). Раньше здесь стоял
- * '/task' — экран, который умеет только смотреть дерево и править запись: в нём
- * нет ни «Отразить», ни удаления, ни разделения записи, ни фильтров. То есть
- * списать часы из карточки задачи было нельзя.
- *
- * В проде это не проявлялось, потому что placement там привязан напрямую к
- * /embedded и корень не открывается вовсе. Но ре-бинд placement'ов — штатная
- * операция: он требуется после смены production-домена (см. README и
- * DEPLOY_README). Любая переустановка приложения пересадила бы сотрудников на
- * урезанный экран, причём молча — вкладка бы открывалась и выглядела рабочей.
- *
- * Поэтому ведём на рабочий экран. Когда его функциональность переедет в task.vue
- * (он единственный написан на Bitrix24 UI Kit), меняется ровно эта константа.
+ * '/task' — экран, который тогда умел только смотреть дерево и править запись,
+ * то есть списать часы из карточки задачи было нельзя. В проде это не
+ * проявлялось (placement привязан прямо к /embedded), но ре-бинд placement'ов —
+ * штатная операция после смены production-домена, и переустановка молча
+ * пересадила бы сотрудников на экран без отражения часов.
  */
-const TASK_TAB_ROUTE = '/embedded'
 
 type PortfolioSummary = {
   total_count: number
