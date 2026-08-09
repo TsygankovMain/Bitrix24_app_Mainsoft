@@ -369,6 +369,106 @@ test('loadTaskTree: списания забираются одним запро�
   assert.equal(byTask.get('3'), 4)
 })
 
+test('loadTaskTree: рекурсия иерархии — глубокая вложенность собирается целиком, итоги всплывают наверх', async () => {
+  fieldConfigStub = makeConfigStub(87)
+
+  // Цепочка 1 -> 2 -> 3 -> 4 -> 5 (пять уровней), плюс ветка 3 -> 30.
+  const subtasksByParent: Record<string, Array<Record<string, unknown>>> = {
+    '1': [{ ID: '2', TITLE: 'Уровень 2', PARENT_ID: '1' }],
+    '2': [{ ID: '3', TITLE: 'Уровень 3', PARENT_ID: '2' }],
+    '3': [
+      { ID: '4', TITLE: 'Уровень 4', PARENT_ID: '3' },
+      { ID: '30', TITLE: 'Ветка на уровне 3', PARENT_ID: '3' }
+    ],
+    '4': [{ ID: '5', TITLE: 'Уровень 5', PARENT_ID: '4' }]
+  }
+
+  // Часы висят на разной глубине, в том числе на самом дне.
+  const mkItem = (id: string, taskId: string, hours: string, considered: 'Y' | 'N') => ({
+    id, createdTime: '2026-07-01T00:00:00', ufCrm87_TASK_ID: taskId, ufCrm87_EMPLOYEE: '10',
+    ufCrm87_HOURS: hours, ufCrm87_IS_CONSIDERED: considered, ufCrm87_DESCRIPTION: 'd', ufCrm87_DATE: '2026-07-01'
+  })
+  const items = [
+    mkItem('500', '5', '3', 'Y'), // дно цепочки
+    mkItem('501', '30', '2', 'Y'), // боковая ветка
+    mkItem('502', '3', '1', 'Y'), // середина
+    mkItem('503', '5', '4', 'N') // неучитываемые часы на дне
+  ]
+
+  const b24 = makeTreeB24Stub({ items, subtasksByParent })
+
+  const loader = useTaskTreeLoader()
+  loader.usersMap.value = { '10': { ID: '10', NAME: 'Иван', LAST_NAME: 'Петров' } }
+
+  await loader.loadTaskTree(b24 as never, '1')
+
+  assert.equal(loader.error.value, null)
+
+  const root = loader.taskTree.value[0]
+  assert.ok(root, 'корень дерева обязан существовать')
+
+  // Вложенность сохранена буквально, а не сплющена в один уровень.
+  const level2 = root!.children[0]
+  const level3 = level2?.children[0]
+  const level4 = level3?.children.find(n => String(n.taskId) === '4')
+  const branch30 = level3?.children.find(n => String(n.taskId) === '30')
+  const level5 = level4?.children[0]
+
+  assert.equal(String(level2?.taskId), '2', 'второй уровень на месте')
+  assert.equal(String(level3?.taskId), '3', 'третий уровень на месте')
+  assert.equal(String(level5?.taskId), '5', 'пятый уровень на месте — рекурсия не обрывается')
+  assert.equal(level3?.children.length, 2, 'у третьего уровня обе ветки')
+  assert.ok(branch30, 'боковая ветка не потеряна')
+
+  // Кумулятивные итоги всплывают через все уровни:
+  // учитываемые 3 (дно) + 2 (ветка) + 1 (середина) = 6, неучитываемые 4.
+  assert.equal(level5?.totalConsidered, 3, 'часы на дне привязаны к своей задаче')
+  assert.equal(level5?.totalUnconsidered, 4)
+  assert.equal(root!.cumulativeConsidered, 6, 'учитываемые часы всплыли до корня через 5 уровней')
+  assert.equal(root!.cumulativeUnconsidered, 4, 'неучитываемые тоже')
+  assert.equal(root!.totalConsidered, 0, 'на самом корне списаний нет')
+})
+
+test('loadTaskTree: рекурсия переживает пагинацию на промежуточном уровне', async () => {
+  fieldConfigStub = makeConfigStub(87)
+
+  // У узла 2 — 120 подзадач (три страницы), и у одной из них со ВТОРОЙ страницы
+  // есть собственный ребёнок. Рекурсия обязана дойти и до него.
+  const many = Array.from({ length: 120 }, (_, index) => ({
+    ID: String(3000 + index), TITLE: `Под ${index}`, PARENT_ID: '2'
+  }))
+
+  const subtasksByParent: Record<string, Array<Record<string, unknown>>> = {
+    '1': [{ ID: '2', TITLE: 'Средний', PARENT_ID: '1' }],
+    '2': many,
+    '3080': [{ ID: '9999', TITLE: 'Внук со второй страницы', PARENT_ID: '3080' }]
+  }
+
+  const items = [{
+    id: '600', createdTime: '2026-07-01T00:00:00', ufCrm87_TASK_ID: '9999', ufCrm87_EMPLOYEE: '10',
+    ufCrm87_HOURS: '9', ufCrm87_IS_CONSIDERED: 'Y', ufCrm87_DESCRIPTION: 'd', ufCrm87_DATE: '2026-07-01'
+  }]
+
+  const b24 = makeTreeB24Stub({ items, subtasksByParent })
+
+  const loader = useTaskTreeLoader()
+  loader.usersMap.value = { '10': { ID: '10', NAME: 'Иван', LAST_NAME: 'Петров' } }
+
+  await loader.loadTaskTree(b24 as never, '1')
+
+  assert.equal(loader.error.value, null)
+
+  const collect = (node: { taskId: string | number, children: never[] }): string[] => [
+    String(node.taskId), ...node.children.flatMap(collect)
+  ]
+  const ids = loader.taskTree.value.flatMap(node => collect(node as never))
+
+  assert.equal(ids.length, 1 + 1 + 120 + 1, 'корень + средний + 120 подзадач + внук')
+  assert.ok(ids.includes('3080'), 'подзадача со второй страницы на месте')
+  assert.ok(ids.includes('9999'), 'её ребёнок тоже — обход не остановился на пагинированном уровне')
+  assert.equal(loader.taskTree.value[0]!.cumulativeConsidered, 9, 'часы внука всплыли до корня')
+})
+
 test('loadTaskTree: у родителя больше 50 подзадач — дерево не теряет вторую страницу', async () => {
   fieldConfigStub = makeConfigStub(87)
 
