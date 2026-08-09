@@ -262,7 +262,10 @@ function makeTreeB24Stub(options: {
       for (const [key, call] of Object.entries(calls)) {
         if (call.method === 'tasks.task.list') {
           const parentId = String((call.params?.filter as Record<string, unknown> | undefined)?.PARENT_ID)
-          data[key] = { result: { tasks: options.subtasksByParent?.[parentId] || [] } }
+          const start = Number(call.params?.start ?? 0)
+          const all = options.subtasksByParent?.[parentId] || []
+          // Bitrix отдаёт максимум 50 записей за вызов и листается смещением start.
+          data[key] = { result: { tasks: all.slice(start, start + 50) } }
         } else if (call.method === 'user.get') {
           const id = String((call.params as Record<string, unknown> | undefined)?.ID)
           const user = options.userGetResponses?.[id]
@@ -364,6 +367,45 @@ test('loadTaskTree: списания забираются одним запро�
   assert.equal(byTask.get('1'), 1)
   assert.equal(byTask.get('2'), 2)
   assert.equal(byTask.get('3'), 4)
+})
+
+test('loadTaskTree: у родителя больше 50 подзадач — дерево не теряет вторую страницу', async () => {
+  fieldConfigStub = makeConfigStub(87)
+
+  // 120 подзадач у корня: раньше tasks.task.list звался без start, отдавал
+  // первые 50, и остальные 70 задач вместе с их часами пропадали молча.
+  const subtasks = Array.from({ length: 120 }, (_, index) => ({
+    ID: String(2000 + index),
+    TITLE: `Подзадача ${index}`,
+    PARENT_ID: '1'
+  }))
+
+  // Списание на самой последней подзадаче — оно обязано доехать до дерева.
+  const items = [
+    { id: '900', createdTime: '2026-07-01T00:00:00', ufCrm87_TASK_ID: '2119', ufCrm87_EMPLOYEE: '10', ufCrm87_HOURS: '7', ufCrm87_IS_CONSIDERED: 'Y', ufCrm87_DESCRIPTION: 'последняя', ufCrm87_DATE: '2026-07-01' }
+  ]
+
+  const b24 = makeTreeB24Stub({ items, subtasksByParent: { '1': subtasks } })
+
+  const loader = useTaskTreeLoader()
+  loader.usersMap.value = { '10': { ID: '10', NAME: 'Иван', LAST_NAME: 'Петров' } }
+
+  await loader.loadTaskTree(b24 as never, '1')
+
+  assert.equal(loader.error.value, null)
+
+  const collect = (node: { taskId: string | number, children: never[] }): string[] => [
+    String(node.taskId),
+    ...node.children.flatMap(collect)
+  ]
+  const allTaskIds = loader.taskTree.value.flatMap(node => collect(node as never))
+  assert.equal(allTaskIds.length, 121, 'корень + 120 подзадач')
+  assert.ok(allTaskIds.includes('2119'), 'подзадача со второй страницы обязана быть в дереве')
+
+  const allItems = loader.taskTree.value.flatMap(function flat(node: never): never[] {
+    return [...(node as { items: never[] }).items, ...(node as { children: never[] }).children.flatMap(flat)]
+  })
+  assert.equal((allItems[0] as { hours?: number } | undefined)?.hours, 7, 'часы с подзадачи со второй страницы не потеряны')
 })
 
 test('loadTaskTree: страницы списаний добираются keyset-пагинацией без дублей', async () => {

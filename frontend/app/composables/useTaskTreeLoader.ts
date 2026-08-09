@@ -174,36 +174,52 @@ export function useTaskTreeLoader() {
       }]
 
       const processed = new Set<string>([normalizedRootTaskId])
-      const queue = [normalizedRootTaskId]
+
+      // Обход подзадач с ПАГИНАЦИЕЙ. tasks.task.list отдаёт максимум 50 записей
+      // за вызов и листается смещением `start` (у метода нет поля next, только
+      // total). Раньше `start` не передавался и признак «есть ещё» не
+      // проверялся — у родителя с более чем 50 подзадачами часть дерева просто
+      // молча пропадала вместе со списанными на неё часами. Это была потеря
+      // данных, а не только вопрос скорости.
+      //
+      // Очередь хранит не просто id родителя, а пару (родитель, смещение):
+      // недочитанная страница возвращается в ту же очередь и уезжает следующим
+      // батчем вместе с новыми родителями, без отдельного последовательного
+      // цикла на каждую задачу.
+      interface SubtaskPage { parentId: string, start: number }
+      const TASKS_PAGE_SIZE = 50
+      const REQUESTS_PER_BATCH = 50
+      const MAX_BATCHES = 200 // страховка: до 10 000 запросов на дерево
+
+      const pending: SubtaskPage[] = [{ parentId: normalizedRootTaskId, start: 0 }]
       let iterations = 0
 
-      while (queue.length > 0 && iterations < 50) {
+      while (pending.length > 0 && iterations < MAX_BATCHES) {
+        const currentPages = pending.splice(0, REQUESTS_PER_BATCH)
         const batch: Record<string, { method: string; params: Record<string, unknown> }> = {}
-        const currentLevelIds = queue.splice(0, 50)
 
-        for (const parentId of currentLevelIds) {
-          batch[`tasks_${parentId}`] = {
+        currentPages.forEach((page, position) => {
+          batch[`tasks_${position}`] = {
             method: 'tasks.task.list',
             params: {
-              filter: { PARENT_ID: parentId },
-              select: ['ID', 'TITLE', 'PARENT_ID']
+              filter: { PARENT_ID: page.parentId },
+              select: ['ID', 'TITLE', 'PARENT_ID'],
+              start: page.start
             }
           }
-        }
-
-        if (!Object.keys(batch).length) {
-          break
-        }
+        })
 
         const batchResponse = await client.callBatch(batch)
         const batchData = batchResponse.getData()
 
-        for (const response of Object.values(batchData) as RawRecord[]) {
-          if (response?.error) {
-            continue
+        currentPages.forEach((page, position) => {
+          const response = batchData[`tasks_${position}`] as RawRecord | undefined
+          if (!response || response.error) {
+            return
           }
 
-          for (const task of extractTaskList(response)) {
+          const tasks = extractTaskList(response)
+          for (const task of tasks) {
             const taskIdValue = String(task.ID || task.id)
             if (processed.has(taskIdValue)) {
               continue
@@ -215,11 +231,20 @@ export function useTaskTreeLoader() {
               title: String(task.TITLE || task.title || ''),
               parentId: task.PARENT_ID || task.parentId ? String(task.PARENT_ID || task.parentId) : null
             })
-            queue.push(taskIdValue)
+            pending.push({ parentId: taskIdValue, start: 0 })
           }
-        }
+
+          // Пришла полная страница — у этого родителя есть ещё подзадачи.
+          if (tasks.length >= TASKS_PAGE_SIZE) {
+            pending.push({ parentId: page.parentId, start: page.start + TASKS_PAGE_SIZE })
+          }
+        })
 
         iterations += 1
+      }
+
+      if (iterations >= MAX_BATCHES) {
+        console.warn('useTaskTreeLoader: достигнут предел обхода подзадач — дерево может быть неполным')
       }
 
       const allTaskIds = allTasks.map(task => task.id)
