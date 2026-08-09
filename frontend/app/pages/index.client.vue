@@ -30,6 +30,26 @@ let $b24: null | B24Frame = null
 const apiStore = useApiStore()
 const fieldConfigStore = useFieldConfigStore()
 
+/**
+ * Куда вести из placement'а TASK_VIEW_TAB.
+ *
+ * installation_service биндит TASK_VIEW_TAB на КОРЕНЬ приложения и рассчитывает,
+ * что маршрут выберет клиент (см. комментарий там же). Раньше здесь стоял
+ * '/task' — экран, который умеет только смотреть дерево и править запись: в нём
+ * нет ни «Отразить», ни удаления, ни разделения записи, ни фильтров. То есть
+ * списать часы из карточки задачи было нельзя.
+ *
+ * В проде это не проявлялось, потому что placement там привязан напрямую к
+ * /embedded и корень не открывается вовсе. Но ре-бинд placement'ов — штатная
+ * операция: он требуется после смены production-домена (см. README и
+ * DEPLOY_README). Любая переустановка приложения пересадила бы сотрудников на
+ * урезанный экран, причём молча — вкладка бы открывалась и выглядела рабочей.
+ *
+ * Поэтому ведём на рабочий экран. Когда его функциональность переедет в task.vue
+ * (он единственный написан на Bitrix24 UI Kit), меняется ровно эта константа.
+ */
+const TASK_TAB_ROUTE = '/embedded'
+
 type PortfolioSummary = {
   total_count: number
   active_count: number
@@ -410,7 +430,7 @@ onMounted(async () => {
     // @ts-expect-error - placement typing
     const placementCode = $b24.placement?.title || $b24.placement?.placement || ($b24.placement?.info && $b24.placement.info.placement)
     if (placementCode === 'TASK_VIEW_TAB') {
-      router.push('/task')
+      router.push(TASK_TAB_ROUTE)
       return
     }
     if (placementCode === 'SONET_GROUP_DETAIL_TAB') {
@@ -425,7 +445,7 @@ onMounted(async () => {
         // @ts-expect-error - BX24 global typing
         const rawPlacement = window.BX24.placement.info()
         if (rawPlacement && rawPlacement.placement === 'TASK_VIEW_TAB') {
-          router.push('/task')
+          router.push(TASK_TAB_ROUTE)
         } else if (rawPlacement && rawPlacement.placement === 'SONET_GROUP_DETAIL_TAB') {
           router.push('/reports/project-report')
         }
