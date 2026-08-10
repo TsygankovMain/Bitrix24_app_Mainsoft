@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import timedelta
 
 from django.core.paginator import Paginator
 from django.http import JsonResponse, HttpResponse
@@ -649,20 +650,43 @@ def get_list(request: AuthorizedRequest):
     return JsonResponse(elements, safe=False)
 
 
-def _refresh_admin_flag(account) -> None:
+# Как часто сверять флаг администратора с Bitrix. Права администратора портала
+# меняются крайне редко, а сверка — блокирующий REST-вызов в критическом пути
+# выдачи токена, см. _refresh_admin_flag.
+ADMIN_FLAG_TTL = timedelta(hours=6)
+
+
+def _refresh_admin_flag(account, force: bool = False) -> None:
     """Refresh ``account.is_b24_user_admin`` from the Bitrix ``user.admin`` method.
 
-    Called from the auth/install flow once the account token is available. A
-    failed Bitrix call must NOT break authentication — the previous value is kept
-    and only a warning is logged.
+    Вызывается из install (``force=True``) и из выдачи токена. Раньше сверка шла
+    на КАЖДЫЙ /api/getToken, а initApp() стоит в onMounted каждой страницы — то
+    есть на открытие вкладки задачи приходилось два блокирующих вызова Bitrix
+    подряд, каждый из которых ещё и занимал слот gunicorn (их всего 8) и жёг
+    общий на портал операционный лимит метода user.admin.
+
+    Теперь сверка идёт не чаще раза в ADMIN_FLAG_TTL. При ``force=True`` (установка
+    приложения) сверяем всегда — там флаг заводится впервые.
+
+    Сбой вызова Bitrix НЕ должен ломать аутентификацию: прежнее значение
+    сохраняется, пишется только предупреждение. Отметка времени при сбое не
+    обновляется — иначе неудачная сверка «залипала» бы на весь TTL.
     """
+    if not force and account.admin_flag_checked_at is not None:
+        if timezone.now() - account.admin_flag_checked_at < ADMIN_FLAG_TTL:
+            return
+
     try:
         response = account.client._bitrix_token.call_method("user.admin", {})
         is_admin = bool(response.get("result") if isinstance(response, dict) else response)
 
+        updated_fields = ["admin_flag_checked_at"]
         if account.is_b24_user_admin != is_admin:
             account.is_b24_user_admin = is_admin
-            account.save(update_fields=["is_b24_user_admin"])
+            updated_fields.append("is_b24_user_admin")
+
+        account.admin_flag_checked_at = timezone.now()
+        account.save(update_fields=updated_fields)
     except Exception:
         logger.warning("Could not refresh is_b24_user_admin via user.admin for account %s", account.pk, exc_info=True)
 
@@ -706,7 +730,8 @@ def install(request):
 def _install_post_logic(request: AuthorizedRequest):
     bitrix24_account = request.bitrix24_account
 
-    _refresh_admin_flag(bitrix24_account)
+    # На установке сверяем всегда: аккаунт заводится впервые, TTL ещё не с чем сравнивать.
+    _refresh_admin_flag(bitrix24_account, force=True)
 
     ApplicationInstallation.objects.update_or_create(
         bitrix_24_account=bitrix24_account,

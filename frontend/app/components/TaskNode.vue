@@ -8,7 +8,7 @@ const props = defineProps<{
     level?: number
 }>()
 
-defineEmits(['edit'])
+defineEmits(['edit', 'create'])
 
 const level = props.level || 0
 const isExpanded = ref(true)
@@ -66,6 +66,15 @@ const totalMoney = computed(() => props.node.cumulativeConsidered * props.rate)
                     <div class="text-xs font-medium text-rose-600/90">Не учтено</div>
                     <div class="text-sm font-medium text-slate-500">{{ node.cumulativeUnconsidered.toFixed(2) }} ч</div>
                 </div>
+
+                <!-- Списывать нужно на конкретную задачу дерева, а не только на корневую. -->
+                <B24Button
+                    label="Отразить"
+                    color="air-primary"
+                    size="xs"
+                    :title="`Отразить часы на задачу «${node.taskTitle}»`"
+                    @click.stop="$emit('create', node.taskId)"
+                />
             </div>
         </div>
 
@@ -81,13 +90,14 @@ const totalMoney = computed(() => props.node.cumulativeConsidered * props.rate)
             />
             
             <!-- RECURSION -->
-            <TaskNode 
-                v-for="child in node.children" 
-                :key="child.taskId" 
-                :node="child" 
-                :rate="rate" 
+            <TaskNode
+                v-for="child in node.children"
+                :key="child.taskId"
+                :node="child"
+                :rate="rate"
                 :level="level + 1"
                 @edit="$emit('edit', $event)"
+                @create="$emit('create', $event)"
             />
         </div>
     </div>

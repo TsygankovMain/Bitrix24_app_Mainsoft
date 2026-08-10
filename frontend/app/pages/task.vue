@@ -3,6 +3,8 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { resolveTaskPlacementId, useIframeResizeOnToggle } from '@/composables/useTaskPlacement'
 import { useTaskTreeLoader } from '@/composables/useTaskTreeLoader'
+import { useTimesheetEntry } from '@/composables/useTimesheetEntry'
+import { makeNewEntryDraft } from '~/utils/timesheetEntry'
 import type { TaskWorkspaceItem, TaskWorkspaceNode, TaskWorkspaceUser } from '~/types/task-workspace'
 
 // --- ICONS ---
@@ -25,6 +27,8 @@ const {
     isLoading,
     error,
     usersMap,
+    usersList,
+    currentUserId,
     taskTree,
     config,
     clientHourRate,
@@ -32,9 +36,14 @@ const {
     loadTaskTree
 } = useTaskTreeLoader()
 
+// Сборка полей списания вместе с проектным контекстом.
+const { prepareEntryFields } = useTimesheetEntry()
+
 // Modals
 interface EditingItem {
     id: string | number | null
+    /** Задача, на которую списываются часы. Пусто у старых записей — тогда корневая. */
+    taskId: string
     hours: number
     isConsidered: boolean
     description: string
@@ -44,6 +53,8 @@ interface EditingItem {
 }
 
 const editingItem = ref<EditingItem | null>(null)
+/** Создание отличается от правки только отсутствием id — как и в рабочем экране. */
+const isCreatingEntry = computed(() => Boolean(editingItem.value) && !editingItem.value?.id)
 const isReportModalOpen = ref(false)
 const isReporting = ref(false)
 
@@ -93,7 +104,9 @@ onMounted(async () => {
         rootTaskId.value = tid
 
         // 2. Load Config & Users
-        await loadConfigAndUsers($b24)
+        // includeProfile: нужен текущий пользователь — он подставляется
+        // сотрудником по умолчанию в форму списания.
+        await loadConfigAndUsers($b24, { includeProfile: true })
         
         // 3. Load Data
         if (config.value?.DEFAULT_SMART_PROCESS_ID && !initError.value) {
@@ -115,27 +128,77 @@ onMounted(async () => {
 
 // --- ACTIONS ---
 
+/** Открыть форму списания на конкретную задачу дерева. */
+function handleCreateEntry(taskId?: string) {
+    const targetTaskId = String(taskId || rootTaskId.value || '')
+    if (!targetTaskId) {
+        toast.add({ title: 'Не удалось определить задачу для списания.', color: 'air-primary-alert' })
+        return
+    }
+
+    editingItem.value = makeNewEntryDraft({
+        taskId: targetTaskId,
+        employeeId: currentUserId.value || usersList.value[0]?.ID || '',
+        today: new Date()
+    }) as EditingItem
+}
+
+/**
+ * Сохранение записи: создание и правка идут одним путём.
+ *
+ * Поля собираются вместе с проектным контекстом — иерархия задач, проект, ИНН,
+ * снимок ставки часа, привязка к элементу Project SPA. Собирать их нужно и при
+ * правке: у записи мог смениться сотрудник или часы, а иерархия и реквизиты
+ * хранятся прямо в элементе смарт-процесса — именно по ним потом строится
+ * отчётность и выгрузка в 1С. Решения о том, что куда писать и что блокирует
+ * сохранение, живут в utils/timesheetEntry.ts и покрыты тестами.
+ */
 async function handleSaveItem(data: EditingItem) {
-    if (!config.value) return
-    const { id, hours, isConsidered, description, employeeId, date } = data
-    isLoading.value = true 
-    
+    if (!config.value || !$b24) return
+    isLoading.value = true
+
     try {
-        // @ts-expect-error $b24 is guaranteed initialized in onMounted before this handler runs
-        await $b24.callMethod('crm.item.update', {
-            entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-            id: id,
-            fields: {
-                [config.value.FIELDS.HOURS]: hours,
-                [config.value.FIELDS.IS_CONSIDERED]: isConsidered ? 'Y' : 'N',
-                [config.value.FIELDS.DESCRIPTION]: description,
-                [config.value.FIELDS.EMPLOYEE]: employeeId,
-                [config.value.FIELDS.DATE]: date
-            }
-        })
-        if (rootTaskId.value) await loadTaskTree($b24!, rootTaskId.value)
+        const { fields, validation } = await prepareEntryFields(
+            $b24,
+            config.value,
+            {
+                ...data,
+                taskId: String(data.taskId || rootTaskId.value || ''),
+                splitHours: 0,
+                keepOriginalConsidered: false
+            },
+            taskTree.value
+        )
+
+        if (validation.warning) {
+            console.warn('[TaskPage]', validation.warning)
+        }
+
+        if (validation.error) {
+            toast.add({ title: validation.error, color: 'air-primary-alert' })
+            isLoading.value = false
+            return
+        }
+
+        if (data.id) {
+            await $b24.callMethod('crm.item.update', {
+                entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
+                id: data.id,
+                fields
+            })
+        } else {
+            await $b24.callMethod('crm.item.add', {
+                entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
+                fields
+            })
+        }
+
+        editingItem.value = null
+        toast.add({ title: data.id ? 'Запись сохранена' : 'Часы отражены', color: 'air-primary-success' })
+        if (rootTaskId.value) await loadTaskTree($b24, rootTaskId.value)
+        return
     } catch (e: unknown) {
-        toast.add({ title: "Ошибка сохранения: " + (e as { message?: string }).message, color: 'air-primary-alert' })
+        toast.add({ title: 'Ошибка сохранения: ' + (e as { message?: string }).message, color: 'air-primary-alert' })
         isLoading.value = false
     }
 
@@ -257,6 +320,7 @@ async function handleTransferToReport() {
                 </div>
 
                 <div class="flex flex-wrap gap-2">
+                    <B24Button label="Отразить" color="air-primary" @click="handleCreateEntry()" />
                     <B24Button label="Excel (CSV)" color="default" @click="handleExportExcel" />
                     <B24Button label="В отчет Bitrix24" color="success" @click="isReportModalOpen = true" />
                 </div>
@@ -296,6 +360,7 @@ async function handleTransferToReport() {
                 :node="node"
                 :rate="clientHourRate"
                 @edit="editingItem = $event"
+                @create="handleCreateEntry($event)"
             />
         </section>
     </div>
@@ -303,8 +368,14 @@ async function handleTransferToReport() {
     <B24Modal :open="!!editingItem" @update:open="(v) => { if (!v) editingItem = null }">
         <template #header>
             <div>
-                <div class="text-sm font-semibold text-slate-900">Редактирование записи</div>
-                <div class="mt-1 text-xs text-slate-500">Измените сотрудника, часы, дату и описание.</div>
+                <div class="text-sm font-semibold text-slate-900">
+                    {{ isCreatingEntry ? 'Отражение часов' : 'Редактирование записи' }}
+                </div>
+                <div class="mt-1 text-xs text-slate-500">
+                    {{ isCreatingEntry
+                        ? `Часы будут списаны на задачу ID ${editingItem?.taskId}.`
+                        : 'Измените сотрудника, часы, дату и описание.' }}
+                </div>
             </div>
         </template>
         <template #body>
@@ -330,7 +401,12 @@ async function handleTransferToReport() {
         </template>
         <template #footer>
             <B24Button label="Отмена" color="link" @click="editingItem = null" />
-            <B24Button label="Сохранить" color="success" @click="editingItem && handleSaveItem(editingItem)" />
+            <B24Button
+                :label="isCreatingEntry ? 'Отразить' : 'Сохранить'"
+                color="success"
+                loading-auto
+                @click="editingItem && handleSaveItem(editingItem)"
+            />
         </template>
     </B24Modal>
 

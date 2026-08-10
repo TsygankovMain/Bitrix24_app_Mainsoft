@@ -1,6 +1,7 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { withoutTrailingSlash } from 'ufo'
 import { withRefreshParam } from '~/utils/apiCache'
+import { isJwtFresh, readJwtExpiryMs } from '~/utils/jwt'
 import { buildReportSearchParams } from '~/utils/reportFilters'
 import type {
   DailyWorkloadReport,
@@ -116,6 +117,27 @@ export const useApiStore = defineStore(
     const apiUrl = normalizeApiBaseUrl(config.public.apiUrl)
 
     const tokenJWT = ref('')
+
+    // Срок годности выданного JWT (мс epoch) и промис запроса «в полёте».
+    //
+    // initApp() стоит в onMounted буквально каждой страницы, а api.init() раньше
+    // безусловно звал reinitToken() -> POST /api/getToken. На открытии вкладки
+    // задачи это давало ДВА токена подряд: монтируется index.client.vue (токен №1),
+    // тот определяет placement и делает router.push('/task'), монтируется task.vue
+    // (токен №2). Каждый getToken на бэкенде синхронно ходит в Bitrix REST
+    // (user.admin) и занимает слот gunicorn — то есть цена лишняя и блокирующая.
+    //
+    // Просто «получить один раз» нельзя: обработчика 401 в приложении нет, и
+    // повторный getToken на каждой навигации де-факто и был механизмом обновления
+    // токена. Поэтому гард смотрит на exp самого JWT и обновляет его заранее, за
+    // TOKEN_REFRESH_MARGIN_MS до истечения. Токен живёт 60 минут
+    // (models.Bitrix24Account.create_jwt_token).
+    let tokenExpiresAtMs = 0
+    let tokenRequest: Promise<void> | null = null
+
+    const isTokenFresh = (): boolean => {
+      return Boolean(tokenJWT.value) && isJwtFresh(tokenExpiresAtMs, Date.now())
+    }
 
     // Сообщение для серверного отказа по правам (admin-only эндпоинты).
     const FORBIDDEN_MESSAGE = 'Недостаточно прав'
@@ -996,7 +1018,23 @@ export const useApiStore = defineStore(
 
     const init = async (b24: B24Frame) => {
       $b24 = b24
-      await reinitToken()
+
+      // Токен ещё живой — второй getToken на том же открытии не нужен.
+      if (isTokenFresh()) {
+        return
+      }
+
+      // Дедупликация: index.client.vue и task.vue монтируются подряд, их initApp
+      // могут перекрыться по времени. Без общего промиса это снова два запроса.
+      if (tokenRequest) {
+        await tokenRequest
+        return
+      }
+
+      tokenRequest = reinitToken().finally(() => {
+        tokenRequest = null
+      })
+      await tokenRequest
     }
 
     const reinitToken = async () => {
@@ -1029,6 +1067,7 @@ export const useApiStore = defineStore(
       })
 
       tokenJWT.value = response.token
+      tokenExpiresAtMs = readJwtExpiryMs(response.token)
     }
 
     // Configuration

@@ -7,7 +7,7 @@ import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import CreateProjectDrawer from '~/components/projects/CreateProjectDrawer.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
-import { CREATE_PROJECT_BUTTON_ENABLED } from '~/utils/featureFlags'
+import { CREATE_PROJECT_BUTTON_ENABLED, TASK_TAB_ROUTE } from '~/utils/featureFlags'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -29,6 +29,18 @@ let $b24: null | B24Frame = null
 
 const apiStore = useApiStore()
 const fieldConfigStore = useFieldConfigStore()
+
+/**
+ * Куда вести из placement'а TASK_VIEW_TAB — см. TASK_TAB_ROUTE в utils/featureFlags.ts.
+ *
+ * installation_service биндит TASK_VIEW_TAB на КОРЕНЬ приложения и рассчитывает,
+ * что маршрут выберет клиент (см. комментарий там же). Раньше здесь стоял
+ * '/task' — экран, который тогда умел только смотреть дерево и править запись,
+ * то есть списать часы из карточки задачи было нельзя. В проде это не
+ * проявлялось (placement привязан прямо к /embedded), но ре-бинд placement'ов —
+ * штатная операция после смены production-домена, и переустановка молча
+ * пересадила бы сотрудников на экран без отражения часов.
+ */
 
 type PortfolioSummary = {
   total_count: number
@@ -410,7 +422,7 @@ onMounted(async () => {
     // @ts-expect-error - placement typing
     const placementCode = $b24.placement?.title || $b24.placement?.placement || ($b24.placement?.info && $b24.placement.info.placement)
     if (placementCode === 'TASK_VIEW_TAB') {
-      router.push('/task')
+      router.push(TASK_TAB_ROUTE)
       return
     }
     if (placementCode === 'SONET_GROUP_DETAIL_TAB') {
@@ -425,7 +437,7 @@ onMounted(async () => {
         // @ts-expect-error - BX24 global typing
         const rawPlacement = window.BX24.placement.info()
         if (rawPlacement && rawPlacement.placement === 'TASK_VIEW_TAB') {
-          router.push('/task')
+          router.push(TASK_TAB_ROUTE)
         } else if (rawPlacement && rawPlacement.placement === 'SONET_GROUP_DETAIL_TAB') {
           router.push('/reports/project-report')
         }
