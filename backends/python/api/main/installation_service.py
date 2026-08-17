@@ -42,8 +42,18 @@ PROJECT_FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     'planned_budget_amount': {'suffix': 'PLANNED_BUDGET_AMOUNT', 'label': 'Бюджет в деньгах', 'type': 'double'},
     'hourly_rate': {'suffix': 'HOURLY_RATE', 'label': 'Ставка часа', 'type': 'double'},
     'curator_id': {'suffix': 'CURATOR_ID', 'label': 'Куратор', 'type': 'employee'},
-    'company_id': {'suffix': 'COMPANY_ID', 'label': 'Компания', 'type': 'crm_company'},
-    'our_legal_entity_id': {'suffix': 'OUR_LEGAL_ENTITY_ID', 'label': 'Наше юрлицо', 'type': 'crm_company'},
+    # Тип «crm» + settings, а не выдуманный «crm_company»: такого userTypeId в
+    # Битриксе нет (crm.userfield.types его не возвращает), и userfieldconfig.add
+    # отбивал создание обоих полей — инцидент 17.08.2026, docs/incidents.
+    # Привязка к конкретной сущности задаётся флагами в settings.
+    'company_id': {
+        'suffix': 'COMPANY_ID', 'label': 'Компания', 'type': 'crm',
+        'settings': {'COMPANY': 'Y', 'CONTACT': 'N', 'DEAL': 'N', 'LEAD': 'N'},
+    },
+    'our_legal_entity_id': {
+        'suffix': 'OUR_LEGAL_ENTITY_ID', 'label': 'Наше юрлицо', 'type': 'crm',
+        'settings': {'COMPANY': 'Y', 'CONTACT': 'N', 'DEAL': 'N', 'LEAD': 'N'},
+    },
     'start_date': {'suffix': 'START_DATE', 'label': 'Дата старта', 'type': 'date'},
     'finish_date': {'suffix': 'FINISH_DATE', 'label': 'Дата окончания', 'type': 'date'},
     'is_archived': {'suffix': 'IS_ARCHIVED', 'label': 'Архив', 'type': 'boolean'},
@@ -93,7 +103,17 @@ SMART_PROCESS_DEFINITIONS: Dict[str, Dict[str, str]] = {
 }
 
 class InstallationError(Exception):
-    pass
+    """Ошибка установки/настройки, несущая собранные по пути предупреждения.
+
+    Создание полей копит в `warnings` ответы Битрикса по каждому полю. Раньше на
+    ветке отказа они терялись: исключение бросалось до возврата warnings, и
+    клиент получал 400 без причины (инцидент 17.08.2026, см.
+    tests_installation_fields). Теперь причина едет вместе с исключением.
+    """
+
+    def __init__(self, message: str, warnings: Optional[List[str]] = None):
+        super().__init__(message)
+        self.warnings: List[str] = list(warnings or [])
 
 class InstallationService:
     """
@@ -239,7 +259,12 @@ class InstallationService:
 
         created_mapping, warnings = self._create_fields_mapping_sync(sp_id, normalized_mapping_type, [canonical_field_key])
         if not created_mapping.get(canonical_field_key):
-            raise InstallationError(f"Поле {canonical_field_key} не удалось создать или определить в Smart Process.")
+            reason = '; '.join(warnings) if warnings else 'Битрикс не вернул причину.'
+            raise InstallationError(
+                f"Поле {canonical_field_key} не удалось создать или определить в Smart Process. "
+                f"Причина: {reason}",
+                warnings,
+            )
 
         existing_mapping.update(created_mapping)
         new_config = {
@@ -371,6 +396,8 @@ class InstallationService:
             }
             if field_definition.get('multiple'):
                 field_config['field']['multiple'] = 'Y'
+            if field_definition.get('settings'):
+                field_config['field']['settings'] = dict(field_definition['settings'])
 
             try:
                 response = self.client._bitrix_token.call_method('userfieldconfig.add', field_config)
@@ -401,7 +428,11 @@ class InstallationService:
             if str(field_id).lower() in available_field_ids or field_id in PROJECT_SYSTEM_MAPPINGS.values():
                 verified_mapping[key] = field_id
             else:
-                warnings.append(f"{key}: поле не найдено в crm.item.fields после создания")
+                # Имя поля в тексте обязательно: без него ветка «создалось, но не
+                # видно в crm.item.fields» неотличима от отказа создания, а именно
+                # здесь всплывает расхождение между угаданным camelCase-идентификатором
+                # и тем, что реально отдаёт портал.
+                warnings.append(f"{key}: поле {field_id} не найдено в crm.item.fields после создания")
 
         logger.info("Final %s mapping (%s fields): %s", normalized_mapping_type, len(verified_mapping), verified_mapping)
         return verified_mapping, warnings

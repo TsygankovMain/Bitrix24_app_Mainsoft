@@ -450,9 +450,9 @@ class ProjectSyncService:
         curator_value = self._get_mapped_value(item, mapping, "curator_id", "UF_CRM_CURATOR_ID", "ufCrmCuratorId")
         curator_user_id = self._extract_scalar(curator_value)
         company_value = self._get_mapped_value(item, mapping, "company_id", "UF_CRM_COMPANY_ID", "ufCrmCompanyId")
-        company_id = self._extract_scalar(company_value)
+        company_id = self._strip_crm_entity_prefix(self._extract_scalar(company_value))
         legal_value = self._get_mapped_value(item, mapping, "our_legal_entity_id", "UF_CRM_OUR_LEGAL_ENTITY_ID", "ufCrmOurLegalEntityId")
-        legal_entity_id = self._extract_scalar(legal_value)
+        legal_entity_id = self._strip_crm_entity_prefix(self._extract_scalar(legal_value))
 
         company_name = self._extract_scalar(self._get_mapped_value(item, mapping, "company_name", "UF_CRM_COMPANY_NAME", "ufCrmCompanyName"))
         legal_entity_name = self._extract_scalar(
@@ -795,6 +795,28 @@ class ProjectSyncService:
                     return ProjectSyncService._extract_scalar(value.get(key))
             return None
         return ProjectSyncService._clean_str(value)
+
+    @staticmethod
+    def _strip_crm_entity_prefix(value: Optional[str]) -> Optional[str]:
+        """«CO_15» -> «15». Голый ID и любое другое значение возвращаются как есть.
+
+        Поля «Компания» и «Наше юрлицо» имеют тип `crm` (привязка к элементам CRM).
+        Битрикс хранит такое значение с префиксом сущности, когда в поле разрешено
+        больше одного типа: CO_ — компания, C_ — контакт, D_ — сделка, L_ — лид.
+        Приложение создаёт эти поля с единственным разрешённым типом (COMPANY),
+        где значение приходит голым ID, но поле могло быть заведено руками через
+        интерфейс портала и с несколькими галочками.
+
+        Ниже по коду ID сравнивается с идентификаторами из crm.company.list
+        (`_resolve_company_reference`) и по нему тянутся реквизиты для ИНН, поэтому
+        префикс здесь снимается один раз на входе, а не в каждом потребителе.
+        """
+        if not value:
+            return value
+        for prefix in ("CO_", "C_", "D_", "L_"):
+            if value.startswith(prefix) and value[len(prefix):].isdigit():
+                return value[len(prefix):]
+        return value
 
     @staticmethod
     def _get_mapped_value(item: Dict[str, Any], mapping: Dict[str, str], mapping_key: str, *fallback_fields: str) -> Any:
