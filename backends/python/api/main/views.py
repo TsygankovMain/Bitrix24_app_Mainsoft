@@ -2259,7 +2259,13 @@ def create_mapped_field(request: AuthorizedRequest):
         result = service.create_single_field(int(sp_id), str(field_key), str(mapping_type))
         return JsonResponse({"status": "success", **result})
     except InstallationError as e:
-        return JsonResponse({"error": str(e)}, status=400)
+        # field_warnings — ответы Битрикса по каждому полю. На успешной ветке они
+        # уже отдавались, на ветке отказа терялись, и 400 приходил без причины.
+        payload = {"error": str(e)}
+        warnings = getattr(e, "warnings", None)
+        if warnings:
+            payload["field_warnings"] = warnings
+        return JsonResponse(payload, status=400)
     except Exception:
         logger.exception("create operation failed")
         return JsonResponse({"error": "Внутренняя ошибка сервера"}, status=500)

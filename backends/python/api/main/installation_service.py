@@ -93,7 +93,17 @@ SMART_PROCESS_DEFINITIONS: Dict[str, Dict[str, str]] = {
 }
 
 class InstallationError(Exception):
-    pass
+    """Ошибка установки/настройки, несущая собранные по пути предупреждения.
+
+    Создание полей копит в `warnings` ответы Битрикса по каждому полю. Раньше на
+    ветке отказа они терялись: исключение бросалось до возврата warnings, и
+    клиент получал 400 без причины (инцидент 17.08.2026, см.
+    tests_installation_fields). Теперь причина едет вместе с исключением.
+    """
+
+    def __init__(self, message: str, warnings: Optional[List[str]] = None):
+        super().__init__(message)
+        self.warnings: List[str] = list(warnings or [])
 
 class InstallationService:
     """
@@ -239,7 +249,12 @@ class InstallationService:
 
         created_mapping, warnings = self._create_fields_mapping_sync(sp_id, normalized_mapping_type, [canonical_field_key])
         if not created_mapping.get(canonical_field_key):
-            raise InstallationError(f"Поле {canonical_field_key} не удалось создать или определить в Smart Process.")
+            reason = '; '.join(warnings) if warnings else 'Битрикс не вернул причину.'
+            raise InstallationError(
+                f"Поле {canonical_field_key} не удалось создать или определить в Smart Process. "
+                f"Причина: {reason}",
+                warnings,
+            )
 
         existing_mapping.update(created_mapping)
         new_config = {
@@ -401,7 +416,11 @@ class InstallationService:
             if str(field_id).lower() in available_field_ids or field_id in PROJECT_SYSTEM_MAPPINGS.values():
                 verified_mapping[key] = field_id
             else:
-                warnings.append(f"{key}: поле не найдено в crm.item.fields после создания")
+                # Имя поля в тексте обязательно: без него ветка «создалось, но не
+                # видно в crm.item.fields» неотличима от отказа создания, а именно
+                # здесь всплывает расхождение между угаданным camelCase-идентификатором
+                # и тем, что реально отдаёт портал.
+                warnings.append(f"{key}: поле {field_id} не найдено в crm.item.fields после создания")
 
         logger.info("Final %s mapping (%s fields): %s", normalized_mapping_type, len(verified_mapping), verified_mapping)
         return verified_mapping, warnings
