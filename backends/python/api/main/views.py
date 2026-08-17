@@ -277,8 +277,8 @@ PROJECT_SPA_REQUIRED_MAPPING = {
     "project_hours_budget": "double",
     "hourly_rate": "double",
     "curator_id": "employee",
-    "company_id": "crm_company",
-    "our_legal_entity_id": "crm_company",
+    "company_id": "crm_binding",
+    "our_legal_entity_id": "crm_binding",
     "start_date": "date",
     "finish_date": "date",
     "is_archived": "boolean",
@@ -290,7 +290,12 @@ PROJECT_SPA_TYPE_ALIASES = {
     "double": {"double", "float", "money"},
     "boolean": {"boolean", "bool"},
     "employee": {"employee", "user", "crm_status"},
-    "crm_company": {"crm_company", "crm", "string"},
+    # Ключ — логическое ожидание приложения, значения — то, что реально может
+    # вернуть crm.item.fields. "crm" — штатный тип привязки к элементам CRM;
+    # "crm_company" остаётся ради порталов, где поле заводили руками до того, как
+    # выяснилось, что такого типа в Битриксе нет; "string"/"integer" — ради тех,
+    # где под компанию подобрали обычное поле с ID.
+    "crm_binding": {"crm", "crm_company", "string", "integer"},
     "date": {"date", "datetime"},
     "project_identifier": {"integer", "int", "string", "text", "char"},
     "stage": {"string", "text", "char", "crm_status", "status"},

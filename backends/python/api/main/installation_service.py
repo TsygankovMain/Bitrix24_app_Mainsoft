@@ -42,8 +42,18 @@ PROJECT_FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     'planned_budget_amount': {'suffix': 'PLANNED_BUDGET_AMOUNT', 'label': 'Бюджет в деньгах', 'type': 'double'},
     'hourly_rate': {'suffix': 'HOURLY_RATE', 'label': 'Ставка часа', 'type': 'double'},
     'curator_id': {'suffix': 'CURATOR_ID', 'label': 'Куратор', 'type': 'employee'},
-    'company_id': {'suffix': 'COMPANY_ID', 'label': 'Компания', 'type': 'crm_company'},
-    'our_legal_entity_id': {'suffix': 'OUR_LEGAL_ENTITY_ID', 'label': 'Наше юрлицо', 'type': 'crm_company'},
+    # Тип «crm» + settings, а не выдуманный «crm_company»: такого userTypeId в
+    # Битриксе нет (crm.userfield.types его не возвращает), и userfieldconfig.add
+    # отбивал создание обоих полей — инцидент 17.08.2026, docs/incidents.
+    # Привязка к конкретной сущности задаётся флагами в settings.
+    'company_id': {
+        'suffix': 'COMPANY_ID', 'label': 'Компания', 'type': 'crm',
+        'settings': {'COMPANY': 'Y', 'CONTACT': 'N', 'DEAL': 'N', 'LEAD': 'N'},
+    },
+    'our_legal_entity_id': {
+        'suffix': 'OUR_LEGAL_ENTITY_ID', 'label': 'Наше юрлицо', 'type': 'crm',
+        'settings': {'COMPANY': 'Y', 'CONTACT': 'N', 'DEAL': 'N', 'LEAD': 'N'},
+    },
     'start_date': {'suffix': 'START_DATE', 'label': 'Дата старта', 'type': 'date'},
     'finish_date': {'suffix': 'FINISH_DATE', 'label': 'Дата окончания', 'type': 'date'},
     'is_archived': {'suffix': 'IS_ARCHIVED', 'label': 'Архив', 'type': 'boolean'},
@@ -386,6 +396,8 @@ class InstallationService:
             }
             if field_definition.get('multiple'):
                 field_config['field']['multiple'] = 'Y'
+            if field_definition.get('settings'):
+                field_config['field']['settings'] = dict(field_definition['settings'])
 
             try:
                 response = self.client._bitrix_token.call_method('userfieldconfig.add', field_config)

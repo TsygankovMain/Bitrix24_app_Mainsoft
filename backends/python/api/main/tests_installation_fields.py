@@ -114,6 +114,95 @@ class CreateSingleFieldErrorTest(SimpleTestCase):
         self.assertIn("ufCrm5CompanyId", str(caught.exception))
         self.assertIn("crm.item.fields", str(caught.exception))
 
+    def test_company_field_is_created_as_crm_binding(self):
+        """Корень инцидента: тип поля должен существовать в Битриксе.
+
+        `crm_company` в `crm.userfield.types` не значится — `userfieldconfig.add`
+        отбивал создание, и «Компания» с «Наше юрлицо» не создавались ни на одном
+        портале. Привязка к CRM — это тип `crm`, сущность задаётся через settings.
+        """
+        service = self._service(
+            _base_handlers(
+                **{
+                    "userfieldconfig.add": {
+                        "result": {"field": {"fieldName": "UF_CRM_5_COMPANY_ID"}}
+                    },
+                    "crm.item.fields": {
+                        "result": {"fields": {"ufCrm5CompanyId": {"type": "crm"}}}
+                    },
+                }
+            )
+        )
+
+        service.create_single_field(1038, "company_id", "project")
+
+        sent = [
+            params
+            for method, params in service.client._bitrix_token.calls
+            if method == "userfieldconfig.add"
+        ]
+        self.assertEqual(len(sent), 1)
+        field = sent[0]["field"]
+        self.assertEqual(field["userTypeId"], "crm")
+        self.assertEqual(field["settings"]["COMPANY"], "Y")
+        self.assertEqual(field["settings"]["CONTACT"], "N")
+        self.assertEqual(field["settings"]["DEAL"], "N")
+        self.assertEqual(field["settings"]["LEAD"], "N")
+
+    def test_legal_entity_field_is_created_as_crm_binding(self):
+        """«Наше юрлицо» страдало от того же несуществующего типа."""
+        service = self._service(
+            _base_handlers(
+                **{
+                    "userfieldconfig.add": {
+                        "result": {
+                            "field": {"fieldName": "UF_CRM_5_OUR_LEGAL_ENTITY_ID"}
+                        }
+                    },
+                    "crm.item.fields": {
+                        "result": {
+                            "fields": {"ufCrm5OurLegalEntityId": {"type": "crm"}}
+                        }
+                    },
+                }
+            )
+        )
+
+        service.create_single_field(1038, "our_legal_entity_id", "project")
+
+        field = [
+            params
+            for method, params in service.client._bitrix_token.calls
+            if method == "userfieldconfig.add"
+        ][0]["field"]
+        self.assertEqual(field["userTypeId"], "crm")
+        self.assertEqual(field["settings"]["COMPANY"], "Y")
+
+    def test_plain_field_carries_no_settings(self):
+        """settings уходит только там, где он объявлен, — не во всех полях подряд."""
+        service = self._service(
+            _base_handlers(
+                **{
+                    "userfieldconfig.add": {
+                        "result": {"field": {"fieldName": "UF_CRM_5_HOURLY_RATE"}}
+                    },
+                    "crm.item.fields": {
+                        "result": {"fields": {"ufCrm5HourlyRate": {"type": "double"}}}
+                    },
+                }
+            )
+        )
+
+        service.create_single_field(1038, "hourly_rate", "project")
+
+        field = [
+            params
+            for method, params in service.client._bitrix_token.calls
+            if method == "userfieldconfig.add"
+        ][0]["field"]
+        self.assertEqual(field["userTypeId"], "double")
+        self.assertNotIn("settings", field)
+
     def test_success_path_returns_mapping(self):
         """Контроль на ложную тревогу: при живом Битриксе поле мапится как раньше."""
         service = self._service(
