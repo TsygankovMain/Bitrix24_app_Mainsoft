@@ -19,7 +19,11 @@ from django.utils import timezone
 from .configuration_service import ConfigurationService
 from .models import Bitrix24Account, ProjectCard
 from .project_board_service import ProjectCardService
-from .project_board_shared import build_account_cache_key, invalidate_project_runtime_caches
+from .project_board_shared import (
+    build_account_cache_key,
+    invalidate_company_directory_cache,
+    invalidate_project_runtime_caches,
+)
 from .project_creation_defaults import ResolvedProjectFields, resolve_project_fields
 from .tenant_scoping import scope_to_tenant
 from .utils.decorators.sync_lock import SyncLockBusy, account_sync_lock
@@ -1173,6 +1177,14 @@ class ProjectCreationService:
             # локальная строка в этом случае не гарантирована, показывать
             # нечего.
             invalidate_project_runtime_caches(self.account)
+            # Единственный путь в приложении, который может завести НОВУЮ
+            # компанию (шаг ensure_company -> crm.company.add), поэтому
+            # справочник компаний сбрасываем именно здесь. В общем списке
+            # invalidate_project_runtime_caches этого ключа больше нет: там
+            # он сносился каждым синком таймшитов, который компании не меняет,
+            # и следующий синк платил за полный обход портала 5-7 минут
+            # (см. invalidate_company_directory_cache).
+            invalidate_company_directory_cache(self.account)
         except Exception as exc:
             logger.warning("create: write_through failed for group %s: %s", group.id, exc)
 
