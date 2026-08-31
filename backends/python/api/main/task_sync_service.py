@@ -84,6 +84,38 @@ class TaskSyncService:
             return {"synced": 0, "created": 0, "updated": 0}
         return self._save_batch(self._fetch_tasks(sorted(set(cleaned))))
 
+    def sync_missing_task_ids(self, limit: int = 200) -> Dict[str, int]:
+        """Дотягивает задачи, которые есть в списаниях, но не в справочнике.
+
+        Зовётся после синхронизации таймшитов — в том числе с кнопки
+        «Обновить». Без этого кнопка обновляла только сами списания, а
+        справочник ждал своего цикла: пользователь списывал часы, переносил
+        задачу, жал «Обновить» и не видел никакой реакции, потому что задачи
+        в справочнике ещё не было (боевая проверка 31.08.2026, задача 8365 —
+        запись доехала на минуту позже прогона задач и разминулась с ним).
+
+        Дёшево в типичном случае: если не хватает нечего, это один SELECT без
+        единого обращения к Битриксу. limit ограничивает разовый объём, чтобы
+        кнопка не превращалась в полный обход после долгого простоя —
+        остальное доберёт фоновый цикл.
+        """
+        known = set(
+            PortalTask.objects.filter(**scope_to_tenant(self.account)).values_list(
+                "bitrix_id", flat=True
+            )
+        )
+        missing = [tid for tid in self.collect_referenced_task_ids() if tid not in known]
+        if not missing:
+            return {"synced": 0, "created": 0, "updated": 0}
+
+        if len(missing) > limit:
+            logger.info(
+                "Task directory: %s tasks missing, syncing first %s (rest on next cycle).",
+                len(missing), limit,
+            )
+            missing = missing[:limit]
+        return self.sync_task_ids(missing)
+
     def collect_referenced_task_ids(self) -> List[str]:
         """ID задач, встречающихся в списаниях: и сама задача, и вся её цепочка.
 
