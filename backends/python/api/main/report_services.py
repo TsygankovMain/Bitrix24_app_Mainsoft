@@ -81,7 +81,28 @@ class DataProcessingService:
 
             project_name = self._stringify_value(item.get(field_project_name))
             if not project_name:
-                project_name = title_hierarchy[0] if title_hierarchy else "Не определён"
+                # Корень иерархии как имя проекта — исходный замысел (см.
+                # tests_reports.test_normalization_project_logic, где корень
+                # так и назван "Project B"): зонтичная задача над этой играет
+                # роль проекта. Замысел рабочий, но только когда над задачей
+                # ДЕЙСТВИТЕЛЬНО кто-то есть.
+                #
+                # У задачи без родителя иерархия состоит из неё самой, и корень
+                # — её собственное название. Оно оседало в project_title как имя
+                # проекта, и в отчётах заводились проекты, которых в Битриксе
+                # нет: на проде у задачи 8033 при одном и том же project_id=415
+                # есть записи и с «Сопровождение ПВД» (настоящее имя проекта), и
+                # с «Разработка модуля/расширения для 1С:Бухгалтерии» (её
+                # собственное имя).
+                #
+                # Цифры прода: на глубине 1 таких подмен 54, на глубине 2 —
+                # ровно одна. То есть проблема именно в вырожденном случае, а не
+                # в самом фолбэке. Поэтому условие на глубину, а не отказ от
+                # фолбэка.
+                if len(title_hierarchy) > 1:
+                    project_name = title_hierarchy[0]
+                else:
+                    project_name = "Не определён"
 
             task_name = title_hierarchy[-1] if title_hierarchy else "Без названия"
 
@@ -211,8 +232,14 @@ class ReportService:
             emp_node["billable_hours"] += billable
             emp_node["non_billable_hours"] += non_billable
 
-            if proj_name not in emp_node["children"]:
-                emp_node["children"][proj_name] = {
+            # Ключ — идентификатор проекта, а НЕ его имя (см.
+            # report_queries.resolve_project_key_for_row). По имени один и тот
+            # же проект расщеплялся на два узла при любом расхождении текста:
+            # project_title в записи — снимок на момент списания, и он спокойно
+            # расходится с текущим именем карточки.
+            proj_key = item.get("project_key") or f"name:{proj_name}"
+            if proj_key not in emp_node["children"]:
+                emp_node["children"][proj_key] = {
                     "type": "project",
                     "name": proj_name,
                     "total_hours": 0.0,
@@ -221,7 +248,7 @@ class ReportService:
                     "children": {},
                 }
 
-            proj_node = emp_node["children"][proj_name]
+            proj_node = emp_node["children"][proj_key]
             proj_node["total_hours"] += hours
             proj_node["billable_hours"] += billable
             proj_node["non_billable_hours"] += non_billable
@@ -278,8 +305,13 @@ class ReportService:
             billable = hours if is_billable else 0.0
             non_billable = hours if not is_billable else 0.0
 
-            if proj_name not in tree:
-                tree[proj_name] = {
+            # Группируем по идентификатору проекта, а не по имени (см.
+            # report_queries.resolve_project_key_for_row). Поле "id" в ответе
+            # намеренно оставлено прежним — это контракт с фронтом, а ключ
+            # словаря наружу не виден.
+            proj_key = item.get("project_key") or f"name:{proj_name}"
+            if proj_key not in tree:
+                tree[proj_key] = {
                     "type": "project",
                     "id": proj_name,
                     "name": proj_name,
@@ -289,7 +321,7 @@ class ReportService:
                     "children": {},
                 }
 
-            proj_node = tree[proj_name]
+            proj_node = tree[proj_key]
             proj_node["total_hours"] += hours
             proj_node["billable_hours"] += billable
             proj_node["non_billable_hours"] += non_billable
@@ -362,8 +394,13 @@ class ReportService:
             billable = hours if is_billable else 0.0
             non_billable = hours if not is_billable else 0.0
 
-            if proj_name not in tree:
-                tree[proj_name] = {
+            # Группируем по идентификатору проекта, а не по имени (см.
+            # report_queries.resolve_project_key_for_row). Поле "id" в ответе
+            # намеренно оставлено прежним — это контракт с фронтом, а ключ
+            # словаря наружу не виден.
+            proj_key = item.get("project_key") or f"name:{proj_name}"
+            if proj_key not in tree:
+                tree[proj_key] = {
                     "type": "project",
                     "id": proj_name,
                     "name": proj_name,
@@ -373,7 +410,7 @@ class ReportService:
                     "children": {},
                 }
 
-            proj_node = tree[proj_name]
+            proj_node = tree[proj_key]
             proj_node["total_hours"] += hours
             proj_node["billable_hours"] += billable
             proj_node["non_billable_hours"] += non_billable

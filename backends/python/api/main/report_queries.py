@@ -234,6 +234,36 @@ def resolve_project_name_for_row(
     return "Не определён"
 
 
+def resolve_project_key_for_row(row: Mapping[str, Any]) -> str:
+    """Устойчивый ключ проекта для группировки в отчётах.
+
+    Дерево отчёта раньше ключевало узел проекта ПО ИМЕНИ
+    (report_services: emp_node["children"][proj_name]), и любое расхождение в
+    тексте немедленно давало вторую строку одного и того же проекта. Расхождения
+    берутся не из воздуха: project_title — это снимок на момент списания, а
+    normalize_items при пустом поле проекта подставлял туда НАЗВАНИЕ ЗАДАЧИ.
+    На проде это 18 задач, чьи записи несут больше одного значения проекта, и
+    185 записей без опоры на карточку проекта.
+
+    Приоритет: project_item_id (элемент СП «Проект») -> project_id (группа
+    Битрикса) -> имя. Имя остаётся последним рубежом для записей, где нет ни
+    того ни другого (12 строк на проде), — иначе они схлопнулись бы в один
+    общий узел, что хуже.
+
+    Ключ используется ТОЛЬКО для группировки; отображаемое имя по-прежнему
+    даёт resolve_project_name_for_row, то есть актуальное имя карточки.
+    """
+    project_item_id = str(row.get("project_item_id") or "").strip()
+    if project_item_id:
+        return f"item:{project_item_id}"
+
+    project_id = str(row.get("project_id") or "").strip()
+    if project_id:
+        return f"group:{project_id}"
+
+    return f"name:{str(row.get('project_title') or '').strip()}"
+
+
 def build_tree_report_items(
     rows: Iterable[Dict[str, Any]],
     include_task_id: bool = False,
@@ -245,6 +275,7 @@ def build_tree_report_items(
         item = {
             "sotrudnik_id": row["employee_id"],
             "project_name": resolve_project_name_for_row(row, project_name_by_item, project_name_by_group),
+            "project_key": resolve_project_key_for_row(row),
             "kolichestvo_chasov": row["hours"],
             "id_zadach_ierarhiya": row["task_hierarchy_ids"],
             "title_zadach_ierarhiya": row["task_hierarchy_titles"],
