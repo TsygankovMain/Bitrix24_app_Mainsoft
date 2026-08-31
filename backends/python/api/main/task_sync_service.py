@@ -61,9 +61,14 @@ class TaskSyncService:
     BULK_BATCH_SIZE = 200
     UPSERT_FIELDS = ["title", "group_id", "updated_at"]
 
-    def __init__(self, client: Client, account: Bitrix24Account):
+    def __init__(self, client: Client, account: Bitrix24Account, interactive: bool = False):
         self.client = client
         self.account = account
+        # interactive=True — вызов из запроса пользователя (кнопка «Обновить»).
+        # Там нет своего таймаута, а между браузером и сервером стоит прокси
+        # хостинга со своим лимитом, поэтому переписываем небольшую порцию
+        # карточек, а остаток доделывает фон.
+        self.interactive = interactive
 
     def sync(self) -> Dict[str, int]:
         task_ids = self.collect_referenced_task_ids()
@@ -159,6 +164,64 @@ class TaskSyncService:
             return {"synced": 0, "created": 0, "updated": 0}
         return self._save_batch(raw_tasks)
 
+    def reconcile_project_divergence(self, limit: int = 5) -> Dict[str, int]:
+        """Выравнивает записи, чей проект разошёлся с текущей группой задачи.
+
+        Нужно, потому что переписывание карточек срабатывает на СМЕНУ группы,
+        то есть на событие. Всё, что событие пропустило, иначе осталось бы
+        расходиться навсегда:
+
+          * остаток от интерактивного вызова — кнопка переписывает небольшую
+            порцию, а справочник при этом уже зафиксировал новую группу, и
+            повторно «смена» не случится;
+          * историческое расхождение — на проде это 60 записей по 28 задачам,
+            накопленных до появления механизма;
+          * любой пропуск: отказ Битрикса, перезапуск контейнера в середине,
+            закрытый период, который потом открыли.
+
+        Обрабатывает не больше limit ЗАДАЧ за прогон: это фоновая уборка, ей
+        некуда спешить, а держать синк минутами незачем. Зовётся только из
+        фонового цикла — в кнопке ей делать нечего.
+        """
+        # Джойн через ORM тут неудобен: PortalTask не связан с TimesheetItem
+        # внешним ключом, они сопоставляются только по bitrix_id задачи.
+        # Поэтому сопоставляем в Python — справочник это полторы тысячи строк.
+        groups = dict(
+            PortalTask.objects.filter(**scope_to_tenant(self.account))
+            .exclude(group_id="")
+            .values_list("bitrix_id", "group_id")
+        )
+        if not groups:
+            return {"tasks": 0, "updated": 0}
+
+        rows = (
+            TimesheetItem.objects.filter(**scope_to_tenant(self.account))
+            .exclude(task_id="")
+            .values_list("task_id", "project_id")
+            .distinct()
+        )
+        stale_tasks = []
+        for task_id, project_id in rows.iterator():
+            current = groups.get(str(task_id))
+            if current and str(project_id or "") != current:
+                stale_tasks.append((str(task_id), str(project_id or ""), current))
+            if len(stale_tasks) >= limit:
+                break
+
+        if not stale_tasks:
+            return {"tasks": 0, "updated": 0}
+
+        moves = [
+            {"task_id": task_id, "old_group": old, "new_group": new, "raw": {}}
+            for task_id, old, new in stale_tasks
+        ]
+        audit.info(
+            "Project reconcile: %s tasks diverged from current group (account %s)",
+            len(moves), self.account.pk,
+        )
+        self._apply_project_moves(moves)
+        return {"tasks": len(moves), "updated": 0}
+
     def _apply_project_moves(self, moves: List[Dict[str, Any]]) -> None:
         """Переписывает проект в карточках списаний переехавших задач.
 
@@ -173,7 +236,11 @@ class TaskSyncService:
         """
         try:
             from .configuration_service import ConfigurationService
-            from .project_move_service import ProjectMoveService
+            from .project_move_service import (
+                MAX_ITEMS_PER_MOVE,
+                MAX_ITEMS_PER_MOVE_INTERACTIVE,
+                ProjectMoveService,
+            )
 
             config = ConfigurationService(self.client, self.account).get_configuration_sync()
             mover = ProjectMoveService(self.client, self.account, config)
@@ -194,6 +261,10 @@ class TaskSyncService:
             raw = move.get("raw") or {}
             try:
                 mover.apply_move(
+                    max_items=(
+                        MAX_ITEMS_PER_MOVE_INTERACTIVE if self.interactive
+                        else MAX_ITEMS_PER_MOVE
+                    ),
                     task_id=move["task_id"],
                     old_group=move["old_group"],
                     new_group=move["new_group"],
