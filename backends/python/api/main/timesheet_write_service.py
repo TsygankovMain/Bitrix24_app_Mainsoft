@@ -45,6 +45,7 @@ from .configuration_service import ConfigurationService
 from .models import Bitrix24Account
 
 logger = logging.getLogger(__name__)
+audit = logging.getLogger("main.audit")
 
 
 class TimesheetWriteError(Exception):
@@ -91,7 +92,7 @@ class TimesheetWriteService:
             {"entityTypeId": entity_type_id, "fields": fields},
         )
         item_id = self._extract_item_id(response)
-        logger.info(
+        audit.info(
             "Timesheet entry created by account %s (b24 user %s): item %s, task %s, project %s",
             self.account.pk, self.account.b24_user_id, item_id,
             self._field(fields, "id_zadachi"), self._field(fields, "project_id"),
@@ -112,7 +113,7 @@ class TimesheetWriteService:
             "crm.item.update",
             {"entityTypeId": entity_type_id, "id": numeric_id, "fields": fields},
         )
-        logger.info(
+        audit.info(
             "Timesheet entry updated by account %s (b24 user %s): item %s, task %s, project %s",
             self.account.pk, self.account.b24_user_id, numeric_id,
             self._field(fields, "id_zadachi"), self._field(fields, "project_id"),

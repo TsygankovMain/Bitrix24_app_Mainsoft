@@ -11,6 +11,7 @@ from .project_board_shared import get_project_card_queryset
 from .tenant_scoping import scope_to_tenant
 
 logger = logging.getLogger(__name__)
+audit = logging.getLogger("main.audit")
 
 
 TREE_REPORT_FIELDS = (
@@ -400,7 +401,7 @@ def build_tree_report_items(
         items.append(item)
 
     if task_lookup is not None and items:
-        logger.info(
+        audit.info(
             "Report resolve: rows=%s, moved_to_current_project=%s, task_missing_in_directory=%s",
             len(items), stat_moved, stat_no_task,
         )

@@ -34,6 +34,9 @@ from .models import Bitrix24Account, PortalTask, TimesheetItem
 from .tenant_scoping import scope_to_tenant
 
 logger = logging.getLogger(__name__)
+# События, которые обязаны быть видны в system_log, но ошибками не являются
+# (порог общего db-обработчика — WARNING, см. settings.LOGGING).
+audit = logging.getLogger("main.audit")
 
 
 def _clean_id(value: Any) -> str:
@@ -196,12 +199,12 @@ class TaskSyncService:
                     # отдельно и явно, иначе «почему цифры поехали» приходится
                     # выяснять сопоставлением выгрузок.
                     if field_name == "group_id":
-                        logger.info(
+                        audit.info(
                             "Task %s moved: group %s -> %s (account %s)",
                             bitrix_id, previous or "—", field_value or "—", self.account.pk,
                         )
                     elif field_name == "title":
-                        logger.info(
+                        audit.info(
                             "Task %s renamed: %r -> %r (account %s)",
                             bitrix_id, previous, field_value, self.account.pk,
                         )
