@@ -297,6 +297,10 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                     with account_sync_lock(account, scope="tasks"):
                         service = TaskSyncService(account.client, account)
                         result = service.sync()
+                        # Уборка за событийным механизмом: остаток от
+                        # интерактивных вызовов, историческое расхождение и
+                        # любые пропуски. Только в фоне — здесь есть время.
+                        service.reconcile_project_divergence()
                 except SyncLockBusy:
                     logger.info("Portal %s task-sync skipped: lock busy.",
                                 account.member_id)

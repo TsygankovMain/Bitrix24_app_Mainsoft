@@ -1859,7 +1859,7 @@ def _refresh_task_directory(account):
     превращать успешный синк часов в ошибку для пользователя.
     """
     try:
-        task_sync = TaskSyncService(account.client, account)
+        task_sync = TaskSyncService(account.client, account, interactive=True)
         task_sync.sync_missing_task_ids()
         task_sync.sync_changed_since()
     except Exception as exc:  # noqa: BLE001

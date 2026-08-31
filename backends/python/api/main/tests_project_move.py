@@ -11,8 +11,13 @@
 
 from django.test import TestCase
 
-from .models import Bitrix24Account, TimesheetItem
-from .project_move_service import MAX_ITEMS_PER_MOVE, ProjectMoveService
+from .models import Bitrix24Account, PortalTask, TimesheetItem
+from .project_move_service import (
+    MAX_ITEMS_PER_MOVE,
+    MAX_ITEMS_PER_MOVE_INTERACTIVE,
+    ProjectMoveService,
+)
+from .task_sync_service import TaskSyncService
 
 
 CONFIG = {
@@ -175,3 +180,95 @@ class ProjectMoveServiceTest(TestCase):
                 if c[0] == "crm.timeline.comment.add"][0][1]["fields"]["COMMENT"]
         self.assertIn("группа 459", text)
         self.assertIn("группа 73", text)
+
+    def test_interactive_cap_is_smaller(self):
+        """У кнопки «Обновить» нет своего таймаута, а прокси хостинга рвёт
+        соединение примерно через минуту. Сто обновлений плюс сто комментариев
+        внутри запроса кнопки — это десятки секунд, поэтому интерактивный
+        потолок отдельный и низкий, а остаток доделывает фон."""
+        for i in range(1, 26):
+            self._entry(i)
+        client = FakeClient()
+
+        result = self._service(client).apply_move(
+            "8365", "459", "73", "Мейнсофт",
+            max_items=MAX_ITEMS_PER_MOVE_INTERACTIVE,
+        )
+
+        self.assertEqual(result["updated"], MAX_ITEMS_PER_MOVE_INTERACTIVE)
+        self.assertEqual(result["over_limit"], 25 - MAX_ITEMS_PER_MOVE_INTERACTIVE)
+
+
+class ReconcileDivergenceTest(TestCase):
+    """Выравнивание того, что событийный механизм пропустил.
+
+    Переписывание срабатывает на СМЕНУ группы. Всё, что смены не застало,
+    иначе расходилось бы навсегда: остаток от интерактивного вызова (кнопка
+    берёт малую порцию, а справочник уже зафиксировал новую группу, и
+    повторно «смена» не случится), историческое расхождение — на проде 60
+    записей по 28 задачам, — и любые пропуски.
+    """
+
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=11, is_b24_user_admin=True, member_id="m-reconcile",
+            is_master_account=True, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def _entry(self, bitrix_id, task_id, project_id):
+        TimesheetItem.objects.create(
+            bitrix24_account=self.account, bitrix_id=bitrix_id, task_id=task_id,
+            employee_id="11", hours=1, project_id=project_id, project_title="Старый",
+            task_hierarchy_ids=[task_id], task_hierarchy_titles=["Задача"],
+            date_reflection="2026-08-31T10:00:00+00:00",
+        )
+
+    def _task(self, bitrix_id, group_id):
+        PortalTask.objects.create(
+            bitrix24_account=self.account, bitrix_id=bitrix_id,
+            title="Задача", group_id=group_id,
+        )
+
+    def _service(self):
+        service = TaskSyncService(client=None, account=self.account)
+        service.applied = []
+        service._apply_project_moves = lambda moves: service.applied.extend(moves)
+        return service
+
+    def test_diverged_task_is_picked_up(self):
+        self._entry(1, "8365", "459")
+        self._task("8365", "73")
+        service = self._service()
+
+        result = service.reconcile_project_divergence()
+
+        self.assertEqual(result["tasks"], 1)
+        self.assertEqual(service.applied[0]["old_group"], "459")
+        self.assertEqual(service.applied[0]["new_group"], "73")
+
+    def test_matching_task_is_left_alone(self):
+        self._entry(1, "8365", "73")
+        self._task("8365", "73")
+        service = self._service()
+
+        self.assertEqual(service.reconcile_project_divergence()["tasks"], 0)
+        self.assertEqual(service.applied, [])
+
+    def test_task_without_directory_row_is_skipped(self):
+        """Нет группы в справочнике — сравнивать не с чем, трогать нельзя."""
+        self._entry(1, "9999", "459")
+        service = self._service()
+
+        self.assertEqual(service.reconcile_project_divergence()["tasks"], 0)
+
+    def test_limit_caps_tasks_per_run(self):
+        """Фоновая уборка, ей некуда спешить: держать синк минутами незачем."""
+        for i in range(1, 11):
+            self._entry(i, f"task{i}", "459")
+            self._task(f"task{i}", "73")
+        service = self._service()
+
+        service.reconcile_project_divergence(limit=3)
+
+        self.assertEqual(len(service.applied), 3)

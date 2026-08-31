@@ -40,9 +40,17 @@ from .tenant_scoping import scope_to_tenant
 logger = logging.getLogger(__name__)
 audit = logging.getLogger("main.audit")
 
-# Потолок карточек на один перенос. Хвост распределения длинный (максимум 260),
-# и переписывать его целиком внутри синка — значит держать синк минутами.
+# Потолки карточек на один перенос — РАЗНЫЕ для кнопки и фона, и это важно.
+#
+# У кнопки «Обновить» нет своего таймаута: браузер ждёт сколько угодно, сервер
+# рвёт на 300 секундах, а между ними стоит прокси хостинга со своим лимитом
+# (обычно 60 секунд). Сто обновлений плюс сто комментариев внутри одного
+# запроса кнопки — это десятки секунд, то есть риск получить ошибку шлюза при
+# том, что на сервере всё продолжит выполняться. Поэтому в интерактивном пути
+# берём небольшую порцию, а остальное доделывает фон, где 300 секунд есть
+# гарантированно.
 MAX_ITEMS_PER_MOVE = 100
+MAX_ITEMS_PER_MOVE_INTERACTIVE = 10
 
 
 class ProjectMoveService:
@@ -69,6 +77,7 @@ class ProjectMoveService:
         new_group_name: str = "",
         moved_by_name: str = "",
         moved_at: str = "",
+        max_items: int = MAX_ITEMS_PER_MOVE,
     ) -> Dict[str, Any]:
         """Переписывает проект во всех карточках задачи и комментирует каждую.
 
@@ -92,9 +101,9 @@ class ProjectMoveService:
         if not total:
             return {"updated": 0, "failed": [], "total": 0}
 
-        over_limit = max(0, total - MAX_ITEMS_PER_MOVE)
+        over_limit = max(0, total - max_items)
         items = list(
-            queryset.values_list("bitrix_id", "project_title")[:MAX_ITEMS_PER_MOVE]
+            queryset.values_list("bitrix_id", "project_title")[:max_items]
         )
 
         fields = {field_project_id: new_group}
