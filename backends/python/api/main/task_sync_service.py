@@ -159,6 +159,111 @@ class TaskSyncService:
             return {"synced": 0, "created": 0, "updated": 0}
         return self._save_batch(raw_tasks)
 
+    def _apply_project_moves(self, moves: List[Dict[str, Any]]) -> None:
+        """Переписывает проект в карточках списаний переехавших задач.
+
+        Изолировано от синка справочника: справочник уже сохранён, и если
+        переписывание карточек упадёт (закрытый период, отказ Битрикса,
+        отсутствие маппинга), актуальные группы задач всё равно останутся в
+        базе — отчёт подставит верный проект на чтении, как и раньше.
+
+        Имя новой группы и того, кто перенёс задачу, берём из сырого ответа
+        tasks.task.list: он отдаёт вложенный объект group и changedBy, а
+        значит второй запрос ради текста комментария не нужен.
+        """
+        try:
+            from .configuration_service import ConfigurationService
+            from .project_move_service import ProjectMoveService
+
+            config = ConfigurationService(self.client, self.account).get_configuration_sync()
+            mover = ProjectMoveService(self.client, self.account, config)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Project rewrite skipped (setup failed): %s", exc)
+            return
+
+        # Имена групп резолвим один раз на все переносы: в списочном ответе
+        # tasks.task.list вложенного объекта group нет, только GROUP_ID.
+        # Берём ИМЯ ГРУППЫ БИТРИКСА, а не название карточки проекта: карточек
+        # на одну группу бывает несколько (на проде 21 такая группа, у одной
+        # их три), и подставлять произвольную в комментарий «стало» нельзя.
+        group_names = self._resolve_group_names(
+            {m["new_group"] for m in moves if m.get("new_group")}
+        )
+
+        for move in moves:
+            raw = move.get("raw") or {}
+            try:
+                mover.apply_move(
+                    task_id=move["task_id"],
+                    old_group=move["old_group"],
+                    new_group=move["new_group"],
+                    new_group_name=group_names.get(move["new_group"], ""),
+                    moved_by_name=self._resolve_user_name(raw.get("changedBy") or raw.get("CHANGED_BY")),
+                    moved_at=str(raw.get("changedDate") or raw.get("CHANGED_DATE") or "")[:19].replace("T", " "),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Project rewrite failed for task %s: %s", move.get("task_id"), exc,
+                )
+
+    def _resolve_group_names(self, group_ids: Set[str]) -> Dict[str, str]:
+        """Названия рабочих групп Битрикса по их id, одним запросом.
+
+        Нужны для текста комментария «стало «Мейнсофт»». Именно имя ГРУППЫ, а
+        не карточки проекта: карточек на одну группу бывает несколько, и
+        подставлять произвольную в историю нельзя.
+
+        Сбой не критичен: без имени комментарий скажет «группа 73» — хуже
+        читается, но не врёт.
+        """
+        ids = sorted(gid for gid in group_ids if gid)
+        if not ids:
+            return {}
+        try:
+            response = self.client._bitrix_token.call_method(
+                "sonet_group.get",
+                {"FILTER": {"ID": ids}, "SELECT": ["ID", "NAME"]},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Group names lookup failed: %s", exc)
+            return {}
+
+        rows = response.get("result") if isinstance(response, dict) else None
+        if not isinstance(rows, list):
+            return {}
+        names: Dict[str, str] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            gid = _clean_id(row.get("ID") or row.get("id"))
+            name = str(row.get("NAME") or row.get("name") or "").strip()
+            if gid and name:
+                names[gid] = name
+        return names
+
+    def _resolve_user_name(self, user_id: Any) -> str:
+        """Имя сотрудника для текста комментария — из локального справочника.
+
+        Специально без обращения к Битриксу: комментарий это оформление, и
+        платить за него лишним запросом на каждую переехавшую задачу незачем.
+        Нет в справочнике — пишем идентификатор, это лучше пустоты.
+        """
+        uid = _clean_id(user_id)
+        if not uid:
+            return ""
+        try:
+            from .models import PortalUser
+
+            row = PortalUser.objects.filter(
+                **scope_to_tenant(self.account), bitrix_id=uid
+            ).values_list("name", "last_name").first()
+        except Exception:  # noqa: BLE001
+            return f"пользователь {uid}"
+        if not row:
+            return f"пользователь {uid}"
+        full = " ".join(part for part in row if part).strip()
+        return full or f"пользователь {uid}"
+
     def _fetch_changed_tasks(self, since) -> List[Dict[str, Any]]:
         """tasks.task.list с фильтром по дате изменения, постранично.
 
@@ -174,7 +279,7 @@ class TaskSyncService:
                     "tasks.task.list",
                     {
                         "filter": {">CHANGED_DATE": since.isoformat()},
-                        "select": ["ID", "TITLE", "GROUP_ID"],
+                        "select": ["ID", "TITLE", "GROUP_ID", "CHANGED_BY", "CHANGED_DATE"],
                         "start": start,
                     },
                 )
@@ -244,7 +349,7 @@ class TaskSyncService:
                     "tasks.task.list",
                     {
                         "filter": {"ID": chunk},
-                        "select": ["ID", "TITLE", "GROUP_ID"],
+                        "select": ["ID", "TITLE", "GROUP_ID", "CHANGED_BY", "CHANGED_DATE"],
                     },
                 )
             except Exception as exc:  # noqa: BLE001
@@ -290,6 +395,10 @@ class TaskSyncService:
             return {"synced": 0, "created": 0, "updated": 0}
 
         now = timezone.now()
+        # Сырые ответы Битрикса по id: из них берём имя группы и того, кто
+        # перенёс задачу, для текста комментария «было -> стало».
+        raw_by_id = {_clean_id(t.get("id") or t.get("ID")): t for t in raw_tasks}
+        moves: List[Dict[str, Any]] = []
         existing = {
             row.bitrix_id: row
             for row in PortalTask.objects.filter(
@@ -328,6 +437,18 @@ class TaskSyncService:
                             "Task %s moved: group %s -> %s (account %s)",
                             bitrix_id, previous or "—", field_value or "—", self.account.pk,
                         )
+                        # Проект переписывается в САМИХ карточках списания, а
+                        # не только подставляется в отчёте: иначе фильтры
+                        # Битрикса, выгрузки и человек, открывший карточку,
+                        # продолжали бы видеть прежний проект. Собираем здесь,
+                        # применяем после сохранения справочника — до тех пор
+                        # старое значение ещё нужно как «было».
+                        moves.append({
+                            "task_id": bitrix_id,
+                            "old_group": previous or "",
+                            "new_group": field_value or "",
+                            "raw": raw_by_id.get(bitrix_id, {}),
+                        })
                     elif field_name == "title":
                         audit.info(
                             "Task %s renamed: %r -> %r (account %s)",
@@ -343,5 +464,8 @@ class TaskSyncService:
             PortalTask.objects.bulk_create(to_create, batch_size=self.BULK_BATCH_SIZE)
         if to_update:
             PortalTask.objects.bulk_update(to_update, self.UPSERT_FIELDS, batch_size=self.BULK_BATCH_SIZE)
+
+        if moves:
+            self._apply_project_moves(moves)
 
         return {"synced": len(prepared), "created": len(to_create), "updated": len(to_update)}
