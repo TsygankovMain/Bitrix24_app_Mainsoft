@@ -24,10 +24,12 @@ GROUP_ID это рабочая группа Битрикса, она же projec
 """
 
 import logging
+from datetime import timedelta
 from typing import Any, Dict, Iterable, List, Set
 
 from b24pysdk import Client
 from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 
 from .models import Bitrix24Account, PortalTask, TimesheetItem
@@ -37,6 +39,10 @@ logger = logging.getLogger(__name__)
 # События, которые обязаны быть видны в system_log, но ошибками не являются
 # (порог общего db-обработчика — WARNING, см. settings.LOGGING).
 audit = logging.getLogger("main.audit")
+
+# Перекрытие для выборки изменённых задач: правка, случившаяся в ту же
+# секунду, что и наша запись, иначе потерялась бы.
+CHANGED_OVERLAP = timedelta(minutes=5)
 
 
 def _clean_id(value: Any) -> str:
@@ -49,6 +55,7 @@ def _clean_id(value: Any) -> str:
 
 
 class TaskSyncService:
+    MAX_CHANGED_PAGES = 20  # страховка, если фильтр >CHANGED_DATE не применился
     CHUNK_SIZE = 50      # столько ID уходит в один tasks.task.list
     MAX_CHUNKS = 400     # предохранитель фонового джоба: 400*50 = 20 000 задач
     BULK_BATCH_SIZE = 200
@@ -115,6 +122,92 @@ class TaskSyncService:
             )
             missing = missing[:limit]
         return self.sync_task_ids(missing)
+
+    def sync_changed_since(self, overlap: timedelta = CHANGED_OVERLAP) -> Dict[str, int]:
+        """Дотягивает задачи, ИЗМЕНЁННЫЕ в Битриксе с момента последней записи.
+
+        Закрывает дыру, которую sync_missing_task_ids не покрывает по своей
+        природе: она тянет только ОТСУТСТВУЮЩИЕ задачи, а перенос касается
+        задачи, которая в справочнике уже есть. Из-за этого кнопка «Обновить»
+        не показывала реального положения: пользователь переносил задачу в
+        другой проект, жал «Обновить» и не видел изменений, потому что перенос
+        ждал десятиминутного фонового цикла (боевая проверка 31.08.2026,
+        задача 8365 — перенесена в 14:51:52, справочник знал прежнюю группу
+        ещё с 14:43:43).
+
+        Полный обход ради кнопки не годится: 1 592 задачи это ~17 секунд.
+        Поэтому спрашиваем у Битрикса только изменившиеся — фильтр
+        >CHANGED_DATE. Обычно это единицы задач и один запрос, то есть
+        стоимость кнопки почти не меняется, а перенос виден сразу.
+
+        Маркер — максимальный updated_at справочника: время, когда мы в
+        последний раз что-то записали. Из него вычитается перекрытие, чтобы не
+        потерять правку, случившуюся в ту же секунду. Пустой справочник ->
+        выходим: наполнять его целиком должен фоновый прогон, а не кнопка.
+        """
+        marker = (
+            PortalTask.objects.filter(**scope_to_tenant(self.account))
+            .aggregate(last=Max("updated_at"))
+            .get("last")
+        )
+        if marker is None:
+            return {"synced": 0, "created": 0, "updated": 0}
+
+        since = marker - overlap
+        raw_tasks = self._fetch_changed_tasks(since)
+        if not raw_tasks:
+            return {"synced": 0, "created": 0, "updated": 0}
+        return self._save_batch(raw_tasks)
+
+    def _fetch_changed_tasks(self, since) -> List[Dict[str, Any]]:
+        """tasks.task.list с фильтром по дате изменения, постранично.
+
+        Пагинация через start, а не keyset: выборка мала по определению
+        (изменения за минуты), а MAX_CHANGED_PAGES страхует от вырожденного
+        случая, когда фильтр вдруг не применился и Битрикс отдаёт всё подряд.
+        """
+        collected: List[Dict[str, Any]] = []
+        start = 0
+        for page in range(self.MAX_CHANGED_PAGES):
+            try:
+                response = self.client._bitrix_token.call_method(
+                    "tasks.task.list",
+                    {
+                        "filter": {">CHANGED_DATE": since.isoformat()},
+                        "select": ["ID", "TITLE", "GROUP_ID"],
+                        "start": start,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Task sync: changed-since fetch failed for account %s: %s",
+                    self.account.pk, exc,
+                )
+                break
+
+            tasks = self._extract_tasks(response)
+            if not tasks:
+                break
+            collected.extend(tasks)
+
+            next_value = response.get("next") if isinstance(response, dict) else None
+            if next_value in (None, "", False):
+                break
+            try:
+                next_start = int(next_value)
+            except (TypeError, ValueError):
+                break
+            if next_start <= start:
+                break
+            start = next_start
+        else:
+            logger.warning(
+                "Task sync: changed-since hit page cap (%s) for account %s; "
+                "filter may not have applied.",
+                self.MAX_CHANGED_PAGES, self.account.pk,
+            )
+
+        return collected
 
     def collect_referenced_task_ids(self) -> List[str]:
         """ID задач, встречающихся в списаниях: и сама задача, и вся её цепочка.

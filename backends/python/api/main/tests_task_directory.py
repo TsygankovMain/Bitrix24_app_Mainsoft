@@ -234,3 +234,72 @@ class SyncMissingTasksTest(TestCase):
         service.sync_missing_task_ids(limit=10)
 
         self.assertEqual(PortalTask.objects.count(), 10)
+
+
+class SyncChangedSinceTest(TestCase):
+    """Перенос УЖЕ известной задачи виден сразу, а не через фоновый цикл.
+
+    Боевая проверка 31.08.2026: пользователь перенёс задачу 8365 в другой
+    проект в 14:51:52, нажал «Обновить» — и ничего не изменилось. Причина:
+    sync_missing_task_ids по своей природе тянет только ОТСУТСТВУЮЩИЕ задачи,
+    а 8365 в справочнике была. Перенос известной задачи ждал десятиминутного
+    цикла, и кнопка не показывала реального положения.
+
+    Полный обход ради кнопки не годится (1 592 задачи ≈ 17 секунд), поэтому
+    спрашиваем у Битрикса только изменившиеся — фильтр >CHANGED_DATE.
+    """
+
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=11, is_b24_user_admin=True, member_id="m-changed",
+            is_master_account=True, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        PortalTask.objects.create(
+            bitrix24_account=self.account, bitrix_id="8365",
+            title="подготовить рассылку", group_id="459",
+        )
+
+    def _service(self, changed):
+        service = TaskSyncService(client=None, account=self.account)
+        service.calls = []
+
+        def _fetch(since):
+            service.calls.append(since)
+            return changed
+
+        service._fetch_changed_tasks = _fetch
+        return service
+
+    def test_move_of_known_task_is_applied(self):
+        service = self._service(
+            [{"id": "8365", "title": "подготовить рассылку", "groupId": "73"}]
+        )
+
+        result = service.sync_changed_since()
+
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(PortalTask.objects.get(bitrix_id="8365").group_id, "73")
+
+    def test_marker_uses_overlap(self):
+        """Правка, случившаяся в ту же секунду, что и наша запись, не теряется."""
+        from datetime import timedelta
+
+        service = self._service([])
+        service.sync_changed_since(overlap=timedelta(minutes=5))
+
+        marker = PortalTask.objects.get(bitrix_id="8365").updated_at
+        self.assertEqual(service.calls[0], marker - timedelta(minutes=5))
+
+    def test_empty_directory_is_left_to_background(self):
+        """Наполнять пустой справочник целиком должен фоновый прогон, не кнопка."""
+        PortalTask.objects.all().delete()
+        service = self._service([{"id": "1", "title": "x", "groupId": "1"}])
+
+        self.assertEqual(service.sync_changed_since()["synced"], 0)
+        self.assertEqual(service.calls, [], "Битрикс не должен вызываться")
+
+    def test_no_changes_costs_nothing(self):
+        service = self._service([])
+
+        self.assertEqual(service.sync_changed_since()["synced"], 0)
