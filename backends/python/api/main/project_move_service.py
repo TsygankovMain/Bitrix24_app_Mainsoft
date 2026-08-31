@@ -134,6 +134,7 @@ class ProjectMoveService:
             fields[field_project_item] = ""
 
         updated = 0
+        updated_ids: List[Any] = []
         failed: List[Dict[str, str]] = []
 
         for bitrix_id, old_title in items:
@@ -150,6 +151,7 @@ class ProjectMoveService:
                 continue
 
             updated += 1
+            updated_ids.append(bitrix_id)
             # Передаём имя КАК ЕСТЬ: подставлять сюда new_group нельзя, иначе
             # фолбэк «группа N» внутри _comment никогда не сработает и в
             # истории окажется голый идентификатор без пояснения.
@@ -157,6 +159,8 @@ class ProjectMoveService:
                 entity_type_id, bitrix_id, old_title, new_group_name,
                 old_group, new_group, moved_by_name, moved_at,
             )
+
+        self._mirror_locally(updated_ids, new_group, new_group_name)
 
         summary = {
             "updated": updated,
@@ -176,6 +180,44 @@ class ProjectMoveService:
                 task_id, len(failed), failed[0].get("error"),
             )
         return summary
+
+    def _mirror_locally(self, bitrix_ids: List[Any], new_group: str,
+                        new_group_name: str) -> None:
+        """Отражает переписанный проект в НАШЕЙ базе, не дожидаясь синка.
+
+        Без этого выравнивание зацикливается. Оно ищет записи, чей проект
+        разошёлся с текущей группой задачи, СМОТРЯ В НАШУ БАЗУ. Переписывание
+        меняет карточку в Битриксе, но локальная строка остаётся прежней до
+        ближайшей синхронизации таймшитов — значит следующий прогон видит то
+        же расхождение и делает всю работу заново, СНОВА оставляя комментарий
+        на каждой карточке.
+
+        Боевой случай 31.08.2026: за час каждая из 23 задач была переписана по
+        ЧЕТЫРЕ раза, и на карточках накопилось по четыре одинаковых
+        комментария «было -> стало» вместо одного. Цикл выравнивания (10 минут)
+        короче цикла синка таймшитов (20 минут), поэтому расхождение успевало
+        сработать дважды между синками.
+
+        Отражаем только то, что Битрикс ПРИНЯЛ: список формируется из успешных
+        обновлений, отказы (закрытый период, права) в него не попадают. Синк
+        всё равно перечитает карточки и подтвердит значения — здесь мы лишь
+        убираем окно, в котором наша база противоречит уже применённой правке.
+        """
+        if not bitrix_ids:
+            return
+        fields = {"project_id": new_group}
+        if new_group_name:
+            fields["project_title"] = new_group_name
+        # project_item_id вычищен и в Битриксе — держим согласованно.
+        fields["project_item_id"] = ""
+        try:
+            TimesheetItem.objects.filter(
+                **scope_to_tenant(self.account), bitrix_id__in=bitrix_ids
+            ).update(**fields)
+        except Exception as exc:  # noqa: BLE001
+            # Не критично: синк перечитает карточки и всё равно приведёт базу
+            # в соответствие, просто позже.
+            logger.warning("Local mirror after rewrite failed: %s", exc)
 
     def _comment(
         self, entity_type_id: int, bitrix_id: Any, old_title: Optional[str],
