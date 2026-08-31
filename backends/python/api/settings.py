@@ -178,6 +178,22 @@ XS_SHARING_ALLOWED_METHODS = ['POST', 'GET', 'OPTIONS', 'PUT', 'DELETE']
 # Включать на проде ТОЛЬКО после backfill + dedupe (см. план sprint-4, Часть B).
 USE_PORTAL_SCOPING = config.use_portal_scoping
 
+# Логи приложения идут в ДВА места. console — как и раньше, поток контейнера
+# (App Platform, короткая история). db — таблица system_log: только WARNING и
+# выше, зато переживает рестарт и доступна через /api/logs/system, не вставая
+# из-за терминала.
+#
+# Порог у db-обработчика отдельный и намеренно выше корневого: на INFO
+# приложение пишет каждую страницу синка и каждую нормализацию — десятки тысяч
+# строк в сутки, которые таблицу утопят, а диагностике не помогут. WARNING —
+# это ровно "что-то пошло не так": проглоченные сбои автопростановки ИНН,
+# упавший синк, отказы Битрикса в резолве реквизитов, пропуски планировщика.
+# Раньше всё это было только в stdout, а в system_log за месяц лежала ОДНА
+# строка (единственное необработанное исключение вьюхи).
+#
+# django.db.backends не подключаем сознательно: обработчик пишет в ту же БД,
+# и её собственные логи создали бы петлю. Реентрантная защита в самом
+# обработчике есть, но кормить её лишним трафиком незачем.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -185,15 +201,26 @@ LOGGING = {
         "console": {
             "class": "logging.StreamHandler",
         },
+        "db": {
+            "class": "main.utils.db_log_handler.DatabaseLogHandler",
+            "level": "WARNING",
+        },
     },
     "root": {
-        "handlers": ["console"],
+        "handlers": ["console", "db"],
         "level": "INFO",
     },
     "loggers": {
         "main": {
-            "handlers": ["console"],
+            "handlers": ["console", "db"],
             "level": "INFO",
+            "propagate": False,
+        },
+        # Петля: сообщения самого драйвера БД не должны идти в обработчик,
+        # который пишет в БД.
+        "django.db.backends": {
+            "handlers": ["console"],
+            "level": "WARNING",
             "propagate": False,
         },
     },

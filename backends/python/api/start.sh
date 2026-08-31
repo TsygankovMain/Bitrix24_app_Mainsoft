@@ -63,6 +63,16 @@ echo -e "${GREEN}Starting Gunicorn (WSGI) server...${NC}"
 ( python manage.py sync_all_portals --scope users || true
   while true; do sleep 3600; python manage.py sync_all_portals --scope users || true; done ) &
 
+# Очистка логов: request_log и system_log старше 30 дней. Команда
+# purge_request_logs существовала с самого начала, но не запускалась ниоткуда —
+# таблицы росли без ограничения. Это стало заметно, когда логирование
+# расширили: теперь в system_log идёт всё уровня WARNING и выше, а в
+# request_log — все ошибки, включая ранее пропускавшиеся 4xx на /api/getToken.
+# Тела запросов могут содержать токены (см. докстринг команды), так что
+# ограничение срока хранения здесь ещё и про безопасность, не только про
+# размер. Первый прогон — после суток аптайма, чистить на старте нечего.
+( while true; do sleep 86400; python manage.py purge_request_logs || true; done ) &
+
 exec gunicorn wsgi:application \
     --bind 0.0.0.0:8000 \
     --worker-class gthread \
