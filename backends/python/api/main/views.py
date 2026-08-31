@@ -2,6 +2,8 @@ from collections import defaultdict
 from datetime import timedelta
 
 from django.core.paginator import Paginator
+from django.db.models import Count, Sum
+from django.db.models.functions import ExtractMonth, ExtractYear
 from django.http import JsonResponse, HttpResponse
 from django.conf import settings
 from django.utils import timezone
@@ -32,6 +34,7 @@ from .services import (
 )
 from .installation_service import InstallationService, InstallationError
 from .app_version import get_app_version, is_version_acceptable
+from .utils.decorators.admin_required import admin_required
 from .task_sync_service import TaskSyncService
 from .timesheet_write_service import TimesheetWriteError, TimesheetWriteService
 from .timesheet_sync_service import resolve_sync_mode
@@ -1844,6 +1847,240 @@ def should_skip_timesheet_sync(account, now, gate_minutes=TIMESHEET_SYNC_GATE_MI
 
 
 @xframe_options_exempt
+@require_GET
+@log_errors("periods_list")
+@auth_required
+def periods_list(request: AuthorizedRequest):
+    """Список периодов: закрытые с журналом и текущий открытый.
+
+    Месяцы берём из самих списаний — заводить календарь не нужно, периоды без
+    часов закрывать незачем.
+    """
+    from .period_check_service import PeriodCheckService
+    from .period_service import MONTHS, PeriodService
+
+    account = request.bitrix24_account
+    periods = PeriodService(account)
+    checker = PeriodCheckService(account)
+
+    closed = {(p.year, p.month): p for p in periods.list_periods()}
+
+    months = (
+        TimesheetItem.objects.filter(**scope_to_tenant(account))
+        .exclude(date_reflection__isnull=True)
+        .annotate(y=ExtractYear("date_reflection"), m=ExtractMonth("date_reflection"))
+        .values("y", "m")
+        .annotate(hours=Sum("hours"), entries=Count("id"))
+        .order_by("-y", "-m")
+    )
+
+    items = []
+    for row in months:
+        year, month = row["y"], row["m"]
+        period = closed.get((year, month))
+        is_closed = period is not None and period.reopened_at is None
+        item = {
+            "year": year,
+            "month": month,
+            "title": f"{MONTHS[month]} {year}",
+            "hours": float(row["hours"] or 0),
+            "entries": row["entries"],
+            "closed": is_closed,
+        }
+        if period is not None:
+            item["closed_at"] = period.closed_at.isoformat()
+            item["closed_by_name"] = period.closed_by_name
+            if period.reopened_at:
+                item["reopened_at"] = period.reopened_at.isoformat()
+                item["reopened_by_name"] = period.reopened_by_name
+                item["reopen_reason"] = period.reopen_reason
+        if is_closed:
+            item["late_arrivals"] = len(checker.late_arrivals(period))
+        items.append(item)
+
+    return JsonResponse({"periods": items})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("period_check")
+@auth_required
+def period_check(request: AuthorizedRequest):
+    """Проверка перед закрытием: блокеры и предупреждения.
+
+    Ничего не меняет — только смотрит. С ?code= отдаёт список записей за
+    конкретной находкой (ссылка «Показать» на экране).
+    """
+    from .period_check_service import PeriodCheckService
+
+    year, month = _period_args(request.GET)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    service = PeriodCheckService(request.bitrix24_account)
+    code = (request.GET.get("code") or "").strip()
+    if code:
+        return JsonResponse({"items": service.details(year, month, code)})
+    return JsonResponse(service.run(year, month))
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("period_close")
+@auth_required
+@rate_limit("period_close", 10, 60, key="account")
+@admin_required
+def period_close(request: AuthorizedRequest):
+    """Закрытие месяца. Блокеры проверяются НА СЕРВЕРЕ, а не только на экране.
+
+    Экран показывает проверку и гасит кнопку, но полагаться на это нельзя:
+    запрос можно отправить и мимо интерфейса. Закрыть месяц со сломанными
+    данными — необратимая операция, и защищать её только в браузере
+    несерьёзно.
+
+    @admin_required — точечное исключение из решения от 11.06.2026, снявшего
+    серверный гейт по роли со всех эндпоинтов. Возвращено заказчиком
+    31.08.2026 только для закрытия и переоткрытия: операции необратимые и
+    влияют на то, что уходит клиенту в счёт. См. докстринг декоратора.
+    """
+    from .period_check_service import PeriodCheckService
+    from .period_service import PeriodService
+
+    payload = _load_request_json(request)
+    year, month = _period_args(payload)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    account = request.bitrix24_account
+    check = PeriodCheckService(account).run(year, month)
+    if not check["can_close"]:
+        return JsonResponse(
+            {
+                "error": "Закрыть период нельзя: проверка нашла ошибки в данных.",
+                "code": "blockers_present",
+                "check": check,
+            },
+            status=409,
+        )
+
+    period = PeriodService(account).close(
+        year, month, stats=check["stats"],
+        by_id=str(account.b24_user_id or ""),
+        by_name=_current_user_display_name(request),
+    )
+    return JsonResponse({
+        "status": "closed",
+        "year": period.year,
+        "month": period.month,
+        "closed_at": period.closed_at.isoformat(),
+        "stats": period.stats,
+    })
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("period_reopen")
+@auth_required
+@rate_limit("period_close", 10, 60, key="account")
+@admin_required
+def period_reopen(request: AuthorizedRequest):
+    """Переоткрытие месяца. Причина обязательна.
+
+    Переоткрытие — событие, а не рутина: отчёт за период может измениться уже
+    после того, как лёг в основу счёта. Причина попадает в журнал, чтобы через
+    полгода было понятно, почему цифры разошлись с актом.
+
+    @admin_required — то же точечное исключение, что у period_close.
+    """
+    from .period_service import PeriodService
+
+    payload = _load_request_json(request)
+    year, month = _period_args(payload)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return JsonResponse(
+            {"error": "Укажите причину переоткрытия.", "code": "reason_required"},
+            status=400,
+        )
+
+    account = request.bitrix24_account
+    period = PeriodService(account).reopen(
+        year, month, reason=reason,
+        by_id=str(account.b24_user_id or ""),
+        by_name=_current_user_display_name(request),
+    )
+    if period is None:
+        return JsonResponse({"error": "Такой закрытый период не найден."}, status=404)
+
+    return JsonResponse({"status": "reopened", "year": year, "month": month})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("period_late_arrivals")
+@auth_required
+def period_late_arrivals(request: AuthorizedRequest):
+    """Часы, поступившие в закрытый период уже после закрытия."""
+    from .period_check_service import PeriodCheckService
+    from .period_service import PeriodService
+
+    year, month = _period_args(request.GET)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    account = request.bitrix24_account
+    period = next(
+        (p for p in PeriodService(account).list_periods()
+         if p.year == year and p.month == month and p.reopened_at is None),
+        None,
+    )
+    if period is None:
+        return JsonResponse({"items": []})
+
+    return JsonResponse({"items": PeriodCheckService(account).late_arrivals(period)})
+
+
+def _period_args(source):
+    """(год, месяц) из query-строки или тела. (None, None) — не разобрали."""
+    try:
+        year = int(source.get("year"))
+        month = int(source.get("month"))
+    except (TypeError, ValueError):
+        return None, None
+    if not (1 <= month <= 12) or not (2000 <= year <= 2100):
+        return None, None
+    return year, month
+
+
+def _refresh_task_directory(account):
+    """Актуализирует справочник задач: недостающие и изменённые.
+
+    Две разные дыры, обе обязательны:
+      * отсутствующие — задача, на которую часы списали только что и которая
+        разминулась с фоновым прогоном;
+      * изменённые — перенос или переименование задачи, которая в справочнике
+        уже есть. Без этого «Обновить» не показывал реального положения.
+
+    Стоимость в спокойном случае — один SELECT и ни одного обращения к
+    Битриксу, поэтому зовётся на каждом нажатии, ДО гейта свежести.
+
+    Сбой изолирован: справочник вспомогательный, и его проблемы не должны
+    превращать успешный синк часов в ошибку для пользователя.
+    """
+    try:
+        task_sync = TaskSyncService(account.client, account, interactive=True)
+        task_sync.sync_missing_task_ids()
+        task_sync.sync_changed_since()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Task directory refresh failed: %s", exc)
+
+
+@xframe_options_exempt
 @csrf_exempt
 @require_POST
 @log_errors("timesheet_sync")
@@ -1875,6 +2112,25 @@ def timesheet_sync(request: AuthorizedRequest):
     # двигается маркер ниже — правка, случившаяся во время обхода, имеет
     # updatedTime >= started_at и попадёт в следующую выборку.
     now = timezone.now()
+
+    # Справочник задач обновляем ДО гейта свежести — это отдельный от списаний
+    # источник, и на него трёхминутный гейт распространяться не должен.
+    #
+    # Ошибка первой версии (боевая проверка 31.08.2026): обновление стояло в
+    # конце обработчика, после гейта. Пользователь назначил задаче новый
+    # проект, нажал «Обновить» — сработало; через пятнадцать секунд поменял
+    # проект снова, нажал «Обновить» — и кнопка не сделала НИЧЕГО, потому что
+    # гейт вернул "fresh" за 110 мс, не дойдя до справочника. В логе это видно
+    # буквально: один ответ "success" за 1805 мс и следом четыре "fresh" по
+    # ~120 мс.
+    #
+    # Гейт защищает от лишних обходов Битрикса за списаниями — операции
+    # дорогой. Обновление справочника стоит один SELECT и, при наличии
+    # изменений, один вызов, поэтому пропускать его незачем: кнопка
+    # «Обновить» обязана показывать реальное положение задач при каждом
+    # нажатии, иначе она врёт.
+    _refresh_task_directory(request.bitrix24_account)
+
     if not is_scoped and should_skip_timesheet_sync(request.bitrix24_account, now):
         db_count = TimesheetItem.objects.filter(**scope_to_tenant(request.bitrix24_account)).count()
         profiler.set_metric("status", "fresh")
@@ -1915,29 +2171,6 @@ def timesheet_sync(request: AuthorizedRequest):
                 "warning": "Не удалось обновить данные из Битрикс24. Используются последние сохраненные данные.",
             }
         )
-
-    # Кнопка «Обновить» обязана обновлять и справочник задач, иначе она
-    # обновляет только половину: списания приезжают, а задача, на которую их
-    # только что списали, остаётся неизвестной до фонового цикла — и отчёт
-    # показывает снимок вместо текущего проекта. Ровно на это наткнулись при
-    # боевой проверке 31.08.2026 (задача 8365 разминулась с прогоном на
-    # минуту, и нажатие «Обновить» ничего не меняло).
-    #
-    # Дотягиваем ТОЛЬКО недостающие: когда всё на месте — это один SELECT без
-    # обращений к Битриксу, то есть на цену кнопки не влияет.
-    with profiler.stage("task_directory"):
-        try:
-            task_sync = TaskSyncService(request.bitrix24_account.client, request.bitrix24_account)
-            # Две разные дыры, обе обязательны:
-            #  - отсутствующие: задача, на которую списали только что;
-            #  - изменённые: перенос задачи, которая в справочнике уже есть.
-            #    Без этого «Обновить» не показывал реального положения.
-            task_sync.sync_missing_task_ids()
-            task_sync.sync_changed_since()
-        except Exception as exc:  # noqa: BLE001
-            # Справочник вспомогательный: его сбой не должен превращать
-            # успешный синк часов в ошибку для пользователя.
-            logger.warning("Task directory refresh after sync failed: %s", exc)
 
     with profiler.stage("invalidate_caches"):
         invalidate_project_runtime_caches(request.bitrix24_account)

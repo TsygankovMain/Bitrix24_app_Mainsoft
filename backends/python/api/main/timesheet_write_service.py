@@ -83,9 +83,33 @@ class TimesheetWriteService:
             raise TimesheetWriteError("Не переданы поля записи.")
         return fields
 
+    def _reject_if_closed(self, fields: Dict[str, Any]) -> None:
+        """Запрет записи в закрытый месяц.
+
+        Одна проверка на все пять точек списания — ровно ради этого запись и
+        переносили из браузера на бэкенд 31.08.2026. В браузере такое правило
+        снималось бы правкой JS, здесь его не обойти.
+
+        Дата берётся из присланных полей по маппингу портала. Если поля даты
+        нет или она пустая — не блокируем: такую запись поймает проверка перед
+        закрытием как блокер «запись без даты», и правильнее показать её там,
+        чем молча отказать человеку в списании.
+        """
+        from .period_service import PeriodService
+
+        date_value = self._field(fields, "data")
+        if not date_value:
+            return
+
+        service = PeriodService(self.account)
+        period = service.closed_period_for(date_value)
+        if period is not None:
+            raise TimesheetWriteError(service.refusal_message(period), status=409)
+
     def create(self, fields: Any) -> Dict[str, Any]:
         entity_type_id = self._entity_type_id()
         fields = self._validate_fields(fields)
+        self._reject_if_closed(fields)
 
         response = self.client._bitrix_token.call_method(
             "crm.item.add",
@@ -103,6 +127,7 @@ class TimesheetWriteService:
     def update(self, item_id: Any, fields: Any) -> Dict[str, Any]:
         entity_type_id = self._entity_type_id()
         fields = self._validate_fields(fields)
+        self._reject_if_closed(fields)
 
         try:
             numeric_id = int(item_id)

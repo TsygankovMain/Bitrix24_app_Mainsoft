@@ -364,6 +364,77 @@ class PortalTask(models.Model):
         ]
 
 
+class ClosedPeriod(models.Model):
+    """Закрытый месяц: часы за него заморожены и правке не подлежат.
+
+    Отчёт по часам — основание для счёта клиенту. Пока месяц открыт, его цифры
+    могут поехать: сотрудник допишет часы задним числом, кто-то перенесёт
+    задачу в другой проект, и приложение честно перепишет проект во всех её
+    карточках (механизм от 31.08.2026). После выставления акта это
+    недопустимо.
+
+    Гранулярность — ПОРТАЛ ЦЕЛИКОМ (решение заказчика 31.08.2026): закрыли
+    август — закрыт у всех проектов и сотрудников. Закрытие по проектам
+    отдельно обсуждалось и отклонено как резко усложняющее и отчёты, и
+    правило «что делать с задачей, переехавшей из закрытого проекта в
+    открытый».
+
+    Признак закрытости на самой записи НЕ заводим: он разъедется с этой
+    таблицей при первом же переоткрытии. Запись считается закрытой, если её
+    date_reflection попадает в закрытый период — вычисляется на лету.
+
+    Опоздавшие часы определяются сравнением source_created_at записи с
+    closed_at её периода. Отдельного поля тоже не нужно.
+
+    Переоткрытие обязано существовать (первая же ошибка иначе становится
+    катастрофой) и обязано объясняться: reopen_reason заполняется всегда,
+    поля переоткрытия — журнал события, а не рутина.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(
+        Bitrix24Account, on_delete=models.CASCADE, related_name="closed_periods",
+    )
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="closed_periods", db_index=True,
+    )
+    year = models.IntegerField()
+    month = models.IntegerField()
+
+    closed_at = models.DateTimeField()
+    closed_by = models.CharField(max_length=50, blank=True, default="")
+    closed_by_name = models.CharField(max_length=255, blank=True, default="")
+
+    # Снимок объёма на момент закрытия — для сверки «столько мы заморозили».
+    # Пересчитывать его потом бессмысленно: данные могли измениться.
+    stats = models.JSONField(default=dict, blank=True)
+
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    reopened_by = models.CharField(max_length=50, blank=True, default="")
+    reopened_by_name = models.CharField(max_length=255, blank=True, default="")
+    reopen_reason = models.TextField(blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "closed_period"
+        unique_together = ("bitrix24_account", "year", "month")
+        ordering = ["-year", "-month"]
+        indexes = [
+            models.Index(fields=["bitrix24_account", "year", "month"], name="closed_period_acc_ym_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.year}-{self.month:02d}"
+
+    @property
+    def is_open(self) -> bool:
+        """Переоткрытый период снова открыт: строка остаётся как журнал."""
+        return self.reopened_at is not None
+
+
 class RequestLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     timestamp = models.DateTimeField(auto_now_add=True)

@@ -40,9 +40,17 @@ from .tenant_scoping import scope_to_tenant
 logger = logging.getLogger(__name__)
 audit = logging.getLogger("main.audit")
 
-# Потолок карточек на один перенос. Хвост распределения длинный (максимум 260),
-# и переписывать его целиком внутри синка — значит держать синк минутами.
+# Потолки карточек на один перенос — РАЗНЫЕ для кнопки и фона, и это важно.
+#
+# У кнопки «Обновить» нет своего таймаута: браузер ждёт сколько угодно, сервер
+# рвёт на 300 секундах, а между ними стоит прокси хостинга со своим лимитом
+# (обычно 60 секунд). Сто обновлений плюс сто комментариев внутри одного
+# запроса кнопки — это десятки секунд, то есть риск получить ошибку шлюза при
+# том, что на сервере всё продолжит выполняться. Поэтому в интерактивном пути
+# берём небольшую порцию, а остальное доделывает фон, где 300 секунд есть
+# гарантированно.
 MAX_ITEMS_PER_MOVE = 100
+MAX_ITEMS_PER_MOVE_INTERACTIVE = 10
 
 
 class ProjectMoveService:
@@ -69,6 +77,7 @@ class ProjectMoveService:
         new_group_name: str = "",
         moved_by_name: str = "",
         moved_at: str = "",
+        max_items: int = MAX_ITEMS_PER_MOVE,
     ) -> Dict[str, Any]:
         """Переписывает проект во всех карточках задачи и комментирует каждую.
 
@@ -85,6 +94,22 @@ class ProjectMoveService:
         queryset = TimesheetItem.objects.filter(
             **scope_to_tenant(self.account), task_id=str(task_id)
         )
+        # Закрытый период трогать нельзя: часы за него уже легли в счёт.
+        # Отсекаем на НАШЕЙ стороне, а не упираемся в отказ прав Битрикса —
+        # иначе каждый прогон выравнивания давал бы пачку бесполезных
+        # обращений и мусор в логе. Задача при этом окажется «разорванной»:
+        # свежие часы в новом проекте, закрытые остались в старом. Так и
+        # должно быть — это зафиксированная история, а не ошибка.
+        from .period_service import PeriodService
+
+        periods = PeriodService(self.account)
+        closed_ids = set()
+        if periods.list_periods():
+            for bid, dt in queryset.values_list("bitrix_id", "date_reflection"):
+                if periods.is_closed(dt):
+                    closed_ids.add(bid)
+            if closed_ids:
+                queryset = queryset.exclude(bitrix_id__in=closed_ids)
         # Точный COUNT, а не длина среза: в отчёте о переносе нужно ЧИСЛО
         # оставшихся записей, иначе «не поместилось» ни о чём не говорит.
         # Запрос дешёвый, task_id индексирован.
@@ -92,9 +117,9 @@ class ProjectMoveService:
         if not total:
             return {"updated": 0, "failed": [], "total": 0}
 
-        over_limit = max(0, total - MAX_ITEMS_PER_MOVE)
+        over_limit = max(0, total - max_items)
         items = list(
-            queryset.values_list("bitrix_id", "project_title")[:MAX_ITEMS_PER_MOVE]
+            queryset.values_list("bitrix_id", "project_title")[:max_items]
         )
 
         fields = {field_project_id: new_group}
@@ -133,10 +158,17 @@ class ProjectMoveService:
                 old_group, new_group, moved_by_name, moved_at,
             )
 
-        summary = {"updated": updated, "failed": failed, "over_limit": over_limit}
+        summary = {
+            "updated": updated,
+            "failed": failed,
+            "over_limit": over_limit,
+            "skipped_closed": len(closed_ids),
+        }
         audit.info(
-            "Project rewrite for task %s: group %s -> %s, updated %s, failed %s, over limit %s",
-            task_id, old_group or "—", new_group or "—", updated, len(failed), over_limit,
+            "Project rewrite for task %s: group %s -> %s, updated %s, failed %s, "
+            "over limit %s, skipped in closed periods %s",
+            task_id, old_group or "—", new_group or "—", updated, len(failed),
+            over_limit, len(closed_ids),
         )
         if failed:
             logger.warning(
