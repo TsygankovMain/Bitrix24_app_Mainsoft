@@ -94,6 +94,22 @@ class ProjectMoveService:
         queryset = TimesheetItem.objects.filter(
             **scope_to_tenant(self.account), task_id=str(task_id)
         )
+        # Закрытый период трогать нельзя: часы за него уже легли в счёт.
+        # Отсекаем на НАШЕЙ стороне, а не упираемся в отказ прав Битрикса —
+        # иначе каждый прогон выравнивания давал бы пачку бесполезных
+        # обращений и мусор в логе. Задача при этом окажется «разорванной»:
+        # свежие часы в новом проекте, закрытые остались в старом. Так и
+        # должно быть — это зафиксированная история, а не ошибка.
+        from .period_service import PeriodService
+
+        periods = PeriodService(self.account)
+        closed_ids = set()
+        if periods.list_periods():
+            for bid, dt in queryset.values_list("bitrix_id", "date_reflection"):
+                if periods.is_closed(dt):
+                    closed_ids.add(bid)
+            if closed_ids:
+                queryset = queryset.exclude(bitrix_id__in=closed_ids)
         # Точный COUNT, а не длина среза: в отчёте о переносе нужно ЧИСЛО
         # оставшихся записей, иначе «не поместилось» ни о чём не говорит.
         # Запрос дешёвый, task_id индексирован.
@@ -142,10 +158,17 @@ class ProjectMoveService:
                 old_group, new_group, moved_by_name, moved_at,
             )
 
-        summary = {"updated": updated, "failed": failed, "over_limit": over_limit}
+        summary = {
+            "updated": updated,
+            "failed": failed,
+            "over_limit": over_limit,
+            "skipped_closed": len(closed_ids),
+        }
         audit.info(
-            "Project rewrite for task %s: group %s -> %s, updated %s, failed %s, over limit %s",
-            task_id, old_group or "—", new_group or "—", updated, len(failed), over_limit,
+            "Project rewrite for task %s: group %s -> %s, updated %s, failed %s, "
+            "over limit %s, skipped in closed periods %s",
+            task_id, old_group or "—", new_group or "—", updated, len(failed),
+            over_limit, len(closed_ids),
         )
         if failed:
             logger.warning(

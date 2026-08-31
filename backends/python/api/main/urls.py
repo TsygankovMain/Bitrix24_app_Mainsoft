@@ -59,6 +59,13 @@ urlpatterns = [
     path('api/sync-timesheets', views.timesheet_sync, name='sync_timesheets'), # Matches api.ts: /api/sync-timesheets
     # Запись часов через бэкенд, а не напрямую из браузера: единственное место,
     # где на списание можно наложить серверное правило (закрытие месяца).
+    # Закрытие месяца: список периодов, проверка, закрытие, переоткрытие,
+    # опоздавшие часы. Спека — docs/architecture/period-closing-spec.md.
+    path('api/periods', views.periods_list, name='periods_list'),
+    path('api/periods/check', views.period_check, name='period_check'),
+    path('api/periods/close', views.period_close, name='period_close'),
+    path('api/periods/reopen', views.period_reopen, name='period_reopen'),
+    path('api/periods/late', views.period_late_arrivals, name='period_late_arrivals'),
     path('api/timesheet/create', views.timesheet_create, name='timesheet_create'),
     path('api/timesheet/update', views.timesheet_update, name='timesheet_update'),
     path('api/timesheet-sync-status', views.timesheet_sync_status, name='timesheet_sync_status'),
