@@ -77,6 +77,11 @@ def invalidate_account_cache(account: Bitrix24Account, suffixes: List[str]) -> N
 
 
 def invalidate_project_runtime_caches(account: Bitrix24Account) -> None:
+    """Сброс кэшей, которые протухают от наших же записей в проекты/списания.
+
+    Здесь НЕТ "admin-company-directory" — намеренно, см.
+    invalidate_company_directory_cache ниже.
+    """
     invalidate_account_cache(
         account,
         [
@@ -85,11 +90,35 @@ def invalidate_project_runtime_caches(account: Bitrix24Account) -> None:
             "filter-projects",
             "project-board",
             "project-board-meta",
-            "admin-company-directory",
             "project-board-legal-entities",
             "project-board-homepage",
         ],
     )
+
+
+def invalidate_company_directory_cache(account: Bitrix24Account) -> None:
+    """Сброс кэша полного справочника компаний портала (ProjectCardService.
+    get_full_company_directory, TTL 6 часов).
+
+    Вынесено из invalidate_project_runtime_caches ОТДЕЛЬНО и зовётся только
+    оттуда, где справочник действительно меняется — то есть после
+    crm.company.add (ProjectCreationService.create). Причина в цене промаха:
+    наполнение этого ключа — единственный в приложении полный постраничный
+    обход компаний Битрикса (на боевом портале 23 252 компании: 465 страниц
+    плюс столько же за реквизитами, 5-7 минут ожидания сети).
+
+    Пока ключ стоял в общем списке, его сносил КАЖДЫЙ успешный синк таймшитов
+    (views.timesheet_sync -> invalidate_project_runtime_caches), а следующий
+    синк, создавший хоть одну карточку, платил за обход заново: шестичасовой
+    TTL не доживал до второго использования. В проде это давало бимодальные
+    синки — 4-6 секунд при попадании в кэш и 330-440 секунд при промахе, —
+    и всё это время синк держал advisory-замок, отдавая 409 остальным
+    сотрудникам портала (инцидент 31.08.2026).
+
+    Синк таймшитов справочник компаний Битрикса не меняет, поэтому чистить
+    его там было незачем.
+    """
+    invalidate_account_cache(account, ["admin-company-directory"])
 
 
 def ensure_project_card_schema(force_refresh: bool = False) -> bool:

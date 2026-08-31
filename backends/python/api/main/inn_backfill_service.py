@@ -2,9 +2,15 @@
 Сервис дозаполнения ИНН в карточках списания времени.
 
 Цепочка: карточка списания (элемент СП) → проект (ProjectCard по project_item_id/project_id)
-→ company_id (клиент) / our_legal_entity_id (наше юрлицо) → ИНН (резолв из реквизитов,
-полный обход ProjectCardService.get_full_company_directory()) → запись в поля
-OUR_INN/CLIENT_INN элемента СП через crm.item.update.
+→ company_id (клиент) / our_legal_entity_id (наше юрлицо) → ИНН из реквизитов → запись в
+поля OUR_INN/CLIENT_INN элемента СП через crm.item.update.
+
+Резолв ИНН идёт двумя разными путями, и путать их нельзя:
+  * админские Scan/Apply/projects_health — _inn_maps(), полный обход справочника
+    компаний портала (get_full_company_directory): им нужны ИНН всех компаний разом;
+  * autofill после синхронизации — _inn_maps_for_cards(), точечный резолв только тех
+    компаний и юрлиц, что встретились в новых карточках. Синк идёт на пользовательском
+    пути и под advisory-замком, полный обход портала там недопустим.
 
 Поля OUR_INN/CLIENT_INN существуют в СП, но не заполняются автоматически — этот сервис
 закрывает разрыв (Спринт 2, вариант A: пишем ИНН обратно в Bitrix).
@@ -23,6 +29,11 @@ PAGE_SIZE = 50
 THROTTLE_DELAY = 0.5  # сек между crm.item.update (как в timesheet_sync_service)
 MAX_APPLY_BATCH = 100  # защита бэка: не более N записей за один HTTP-запрос (фронт шлёт чанками)
 AUTOFILL_LIMIT = 30    # максимум авто-простановок за один синк (остальное — через UI)
+# Потолок точечных резолвов ИНН за один autofill (см. _inn_maps_for_cards).
+# С запасом к AUTOFILL_LIMIT: применяем всё равно не больше 30 записей, а
+# первый синк портала создаёт карточки тысячами — без потолка мы бы поменяли
+# один долгий обход справочника на тысячу коротких запросов.
+AUTOFILL_INN_LOOKUP_LIMIT = 60
 
 # Статусы строки дозаполнения
 STATUS_READY = "ready"          # все пустые поля имеют ИНН из проекта → можно проставить авто
@@ -190,6 +201,76 @@ class InnBackfillService:
             for c in directory
             if c.get("id") and c.get("is_my_company")
         }
+        return companies, legal
+
+    def _inn_maps_for_cards(self, cards: List[Any]) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """Карты ИНН ТОЛЬКО для компаний и юрлиц, встретившихся в `cards`.
+
+        Формат возврата тот же, что у _inn_maps() (company_id -> ИНН,
+        legal_entity_id -> ИНН), поэтому resolve_card_inn работает с обеими
+        картами без изменений.
+
+        Зачем отдельный метод. _inn_maps() строит карты из
+        get_full_company_directory() — полного постраничного обхода
+        справочника компаний портала (на боевом портале 23 252 компании:
+        465 страниц плюс столько же за реквизитами). Его докстринг прямо
+        запрещает пользовательский путь, и для админских Scan/Apply это
+        оправдано: там нужны ИНН всех компаний разом. Но autofill зовётся из
+        синхронизации таймшитов — то есть с кнопки «Обновить» и из фонового
+        планировщика, — где нужны ИНН двух-трёх компаний из новых карточек.
+        Обход портала ради них превращал синк из 5 секунд в 5-7 минут и всё
+        это время держал advisory-замок синка, отдавая 409 остальным
+        сотрудникам портала (инцидент 31.08.2026).
+
+        Здесь на каждый УНИКАЛЬНЫЙ id — один crm.requisite.list через
+        ProjectCardService.resolve_reference_inn с его суточным кэшем и
+        кэшированием отрицательного результата. Обычно 1-3 запроса на синк.
+
+        AUTOFILL_INN_LOOKUP_LIMIT ограничивает число запросов на один вызов:
+        первый синк портала создаёт карточки тысячами, и без потолка мы бы
+        просто поменяли один долгий обход на тысячу коротких запросов.
+        Записей всё равно применяется не больше AUTOFILL_LIMIT, поэтому
+        потолок взят с запасом к нему; что не поместилось — дозаполняется
+        админским экраном, для которого полный обход и предназначен.
+
+        Отличие от _inn_maps() по существу: там "свои" юрлица отбирались из
+        справочника по признаку is_my_company, и юрлицо без этого флага
+        молча давало пустой ИНН. Здесь id берётся из поля карточки
+        our_legal_entity_id, то есть оно уже выбрано как наше юрлицо, и
+        флаг не перепроверяется.
+        """
+        if not cards:
+            return {}, {}
+
+        board = ProjectCardService(self.client, self.account)
+        resolved: Dict[str, str] = {}
+
+        def lookup(reference_id: Any) -> str:
+            key = _clean(reference_id)
+            if not key:
+                return ""
+            if key not in resolved:
+                if len(resolved) >= AUTOFILL_INN_LOOKUP_LIMIT:
+                    return ""
+                try:
+                    resolved[key] = _clean(board.resolve_reference_inn(key) or "")
+                except Exception as exc:  # noqa: BLE001
+                    # Резолв ИНН не должен ронять синк: карточка без ИНН —
+                    # рабочее состояние, её дозаполнят через UI.
+                    logger.warning("INN lookup failed for reference %s: %s", key, exc)
+                    resolved[key] = ""
+            return resolved[key]
+
+        companies: Dict[str, str] = {}
+        legal: Dict[str, str] = {}
+        for card in cards:
+            company_id = _clean(getattr(card, "company_id", ""))
+            if company_id and company_id not in companies:
+                companies[company_id] = lookup(company_id)
+            legal_id = _clean(getattr(card, "our_legal_entity_id", ""))
+            if legal_id and legal_id not in legal:
+                legal[legal_id] = lookup(legal_id)
+
         return companies, legal
 
     def _resolve_employee_names(self, ids: List[str]) -> Dict[str, str]:
@@ -403,11 +484,25 @@ class InnBackfillService:
             return {"updated": 0, "resolved": 0, "over_limit": 0, "skipped": "inn_fields_not_configured"}
 
         by_item, by_id = build_project_lookup(get_project_card_queryset(self.account))
-        companies_inn, legal_inn = self._inn_maps()
+
+        # Сначала сопоставляем карточки, и только потом резолвим ИНН — ровно
+        # для тех компаний и юрлиц, которые в них встретились. Порядок важен:
+        # _inn_maps() строит карты ДО того, как известно, что вообще нужно, и
+        # потому вынужден обходить портал целиком (см. _inn_maps_for_cards).
+        matched: List[Tuple[Dict[str, Any], Any]] = [
+            (
+                ci,
+                by_item.get(_clean(ci.get("project_item_id"))) or by_id.get(_clean(ci.get("project_id"))),
+            )
+            for ci in cards_info
+        ]
+
+        companies_inn, legal_inn = self._inn_maps_for_cards(
+            [card for _, card in matched if card is not None]
+        )
 
         items: List[Dict[str, Any]] = []
-        for ci in cards_info:
-            card = by_item.get(_clean(ci.get("project_item_id"))) or by_id.get(_clean(ci.get("project_id")))
+        for ci, card in matched:
             our, client = resolve_card_inn(card, companies_inn, legal_inn)
             if our or client:
                 items.append({"bitrix_id": ci.get("bitrix_id"), "our_inn": our, "client_inn": client})
