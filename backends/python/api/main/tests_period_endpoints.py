@@ -334,6 +334,82 @@ class ClosingOrderTest(TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["earliest_open"], {"year": 2026, "month": 6})
 
+    # ---------- Массовое закрытие истории ----------
+
+    def _bulk(self, year, month, acknowledge=False):
+        return Client().post(
+            "/api/periods/close-bulk",
+            data=json.dumps({
+                "until_year": year, "until_month": month, "acknowledge": acknowledge,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+        )
+
+    def test_bulk_without_acknowledge_changes_nothing(self):
+        """Главное свойство: сначала показать, что принимаешь, и не закрывать.
+
+        Иначе «закрыть разом» превращается в заморозку девяти месяцев с
+        неизвестным мусором внутри, о котором узнают при сверке с клиентом.
+        """
+        response = self._bulk(2026, 7)
+
+        self.assertEqual(response.status_code, 409)
+        body = response.json()
+        self.assertEqual(body["code"], "acknowledge_required")
+        self.assertEqual(body["total"]["periods"], 2, "июнь и июль")
+        self.assertFalse(ClosedPeriod.objects.exists(), "ничего не должно закрыться")
+
+    def test_bulk_with_acknowledge_closes_range(self):
+        response = self._bulk(2026, 7, acknowledge=True)
+
+        self.assertEqual(response.status_code, 200)
+        closed = {(p.year, p.month) for p in ClosedPeriod.objects.all()}
+        self.assertEqual(closed, {(2026, 6), (2026, 7)})
+
+    def test_bulk_does_not_touch_later_periods(self):
+        """«До июля» значит до июля: август остаётся открытым."""
+        self._bulk(2026, 7, acknowledge=True)
+
+        self.assertFalse(ClosedPeriod.objects.filter(year=2026, month=8).exists())
+
+    def test_bulk_records_blockers_in_snapshot(self):
+        """След того, с каким качеством данных месяц заморозили.
+
+        Без этого «закрыли пачкой» превращается в «неизвестно что заморозили».
+        """
+        TimesheetItem.objects.filter(bitrix_id=1).update(project_id="")
+
+        self._bulk(2026, 6, acknowledge=True)
+
+        stats = ClosedPeriod.objects.get(year=2026, month=6).stats
+        self.assertTrue(stats["closed_in_bulk"])
+        self.assertIn("no_project", [b["code"] for b in stats["blockers_at_close"]])
+
+    def test_bulk_unblocks_the_queue(self):
+        """Ради этого всё и делалось: после массового закрытия текущий месяц
+        закрывается обычным путём, с полноценной проверкой."""
+        self._bulk(2026, 7, acknowledge=True)
+
+        self.assertEqual(self._close(2026, 8).status_code, 200)
+
+    def test_bulk_requires_admin(self):
+        other = Bitrix24Account.objects.create(
+            b24_user_id=303, is_b24_user_admin=False, member_id="m-order",
+            is_master_account=False, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+        response = Client().post(
+            "/api/periods/close-bulk",
+            data=json.dumps({"until_year": 2026, "until_month": 7, "acknowledge": True}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {other.create_jwt_token()}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(ClosedPeriod.objects.exists())
+
     def test_empty_months_are_skipped(self):
         """Месяц без часов закрывать незачем, и требовать этого — тоже.
 

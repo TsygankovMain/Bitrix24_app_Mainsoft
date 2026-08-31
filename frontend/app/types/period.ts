@@ -48,6 +48,33 @@ export interface PeriodRow {
   late_arrivals?: number
 }
 
+/**
+ * План массового закрытия.
+ *
+ * status = "confirmation_required" приходит с кодом 409 и означает «ничего не
+ * закрыто, подтвердите». Это штатный ответ, а не сбой: сервер сначала
+ * показывает, что именно предлагается принять.
+ */
+export interface PeriodBulkPlan {
+  status: 'confirmation_required' | 'closed' | 'nothing_to_close'
+  code?: string
+  periods?: Array<{
+    year: number
+    month: number
+    title: string
+    stats: PeriodStats
+    blockers: PeriodFinding[]
+  }>
+  total?: {
+    periods: number
+    hours: number
+    entries: number
+    /** Сколько периодов замораживается со сломанными данными. */
+    with_blockers: number
+  }
+  closed?: Array<{ year: number, month: number, title: string }>
+}
+
 export interface PeriodEntryRow {
   bitrix_id: number
   task_id: string

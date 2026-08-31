@@ -24,7 +24,7 @@ import type {
 import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
-import type { PeriodCheckResult, PeriodEntryRow, PeriodRow } from '~/types/period'
+import type { PeriodBulkPlan, PeriodCheckResult, PeriodEntryRow, PeriodRow } from '~/types/period'
 
 type SaveConfigurationResponse = {
   status?: string
@@ -749,6 +749,30 @@ export const useApiStore = defineStore(
       return result
     }
 
+    /**
+     * Закрыть все открытые периоды до указанного включительно.
+     *
+     * Без acknowledge сервер НИЧЕГО не закрывает, а отвечает 409 с разбором:
+     * какие периоды затронуты и что в каждом сломано. Это не ошибка, а
+     * запрос подтверждения — экран показывает разбор и просит согласия.
+     */
+    const closePeriodsBulk = async (
+      untilYear: number, untilMonth: number, acknowledge = false,
+    ): Promise<PeriodBulkPlan> => {
+      const result = await $api<PeriodBulkPlan>('/api/periods/close-bulk', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { until_year: untilYear, until_month: untilMonth, acknowledge }
+      }).catch((error: unknown) => {
+        // 409 здесь — штатный ответ «подтвердите», а не сбой.
+        const data = (error as { data?: PeriodBulkPlan })?.data
+        if (data?.code === 'acknowledge_required') return data
+        return rethrowWithServerMessage(error)
+      })
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
     const getLateArrivals = async (year: number, month: number): Promise<{ items: PeriodEntryRow[] }> => {
       return await $api(`/api/periods/late?year=${year}&month=${month}`, {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
@@ -1348,6 +1372,7 @@ export const useApiStore = defineStore(
       checkPeriod,
       getPeriodCheckDetails,
       closePeriod,
+      closePeriodsBulk,
       reopenPeriod,
       getLateArrivals,
       syncTimesheets,
