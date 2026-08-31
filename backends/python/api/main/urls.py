@@ -64,6 +64,7 @@ urlpatterns = [
     path('api/periods', views.periods_list, name='periods_list'),
     path('api/periods/check', views.period_check, name='period_check'),
     path('api/periods/close', views.period_close, name='period_close'),
+    path('api/periods/close-bulk', views.period_close_bulk, name='period_close_bulk'),
     path('api/periods/reopen', views.period_reopen, name='period_reopen'),
     path('api/periods/late', views.period_late_arrivals, name='period_late_arrivals'),
     path('api/timesheet/create', views.timesheet_create, name='timesheet_create'),

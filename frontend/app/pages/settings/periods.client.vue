@@ -16,7 +16,7 @@
  * перестанет работать ровно тогда, когда понадобится.
  */
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import type { PeriodCheckResult, PeriodEntryRow, PeriodRow } from '~/types/period'
+import type { PeriodBulkPlan, PeriodCheckResult, PeriodEntryRow, PeriodRow } from '~/types/period'
 
 const router = useRouter()
 const apiStore = useApiStore()
@@ -66,18 +66,30 @@ async function loadPeriods() {
 }
 
 /**
- * Закрывать можно только последний открытый месяц: дыры в череде закрытых
- * периодов запрещены, иначе «закрыт» перестаёт что-либо значить.
+ * Закрывать периоды можно только по порядку, от САМОГО СТАРОГО к новым.
+ *
+ * Так устроен учёт: нельзя закрыть август, оставив июль открытым — иначе
+ * слово «закрыт» перестаёт что-либо значить, а в череде закрытых периодов
+ * появляются дыры.
+ *
+ * Первая версия брала open[0], а список приходит отсортированным от НОВЫХ к
+ * старым — то есть кнопка оказывалась у самого свежего месяца, ровно наоборот
+ * (найдено при первом же боевом использовании 31.08.2026: у пользователя
+ * кнопка была только у сентября, а у остальных девяти периодов стояла
+ * подсказка «сначала закройте предыдущий», указывавшая в никуда).
+ *
+ * Считаем минимум явно, а не по позиции в массиве: порядок сортировки — не то
+ * свойство, на которое стоит опираться, оно может измениться на сервере.
  */
-const closableKey = computed(() => {
+const oldestOpen = computed<PeriodRow | null>(() => {
   const open = periods.value.filter(p => !p.closed)
-  if (!open.length) return ''
-  const first = open[0]
-  return `${first.year}-${first.month}`
+  if (!open.length) return null
+  return open.reduce((a, b) => (a.year * 12 + a.month <= b.year * 12 + b.month ? a : b))
 })
 
 function isClosable(row: PeriodRow) {
-  return !row.closed && `${row.year}-${row.month}` === closableKey.value
+  const target = oldestOpen.value
+  return !!target && row.year === target.year && row.month === target.month
 }
 
 async function runCheck(row: PeriodRow) {
@@ -145,6 +157,61 @@ async function doReopen() {
   } catch (e: unknown) {
     toast.add({
       title: (e as { message?: string })?.message || 'Не удалось переоткрыть период',
+      color: 'air-primary-alert',
+    })
+  } finally {
+    busy.value = false
+  }
+}
+
+// Массовое закрытие истории
+const bulkPlan = ref<PeriodBulkPlan | null>(null)
+
+/**
+ * Предлагаем закрыть всё, что старше самого свежего периода: обычно человеку
+ * нужен именно текущий месяц, а девять предыдущих он ревизовать не собирался.
+ */
+const bulkTarget = computed<PeriodRow | null>(() => {
+  const open = periods.value.filter(p => !p.closed)
+  if (open.length < 2) return null
+  const newest = open.reduce((a, b) => (a.year * 12 + a.month >= b.year * 12 + b.month ? a : b))
+  // Всё, что СТРОГО старше самого нового открытого.
+  const older = open.filter(p => p.year * 12 + p.month < newest.year * 12 + newest.month)
+  if (!older.length) return null
+  return older.reduce((a, b) => (a.year * 12 + a.month >= b.year * 12 + b.month ? a : b))
+})
+
+async function planBulk() {
+  const target = bulkTarget.value
+  if (!target) return
+  busy.value = true
+  try {
+    bulkPlan.value = await apiStore.closePeriodsBulk(target.year, target.month, false)
+  } catch (e: unknown) {
+    toast.add({
+      title: (e as { message?: string })?.message || 'Не удалось построить план',
+      color: 'air-primary-alert',
+    })
+  } finally {
+    busy.value = false
+  }
+}
+
+async function confirmBulk() {
+  const target = bulkTarget.value
+  if (!target) return
+  busy.value = true
+  try {
+    const res = await apiStore.closePeriodsBulk(target.year, target.month, true)
+    toast.add({
+      title: `Закрыто периодов: ${res.closed?.length ?? 0}`,
+      color: 'air-primary-success',
+    })
+    bulkPlan.value = null
+    await loadPeriods()
+  } catch (e: unknown) {
+    toast.add({
+      title: (e as { message?: string })?.message || 'Не удалось закрыть периоды',
       color: 'air-primary-alert',
     })
   } finally {
@@ -245,12 +312,32 @@ onMounted(async () => {
                   @click="reopenTarget = row"
                 />
                 <span v-else class="text-xs text-slate-400">
-                  Сначала закройте предыдущий
+                  Сначала закройте {{ oldestOpen?.title }}
                 </span>
               </td>
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <!--
+        Массовое закрытие истории. Появляется, только когда открытых периодов
+        больше одного: иначе закрывать «всё до» нечего.
+      -->
+      <div
+        v-if="bulkTarget"
+        class="mt-4 flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-700"
+      >
+        <span>
+          Периоды закрываются по порядку. Если прошлое ревизовать не нужно —
+          закройте историю разом до «{{ bulkTarget.title }}» включительно.
+        </span>
+        <B24Button
+          label="Закрыть историю разом"
+          color="default"
+          :loading="busy"
+          @click="planBulk"
+        />
       </div>
 
       <!-- Опоздавшие часы: заметны, но не мешают -->
@@ -427,6 +514,73 @@ onMounted(async () => {
       <template #footer>
         <B24Button label="Отмена" color="link" @click="confirmClose = false" />
         <B24Button label="Закрыть месяц" color="primary" :loading="busy" @click="doClose" />
+      </template>
+    </B24Modal>
+
+    <!--
+      ===== Подтверждение массового закрытия =====
+      Сервер сначала присылает план и НИЧЕГО не закрывает. Здесь человек видит,
+      что именно принимает: сколько периодов, часов и сколько из них с
+      блокерами. Одно осознанное решение вместо девяти — но осознанное.
+    -->
+    <B24Modal
+      :open="!!bulkPlan"
+      title="Закрыть историю разом?"
+      @update:open="v => { if (!v) bulkPlan = null }"
+    >
+      <template #body>
+        <template v-if="bulkPlan?.total">
+          <p class="text-sm text-slate-700">
+            Будет закрыто <b>{{ bulkPlan.total.periods }}</b> периодов:
+            <b class="tabular-nums">{{ bulkPlan.total.hours.toLocaleString('ru-RU') }} ч</b>
+            в <b class="tabular-nums">{{ bulkPlan.total.entries.toLocaleString('ru-RU') }}</b> записях.
+          </p>
+
+          <p
+            v-if="bulkPlan.total.with_blockers"
+            class="mt-3 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-900"
+          >
+            В <b>{{ bulkPlan.total.with_blockers }}</b> из них проверка нашла ошибки
+            в данных. Эти периоды будут заморожены <b>как есть</b> — исправить их
+            потом можно будет только через переоткрытие.
+            Что именно сломано, записывается в историю каждого периода.
+          </p>
+
+          <div class="ms-table-shell mt-4 max-h-64 overflow-y-auto">
+            <table class="min-w-full text-sm">
+              <thead class="bg-slate-50">
+                <tr class="text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  <th class="px-3 py-2">Период</th>
+                  <th class="px-3 py-2 text-right">Часов</th>
+                  <th class="px-3 py-2">Ошибки</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr v-for="p in bulkPlan.periods" :key="`${p.year}-${p.month}`">
+                  <td class="px-3 py-2">{{ p.title }}</td>
+                  <td class="px-3 py-2 text-right tabular-nums">
+                    {{ p.stats.hours.toLocaleString('ru-RU') }}
+                  </td>
+                  <td class="px-3 py-2">
+                    <span v-if="!p.blockers.length" class="text-xs text-emerald-700">чисто</span>
+                    <span v-else class="text-xs text-red-700">
+                      {{ p.blockers.map(b => b.title).join('; ') }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </template>
+      <template #footer>
+        <B24Button label="Отмена" color="link" @click="bulkPlan = null" />
+        <B24Button
+          label="Закрыть всё перечисленное"
+          color="primary"
+          :loading="busy"
+          @click="confirmBulk"
+        />
       </template>
     </B24Modal>
 

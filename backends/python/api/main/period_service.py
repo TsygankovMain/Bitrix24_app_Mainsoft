@@ -154,6 +154,41 @@ class PeriodService:
         )
         return period
 
+    def earliest_open_period(self) -> Optional[tuple]:
+        """(год, месяц) самого старого ОТКРЫТОГО периода, в котором есть часы.
+
+        Нужна, чтобы запретить закрытие вне очереди. Правило учёта: закрывать
+        строго от старого к новому — нельзя закрыть август, оставив июль
+        открытым, иначе в череде закрытых периодов появляются дыры и слово
+        «закрыт» перестаёт что-либо значить.
+
+        Проверка живёт на СЕРВЕРЕ, а не только в интерфейсе: экран прячет
+        кнопку у остальных периодов, но запрос можно отправить и мимо него, а
+        закрытие необратимо. Ровно на этом обожглись сегодня с записью часов —
+        правило в браузере не правило.
+
+        Периоды без часов пропускаем: закрывать пустой месяц незачем, и
+        требовать этого от человека тоже.
+        """
+        from .models import TimesheetItem
+
+        closed = {
+            (row.year, row.month)
+            for row in ClosedPeriod.objects.filter(
+                **scope_to_tenant(self.account), reopened_at__isnull=True
+            )
+        }
+        months = (
+            TimesheetItem.objects.filter(**scope_to_tenant(self.account))
+            .exclude(date_reflection__isnull=True)
+            .dates("date_reflection", "month", order="ASC")
+        )
+        for value in months:
+            key = (value.year, value.month)
+            if key not in closed:
+                return key
+        return None
+
     def list_periods(self) -> List[ClosedPeriod]:
         return list(ClosedPeriod.objects.filter(**scope_to_tenant(self.account)))
 

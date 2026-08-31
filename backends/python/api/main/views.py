@@ -130,6 +130,7 @@ __all__ = [
 
 config = load_config()
 logger = logging.getLogger(__name__)
+audit = logging.getLogger("main.audit")
 
 
 # Потолок страницы для диагностических (/api/logs/*) эндпоинтов: они админские
@@ -1953,6 +1954,27 @@ def period_close(request: AuthorizedRequest):
         return JsonResponse({"error": "Не указан период."}, status=400)
 
     account = request.bitrix24_account
+    periods = PeriodService(account)
+
+    # Порядок закрытия: строго от старого к новому. Проверяем на сервере, а не
+    # полагаемся на то, что экран спрятал кнопку — запрос можно отправить и
+    # мимо интерфейса, а закрытие необратимо.
+    earliest = periods.earliest_open_period()
+    if earliest is not None and earliest != (year, month):
+        from .period_service import MONTHS
+
+        return JsonResponse(
+            {
+                "error": (
+                    f"Сначала закройте {MONTHS[earliest[1]]} {earliest[0]}: "
+                    "периоды закрываются по порядку, от старых к новым."
+                ),
+                "code": "out_of_order",
+                "earliest_open": {"year": earliest[0], "month": earliest[1]},
+            },
+            status=409,
+        )
+
     check = PeriodCheckService(account).run(year, month)
     if not check["can_close"]:
         return JsonResponse(
@@ -1964,7 +1986,7 @@ def period_close(request: AuthorizedRequest):
             status=409,
         )
 
-    period = PeriodService(account).close(
+    period = periods.close(
         year, month, stats=check["stats"],
         by_id=str(account.b24_user_id or ""),
         by_name=_current_user_display_name(request),
@@ -2018,6 +2040,109 @@ def period_reopen(request: AuthorizedRequest):
         return JsonResponse({"error": "Такой закрытый период не найден."}, status=404)
 
     return JsonResponse({"status": "reopened", "year": year, "month": month})
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("period_close_bulk")
+@auth_required
+@rate_limit("period_close", 10, 60, key="account")
+@admin_required
+def period_close_bulk(request: AuthorizedRequest):
+    """Закрыть все открытые периоды ДО указанного включительно, одной операцией.
+
+    Зачем. Периоды закрываются по порядку, от старых к новым. Для портала с
+    накопленной историей это означает десять последовательных закрытий с
+    разбором блокеров в каждом — на проде это девять месяцев по тысяче записей,
+    которые никто не собирался ревизовать. Требовать этого ради того, чтобы
+    закрыть текущий месяц, бессмысленно.
+
+    Блокеры при этом НЕ ГЛОТАЮТСЯ МОЛЧА. Без acknowledge=true ручка ничего не
+    закрывает, а возвращает разбор: какие периоды затронуты и что в каждом
+    сломано. Человек видит, что именно принимает, и подтверждает это ОДНИМ
+    решением вместо девяти — но осознанно.
+
+    Найденное на момент закрытия пишется в снимок периода (blockers_at_close),
+    чтобы через полгода было понятно, с каким качеством данных месяц
+    замораживали. Без этого «закрыли пачкой» превращается в «неизвестно что
+    заморозили».
+    """
+    from .period_check_service import PeriodCheckService
+    from .period_service import MONTHS, PeriodService
+
+    payload = _load_request_json(request)
+    year, month = _period_args({"year": payload.get("until_year"),
+                                "month": payload.get("until_month")})
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    account = request.bitrix24_account
+    periods = PeriodService(account)
+    checker = PeriodCheckService(account)
+
+    closed = {
+        (p.year, p.month)
+        for p in periods.list_periods() if p.reopened_at is None
+    }
+    limit = year * 12 + month
+    targets = [
+        (value.year, value.month)
+        for value in TimesheetItem.objects.filter(**scope_to_tenant(account))
+        .exclude(date_reflection__isnull=True)
+        .dates("date_reflection", "month", order="ASC")
+        if (value.year, value.month) not in closed
+        and value.year * 12 + value.month <= limit
+    ]
+
+    if not targets:
+        return JsonResponse({"status": "nothing_to_close", "closed": []})
+
+    plan = []
+    for t_year, t_month in targets:
+        check = checker.run(t_year, t_month)
+        plan.append({
+            "year": t_year,
+            "month": t_month,
+            "title": f"{MONTHS[t_month]} {t_year}",
+            "stats": check["stats"],
+            "blockers": check["blockers"],
+        })
+
+    if not payload.get("acknowledge"):
+        # Показываем, что именно предлагается принять, и ничего не делаем.
+        return JsonResponse({
+            "status": "confirmation_required",
+            "code": "acknowledge_required",
+            "periods": plan,
+            "total": {
+                "periods": len(plan),
+                "hours": round(sum(p["stats"]["hours"] for p in plan), 2),
+                "entries": sum(p["stats"]["entries"] for p in plan),
+                "with_blockers": sum(1 for p in plan if p["blockers"]),
+            },
+        }, status=409)
+
+    by_name = _current_user_display_name(request)
+    for item in plan:
+        stats = dict(item["stats"])
+        # След того, с каким качеством данных месяц заморозили.
+        stats["blockers_at_close"] = item["blockers"]
+        stats["closed_in_bulk"] = True
+        periods.close(
+            item["year"], item["month"], stats=stats,
+            by_id=str(account.b24_user_id or ""), by_name=by_name,
+        )
+
+    audit.info(
+        "Bulk close by %s: %s periods up to %s-%02d, %s with blockers",
+        by_name or "—", len(plan), year, month,
+        sum(1 for p in plan if p["blockers"]),
+    )
+    return JsonResponse({
+        "status": "closed",
+        "closed": [{"year": p["year"], "month": p["month"], "title": p["title"]} for p in plan],
+    })
 
 
 @xframe_options_exempt
