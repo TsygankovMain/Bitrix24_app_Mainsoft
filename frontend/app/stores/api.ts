@@ -24,6 +24,7 @@ import type {
 import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
+import type { PeriodCheckResult, PeriodEntryRow, PeriodRow } from '~/types/period'
 
 type SaveConfigurationResponse = {
   status?: string
@@ -720,6 +721,57 @@ export const useApiStore = defineStore(
       return result
     }
 
+    // --- Закрытие месяца ---
+    // Спека: docs/architecture/period-closing-spec.md
+    const getPeriods = async (): Promise<{ periods: PeriodRow[] }> => {
+      return await $api('/api/periods', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const checkPeriod = async (year: number, month: number): Promise<PeriodCheckResult> => {
+      return await $api(`/api/periods/check?year=${year}&month=${month}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const getPeriodCheckDetails = async (year: number, month: number, code: string): Promise<{ items: PeriodEntryRow[] }> => {
+      return await $api(`/api/periods/check?year=${year}&month=${month}&code=${encodeURIComponent(code)}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /**
+     * Закрытие периода. Сервер повторно проверяет блокеры и отвечает 409, даже
+     * если экран считал, что всё чисто — кнопку можно обойти, а закрытие
+     * необратимо. Текст ошибки достаём из ответа (см. rethrowWithServerMessage).
+     */
+    const closePeriod = async (year: number, month: number): Promise<{ status: string }> => {
+      const result = await $api<{ status: string }>('/api/periods/close', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { year, month }
+      }).catch(rethrowWithServerMessage)
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    const reopenPeriod = async (year: number, month: number, reason: string): Promise<{ status: string }> => {
+      const result = await $api<{ status: string }>('/api/periods/reopen', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { year, month, reason }
+      }).catch(rethrowWithServerMessage)
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    const getLateArrivals = async (year: number, month: number): Promise<{ items: PeriodEntryRow[] }> => {
+      return await $api(`/api/periods/late?year=${year}&month=${month}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
     const getTimesheetSyncStatus = async (): Promise<{ last_synced_at: string | null; count: number }> => {
       return await $api<{ last_synced_at: string | null, count: number }>('/api/timesheet-sync-status', {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
@@ -1310,6 +1362,12 @@ export const useApiStore = defineStore(
       getReportRevenueLeakage,
       getReportTimeEntryDiscipline,
       getReportFocusAnalysis,
+      getPeriods,
+      checkPeriod,
+      getPeriodCheckDetails,
+      closePeriod,
+      reopenPeriod,
+      getLateArrivals,
       syncTimesheets,
       createTimesheetEntry,
       updateTimesheetEntry,
