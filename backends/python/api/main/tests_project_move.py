@@ -343,6 +343,78 @@ class RewriteMirrorsLocallyTest(TestCase):
             "8365", "459", "73", "Мейнсофт",
         )
 
-        self.assertEqual(TimesheetItem.objects.get(bitrix_id=1).project_id, "73")
-        self.assertEqual(TimesheetItem.objects.get(bitrix_id=2).project_id, "459",
-                         "непринятая карточка не должна меняться локально")
+        self.assertEqual(
+            TimesheetItem.objects.get(bitrix_id=1, bitrix24_account=self.account).project_id,
+            "73",
+        )
+        self.assertEqual(
+            TimesheetItem.objects.get(bitrix_id=2, bitrix24_account=self.account).project_id,
+            "459",
+            "непринятая карточка не должна меняться локально",
+        )
+
+
+class RewriteMirrorsEveryCopyOfCardTest(TestCase):
+    """Копии карточки у ДРУГИХ аккаунтов портала тоже должны обновиться.
+
+    Вторая серия того же дефекта, найдена на проде 31.08.2026 уже после первой
+    правки. Одна карточка списания лежит в базе несколькими строками — по одной
+    на аккаунт, которым её увидел синк (25 239 строк на 7 149 карточек, то есть
+    3,5 копии в среднем, 31 аккаунт).
+
+    Зеркало правило только копию текущего аккаунта, а выравнивание запускается
+    от РАЗНЫХ аккаунтов: следующий прогон видел чужую, ещё не поправленную
+    копию, считал задачу разошедшейся и переписывал те же карточки заново —
+    снова с комментарием. На проде это дало новый комментарий каждые 10 минут
+    на задачах 6823, 7507 и 7967.
+    """
+
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=11, is_b24_user_admin=True, member_id="m-copy-1",
+            is_master_account=True, domain_url="portal.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        # Тот же портал, другой сотрудник — своя копия той же карточки.
+        self.neighbour = Bitrix24Account.objects.create(
+            b24_user_id=22, is_b24_user_admin=False, member_id="m-copy-2",
+            is_master_account=False, domain_url="portal.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        # Чужой портал: идентификаторы карточек уникальны только внутри
+        # портала, поэтому его трогать нельзя ни при каких условиях.
+        self.stranger = Bitrix24Account.objects.create(
+            b24_user_id=33, is_b24_user_admin=False, member_id="m-copy-3",
+            is_master_account=True, domain_url="other.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        for account in (self.account, self.neighbour, self.stranger):
+            TimesheetItem.objects.create(
+                bitrix24_account=account, bitrix_id=1, task_id="8365",
+                employee_id="11", hours=1, project_id="459",
+                project_title="Мероприятие", project_item_id="253",
+                task_hierarchy_ids=["8365"], task_hierarchy_titles=["Задача"],
+                date_reflection="2026-08-31T10:00:00+00:00",
+            )
+
+    def test_copy_of_another_account_is_mirrored_too(self):
+        ProjectMoveService(FakeClient(), self.account, CONFIG).apply_move(
+            "8365", "459", "73", "Мейнсофт",
+        )
+
+        self.assertEqual(
+            TimesheetItem.objects.get(bitrix24_account=self.neighbour).project_id,
+            "73",
+            "чужая копия той же карточки оставила бы выравнивание в цикле",
+        )
+
+    def test_other_portal_is_never_touched(self):
+        ProjectMoveService(FakeClient(), self.account, CONFIG).apply_move(
+            "8365", "459", "73", "Мейнсофт",
+        )
+
+        self.assertEqual(
+            TimesheetItem.objects.get(bitrix24_account=self.stranger).project_id,
+            "459",
+            "идентификатор карточки уникален только внутри портала",
+        )
