@@ -5,11 +5,12 @@
 можно отправить и мимо интерфейса, а закрыть месяц со сломанными данными
 операция необратимая.
 
-Про права. Серверного гейта по роли здесь нет — это следование решению
-владельца продукта от 11.06.2026, снявшему @admin_required со всех
-эндпоинтов (см. tests_security_roles). Флаг администратора используется
-фронтом, чтобы прятать экран настроек. Вопрос, нужно ли для закрытия месяца
-сделать исключение, вынесен заказчику отдельно.
+Про права. Закрытие и переоткрытие закрыты серверной проверкой роли — это
+точечное исключение из решения от 11.06.2026, снявшего гейт со всех
+эндпоинтов. Заказчик вернул его 31.08.2026 именно для этих двух операций:
+они необратимы и влияют на то, что уходит клиенту в счёт. Остальные
+эндпоинты периодов (список, проверка, опоздавшие) только читают и гейта не
+имеют.
 """
 
 import json
@@ -191,6 +192,62 @@ class PeriodEndpointsTest(TestCase):
         self.assertEqual(self._get("/api/periods/late?year=2026&month=8").json()["items"], [])
 
     # ---------- Авторизация ----------
+
+    # ---------- Права ----------
+
+    def test_non_admin_cannot_close(self):
+        """Точечный гейт: закрытие необратимо и меняет то, что уходит в счёт."""
+        self._entry(1)
+        other = Bitrix24Account.objects.create(
+            b24_user_id=303, is_b24_user_admin=False, member_id="m-ep",
+            is_master_account=False, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+        response = Client().post(
+            "/api/periods/close",
+            data=json.dumps({"year": 2026, "month": 8}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {other.create_jwt_token()}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["code"], "admin_required")
+        self.assertFalse(ClosedPeriod.objects.exists(), "период не должен закрыться")
+
+    def test_non_admin_cannot_reopen(self):
+        self._entry(1)
+        self._post("/api/periods/close", {"year": 2026, "month": 8})
+        other = Bitrix24Account.objects.create(
+            b24_user_id=303, is_b24_user_admin=False, member_id="m-ep",
+            is_master_account=False, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+        response = Client().post(
+            "/api/periods/reopen",
+            data=json.dumps({"year": 2026, "month": 8, "reason": "хочу"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {other.create_jwt_token()}",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIsNone(ClosedPeriod.objects.get(year=2026, month=8).reopened_at)
+
+    def test_non_admin_can_still_read(self):
+        """Общее решение от 11.06.2026 в силе: чтение роли не требует."""
+        self._entry(1)
+        other = Bitrix24Account.objects.create(
+            b24_user_id=303, is_b24_user_admin=False, member_id="m-ep",
+            is_master_account=False, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        token = other.create_jwt_token()
+
+        for path in ("/api/periods", "/api/periods/check?year=2026&month=8"):
+            with self.subTest(path=path):
+                response = Client().get(path, HTTP_AUTHORIZATION=f"Bearer {token}")
+                self.assertEqual(response.status_code, 200)
 
     def test_endpoints_require_auth(self):
         for path in ("/api/periods", "/api/periods/check?year=2026&month=8"):

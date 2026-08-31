@@ -34,6 +34,7 @@ from .services import (
 )
 from .installation_service import InstallationService, InstallationError
 from .app_version import get_app_version, is_version_acceptable
+from .utils.decorators.admin_required import admin_required
 from .task_sync_service import TaskSyncService
 from .timesheet_write_service import TimesheetWriteError, TimesheetWriteService
 from .timesheet_sync_service import resolve_sync_mode
@@ -1929,6 +1930,7 @@ def period_check(request: AuthorizedRequest):
 @log_errors("period_close")
 @auth_required
 @rate_limit("period_close", 10, 60, key="account")
+@admin_required
 def period_close(request: AuthorizedRequest):
     """Закрытие месяца. Блокеры проверяются НА СЕРВЕРЕ, а не только на экране.
 
@@ -1936,6 +1938,11 @@ def period_close(request: AuthorizedRequest):
     запрос можно отправить и мимо интерфейса. Закрыть месяц со сломанными
     данными — необратимая операция, и защищать её только в браузере
     несерьёзно.
+
+    @admin_required — точечное исключение из решения от 11.06.2026, снявшего
+    серверный гейт по роли со всех эндпоинтов. Возвращено заказчиком
+    31.08.2026 только для закрытия и переоткрытия: операции необратимые и
+    влияют на то, что уходит клиенту в счёт. См. докстринг декоратора.
     """
     from .period_check_service import PeriodCheckService
     from .period_service import PeriodService
@@ -1977,12 +1984,15 @@ def period_close(request: AuthorizedRequest):
 @log_errors("period_reopen")
 @auth_required
 @rate_limit("period_close", 10, 60, key="account")
+@admin_required
 def period_reopen(request: AuthorizedRequest):
     """Переоткрытие месяца. Причина обязательна.
 
     Переоткрытие — событие, а не рутина: отчёт за период может измениться уже
     после того, как лёг в основу счёта. Причина попадает в журнал, чтобы через
     полгода было понятно, почему цифры разошлись с актом.
+
+    @admin_required — то же точечное исключение, что у period_close.
     """
     from .period_service import PeriodService
 
