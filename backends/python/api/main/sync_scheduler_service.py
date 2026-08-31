@@ -70,6 +70,7 @@ from .configuration_service import ConfigurationService
 from .project_sync_service import ProjectSyncService
 from .tenant_scoping import portal_scoping_enabled
 from .timesheet_sync_service import TimesheetSyncService
+from .task_sync_service import TaskSyncService
 from .user_sync_service import UserSyncService
 # Под USE_PORTAL_SCOPING account_sync_lock ключуется по portal.pk (замок «по
 # компании»), выбор субъекта — внутри замка по флагу; вызовы ниже не меняются.
@@ -290,6 +291,21 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                 synced += 1
                 items_total += int(count or 0)
                 logger.info("Scheduled user-sync portal %s: %s users.", account.member_id, count)
+
+            elif scope == "tasks":
+                try:
+                    with account_sync_lock(account, scope="tasks"):
+                        service = TaskSyncService(account.client, account)
+                        result = service.sync()
+                except SyncLockBusy:
+                    logger.info("Portal %s task-sync skipped: lock busy.",
+                                account.member_id)
+                    continue
+
+                count = result.get("synced", 0) if isinstance(result, dict) else 0
+                synced += 1
+                items_total += int(count or 0)
+                logger.info("Scheduled task-sync portal %s: %s tasks.", account.member_id, count)
 
             else:  # scope == "timesheet"
                 if not config.get("sp_entity_type_id"):
