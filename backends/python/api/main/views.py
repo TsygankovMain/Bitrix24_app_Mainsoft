@@ -32,6 +32,7 @@ from .services import (
 )
 from .installation_service import InstallationService, InstallationError
 from .app_version import get_app_version, is_version_acceptable
+from .task_sync_service import TaskSyncService
 from .timesheet_write_service import TimesheetWriteError, TimesheetWriteService
 from .timesheet_sync_service import resolve_sync_mode
 from .tenant_scoping import scope_to_tenant
@@ -1914,6 +1915,23 @@ def timesheet_sync(request: AuthorizedRequest):
                 "warning": "Не удалось обновить данные из Битрикс24. Используются последние сохраненные данные.",
             }
         )
+
+    # Кнопка «Обновить» обязана обновлять и справочник задач, иначе она
+    # обновляет только половину: списания приезжают, а задача, на которую их
+    # только что списали, остаётся неизвестной до фонового цикла — и отчёт
+    # показывает снимок вместо текущего проекта. Ровно на это наткнулись при
+    # боевой проверке 31.08.2026 (задача 8365 разминулась с прогоном на
+    # минуту, и нажатие «Обновить» ничего не меняло).
+    #
+    # Дотягиваем ТОЛЬКО недостающие: когда всё на месте — это один SELECT без
+    # обращений к Битриксу, то есть на цену кнопки не влияет.
+    with profiler.stage("task_directory"):
+        try:
+            TaskSyncService(request.bitrix24_account.client, request.bitrix24_account).sync_missing_task_ids()
+        except Exception as exc:  # noqa: BLE001
+            # Справочник вспомогательный: его сбой не должен превращать
+            # успешный синк часов в ошибку для пользователя.
+            logger.warning("Task directory refresh after sync failed: %s", exc)
 
     with profiler.stage("invalidate_caches"):
         invalidate_project_runtime_caches(request.bitrix24_account)

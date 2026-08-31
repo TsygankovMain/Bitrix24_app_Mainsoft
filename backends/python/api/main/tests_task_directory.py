@@ -173,3 +173,64 @@ class TaskSyncServiceTest(TestCase):
 
         lookup = build_task_lookup(self.account)
         self.assertEqual(lookup["6823"], {"title": "Актуальное", "group_id": "425"})
+
+
+class SyncMissingTasksTest(TestCase):
+    """Кнопка «Обновить» дотягивает задачи, которых нет в справочнике.
+
+    Боевая проверка 31.08.2026: пользователь списал час на задачу 8365,
+    перенёс её в другой проект и нажал «Обновить» — ничего не изменилось.
+    Причина: синк обновлял только списания, а справочник ждал своего цикла, и
+    задача, доехавшая на минуту позже прогона, оставалась неизвестной. Отчёт
+    при этом честно откатывался на снимок, показывая прежний проект.
+    """
+
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=11, is_b24_user_admin=True, member_id="m-missing",
+            is_master_account=True, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def _service(self, referenced, fetched):
+        service = TaskSyncService(client=None, account=self.account)
+        service.collect_referenced_task_ids = lambda: referenced
+        service._fetch_tasks = lambda ids: [t for t in fetched if str(t.get("id")) in set(ids)]
+        return service
+
+    def test_missing_task_is_pulled(self):
+        service = self._service(
+            referenced=["8365"],
+            fetched=[{"id": "8365", "title": "подготовить рассылку", "groupId": "73"}],
+        )
+
+        result = service.sync_missing_task_ids()
+
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(PortalTask.objects.get(bitrix_id="8365").group_id, "73")
+
+    def test_nothing_missing_costs_no_bitrix_calls(self):
+        """Обычный случай: всё на месте — кнопка не платит ни одного вызова."""
+        PortalTask.objects.create(
+            bitrix24_account=self.account, bitrix_id="8365",
+            title="подготовить рассылку", group_id="73",
+        )
+        service = TaskSyncService(client=None, account=self.account)
+        service.collect_referenced_task_ids = lambda: ["8365"]
+
+        def _must_not_be_called(ids):
+            raise AssertionError("Битрикс не должен вызываться, когда дотягивать нечего")
+
+        service._fetch_tasks = _must_not_be_called
+
+        self.assertEqual(service.sync_missing_task_ids()["synced"], 0)
+
+    def test_limit_caps_one_run(self):
+        """После долгого простоя кнопка не превращается в полный обход."""
+        referenced = [str(i) for i in range(1, 51)]
+        fetched = [{"id": str(i), "title": f"Задача {i}", "groupId": "1"} for i in referenced]
+        service = self._service(referenced=referenced, fetched=fetched)
+
+        service.sync_missing_task_ids(limit=10)
+
+        self.assertEqual(PortalTask.objects.count(), 10)
