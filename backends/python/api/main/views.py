@@ -1927,7 +1927,13 @@ def timesheet_sync(request: AuthorizedRequest):
     # обращений к Битриксу, то есть на цену кнопки не влияет.
     with profiler.stage("task_directory"):
         try:
-            TaskSyncService(request.bitrix24_account.client, request.bitrix24_account).sync_missing_task_ids()
+            task_sync = TaskSyncService(request.bitrix24_account.client, request.bitrix24_account)
+            # Две разные дыры, обе обязательны:
+            #  - отсутствующие: задача, на которую списали только что;
+            #  - изменённые: перенос задачи, которая в справочнике уже есть.
+            #    Без этого «Обновить» не показывал реального положения.
+            task_sync.sync_missing_task_ids()
+            task_sync.sync_changed_since()
         except Exception as exc:  # noqa: BLE001
             # Справочник вспомогательный: его сбой не должен превращать
             # успешный синк часов в ошибку для пользователя.
