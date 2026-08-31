@@ -53,7 +53,7 @@ class Command(BaseCommand):
             "--scope",
             type=str,
             default="timesheet",
-            choices=["timesheet", "project", "users"],
+            choices=["timesheet", "project", "users", "tasks"],
             help="Что синхронизировать: timesheet (трудозатраты), project (проекты) или "
                  "users (пользователи, раз в ~1 ч). По умолчанию timesheet (обратная совместимость).",
         )

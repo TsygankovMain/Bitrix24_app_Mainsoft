@@ -40,6 +40,7 @@ from .report_queries import (
     build_filtered_timesheet_queryset,
     build_project_filter_options,
     build_project_title_lookups,
+    build_task_lookup,
     build_tree_report_items,
     materialize_rows,
     resolve_project_name_for_row,
@@ -1217,9 +1218,13 @@ def report_employee_project(request: AuthorizedRequest):
         user_map = _get_user_map(request, user_ids)
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("build_items"):
         items = build_tree_report_items(
             rows,
+            task_lookup=_task_lookup,
             project_name_by_item=project_name_by_item,
             project_name_by_group=project_name_by_group,
         )
@@ -1250,9 +1255,13 @@ def report_project_employee(request: AuthorizedRequest):
         user_map = _get_user_map(request, user_ids)
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("build_items"):
         items = build_tree_report_items(
             rows,
+            task_lookup=_task_lookup,
             project_name_by_item=project_name_by_item,
             project_name_by_group=project_name_by_group,
         )
@@ -1283,9 +1292,13 @@ def report_project_task_employee(request: AuthorizedRequest):
         user_map = _get_user_map(request, user_ids)
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("build_items"):
         items = build_tree_report_items(
             rows,
+            task_lookup=_task_lookup,
             include_task_id=True,
             project_name_by_item=project_name_by_item,
             project_name_by_group=project_name_by_group,
@@ -1314,8 +1327,12 @@ def report_project_task_employee_export(request: AuthorizedRequest):
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     items = build_tree_report_items(
         rows,
+        task_lookup=_task_lookup,
         include_task_id=True,
         project_name_by_item=project_name_by_item,
         project_name_by_group=project_name_by_group,
@@ -1351,8 +1368,12 @@ def report_employee_project_export(request: AuthorizedRequest):
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     items = build_tree_report_items(
         rows,
+        task_lookup=_task_lookup,
         project_name_by_item=project_name_by_item,
         project_name_by_group=project_name_by_group,
     )
@@ -1386,8 +1407,12 @@ def report_project_employee_export(request: AuthorizedRequest):
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     items = build_tree_report_items(
         rows,
+        task_lookup=_task_lookup,
         project_name_by_item=project_name_by_item,
         project_name_by_group=project_name_by_group,
     )
@@ -1439,6 +1464,9 @@ def report_daily_workload_export(request: AuthorizedRequest):
         },
     )
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     rows = materialize_rows(
         queryset,
         (
@@ -1493,6 +1521,9 @@ def report_revenue_leakage_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Потери выручки» в виде таблицы."""
     queryset = _get_filtered_timesheet_queryset(request)
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     rows = list(queryset.values(
         'employee_id',
         'project_item_id',
@@ -1663,6 +1694,9 @@ def report_revenue_leakage(request: AuthorizedRequest):
         queryset = _get_filtered_timesheet_queryset(request)
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("materialize"):
         rows = list(queryset.values(
             'employee_id',
@@ -2333,6 +2367,9 @@ def report_daily_workload(request: AuthorizedRequest):
         )
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("materialize"):
         rows = materialize_rows(
             queryset,
