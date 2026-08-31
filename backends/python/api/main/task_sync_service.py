@@ -62,6 +62,25 @@ class TaskSyncService:
         raw_tasks = self._fetch_tasks(task_ids)
         return self._save_batch(raw_tasks)
 
+    def sync_task_ids(self, task_ids: List[str]) -> Dict[str, int]:
+        """Точечное обновление справочника по конкретным задачам.
+
+        Нужно, потому что полный прогон идёт по расписанию, а справочник
+        строится из УЖЕ синхронизированных списаний. Задача, на которую часы
+        списали только что, попадает в него лишь следующим циклом — и до тех
+        пор отчёт по ней откатывается на снимок, то есть «следовать за
+        задачей» не работает ровно для самых свежих записей. На проде
+        31.08.2026 таких задач набралось семь за пятнадцать минут.
+
+        Зовётся при записи часов через бэкенд: там id задачи известен, а
+        стоимость — один crm-вызов на пачку до 50 задач.
+        """
+        cleaned = [_clean_id(t) for t in task_ids]
+        cleaned = [t for t in cleaned if t]
+        if not cleaned:
+            return {"synced": 0, "created": 0, "updated": 0}
+        return self._save_batch(self._fetch_tasks(sorted(set(cleaned))))
+
     def collect_referenced_task_ids(self) -> List[str]:
         """ID задач, встречающихся в списаниях: и сама задача, и вся её цепочка.
 
@@ -170,7 +189,22 @@ class TaskSyncService:
 
             has_changes = False
             for field_name, field_value in defaults.items():
-                if getattr(existing_row, field_name) != field_value:
+                previous = getattr(existing_row, field_name)
+                if previous != field_value:
+                    # Перенос задачи в другой проект — ключевое событие для
+                    # отчётов: именно из-за него часы меняют проект. Логируем
+                    # отдельно и явно, иначе «почему цифры поехали» приходится
+                    # выяснять сопоставлением выгрузок.
+                    if field_name == "group_id":
+                        logger.info(
+                            "Task %s moved: group %s -> %s (account %s)",
+                            bitrix_id, previous or "—", field_value or "—", self.account.pk,
+                        )
+                    elif field_name == "title":
+                        logger.info(
+                            "Task %s renamed: %r -> %r (account %s)",
+                            bitrix_id, previous, field_value, self.account.pk,
+                        )
                     setattr(existing_row, field_name, field_value)
                     has_changes = True
             if has_changes:

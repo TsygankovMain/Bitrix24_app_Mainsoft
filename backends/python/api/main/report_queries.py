@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
@@ -8,6 +9,8 @@ from .employee_ids import build_employee_id_aliases
 from .models import Bitrix24Account, PortalTask, TimesheetItem
 from .project_board_shared import get_project_card_queryset
 from .tenant_scoping import scope_to_tenant
+
+logger = logging.getLogger(__name__)
 
 
 TREE_REPORT_FIELDS = (
@@ -351,9 +354,20 @@ def build_tree_report_items(
     прежнее: во всём используется снимок.
     """
     items = []
+    # Диагностика резолва: сколько записей реально поехало за задачей, а
+    # сколько осталось на снимке из-за отсутствия задачи в справочнике.
+    # Сводка на запрос, а не на строку: строк тысячи, лог должен помогать,
+    # а не топить. Включена по просьбе при проверке переноса 31.08.2026.
+    stat_moved = 0
+    stat_no_task = 0
     for row in rows:
         current_group = resolve_current_group_for_row(row, task_lookup)
         current_titles = resolve_task_titles_for_row(row, task_lookup)
+        if current_group:
+            if current_group != str(row.get("project_id") or "").strip():
+                stat_moved += 1
+        elif task_lookup is not None:
+            stat_no_task += 1
         # Актуальная группа замещает снимок и в имени проекта, и в ключе
         # группировки — иначе перенесённая задача осталась бы под старым
         # проектом.
@@ -384,6 +398,12 @@ def build_tree_report_items(
         if include_task_id:
             item["id_zadachi"] = row["task_id"]
         items.append(item)
+
+    if task_lookup is not None and items:
+        logger.info(
+            "Report resolve: rows=%s, moved_to_current_project=%s, task_missing_in_directory=%s",
+            len(items), stat_moved, stat_no_task,
+        )
     return items
 
 
