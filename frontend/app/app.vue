@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import * as locales from '@bitrix24/b24ui-nuxt/locale'
+import AppOutdatedBanner from '~/components/common/AppOutdatedBanner.vue'
 import ProgressOverlay from '~/components/common/ProgressOverlay.vue'
 import { useProgress } from '~/composables/useProgress'
 
@@ -25,5 +26,6 @@ const progress = useProgress()
       </NuxtLayout>
     </B24DashboardGroup>
     <ProgressOverlay :visible="progress.active.value" :title="progress.state.title" :hint="progress.state.hint" :done="progress.state.done" :total="progress.state.total" />
+    <AppOutdatedBanner />
   </B24App>
 </template>

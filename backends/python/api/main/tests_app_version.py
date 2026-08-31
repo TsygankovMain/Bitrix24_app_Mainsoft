@@ -161,6 +161,80 @@ class WriteRejectsStaleClientTest(TestCase):
         m_service.assert_not_called()
 
 
+class PeriodOperationsRejectStaleClientTest(TestCase):
+    """Закрытие месяца тоже закрыто проверкой версии.
+
+    Сначала проверка стояла только на списании часов, и этого было мало:
+    закрытие и переоткрытие необратимы и решают, что уйдёт клиенту в счёт.
+    Вкладка со старым кодом могла закрыть месяц по правилам, которых на
+    сервере уже нет.
+    """
+
+    def setUp(self):
+        app_version_module._cache.clear()
+        app_version_module._cache["version"] = "server-build1"
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=11, is_b24_user_admin=True, member_id="m-ver-period",
+            is_master_account=True, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        self.token = self.account.create_jwt_token()
+
+    def tearDown(self):
+        app_version_module._cache.clear()
+
+    def _post(self, path, body, version="old-build"):
+        return Client().post(
+            path, data=json.dumps(body), content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            HTTP_X_APP_VERSION=version,
+        )
+
+    def test_close_rejects_stale_client(self):
+        response = self._post("/api/periods/close", {"year": 2026, "month": 8})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "app_version_mismatch")
+
+    def test_reopen_rejects_stale_client(self):
+        response = self._post(
+            "/api/periods/reopen", {"year": 2026, "month": 8, "reason": "правка"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "app_version_mismatch")
+
+    def test_bulk_close_rejects_stale_client(self):
+        response = self._post(
+            "/api/periods/close-bulk", {"until_year": 2026, "until_month": 8},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "app_version_mismatch")
+
+    def test_fix_rejects_stale_client(self):
+        response = self._post(
+            "/api/periods/fix",
+            {"year": 2026, "month": 8, "code": "diverged_project"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "app_version_mismatch")
+
+    def test_current_client_is_not_blocked_by_the_guard(self):
+        """Свежая вкладка проходит гейт версии.
+
+        Ответ при этом может быть каким угодно по существу операции — важно
+        лишь, что отказ не по версии.
+        """
+        response = self._post(
+            "/api/periods/close", {"year": 2026, "month": 8}, version="server-build1",
+        )
+
+        body = response.json() if response.status_code != 200 else {}
+        self.assertNotEqual(body.get("code"), "app_version_mismatch")
+
+
 class AppVersionEndpointTest(TestCase):
     def setUp(self):
         app_version_module._cache.clear()

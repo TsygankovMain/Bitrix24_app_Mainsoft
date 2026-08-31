@@ -84,3 +84,30 @@ export interface PeriodEntryRow {
   date: string | null
   created_at?: string | null
 }
+
+/**
+ * Ответ на исправление находки.
+ *
+ * check — свежая проверка ПОСЛЕ правки. Именно она показывает, что реально
+ * поправилось: часть карточек Битрикс может отвергнуть, а часть задач
+ * окажется без рабочей группы (unfixable_tasks) — для них верного проекта
+ * попросту не существует, и это не сбой.
+ */
+export interface PeriodFixResult {
+  status: 'done' | 'not_fixable' | 'period_closed'
+  code: string
+  error?: string
+  attempted_tasks?: number
+  unfixable_tasks?: number
+  check?: PeriodCheckResult
+}
+
+/**
+ * Находки, у которых на экране есть кнопка «Исправить».
+ *
+ * Список дублирует FIXABLE_CODES бэкенда (period_fix_service) осознанно:
+ * экран должен знать, рисовать ли кнопку, ДО запроса. Сервер всё равно
+ * проверяет код сам и отвечает 409 на всё остальное — здесь это лишь подсказка
+ * интерфейсу, а не правило.
+ */
+export const FIXABLE_CODES = ['diverged_project', 'no_project']

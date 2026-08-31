@@ -24,7 +24,7 @@ import type {
 import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
-import type { PeriodBulkPlan, PeriodCheckResult, PeriodEntryRow, PeriodRow } from '~/types/period'
+import type { PeriodBulkPlan, PeriodCheckResult, PeriodEntryRow, PeriodFixResult, PeriodRow } from '~/types/period'
 
 type SaveConfigurationResponse = {
   status?: string
@@ -185,6 +185,20 @@ export const useApiStore = defineStore(
         //     frontend/app/utils/apiErrors.ts) — она закрывает тот же класс
         //     мест (весь код, который зовёт processErrorGlobal(e) в catch),
         //     не трогая этот файл и не рискуя поиском компаний.
+
+        // HTTP 409 app_version_mismatch — вкладка исполняет код, которого на
+        // сервере уже нет. Ловим ЗДЕСЬ, а не на экранах: отказ может прийти
+        // на любую пишущую ручку, и заводить обработчик в каждой было бы
+        // ровно тем дублированием, ради устранения которого этот перехватчик
+        // и существует. Ошибку не подменяем — экран всё так же покажет
+        // серверный текст, — только взводим флаг для баннера с кнопкой
+        // перезагрузки.
+        if (ctx.response?.status === 409) {
+          const data = ctx.response._data as { code?: string } | undefined
+          if (data?.code === 'app_version_mismatch') {
+            useAppOutdated().markOutdated()
+          }
+        }
       }
     })
 
@@ -621,18 +635,56 @@ export const useApiStore = defineStore(
     /**
      * Версия сборки, на которой работает ЭТА вкладка.
      *
-     * Спрашивается один раз при первой записи и запоминается. Смысл в том,
-     * что вкладка получает версию того кода, который сейчас исполняет: она
-     * загрузилась из той же сборки. Если позже приложение выкатят заново,
-     * сервер начнёт отдавать другую версию, а вкладка продолжит слать
-     * запомненную — сервер увидит расхождение и запись отклонит.
+     * Смысл в том, что вкладка запоминает версию того кода, который сейчас
+     * исполняет: она загрузилась из этой сборки. После передеплоя сервер
+     * начнёт отдавать другую версию, а вкладка продолжит слать запомненную —
+     * сервер увидит расхождение и запись отклонит.
      *
      * Зачем: приложение живёт в айфрейме, и жёсткая перезагрузка страницы
      * Битрикса содержимое фрейма не обновляет — вкладка может неделями
      * работать на старом коде (инцидент 31.08.2026). Без этой проверки такая
-     * вкладка обошла бы будущий запрет на списание в закрытый месяц.
+     * вкладка обошла бы запрет на списание в закрытый месяц.
+     *
+     * ВЕРСИЯ СПРАШИВАЕТСЯ НА СТАРТЕ, А НЕ ПРИ ПЕРВОЙ ЗАПИСИ, и это
+     * принципиально. В первой версии (31.08.2026) запрос был ленивым, и
+     * защита из-за этого не работала в самом частом случае: вкладка, открытая
+     * ДО передеплоя и ничего не писавшая, при первой же записи спрашивала
+     * версию у УЖЕ ОБНОВЛЁННОГО сервера, получала новую и успешно проходила
+     * проверку — исполняя при этом старый код. Ловились только вкладки,
+     * успевшие что-то записать до выкатки. Спрашивая на старте, мы получаем
+     * версию сервера на момент загрузки страницы, то есть версию собственного
+     * кода.
      */
     const appVersion = ref<string | null>(null)
+
+    /**
+     * Единственный запрос версии за жизнь вкладки.
+     *
+     * Промис запоминается, а не только результат: writeHeaders может успеть
+     * дважды до ответа, и без этого получилось бы два параллельных запроса.
+     */
+    let versionCapture: Promise<void> | null = null
+
+    const captureAppVersion = (): Promise<void> => {
+      if (!versionCapture) {
+        versionCapture = $api<{ version: string }>('/api/app-version')
+          .then((res) => {
+            appVersion.value = res?.version || null
+          })
+          .catch(() => {
+            // Версия не критична: сервер трактует её отсутствие как
+            // «проверять нечем» и пропускает запись. Ронять списание из-за
+            // сбоя вспомогательной ручки нельзя.
+          })
+      }
+      return versionCapture
+    }
+
+    // Старт вкладки. Ответ не ждём — он нужен только к первой записи, а
+    // блокировать инициализацию стора сетевым запросом незачем.
+    if (import.meta.client) {
+      void captureAppVersion()
+    }
 
     /**
      * Превращает отказ сервера в понятный пользователю текст.
@@ -654,18 +706,17 @@ export const useApiStore = defineStore(
       throw error
     }
 
+    /**
+     * Заголовки пишущего запроса: токен и версия сборки.
+     *
+     * Ставятся на ВСЕ операции, меняющие данные, а не только на списание
+     * часов: закрытие и переоткрытие месяца необратимы, и выполнить их из
+     * вкладки со старым кодом — ровно тот случай, ради которого проверка
+     * версии заводилась.
+     */
     const writeHeaders = async (): Promise<Record<string, string>> => {
       const headers: Record<string, string> = { Authorization: `Bearer ${tokenJWT.value}` }
-      if (!appVersion.value) {
-        try {
-          const res = await $api<{ version: string }>('/api/app-version')
-          appVersion.value = res?.version || null
-        } catch {
-          // Версия не критична для записи: сервер трактует её отсутствие как
-          // «проверять нечем» и пропускает. Ронять списание из-за сбоя
-          // вспомогательной ручки нельзя.
-        }
-      }
+      await captureAppVersion()
       if (appVersion.value) {
         headers['X-App-Version'] = appVersion.value
       }
@@ -725,6 +776,28 @@ export const useApiStore = defineStore(
     }
 
     /**
+     * Исправление находки проверки одним нажатием.
+     *
+     * В ответе всегда лежит СВЕЖАЯ проверка — экран перерисовывается по факту,
+     * а не по прогнозу: часть карточек Битрикс может отвергнуть, часть задач
+     * окажется без рабочей группы.
+     *
+     * 409 здесь штатный: «эту находку машина не чинит» или «период закрыт,
+     * сначала переоткройте». Текст берём из ответа сервера.
+     */
+    const fixPeriodFinding = async (
+      year: number, month: number, code: string,
+    ): Promise<PeriodFixResult> => {
+      const result = await $api<PeriodFixResult>('/api/periods/fix', {
+        method: 'POST',
+        headers: await writeHeaders(),
+        body: { year, month, code }
+      }).catch(rethrowWithServerMessage)
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    /**
      * Закрытие периода. Сервер повторно проверяет блокеры и отвечает 409, даже
      * если экран считал, что всё чисто — кнопку можно обойти, а закрытие
      * необратимо. Текст ошибки достаём из ответа (см. rethrowWithServerMessage).
@@ -732,7 +805,7 @@ export const useApiStore = defineStore(
     const closePeriod = async (year: number, month: number): Promise<{ status: string }> => {
       const result = await $api<{ status: string }>('/api/periods/close', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        headers: await writeHeaders(),
         body: { year, month }
       }).catch(rethrowWithServerMessage)
       clearCache('project-board', 'homepage-portfolio', 'filter-projects')
@@ -742,7 +815,7 @@ export const useApiStore = defineStore(
     const reopenPeriod = async (year: number, month: number, reason: string): Promise<{ status: string }> => {
       const result = await $api<{ status: string }>('/api/periods/reopen', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        headers: await writeHeaders(),
         body: { year, month, reason }
       }).catch(rethrowWithServerMessage)
       clearCache('project-board', 'homepage-portfolio', 'filter-projects')
@@ -761,7 +834,7 @@ export const useApiStore = defineStore(
     ): Promise<PeriodBulkPlan> => {
       const result = await $api<PeriodBulkPlan>('/api/periods/close-bulk', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        headers: await writeHeaders(),
         body: { until_year: untilYear, until_month: untilMonth, acknowledge }
       }).catch((error: unknown) => {
         // 409 здесь — штатный ответ «подтвердите», а не сбой.
@@ -1371,6 +1444,7 @@ export const useApiStore = defineStore(
       getPeriods,
       checkPeriod,
       getPeriodCheckDetails,
+      fixPeriodFinding,
       closePeriod,
       closePeriodsBulk,
       reopenPeriod,
