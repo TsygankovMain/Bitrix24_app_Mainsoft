@@ -16,6 +16,7 @@
  * перестанет работать ровно тогда, когда понадобится.
  */
 import type { B24Frame } from '@bitrix24/b24jssdk'
+import { FIXABLE_CODES } from '~/types/period'
 import type { PeriodBulkPlan, PeriodCheckResult, PeriodEntryRow, PeriodRow } from '~/types/period'
 
 const router = useRouter()
@@ -104,6 +105,67 @@ async function runCheck(row: PeriodRow) {
     checkTarget.value = null
   } finally {
     checking.value = false
+  }
+}
+
+/**
+ * Находка, которую сейчас чинит сервер. Пусто — ничего не чинится.
+ *
+ * Хранится код, а не булев флаг: кнопка должна гаснуть только у своей строки,
+ * иначе человек не понимает, какая именно правка идёт.
+ */
+const fixing = ref('')
+
+/**
+ * Есть ли у находки кнопка «Исправить».
+ *
+ * Закрытый период кнопку не получает: переписывание карточек намеренно не
+ * трогает замороженные записи, и нажатие честно вернуло бы отказ. Лучше не
+ * показывать кнопку, которая заведомо откажет.
+ */
+function canFix(code: string): boolean {
+  return FIXABLE_CODES.includes(code) && !checkTarget.value?.closed
+}
+
+/**
+ * Чинит находку и перерисовывает проверку ответом сервера.
+ *
+ * Свою проверку заново НЕ запускаем: сервер уже вернул свежую, и повторный
+ * запрос дал бы лишний круг к Битриксу ради того же результата.
+ */
+async function fixFinding(code: string, title: string) {
+  if (!checkTarget.value) return
+  fixing.value = code
+  try {
+    const res = await apiStore.fixPeriodFinding(
+      checkTarget.value.year, checkTarget.value.month, code,
+    )
+    if (res.check) {
+      check.value = res.check
+    }
+    // Открытая детализация после правки устарела — закрываем, чтобы человек
+    // не читал список записей, которых уже нет.
+    if (detailsCode.value === code) {
+      detailsCode.value = ''
+      detailsRows.value = []
+    }
+    const left = res.check?.blockers.find(b => b.code === code)?.count || 0
+    toast.add({
+      title: left
+        ? `${title}: осталось ${left}. Нажмите ещё раз`
+        : `${title}: исправлено`,
+      color: left ? 'air-primary-warning' : 'air-primary-success',
+    })
+    if (res.unfixable_tasks) {
+      toast.add({
+        title: `${res.unfixable_tasks} задач без рабочей группы — проект для них подставить неоткуда`,
+        color: 'air-primary-warning',
+      })
+    }
+  } catch (e) {
+    processErrorGlobal(e)
+  } finally {
+    fixing.value = ''
   }
 }
 
@@ -260,6 +322,10 @@ onMounted(async () => {
     >
       <template #links>
         <B24Button label="Обновить" :loading="isLoading" @click="loadPeriods" />
+        <!-- Инструкция по закрытию — раздел 4 юзергайда. Ссылка здесь, а не
+             только в общем меню: вопросы про порядок закрытия и про то, что
+             чинит кнопка «Исправить», возникают именно на этом экране. -->
+        <B24Button label="Как это работает" color="link" @click="router.push('/guide')" />
         <B24Button label="Назад" color="link" @click="router.push('/settings')" />
       </template>
     </B24PageHeader>
@@ -383,6 +449,14 @@ onMounted(async () => {
               <span class="block text-xs text-slate-600">{{ item.why }}</span>
             </span>
             <B24Button label="Показать" color="link" @click="showDetails(item.code, item.title)" />
+            <B24Button
+              v-if="canFix(item.code)"
+              :label="fixing === item.code ? 'Чиним…' : 'Исправить'"
+              :disabled="Boolean(fixing)"
+              color="primary"
+              size="sm"
+              @click="fixFinding(item.code, item.title)"
+            />
           </div>
         </template>
         <p v-else class="mt-5 text-xs font-bold uppercase tracking-wider text-emerald-700">

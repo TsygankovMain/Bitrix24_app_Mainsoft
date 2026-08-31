@@ -222,6 +222,16 @@ class TaskSyncService:
         self._apply_project_moves(moves)
         return {"tasks": len(moves), "updated": 0}
 
+    def rewrite_project_for_tasks(self, moves: List[Dict[str, Any]]) -> None:
+        """Переписывание по готовому списку переносов — точка входа для кнопки.
+
+        Отличается от reconcile_project_divergence тем, что НЕ ищет, что чинить:
+        список уже собран вызывающим. Нужно экрану закрытия месяца, где человек
+        чинит конкретную находку конкретного периода, а не всё подряд
+        (period_fix_service).
+        """
+        self._apply_project_moves(moves)
+
     def _apply_project_moves(self, moves: List[Dict[str, Any]]) -> None:
         """Переписывает проект в карточках списаний переехавших задач.
 

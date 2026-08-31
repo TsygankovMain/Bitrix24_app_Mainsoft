@@ -1948,6 +1948,10 @@ def period_close(request: AuthorizedRequest):
     from .period_check_service import PeriodCheckService
     from .period_service import PeriodService
 
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
+
     payload = _load_request_json(request)
     year, month = _period_args(payload)
     if year is None:
@@ -2018,6 +2022,10 @@ def period_reopen(request: AuthorizedRequest):
     """
     from .period_service import PeriodService
 
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
+
     payload = _load_request_json(request)
     year, month = _period_args(payload)
     if year is None:
@@ -2070,6 +2078,10 @@ def period_close_bulk(request: AuthorizedRequest):
     """
     from .period_check_service import PeriodCheckService
     from .period_service import MONTHS, PeriodService
+
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
 
     payload = _load_request_json(request)
     year, month = _period_args({"year": payload.get("until_year"),
@@ -2168,6 +2180,82 @@ def period_late_arrivals(request: AuthorizedRequest):
         return JsonResponse({"items": []})
 
     return JsonResponse({"items": PeriodCheckService(account).late_arrivals(period)})
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("period_fix")
+@auth_required
+@rate_limit("period_fix", 20, 60, key="account")
+@admin_required
+def period_fix(request: AuthorizedRequest):
+    """Исправление находки проверки одним нажатием.
+
+    Пишет в карточки списаний Битрикса, то есть меняет исходные данные, по
+    которым потом выставляется счёт. Поэтому здесь тот же гейт по роли, что у
+    закрытия и переоткрытия: операция не разрушительная (проект в карточке
+    можно переписать обратно, и каждая правка оставляет комментарий в
+    таймлайне), но доверять её всем подряд незачем.
+
+    Что именно чинится и что осознанно не чинится — в докстринге
+    period_fix_service. Ответ всегда содержит СВЕЖУЮ проверку: экран
+    перерисовывается по факту, а не по нашему прогнозу.
+    """
+    from .period_fix_service import PeriodFixService
+
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
+
+    payload = _load_request_json(request)
+    year, month = _period_args(payload)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    code = str(payload.get("code") or "").strip()
+    if not code:
+        return JsonResponse({"error": "Не указана находка."}, status=400)
+
+    account = request.bitrix24_account
+    result = PeriodFixService(account.client, account).fix(year, month, code)
+
+    # Отказы отдаём 409, а не 400: запрос корректен, просто сейчас так делать
+    # нельзя — ровно как при закрытии периода с блокерами.
+    if result.get("status") in {"not_fixable", "period_closed"}:
+        return JsonResponse(result, status=409)
+    return JsonResponse(result)
+
+
+def _reject_stale_client(request):
+    """Отказ вкладке, работающей на снятой с сервера сборке. None — можно.
+
+    Приложение живёт в айфрейме, и жёсткая перезагрузка внешней страницы
+    Битрикса содержимое фрейма НЕ обновляет: вкладка может неделями исполнять
+    код, которого на сервере уже нет (инцидент 31.08.2026).
+
+    Ставится на ВСЕ операции, меняющие данные. Изначально проверка стояла
+    только на списании часов, и этого мало: закрытие и переоткрытие месяца
+    необратимы и определяют, что уйдёт клиенту в счёт, — выполнить их из
+    вкладки со старым кодом ничем не лучше.
+
+    Отсутствие заголовка пропускаем (см. is_version_acceptable): вкладки,
+    открытые до появления проверки, не должны отваливаться на ровном месте.
+    """
+    client_version = request.headers.get("X-App-Version")
+    if is_version_acceptable(client_version):
+        return None
+    logger.info(
+        "Stale client rejected: version=%s, server=%s, account=%s",
+        client_version, get_app_version(), request.bitrix24_account.pk,
+    )
+    return JsonResponse(
+        {
+            "error": "Приложение обновилось. Перезагрузите страницу и повторите.",
+            "code": "app_version_mismatch",
+        },
+        status=409,
+    )
 
 
 def _period_args(source):
@@ -2328,19 +2416,9 @@ def _timesheet_write(request: AuthorizedRequest, is_update: bool):
     # (инцидент 31.08.2026, см. app_version.py). Пока правил не было, это
     # означало лишь запись прежним путём; с закрытием месяца та же вкладка
     # обошла бы проверку и списала часы в закрытый период.
-    client_version = request.headers.get("X-App-Version")
-    if not is_version_acceptable(client_version):
-        logger.info(
-            "Stale client rejected: version=%s, server=%s, account=%s",
-            client_version, get_app_version(), request.bitrix24_account.pk,
-        )
-        return JsonResponse(
-            {
-                "error": "Приложение обновилось. Перезагрузите страницу и повторите.",
-                "code": "app_version_mismatch",
-            },
-            status=409,
-        )
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
 
     payload = _load_request_json(request)
     account = request.bitrix24_account
