@@ -1,7 +1,7 @@
 import logging
 import traceback
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from b24pysdk import Client
 from django.core.cache import cache

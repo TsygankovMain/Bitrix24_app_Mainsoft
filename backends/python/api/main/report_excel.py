@@ -15,7 +15,7 @@ ReportService().generate_project_task_employees(...):
 """
 
 import io
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import openpyxl
 from openpyxl.cell import WriteOnlyCell
@@ -467,7 +467,6 @@ def build_table_workbook(columns, rows, *, title, date_from="", date_to="", tota
 
     wb = openpyxl.Workbook(write_only=True)
     ws = wb.create_sheet("Отчёт")
-    ncols = len(columns)
     # freeze и ширины ставим ДО append (требование write_only)
     ws.freeze_panes = "A3"
     for i, col in enumerate(columns):

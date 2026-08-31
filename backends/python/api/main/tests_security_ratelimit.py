@@ -9,7 +9,6 @@ Tests verify:
 (г) Обычный одиночный запрос работает как раньше.
 """
 import json
-import time
 from http import HTTPStatus
 from unittest.mock import MagicMock, PropertyMock, patch
 

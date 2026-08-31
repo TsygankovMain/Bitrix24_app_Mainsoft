@@ -12,7 +12,7 @@ tie-break по b24_user_id). По умолчанию DRY-RUN: только сч�
 """
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from django.db import transaction
 

@@ -1,4 +1,3 @@
-import hashlib
 from unittest.mock import Mock
 
 from django.core.cache import cache

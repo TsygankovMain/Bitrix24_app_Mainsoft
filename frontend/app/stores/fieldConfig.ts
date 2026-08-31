@@ -70,14 +70,6 @@ type OptionGetPayload =
     | null
     | undefined
 
-export interface FieldConfigState {
-    entityTypeId: number
-    fields: Record<string, string>  // e.g. { TASK_ID: 'ufCrm87_xxx', HOURS: 'ufCrm87_yyy', ... }
-    taskFields: Record<string, string>  // e.g. { OUR_INN: 'UF_TASKS_TASK_xxx' }
-    spaFields: Record<string, string>   // e.g. { OUR_INN: 'ufCrm87_xxx' }
-    hourlyRate: number
-}
-
 export const useFieldConfigStore = defineStore(
     'fieldConfig',
     () => {

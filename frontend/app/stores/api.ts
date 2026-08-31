@@ -292,23 +292,6 @@ export const useApiStore = defineStore(
       return value
     }
 
-    // Health check
-    const checkHealth = async (): Promise<{
-      status: string
-      backend: string
-      timestamp: number
-    }> => {
-      try {
-        return await $api('/api/health', {
-          headers: {
-            Authorization: `Bearer ${tokenJWT.value}`
-          }
-        })
-      } catch {
-        throw new Error('Backend health check failed')
-      }
-    }
-
     // API
     const getEnum = async (): Promise<string[]> => {
       return await $api('/api/enum', {
@@ -1287,7 +1270,6 @@ export const useApiStore = defineStore(
     }
 
     return {
-      checkHealth,
       init,
       getEnum,
       getList,
