@@ -66,18 +66,30 @@ async function loadPeriods() {
 }
 
 /**
- * Закрывать можно только последний открытый месяц: дыры в череде закрытых
- * периодов запрещены, иначе «закрыт» перестаёт что-либо значить.
+ * Закрывать периоды можно только по порядку, от САМОГО СТАРОГО к новым.
+ *
+ * Так устроен учёт: нельзя закрыть август, оставив июль открытым — иначе
+ * слово «закрыт» перестаёт что-либо значить, а в череде закрытых периодов
+ * появляются дыры.
+ *
+ * Первая версия брала open[0], а список приходит отсортированным от НОВЫХ к
+ * старым — то есть кнопка оказывалась у самого свежего месяца, ровно наоборот
+ * (найдено при первом же боевом использовании 31.08.2026: у пользователя
+ * кнопка была только у сентября, а у остальных девяти периодов стояла
+ * подсказка «сначала закройте предыдущий», указывавшая в никуда).
+ *
+ * Считаем минимум явно, а не по позиции в массиве: порядок сортировки — не то
+ * свойство, на которое стоит опираться, оно может измениться на сервере.
  */
-const closableKey = computed(() => {
+const oldestOpen = computed<PeriodRow | null>(() => {
   const open = periods.value.filter(p => !p.closed)
-  if (!open.length) return ''
-  const first = open[0]
-  return `${first.year}-${first.month}`
+  if (!open.length) return null
+  return open.reduce((a, b) => (a.year * 12 + a.month <= b.year * 12 + b.month ? a : b))
 })
 
 function isClosable(row: PeriodRow) {
-  return !row.closed && `${row.year}-${row.month}` === closableKey.value
+  const target = oldestOpen.value
+  return !!target && row.year === target.year && row.month === target.month
 }
 
 async function runCheck(row: PeriodRow) {
@@ -245,7 +257,7 @@ onMounted(async () => {
                   @click="reopenTarget = row"
                 />
                 <span v-else class="text-xs text-slate-400">
-                  Сначала закройте предыдущий
+                  Сначала закройте {{ oldestOpen?.title }}
                 </span>
               </td>
             </tr>

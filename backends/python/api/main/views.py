@@ -1953,6 +1953,27 @@ def period_close(request: AuthorizedRequest):
         return JsonResponse({"error": "Не указан период."}, status=400)
 
     account = request.bitrix24_account
+    periods = PeriodService(account)
+
+    # Порядок закрытия: строго от старого к новому. Проверяем на сервере, а не
+    # полагаемся на то, что экран спрятал кнопку — запрос можно отправить и
+    # мимо интерфейса, а закрытие необратимо.
+    earliest = periods.earliest_open_period()
+    if earliest is not None and earliest != (year, month):
+        from .period_service import MONTHS
+
+        return JsonResponse(
+            {
+                "error": (
+                    f"Сначала закройте {MONTHS[earliest[1]]} {earliest[0]}: "
+                    "периоды закрываются по порядку, от старых к новым."
+                ),
+                "code": "out_of_order",
+                "earliest_open": {"year": earliest[0], "month": earliest[1]},
+            },
+            status=409,
+        )
+
     check = PeriodCheckService(account).run(year, month)
     if not check["can_close"]:
         return JsonResponse(
@@ -1964,7 +1985,7 @@ def period_close(request: AuthorizedRequest):
             status=409,
         )
 
-    period = PeriodService(account).close(
+    period = periods.close(
         year, month, stats=check["stats"],
         by_id=str(account.b24_user_id or ""),
         by_name=_current_user_display_name(request),
