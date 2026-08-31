@@ -762,13 +762,6 @@ class ProjectSyncService:
         return None
 
     @staticmethod
-    def _is_project(item: Dict[str, Any]) -> bool:
-        project_flag = item.get("PROJECT")
-        if project_flag is None:
-            return True
-        return ProjectCardService._to_bool(project_flag, default=False)
-
-    @staticmethod
     def _set_if_changed(card: ProjectCard, field_name: str, next_value: Any, changed_fields: List[str]) -> None:
         if getattr(card, field_name) != next_value:
             setattr(card, field_name, next_value)

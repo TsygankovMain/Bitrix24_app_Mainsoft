@@ -16,7 +16,6 @@
 """
 
 from datetime import datetime
-from unittest.mock import Mock
 
 from django.test import TestCase
 from django.utils import timezone
