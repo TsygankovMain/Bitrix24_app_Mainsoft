@@ -634,6 +634,38 @@ export const useApiStore = defineStore(
       return result
     }
 
+    /**
+     * Создание карточки списания через наш бэкенд.
+     *
+     * Раньше экраны звали $b24.callMethod('crm.item.add', …) напрямую из
+     * браузера, минуя Django. Серверного правила на такую запись наложить было
+     * негде — в частности запрет списания в закрытый месяц жил бы только в JS.
+     *
+     * entityTypeId сюда НЕ передаётся: смарт-процесс выбирает сервер из своей
+     * конфигурации. Автор записи не меняется — бэкенд ходит в Битрикс токеном
+     * того же сотрудника (см. TimesheetWriteService).
+     */
+    const createTimesheetEntry = async (fields: Record<string, unknown>): Promise<{ status: string; id: number | null }> => {
+      const result = await $api<{ status: string, id: number | null }>('/api/timesheet/create', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { fields }
+      })
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    /** Правка карточки списания. Условия те же, что у createTimesheetEntry. */
+    const updateTimesheetEntry = async (id: string | number, fields: Record<string, unknown>): Promise<{ status: string; id: number | null }> => {
+      const result = await $api<{ status: string, id: number | null }>('/api/timesheet/update', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { id, fields }
+      })
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
     const getTimesheetSyncStatus = async (): Promise<{ last_synced_at: string | null; count: number }> => {
       return await $api<{ last_synced_at: string | null, count: number }>('/api/timesheet-sync-status', {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
@@ -1225,6 +1257,8 @@ export const useApiStore = defineStore(
       getReportTimeEntryDiscipline,
       getReportFocusAnalysis,
       syncTimesheets,
+      createTimesheetEntry,
+      updateTimesheetEntry,
       getTimesheetSyncStatus,
       getTimesheetsList,
       getUsers,

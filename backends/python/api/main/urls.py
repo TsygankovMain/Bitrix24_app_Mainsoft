@@ -55,6 +55,10 @@ urlpatterns = [
 
     # Timesheets
     path('api/sync-timesheets', views.timesheet_sync, name='sync_timesheets'), # Matches api.ts: /api/sync-timesheets
+    # Запись часов через бэкенд, а не напрямую из браузера: единственное место,
+    # где на списание можно наложить серверное правило (закрытие месяца).
+    path('api/timesheet/create', views.timesheet_create, name='timesheet_create'),
+    path('api/timesheet/update', views.timesheet_update, name='timesheet_update'),
     path('api/timesheet-sync-status', views.timesheet_sync_status, name='timesheet_sync_status'),
     path('api/timesheets', views.timesheet_list, name='list_timesheets'),      # Matches api.ts: /api/timesheets
     path('api/users', views.get_users, name='get_users'),
