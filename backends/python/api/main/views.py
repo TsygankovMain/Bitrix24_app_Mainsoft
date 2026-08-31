@@ -31,6 +31,7 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
+from .timesheet_write_service import TimesheetWriteError, TimesheetWriteService
 from .timesheet_sync_service import resolve_sync_mode
 from .tenant_scoping import scope_to_tenant
 from .employee_ids import extract_bitrix_user_id
@@ -1907,6 +1908,64 @@ def timesheet_sync(request: AuthorizedRequest):
     profiler.attach_to_response(response)
     profiler.log()
     return response
+
+
+def _timesheet_write(request: AuthorizedRequest, is_update: bool):
+    """Общее тело create/update: разбор тела -> сервис -> ответ.
+
+    Обе ручки существуют затем, чтобы у списания появилась ТОЧКА КОНТРОЛЯ на
+    сервере. Раньше часы уходили в Битрикс прямо из браузера
+    ($b24.callMethod('crm.item.add', …) в task.vue, embedded.vue и
+    reports/project-report.client.vue), бэкенд об этом не знал, и наложить на
+    запись серверное правило — в первую очередь запрет списания в закрытый
+    месяц — было физически некуда.
+
+    Автор записи сохраняется: TimesheetWriteService ходит токеном самого
+    сотрудника (см. его докстринг), поэтому карточка создаётся от того же
+    человека, что и раньше, и права Битрикса применяются к нему же.
+    """
+    payload = _load_request_json(request)
+    account = request.bitrix24_account
+
+    try:
+        service = TimesheetWriteService(account)
+        if is_update:
+            result = service.update(payload.get("id"), payload.get("fields"))
+        else:
+            result = service.create(payload.get("fields"))
+    except TimesheetWriteError as exc:
+        return JsonResponse({"error": exc.message}, status=exc.status)
+
+    return JsonResponse(result)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("timesheet_create")
+@auth_required
+@rate_limit("timesheet_write", 30, 60, key="account")
+def timesheet_create(request: AuthorizedRequest):
+    """Создание карточки списания.
+
+    Порог @rate_limit — 30/60с, заметно выше, чем у синков (6/60с): списание
+    это обычное частое действие пользователя, а не тяжёлая операция. Экран
+    «разделить запись» в embedded.vue создаёт несколько карточек подряд, и
+    порог уровня синка ронял бы штатную работу. При этом лимит есть: сама
+    ручка ходит в Битрикс, и безлимитной её оставлять нельзя.
+    """
+    return _timesheet_write(request, is_update=False)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("timesheet_update")
+@auth_required
+@rate_limit("timesheet_write", 30, 60, key="account")
+def timesheet_update(request: AuthorizedRequest):
+    """Правка карточки списания. Лимит общий с созданием (тот же scope)."""
+    return _timesheet_write(request, is_update=True)
 
 
 @xframe_options_exempt
