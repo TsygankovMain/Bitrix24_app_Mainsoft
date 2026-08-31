@@ -92,9 +92,11 @@ class TimesheetWriteService:
         )
         item_id = self._extract_item_id(response)
         logger.info(
-            "Timesheet entry created by account %s (b24 user %s): item %s",
+            "Timesheet entry created by account %s (b24 user %s): item %s, task %s, project %s",
             self.account.pk, self.account.b24_user_id, item_id,
+            self._field(fields, "id_zadachi"), self._field(fields, "project_id"),
         )
+        self._refresh_task_directory(fields)
         return {"status": "success", "id": item_id}
 
     def update(self, item_id: Any, fields: Any) -> Dict[str, Any]:
@@ -111,10 +113,38 @@ class TimesheetWriteService:
             {"entityTypeId": entity_type_id, "id": numeric_id, "fields": fields},
         )
         logger.info(
-            "Timesheet entry updated by account %s (b24 user %s): item %s",
+            "Timesheet entry updated by account %s (b24 user %s): item %s, task %s, project %s",
             self.account.pk, self.account.b24_user_id, numeric_id,
+            self._field(fields, "id_zadachi"), self._field(fields, "project_id"),
         )
+        self._refresh_task_directory(fields)
         return {"status": "success", "id": numeric_id}
+
+    def _field(self, fields: Dict[str, Any], mapping_key: str) -> Any:
+        """Значение поля по логическому ключу маппинга — только для логов."""
+        code = (self.config.get("fields_mapping") or {}).get(mapping_key)
+        return fields.get(code) if code else None
+
+    def _refresh_task_directory(self, fields: Dict[str, Any]) -> None:
+        """Дотягивает задачу записи в PortalTask сразу, не дожидаясь цикла.
+
+        Без этого справочник узнаёт о задаче только следующим фоновым
+        прогоном (раз в 10 минут), а до тех пор отчёт по свежей записи
+        откатывается на снимок — то есть «следовать за задачей» не работает
+        именно для того, что человек только что внёс, и выглядит как поломка.
+
+        Ошибки проглатываются намеренно: справочник — вспомогательный слой,
+        и его сбой не должен ронять уже состоявшуюся запись часов.
+        """
+        task_id = self._field(fields, "id_zadachi")
+        if not task_id:
+            return
+        try:
+            from .task_sync_service import TaskSyncService
+
+            TaskSyncService(self.client, self.account).sync_task_ids([str(task_id)])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Task directory refresh failed for task %s: %s", task_id, exc)
 
     @staticmethod
     def _extract_item_id(response: Any) -> Optional[int]:

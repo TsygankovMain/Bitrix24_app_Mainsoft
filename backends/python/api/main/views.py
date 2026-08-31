@@ -31,6 +31,7 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
+from .app_version import get_app_version, is_version_acceptable
 from .timesheet_write_service import TimesheetWriteError, TimesheetWriteService
 from .timesheet_sync_service import resolve_sync_mode
 from .tenant_scoping import scope_to_tenant
@@ -618,6 +619,19 @@ def root(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @require_GET
+@csrf_exempt
+def app_version(request):
+    """Версия текущей сборки фронта.
+
+    БЕЗ @auth_required намеренно: фронт спрашивает версию на старте, до того
+    как получил JWT, и должен уметь сравнить её позже. Секрета здесь нет —
+    это хэш файла, который и так отдаётся браузеру целиком.
+    """
+    return JsonResponse({"version": get_app_version()})
+
+
+@xframe_options_exempt
+@require_GET
 @log_errors("health")
 @auth_required
 def health(request: AuthorizedRequest):
@@ -865,9 +879,11 @@ def _get_project_board_meta_refresh(request: AuthorizedRequest, service: Project
     кэша project-board-meta (TTL 6 часов) и Битрикс не трогают вовсе — им
     лимит не нужен и он их не касается.
 
-    Порог 6/60 — тот же класс риска и то же число, что у соседнего
-    sync_project_board (@rate_limit("sync", 6, 60, key="account")): там же
-    ровно 1-2 живых вызова к Bitrix за запрос. Отдельный scope
+    Порог 6/60 — тот же класс риска, что у соседнего sync_project_board:
+    там же ровно 1-2 живых вызова к Bitrix за запрос. Числа с 31.08.2026
+    разные (у sync — 30/60): синк ускорился с минут до сотен миллисекунд, и
+    его порог подняли под живой ритм нажатий. Здесь ускорения не было, менять
+    было нечего. Отдельный scope
     ("board_meta_refresh", а не "sync") — иначе один клик «Синхронизировать»
     (фронт бьёт и /project-board/sync, и /project-board/meta?refresh=1 одним
     действием, см. frontend/app/pages/projects/index.client.vue:syncBoard)
@@ -1011,7 +1027,7 @@ def get_homepage_portfolio(request: AuthorizedRequest):
 @require_POST
 @log_errors("sync_project_board")
 @auth_required
-@rate_limit("sync", 6, 60, key="account")
+@rate_limit("sync", 30, 60, key="account")
 @sync_lock("project")
 def sync_project_board(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
@@ -1831,7 +1847,7 @@ def should_skip_timesheet_sync(account, now, gate_minutes=TIMESHEET_SYNC_GATE_MI
 @require_POST
 @log_errors("timesheet_sync")
 @auth_required
-@rate_limit("sync", 6, 60, key="account")
+@rate_limit("sync", 30, 60, key="account")
 @sync_lock("timesheet")
 def timesheet_sync(request: AuthorizedRequest):
     profiler = ReportProfiler("timesheet_sync", account_id=request.bitrix24_account.pk)
@@ -1924,6 +1940,26 @@ def _timesheet_write(request: AuthorizedRequest, is_update: bool):
     сотрудника (см. его докстринг), поэтому карточка создаётся от того же
     человека, что и раньше, и права Битрикса применяются к нему же.
     """
+    # Устаревшая вкладка не имеет права писать. После подмены контейнера
+    # приложение во фрейме продолжает работать на старом коде: жёсткая
+    # перезагрузка внешней страницы Битрикса содержимое фрейма не обновляет
+    # (инцидент 31.08.2026, см. app_version.py). Пока правил не было, это
+    # означало лишь запись прежним путём; с закрытием месяца та же вкладка
+    # обошла бы проверку и списала часы в закрытый период.
+    client_version = request.headers.get("X-App-Version")
+    if not is_version_acceptable(client_version):
+        logger.info(
+            "Stale client rejected: version=%s, server=%s, account=%s",
+            client_version, get_app_version(), request.bitrix24_account.pk,
+        )
+        return JsonResponse(
+            {
+                "error": "Приложение обновилось. Перезагрузите страницу и повторите.",
+                "code": "app_version_mismatch",
+            },
+            status=409,
+        )
+
     payload = _load_request_json(request)
     account = request.bitrix24_account
 
@@ -1948,8 +1984,9 @@ def _timesheet_write(request: AuthorizedRequest, is_update: bool):
 def timesheet_create(request: AuthorizedRequest):
     """Создание карточки списания.
 
-    Порог @rate_limit — 30/60с, заметно выше, чем у синков (6/60с): списание
-    это обычное частое действие пользователя, а не тяжёлая операция. Экран
+    Порог @rate_limit — 30/60с: списание это обычное частое действие
+    пользователя, а не тяжёлая операция. Столько же с 31.08.2026 у синка —
+    он перестал быть тяжёлым и получил тот же бюджет. Экран
     «разделить запись» в embedded.vue создаёт несколько карточек подряд, и
     порог уровня синка ронял бы штатную работу. При этом лимит есть: сама
     ручка ходит в Битрикс, и безлимитной её оставлять нельзя.
@@ -2108,9 +2145,11 @@ def _save_configuration_with_project_sync(
     секретом (то же значение возвращает get_configuration) — значит любой
     запрос с валидным токеном может выставить его и звать эту ветку в цикле.
 
-    Порог 6/60 — тот же класс риска и то же число, что у соседнего
-    sync_project_board (@rate_limit("sync", 6, 60, key="account")): внутри
-    вызывается тот же ProjectSyncService.sync(). Привязка Project SPA в
+    Порог 6/60 — тот же класс риска, что у соседнего sync_project_board:
+    внутри вызывается тот же ProjectSyncService.sync(). Число при этом
+    осталось 6, тогда как у sync с 31.08.2026 стоит 30: там порог поднимали
+    под частые нажатия «Обновить», а привязка Project SPA — операция
+    первичной настройки, её в цикле не жмут. Привязка Project SPA в
     настройках — операция первичной настройки, которую выполняют редко и
     осознанно (в отличие, например, от автокомплита company_search — 60/60):
     6 запросов в минуту с запасом покрывают ручной цикл «поправил

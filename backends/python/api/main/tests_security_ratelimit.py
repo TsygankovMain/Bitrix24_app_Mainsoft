@@ -29,6 +29,13 @@ from .project_sync_service import ProjectSyncService
 
 RATELIMIT_CACHE = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "ratelimit-tests"}}
 
+# Порог scope="sync" (@rate_limit в views.timesheet_sync/sync_project_board).
+# Поднят с 6 до 30 31.08.2026: синк перестал быть тяжёлым (после снятия
+# полного обхода справочника компаний он отвечает за сотни миллисекунд),
+# и прежний порог мешал живому ритму нажатий кнопки «Обновить».
+# Константа здесь, чтобы порог правился в одном месте, а не в пяти тестах.
+SYNC_SCOPE_LIMIT = 30
+
 
 def _make_account(domain_url: str = "portal-rl.bitrix24.ru", *, is_admin: bool = True, b24_user_id: int = 1) -> Bitrix24Account:
     return Bitrix24Account.objects.create(
@@ -117,7 +124,7 @@ class RateLimitBasicTest(TestCase):
 
     def test_sync_view_passes_within_limit_and_blocks_on_overflow(self):
         """timesheet_sync: 6 запросов разрешены, 7-й → 429."""
-        SYNC_LIMIT = 6
+        SYNC_LIMIT = SYNC_SCOPE_LIMIT
         bitrix_client = _bitrix_mock()
 
         with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
@@ -254,7 +261,7 @@ class RateLimitKeyIsolationTest(TestCase):
         account_b = _make_account(domain_url="portal-key-b.bitrix24.ru", b24_user_id=20)
         bitrix_client = _bitrix_mock()
 
-        SYNC_LIMIT = 6
+        SYNC_LIMIT = SYNC_SCOPE_LIMIT
         with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
             # Exhaust account A
             for _ in range(SYNC_LIMIT + 1):
@@ -758,7 +765,7 @@ class RateLimitCompanySearchTest(TestCase):
         """
         bitrix_client = _bitrix_mock()
         with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
-            for _ in range(6 + 1):
+            for _ in range(SYNC_SCOPE_LIMIT + 1):
                 self._sync()
 
             resp_sync = self._sync()
@@ -927,7 +934,7 @@ class RateLimitSaveConfigurationProjectSyncTest(TestCase):
              patch.object(ProjectSyncService, "sync", return_value={"status": "success", "synced": 0}):
 
             # Reverse direction: exhaust sync_project_board's own bucket instead.
-            for _ in range(6 + 1):
+            for _ in range(SYNC_SCOPE_LIMIT + 1):
                 self._sync_button()
             resp_button = self._sync_button()
             self.assertEqual(
@@ -1037,7 +1044,7 @@ class RateLimitCreateProjectTest(TestCase):
         хотя ключ (account) один и тот же."""
         bitrix_client = _bitrix_mock()
         with patch.object(Bitrix24Account, "client", new_callable=PropertyMock, return_value=bitrix_client):
-            for _ in range(6 + 1):
+            for _ in range(SYNC_SCOPE_LIMIT + 1):
                 self._sync()
 
             resp_sync = self._sync()

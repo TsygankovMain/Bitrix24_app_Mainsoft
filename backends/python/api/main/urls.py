@@ -5,6 +5,8 @@ from . import views
 urlpatterns = [
     path('api', views.root, name='root'),
     path('api/health', views.health, name='health'),
+    # Версия собранного фронта: по ней ловится устаревшая вкладка (см. app_version.py).
+    path('api/app-version', views.app_version, name='app_version'),
     path('healthz', views.health_check, name='health_check'),
     path('api/enum', views.get_enum, name='enum'),
     path('api/list', views.get_list, name='list'),

@@ -635,6 +635,60 @@ export const useApiStore = defineStore(
     }
 
     /**
+     * Версия сборки, на которой работает ЭТА вкладка.
+     *
+     * Спрашивается один раз при первой записи и запоминается. Смысл в том,
+     * что вкладка получает версию того кода, который сейчас исполняет: она
+     * загрузилась из той же сборки. Если позже приложение выкатят заново,
+     * сервер начнёт отдавать другую версию, а вкладка продолжит слать
+     * запомненную — сервер увидит расхождение и запись отклонит.
+     *
+     * Зачем: приложение живёт в айфрейме, и жёсткая перезагрузка страницы
+     * Битрикса содержимое фрейма не обновляет — вкладка может неделями
+     * работать на старом коде (инцидент 31.08.2026). Без этой проверки такая
+     * вкладка обошла бы будущий запрет на списание в закрытый месяц.
+     */
+    const appVersion = ref<string | null>(null)
+
+    /**
+     * Превращает отказ сервера в понятный пользователю текст.
+     *
+     * ofetch кладёт в message строку вида `[POST] "/api/…": 409 Conflict`, и
+     * экраны показывают в тосте именно её — то есть человек видит код вместо
+     * объяснения. Разбор ошибки здесь, а не на каждом экране: сообщение у
+     * бэкенда уже человеческое, его достаточно достать.
+     */
+    const rethrowWithServerMessage = (error: unknown): never => {
+      const data = (error as { data?: { error?: string, code?: string } })?.data
+      if (data?.error) {
+        const friendly = new Error(data.error)
+        if (data.code) {
+          ;(friendly as Error & { code?: string }).code = data.code
+        }
+        throw friendly
+      }
+      throw error
+    }
+
+    const writeHeaders = async (): Promise<Record<string, string>> => {
+      const headers: Record<string, string> = { Authorization: `Bearer ${tokenJWT.value}` }
+      if (!appVersion.value) {
+        try {
+          const res = await $api<{ version: string }>('/api/app-version')
+          appVersion.value = res?.version || null
+        } catch {
+          // Версия не критична для записи: сервер трактует её отсутствие как
+          // «проверять нечем» и пропускает. Ронять списание из-за сбоя
+          // вспомогательной ручки нельзя.
+        }
+      }
+      if (appVersion.value) {
+        headers['X-App-Version'] = appVersion.value
+      }
+      return headers
+    }
+
+    /**
      * Создание карточки списания через наш бэкенд.
      *
      * Раньше экраны звали $b24.callMethod('crm.item.add', …) напрямую из
@@ -648,9 +702,9 @@ export const useApiStore = defineStore(
     const createTimesheetEntry = async (fields: Record<string, unknown>): Promise<{ status: string; id: number | null }> => {
       const result = await $api<{ status: string, id: number | null }>('/api/timesheet/create', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        headers: await writeHeaders(),
         body: { fields }
-      })
+      }).catch(rethrowWithServerMessage)
       clearCache('project-board', 'homepage-portfolio', 'filter-projects')
       return result
     }
@@ -659,9 +713,9 @@ export const useApiStore = defineStore(
     const updateTimesheetEntry = async (id: string | number, fields: Record<string, unknown>): Promise<{ status: string; id: number | null }> => {
       const result = await $api<{ status: string, id: number | null }>('/api/timesheet/update', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        headers: await writeHeaders(),
         body: { id, fields }
-      })
+      }).catch(rethrowWithServerMessage)
       clearCache('project-board', 'homepage-portfolio', 'filter-projects')
       return result
     }
