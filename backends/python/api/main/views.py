@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.core.paginator import Paginator
 from django.http import JsonResponse, HttpResponse
@@ -12,7 +12,8 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from .utils.decorators import auth_required, log_errors, rate_limit
 from .utils.decorators.sync_lock import sync_lock, account_sync_lock, SyncLockBusy
 from .utils import AuthorizedRequest
-from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard, PortalUser
+from .models import (ApplicationInstallation, TimesheetItem, RequestLog, SystemLog,
+                     ProjectCard, PortalUser, OneCExportRun)
 
 import logging
 import json
@@ -53,6 +54,7 @@ from .report_excel import (
     _safe_cell_text,
 )
 from .inn_backfill_service import InnBackfillService
+from .one_c_export_service import OneCExportService
 from .company_search_service import CompanySearchService
 from .project_creation_service import ProjectCreationService
 
@@ -2862,3 +2864,71 @@ def serve_spa(request):
             "Please ensure 'npm run generate' ran successfully during build.",
             status=404
         )
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("one_c_export")
+@auth_required
+@rate_limit("one_c_export", 5, 300, key="account")
+def one_c_export(request: AuthorizedRequest):
+    """Отправляет часы за период в 1С и возвращает построчный отчёт.
+
+    Ограничение по частоте намеренно жёсткое: отправка идёт в бухгалтерию,
+    и нажимать её десять раз подряд незачем — повтор безопасен, но бессмысленен.
+    """
+    payload = _load_request_json(request)
+    period_from = _parse_date(payload.get("period_from"))
+    period_to = _parse_date(payload.get("period_to"))
+
+    if not period_from or not period_to:
+        return JsonResponse(
+            {"error": "Нужны period_from и period_to в формате ГГГГ-ММ-ДД"}, status=400)
+    if period_from > period_to:
+        return JsonResponse({"error": "Начало периода позже его конца"}, status=400)
+
+    service = OneCExportService(
+        account=request.bitrix24_account,
+        client=request.bitrix24_account.client,
+        config=ConfigurationService(
+            request.bitrix24_account.client, request.bitrix24_account).get_configuration_sync(),
+    )
+    run = service.run(period_from, period_to, started_by=str(request.bitrix24_account.b24_user_id))
+
+    return JsonResponse(_serialize_export_run(run), status=200)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@log_errors("one_c_export_history")
+@auth_required
+def one_c_export_history(request: AuthorizedRequest):
+    """Последние отправки: без истории вопрос «почему в 1С меньше часов»
+    разбирается по памяти, а не по записи."""
+    runs = OneCExportRun.objects.filter(bitrix24_account=request.bitrix24_account)[:20]
+    return JsonResponse({"runs": [_serialize_export_run(run) for run in runs]})
+
+
+def _parse_date(value):
+    try:
+        return datetime.strptime(str(value or "")[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _serialize_export_run(run):
+    return {
+        "id": str(run.id),
+        "period_from": run.period_from.isoformat(),
+        "period_to": run.period_to.isoformat(),
+        "sending_id": run.sending_id,
+        "status": run.status,
+        "sent_rows": run.sent_rows,
+        "accepted": run.accepted,
+        "rejected": run.rejected,
+        "documents": run.documents,
+        "rows": run.rows,
+        "message": run.message,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+    }
+

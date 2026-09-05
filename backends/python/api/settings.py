@@ -198,3 +198,7 @@ LOGGING = {
         },
     },
 }
+
+# Приёмник часов в 1С (см. main/one_c_export_service.py)
+ONE_C_INBOX_URL = config.one_c_inbox_url
+ONE_C_TOKEN = config.one_c_token

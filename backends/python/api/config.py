@@ -46,6 +46,10 @@ class Config:
     django_admin_enabled: bool
 
     # Multitenancy (sprint 4)
+    # Приёмник часов в 1С: точка /v1/inbox коннектора и её токен.
+    # Пусто — отправка выключена: сервис ответит внятной ошибкой, а не молча.
+    one_c_inbox_url: str
+    one_c_token: str
     use_portal_scoping: bool
 
 
@@ -72,6 +76,8 @@ def load_config() -> Config:
         cors_allowed_origins=parse_csv_env(env.str("CORS_ALLOWED_ORIGINS", "")),
         support_openline_code=env.str("SUPPORT_OPENLINE_CODE", "2106d29de50818f3e0e36bd949f54f37"),
         django_admin_enabled=env.bool("DJANGO_ADMIN_ENABLED", False),
+        one_c_inbox_url=env.str("ONE_C_INBOX_URL", ""),
+        one_c_token=env.str("ONE_C_TOKEN", ""),
         use_portal_scoping=env.bool("USE_PORTAL_SCOPING", False),
     )
 

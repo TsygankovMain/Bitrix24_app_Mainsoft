@@ -382,3 +382,45 @@ class SyncRun(models.Model):
         indexes = [
             models.Index(fields=["started_at"], name="sync_run_started_idx"),
         ]
+
+class OneCExportRun(models.Model):
+    """Отправка часов за период в 1С: что уехало, что принято, что отклонено.
+
+    История нужна не для отчётности, а для разбора: часы уходят в бухгалтерию,
+    и вопрос «почему за август в 1С меньше, чем у нас» должен закрываться
+    записью, а не воспоминаниями. Поэтому построчный результат сохраняется
+    целиком, включая причины отказов.
+    """
+
+    STATUS_OK = "ok"
+    STATUS_PARTIAL = "partial"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = (
+        (STATUS_OK, "Принято"),
+        (STATUS_PARTIAL, "Принято частично"),
+        (STATUS_FAILED, "Не принято"),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(
+        Bitrix24Account, on_delete=models.CASCADE, related_name="one_c_exports")
+    period_from = models.DateField()
+    period_to = models.DateField()
+    # Идентификатор отправки уходит в журнал обмена 1С: по нему поднимается
+    # вся история приёма на той стороне.
+    sending_id = models.CharField(max_length=64, db_index=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_FAILED)
+    sent_rows = models.IntegerField(default=0)
+    accepted = models.IntegerField(default=0)
+    rejected = models.IntegerField(default=0)
+    documents = models.JSONField(default=list)
+    rows = models.JSONField(default=list)
+    message = models.TextField(blank=True, default="")
+    started_by = models.CharField(max_length=50, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = True
+        db_table = "one_c_export_run"
+        ordering = ("-created_at",)
+

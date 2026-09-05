@@ -68,6 +68,8 @@ urlpatterns = [
 
     # Configuration
     path('api/configuration', views.get_configuration, name='get_configuration'),
+    path('api/one-c/export', views.one_c_export, name='one_c_export'),
+    path('api/one-c/exports', views.one_c_export_history, name='one_c_export_history'),
     path('api/configuration/save', views.save_configuration, name='save_configuration'),
     path('api/bitrix/internal-lists', views.get_internal_lists, name='get_internal_lists'),
     path('api/smart-processes', views.get_smart_processes, name='get_smart_processes'),
