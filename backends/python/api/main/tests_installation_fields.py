@@ -184,16 +184,43 @@ class CreateSingleFieldErrorTest(SimpleTestCase):
             _base_handlers(
                 **{
                     "userfieldconfig.add": {
-                        "result": {"field": {"fieldName": "UF_CRM_5_HOURLY_RATE"}}
+                        "result": {"field": {"fieldName": "UF_CRM_5_BITRIX_GROUP_ID"}}
                     },
                     "crm.item.fields": {
-                        "result": {"fields": {"ufCrm5HourlyRate": {"type": "double"}}}
+                        "result": {"fields": {"ufCrm5BitrixGroupId": {"type": "integer"}}}
                     },
                 }
             )
         )
 
-        service.create_single_field(1038, "hourly_rate", "project")
+        service.create_single_field(1038, "bitrix_group_id", "project")
+
+        field = [
+            params
+            for method, params in service.client._bitrix_token.calls
+            if method == "userfieldconfig.add"
+        ][0]["field"]
+        self.assertEqual(field["userTypeId"], "integer")
+        self.assertNotIn("settings", field)
+
+    def test_double_field_carries_precision(self):
+        """Часы бывают дробные. Без явной точности Битрикс создаёт поле с
+        PRECISION=0 и молча округляет: 0.5 часа сохраняются как 1.
+        Проверено на nfr-mainsoft 05.09.2026 — округлилось 254 записи из 796."""
+        service = self._service(
+            _base_handlers(
+                **{
+                    "userfieldconfig.add": {
+                        "result": {"field": {"fieldName": "UF_CRM_5_HOURS"}}
+                    },
+                    "crm.item.fields": {
+                        "result": {"fields": {"ufCrm5Hours": {"type": "double"}}}
+                    },
+                }
+            )
+        )
+
+        service.create_single_field(1038, "kolichestvo_chasov", "timesheet")
 
         field = [
             params
@@ -201,7 +228,7 @@ class CreateSingleFieldErrorTest(SimpleTestCase):
             if method == "userfieldconfig.add"
         ][0]["field"]
         self.assertEqual(field["userTypeId"], "double")
-        self.assertNotIn("settings", field)
+        self.assertEqual(field["settings"], {"PRECISION": 2})
 
     def test_success_path_returns_mapping(self):
         """Контроль на ложную тревогу: при живом Битриксе поле мапится как раньше."""
