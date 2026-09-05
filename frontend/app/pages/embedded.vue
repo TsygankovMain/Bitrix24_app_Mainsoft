@@ -198,39 +198,6 @@ function resolveInnFieldCode(kind: 'OUR_INN' | 'CLIENT_INN'): string {
     ).trim()
 }
 
-interface CreatedItemResultObject {
-    id?: string | number
-    itemId?: string | number
-    item?: { id?: string | number, ID?: string | number }
-}
-
-function extractCreatedItemId(
-    rawData: { result?: string | number | CreatedItemResultObject } | null | undefined
-): string | null {
-    const result = rawData?.result
-    if (!result) {
-        return null
-    }
-
-    if (typeof result === 'string' || typeof result === 'number') {
-        const normalized = String(result).trim()
-        return normalized || null
-    }
-
-    if (typeof result === 'object') {
-        const directId = String(result.id || result.itemId || '').trim()
-        if (directId) {
-            return directId
-        }
-
-        const nestedItemId = String(result.item?.id || result.item?.ID || '').trim()
-        if (nestedItemId) {
-            return nestedItemId
-        }
-    }
-
-    return null
-}
 
 function resolveTaskTitle(taskId: string | null | undefined, hierarchy?: { titlePath?: string[] | null } | null) {
     const node = findTaskNodeById(taskId, taskTree.value)
@@ -705,11 +672,9 @@ async function saveCurrentItem() {
                 hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
                 payloadHourlyRateSnapshot: fields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
             })
-            await ($b24 as B24Frame).callMethod('crm.item.update', {
-                entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-                id: editingItem.value.id,
-                fields: fields
-            })
+            // Через бэкенд: единственное место, где на списание можно
+            // наложить серверное правило (закрытие месяца).
+            await apiStore.updateTimesheetEntry(editingItem.value.id, fields)
         } else {
             // Create new
             console.log('💾 [Embedded] Creating new item fields:', fields)
@@ -728,15 +693,9 @@ async function saveCurrentItem() {
                 hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
                 payloadHourlyRateSnapshot: fields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
             })
-            const createRes = await ($b24 as B24Frame).callMethod('crm.item.add', {
-                entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-                fields: fields
-            })
-            const createdItemId = extractCreatedItemId(createRes?.getData?.())
-            console.info('[Embedded][INN] Create result', {
-                createdItemId,
-                rawResult: createRes?.getData?.()?.result,
-            })
+            const createRes = await apiStore.createTimesheetEntry(fields)
+            const createdItemId = createRes?.id ?? null
+            console.info('[Embedded][INN] Create result', { createdItemId })
 
             const ourInnFieldCode = resolveInnFieldCode('OUR_INN')
             const clientInnFieldCode = resolveInnFieldCode('CLIENT_INN')
@@ -785,12 +744,12 @@ async function splitItem() {
 
     isLoading.value = true
     try {
-        // Update original
+        // Update original — тоже через бэкенд: «разделение» это две записи
+        // (уменьшить исходную + создать новую), и обе обязаны проходить одну
+        // и ту же серверную проверку, иначе половина операции обошла бы её.
         const remainingHours = editingItem.value.hours - splitHours
-        await ($b24 as B24Frame).callMethod('crm.item.update', {
-            entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-            id: editingItem.value.id,
-            fields: { [config.value.FIELDS.HOURS]: remainingHours }
+        await apiStore.updateTimesheetEntry(editingItem.value.id, {
+            [config.value.FIELDS.HOURS]: remainingHours
         })
 
         // Create new split entry with full hierarchy
@@ -822,10 +781,7 @@ async function splitItem() {
             return
         }
 
-        await ($b24 as B24Frame).callMethod('crm.item.add', {
-            entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-            fields: splitFields
-        })
+        await apiStore.createTimesheetEntry(splitFields)
         console.info('[Embedded][INN] Split create payload summary', {
             splitTaskId,
             ourInnFieldCode: resolveInnFieldCode('OUR_INN'),

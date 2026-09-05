@@ -1,6 +1,5 @@
 from typing import Any, Dict, Optional
 
-from django.utils import timezone
 
 from .models import Bitrix24Account, ProjectCard
 from .project_board_service import ProjectCardService

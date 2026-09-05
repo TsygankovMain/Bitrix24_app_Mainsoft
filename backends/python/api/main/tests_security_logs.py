@@ -5,11 +5,9 @@ Task 1.1 — Sprint Security.
 Tests must FAIL against the current (vulnerable) code and PASS after the fix.
 """
 import json
-import re
 
 from django.test import Client, TestCase
 
-from .middleware import RequestLoggingMiddleware
 from .models import Bitrix24Account, RequestLog, SystemLog
 
 

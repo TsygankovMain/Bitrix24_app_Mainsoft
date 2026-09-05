@@ -2,7 +2,6 @@
 Тесты безопасности: Excel-инъекция формул, CORS-regex, отключаемая Django-админка.
 Задача 1.3 sprint-1-security.
 """
-import io
 import os
 import re
 import unittest
@@ -14,7 +13,6 @@ django.setup()
 
 import openpyxl  # noqa: E402
 from django.test import TestCase  # noqa: E402
-from django.urls import resolve, Resolver404  # noqa: E402
 
 from main.report_excel import (  # noqa: E402
     build_hierarchy_workbook,
@@ -178,7 +176,6 @@ class TestSafeCellTextContract(TestCase):
 # ---------------------------------------------------------------------------
 class TestCorsRegex(TestCase):
     def setUp(self):
-        from django.conf import settings
         # Импортируем напрямую из модуля settings (не через django.conf который может быть обёрткой)
         import settings as settings_module
         self.regex = getattr(settings_module, "BITRIX24_ORIGIN_REGEX", None)

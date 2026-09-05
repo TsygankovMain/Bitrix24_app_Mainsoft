@@ -5,6 +5,8 @@ from . import views
 urlpatterns = [
     path('api', views.root, name='root'),
     path('api/health', views.health, name='health'),
+    # Версия собранного фронта: по ней ловится устаревшая вкладка (см. app_version.py).
+    path('api/app-version', views.app_version, name='app_version'),
     path('healthz', views.health_check, name='health_check'),
     path('api/enum', views.get_enum, name='enum'),
     path('api/list', views.get_list, name='list'),
@@ -55,6 +57,19 @@ urlpatterns = [
 
     # Timesheets
     path('api/sync-timesheets', views.timesheet_sync, name='sync_timesheets'), # Matches api.ts: /api/sync-timesheets
+    # Запись часов через бэкенд, а не напрямую из браузера: единственное место,
+    # где на списание можно наложить серверное правило (закрытие месяца).
+    # Закрытие месяца: список периодов, проверка, закрытие, переоткрытие,
+    # опоздавшие часы. Спека — docs/architecture/period-closing-spec.md.
+    path('api/periods', views.periods_list, name='periods_list'),
+    path('api/periods/check', views.period_check, name='period_check'),
+    path('api/periods/close', views.period_close, name='period_close'),
+    path('api/periods/close-bulk', views.period_close_bulk, name='period_close_bulk'),
+    path('api/periods/fix', views.period_fix, name='period_fix'),
+    path('api/periods/reopen', views.period_reopen, name='period_reopen'),
+    path('api/periods/late', views.period_late_arrivals, name='period_late_arrivals'),
+    path('api/timesheet/create', views.timesheet_create, name='timesheet_create'),
+    path('api/timesheet/update', views.timesheet_update, name='timesheet_update'),
     path('api/timesheet-sync-status', views.timesheet_sync_status, name='timesheet_sync_status'),
     path('api/timesheets', views.timesheet_list, name='list_timesheets'),      # Matches api.ts: /api/timesheets
     path('api/users', views.get_users, name='get_users'),

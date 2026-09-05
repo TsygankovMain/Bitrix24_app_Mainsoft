@@ -1,5 +1,4 @@
 import hashlib
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -171,41 +170,6 @@ class BitrixDataService:
         except Exception as exc:
             logger.error("Error fetching active users: %s", exc)
             return []
-
-    def fetch_all_items(self, extra_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        self.check_connection()
-
-        if not self.entity_type_id:
-            logger.error("No SP Entity Type ID configured")
-            return []
-
-        base_filter = {"entityTypeId": self.entity_type_id}
-        if extra_filter:
-            base_filter.update(extra_filter)
-
-        logger.info("Executing single request fetch (SELECT *, UF_*) for SPA %s", self.entity_type_id)
-        try:
-            response = self.client._bitrix_token.call_method(
-                "crm.item.list",
-                {
-                    "entityTypeId": self.entity_type_id,
-                    "filter": base_filter,
-                    "select": ["*", "UF_*"],
-                    "order": {"id": "DESC"},
-                    "start": 0,
-                    "limit": 50,
-                },
-            )
-            all_items = response.get("result", {}).get("items", [])
-        except Exception as exc:
-            logger.error("Error fetching items: %s", exc)
-            all_items = []
-
-        logger.info("Total items fetched from Bitrix24: %s", len(all_items))
-        if all_items:
-            logger.info("First item FULL DUMP:")
-            logger.info(json.dumps(all_items[0], indent=2, default=str))
-        return all_items
 
     @staticmethod
     def _build_user_name(user: Dict[str, Any], user_id: str) -> str:

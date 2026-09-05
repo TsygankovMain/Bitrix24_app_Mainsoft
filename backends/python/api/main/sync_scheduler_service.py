@@ -70,6 +70,7 @@ from .configuration_service import ConfigurationService
 from .project_sync_service import ProjectSyncService
 from .tenant_scoping import portal_scoping_enabled
 from .timesheet_sync_service import TimesheetSyncService
+from .task_sync_service import TaskSyncService
 from .user_sync_service import UserSyncService
 # Под USE_PORTAL_SCOPING account_sync_lock ключуется по portal.pk (замок «по
 # компании»), выбор субъекта — внутри замка по флагу; вызовы ниже не меняются.
@@ -290,6 +291,41 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                 synced += 1
                 items_total += int(count or 0)
                 logger.info("Scheduled user-sync portal %s: %s users.", account.member_id, count)
+
+            elif scope == "tasks":
+                try:
+                    with account_sync_lock(account, scope="tasks"):
+                        service = TaskSyncService(account.client, account)
+                        result = service.sync()
+                        # Уборка за событийным механизмом: остаток от
+                        # интерактивных вызовов, историческое расхождение и
+                        # любые пропуски. Только в фоне — здесь есть время.
+                        # Порция 50, а не 5 по умолчанию. Пять ставились из
+                        # соображения «фоновой уборке некуда спешить», но на
+                        # практике это два часа на разбор накопленного, и всё
+                        # это время периоды не закрываются: расхождение
+                        # проектов — блокер проверки перед закрытием.
+                        #
+                        # Замер на проде 31.08.2026: расходятся 23 задачи и 48
+                        # записей, плюс 11 записей вовсе без проекта. Это ~60
+                        # обновлений карточек с комментариями, то есть минута-
+                        # две работы. Прогон идёт отдельным процессом из
+                        # start.sh, HTTP-таймаута над ним нет — потолок здесь
+                        # только про то, чтобы не держать advisory-замок
+                        # сколько угодно долго.
+                        #
+                        # Когда накопленное разобрано, стоимость нулевая: при
+                        # отсутствии расхождений это один SELECT.
+                        service.reconcile_project_divergence(limit=50)
+                except SyncLockBusy:
+                    logger.info("Portal %s task-sync skipped: lock busy.",
+                                account.member_id)
+                    continue
+
+                count = result.get("synced", 0) if isinstance(result, dict) else 0
+                synced += 1
+                items_total += int(count or 0)
+                logger.info("Scheduled task-sync portal %s: %s tasks.", account.member_id, count)
 
             else:  # scope == "timesheet"
                 if not config.get("sp_entity_type_id"):

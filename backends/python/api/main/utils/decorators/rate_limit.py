@@ -26,10 +26,13 @@ Algorithm: fixed window.
 """
 
 import json
+import logging
 from functools import wraps
 
 from django.core.cache import cache
 from django.http import JsonResponse, HttpRequest
+
+logger = logging.getLogger(__name__)
 
 
 def rate_limit(scope: str, max_requests: int, window_seconds: int, key: str):
@@ -62,6 +65,27 @@ def rate_limit(scope: str, max_requests: int, window_seconds: int, key: str):
             count = cache.incr(cache_key)
 
             if count > max_requests:
+                # Единственный след 429 в системе. Для /api/getToken он ещё и
+                # единственно возможный: этот путь исключён из request_log
+                # навсегда (в теле OAuth-пейлоад, см. SENSITIVE_PATH_PREFIXES
+                # в middleware), поэтому раньше отказ по лимиту не оставлял
+                # вообще ничего — за месяц ноль записей со статусом 429 при
+                # живых жалобах пользователей.
+                #
+                # Пишем то, что нужно для разбора, и ничего сверх: путь, scope,
+                # порог и фактический счётчик. Сам ключ (в нём IP и домен) в
+                # сообщение не кладём — для диагностики хватает scope и пути,
+                # а лог не должен становиться реестром адресов.
+                logger.warning(
+                    "Rate limit hit: %s %s (scope=%s, key=%s, %s/%s за %sс)",
+                    request.method,
+                    request.path,
+                    scope,
+                    key,
+                    count,
+                    max_requests,
+                    window_seconds,
+                )
                 return JsonResponse(
                     {"error": "Слишком много запросов, повторите через минуту"},
                     status=429,

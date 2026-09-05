@@ -2,6 +2,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from django.core.paginator import Paginator
+from django.db.models import Count, Sum
+from django.db.models.functions import ExtractMonth, ExtractYear
 from django.http import JsonResponse, HttpResponse
 from django.conf import settings
 from django.utils import timezone
@@ -32,6 +34,10 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
+from .app_version import get_app_version, is_version_acceptable
+from .utils.decorators.admin_required import admin_required
+from .task_sync_service import TaskSyncService
+from .timesheet_write_service import TimesheetWriteError, TimesheetWriteService
 from .timesheet_sync_service import resolve_sync_mode
 from .tenant_scoping import scope_to_tenant
 from .employee_ids import extract_bitrix_user_id
@@ -41,6 +47,7 @@ from .report_queries import (
     build_filtered_timesheet_queryset,
     build_project_filter_options,
     build_project_title_lookups,
+    build_task_lookup,
     build_tree_report_items,
     materialize_rows,
     resolve_project_name_for_row,
@@ -125,6 +132,7 @@ __all__ = [
 
 config = load_config()
 logger = logging.getLogger(__name__)
+audit = logging.getLogger("main.audit")
 
 
 # Потолок страницы для диагностических (/api/logs/*) эндпоинтов: они админские
@@ -618,6 +626,19 @@ def root(request: AuthorizedRequest):
 
 @xframe_options_exempt
 @require_GET
+@csrf_exempt
+def app_version(request):
+    """Версия текущей сборки фронта.
+
+    БЕЗ @auth_required намеренно: фронт спрашивает версию на старте, до того
+    как получил JWT, и должен уметь сравнить её позже. Секрета здесь нет —
+    это хэш файла, который и так отдаётся браузеру целиком.
+    """
+    return JsonResponse({"version": get_app_version()})
+
+
+@xframe_options_exempt
+@require_GET
 @log_errors("health")
 @auth_required
 def health(request: AuthorizedRequest):
@@ -865,9 +886,11 @@ def _get_project_board_meta_refresh(request: AuthorizedRequest, service: Project
     кэша project-board-meta (TTL 6 часов) и Битрикс не трогают вовсе — им
     лимит не нужен и он их не касается.
 
-    Порог 6/60 — тот же класс риска и то же число, что у соседнего
-    sync_project_board (@rate_limit("sync", 6, 60, key="account")): там же
-    ровно 1-2 живых вызова к Bitrix за запрос. Отдельный scope
+    Порог 6/60 — тот же класс риска, что у соседнего sync_project_board:
+    там же ровно 1-2 живых вызова к Bitrix за запрос. Числа с 31.08.2026
+    разные (у sync — 30/60): синк ускорился с минут до сотен миллисекунд, и
+    его порог подняли под живой ритм нажатий. Здесь ускорения не было, менять
+    было нечего. Отдельный scope
     ("board_meta_refresh", а не "sync") — иначе один клик «Синхронизировать»
     (фронт бьёт и /project-board/sync, и /project-board/meta?refresh=1 одним
     действием, см. frontend/app/pages/projects/index.client.vue:syncBoard)
@@ -1011,7 +1034,7 @@ def get_homepage_portfolio(request: AuthorizedRequest):
 @require_POST
 @log_errors("sync_project_board")
 @auth_required
-@rate_limit("sync", 6, 60, key="account")
+@rate_limit("sync", 30, 60, key="account")
 @sync_lock("project")
 def sync_project_board(request: AuthorizedRequest):
     service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
@@ -1219,9 +1242,13 @@ def report_employee_project(request: AuthorizedRequest):
         user_map = _get_user_map(request, user_ids)
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("build_items"):
         items = build_tree_report_items(
             rows,
+            task_lookup=_task_lookup,
             project_name_by_item=project_name_by_item,
             project_name_by_group=project_name_by_group,
         )
@@ -1252,9 +1279,13 @@ def report_project_employee(request: AuthorizedRequest):
         user_map = _get_user_map(request, user_ids)
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("build_items"):
         items = build_tree_report_items(
             rows,
+            task_lookup=_task_lookup,
             project_name_by_item=project_name_by_item,
             project_name_by_group=project_name_by_group,
         )
@@ -1285,9 +1316,13 @@ def report_project_task_employee(request: AuthorizedRequest):
         user_map = _get_user_map(request, user_ids)
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("build_items"):
         items = build_tree_report_items(
             rows,
+            task_lookup=_task_lookup,
             include_task_id=True,
             project_name_by_item=project_name_by_item,
             project_name_by_group=project_name_by_group,
@@ -1316,8 +1351,12 @@ def report_project_task_employee_export(request: AuthorizedRequest):
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     items = build_tree_report_items(
         rows,
+        task_lookup=_task_lookup,
         include_task_id=True,
         project_name_by_item=project_name_by_item,
         project_name_by_group=project_name_by_group,
@@ -1353,8 +1392,12 @@ def report_employee_project_export(request: AuthorizedRequest):
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     items = build_tree_report_items(
         rows,
+        task_lookup=_task_lookup,
         project_name_by_item=project_name_by_item,
         project_name_by_group=project_name_by_group,
     )
@@ -1388,8 +1431,12 @@ def report_project_employee_export(request: AuthorizedRequest):
     user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
     user_map = _get_user_map(request, user_ids)
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     items = build_tree_report_items(
         rows,
+        task_lookup=_task_lookup,
         project_name_by_item=project_name_by_item,
         project_name_by_group=project_name_by_group,
     )
@@ -1441,6 +1488,9 @@ def report_daily_workload_export(request: AuthorizedRequest):
         },
     )
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     rows = materialize_rows(
         queryset,
         (
@@ -1495,6 +1545,9 @@ def report_revenue_leakage_export(request: AuthorizedRequest):
     """Excel-выгрузка отчёта «Потери выручки» в виде таблицы."""
     queryset = _get_filtered_timesheet_queryset(request)
     project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+    # Актуальные название и проект задачи (PortalTask). Снимок в записи
+    # остаётся нетронутым, резолв идёт на чтении.
+    _task_lookup = build_task_lookup(request.bitrix24_account)
     rows = list(queryset.values(
         'employee_id',
         'project_item_id',
@@ -1665,6 +1718,9 @@ def report_revenue_leakage(request: AuthorizedRequest):
         queryset = _get_filtered_timesheet_queryset(request)
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("materialize"):
         rows = list(queryset.values(
             'employee_id',
@@ -1794,11 +1850,457 @@ def should_skip_timesheet_sync(account, now, gate_minutes=TIMESHEET_SYNC_GATE_MI
 
 
 @xframe_options_exempt
+@require_GET
+@log_errors("periods_list")
+@auth_required
+def periods_list(request: AuthorizedRequest):
+    """Список периодов: закрытые с журналом и текущий открытый.
+
+    Месяцы берём из самих списаний — заводить календарь не нужно, периоды без
+    часов закрывать незачем.
+    """
+    from .period_check_service import PeriodCheckService
+    from .period_service import MONTHS, PeriodService
+
+    account = request.bitrix24_account
+    periods = PeriodService(account)
+    checker = PeriodCheckService(account)
+
+    closed = {(p.year, p.month): p for p in periods.list_periods()}
+
+    months = (
+        TimesheetItem.objects.filter(**scope_to_tenant(account))
+        .exclude(date_reflection__isnull=True)
+        .annotate(y=ExtractYear("date_reflection"), m=ExtractMonth("date_reflection"))
+        .values("y", "m")
+        .annotate(hours=Sum("hours"), entries=Count("id"))
+        .order_by("-y", "-m")
+    )
+
+    items = []
+    for row in months:
+        year, month = row["y"], row["m"]
+        period = closed.get((year, month))
+        is_closed = period is not None and period.reopened_at is None
+        item = {
+            "year": year,
+            "month": month,
+            "title": f"{MONTHS[month]} {year}",
+            "hours": float(row["hours"] or 0),
+            "entries": row["entries"],
+            "closed": is_closed,
+        }
+        if period is not None:
+            item["closed_at"] = period.closed_at.isoformat()
+            item["closed_by_name"] = period.closed_by_name
+            if period.reopened_at:
+                item["reopened_at"] = period.reopened_at.isoformat()
+                item["reopened_by_name"] = period.reopened_by_name
+                item["reopen_reason"] = period.reopen_reason
+        if is_closed:
+            item["late_arrivals"] = len(checker.late_arrivals(period))
+        items.append(item)
+
+    return JsonResponse({"periods": items})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("period_check")
+@auth_required
+def period_check(request: AuthorizedRequest):
+    """Проверка перед закрытием: блокеры и предупреждения.
+
+    Ничего не меняет — только смотрит. С ?code= отдаёт список записей за
+    конкретной находкой (ссылка «Показать» на экране).
+    """
+    from .period_check_service import PeriodCheckService
+
+    year, month = _period_args(request.GET)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    service = PeriodCheckService(request.bitrix24_account)
+    code = (request.GET.get("code") or "").strip()
+    if code:
+        return JsonResponse({"items": service.details(year, month, code)})
+    return JsonResponse(service.run(year, month))
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("period_close")
+@auth_required
+@rate_limit("period_close", 10, 60, key="account")
+@admin_required
+def period_close(request: AuthorizedRequest):
+    """Закрытие месяца. Блокеры проверяются НА СЕРВЕРЕ, а не только на экране.
+
+    Экран показывает проверку и гасит кнопку, но полагаться на это нельзя:
+    запрос можно отправить и мимо интерфейса. Закрыть месяц со сломанными
+    данными — необратимая операция, и защищать её только в браузере
+    несерьёзно.
+
+    @admin_required — точечное исключение из решения от 11.06.2026, снявшего
+    серверный гейт по роли со всех эндпоинтов. Возвращено заказчиком
+    31.08.2026 только для закрытия и переоткрытия: операции необратимые и
+    влияют на то, что уходит клиенту в счёт. См. докстринг декоратора.
+    """
+    from .period_check_service import PeriodCheckService
+    from .period_service import PeriodService
+
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
+
+    payload = _load_request_json(request)
+    year, month = _period_args(payload)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    account = request.bitrix24_account
+    periods = PeriodService(account)
+
+    # Порядок закрытия: строго от старого к новому. Проверяем на сервере, а не
+    # полагаемся на то, что экран спрятал кнопку — запрос можно отправить и
+    # мимо интерфейса, а закрытие необратимо.
+    earliest = periods.earliest_open_period()
+    if earliest is not None and earliest != (year, month):
+        from .period_service import MONTHS
+
+        return JsonResponse(
+            {
+                "error": (
+                    f"Сначала закройте {MONTHS[earliest[1]]} {earliest[0]}: "
+                    "периоды закрываются по порядку, от старых к новым."
+                ),
+                "code": "out_of_order",
+                "earliest_open": {"year": earliest[0], "month": earliest[1]},
+            },
+            status=409,
+        )
+
+    check = PeriodCheckService(account).run(year, month)
+    if not check["can_close"]:
+        return JsonResponse(
+            {
+                "error": "Закрыть период нельзя: проверка нашла ошибки в данных.",
+                "code": "blockers_present",
+                "check": check,
+            },
+            status=409,
+        )
+
+    period = periods.close(
+        year, month, stats=check["stats"],
+        by_id=str(account.b24_user_id or ""),
+        by_name=_current_user_display_name(request),
+    )
+    return JsonResponse({
+        "status": "closed",
+        "year": period.year,
+        "month": period.month,
+        "closed_at": period.closed_at.isoformat(),
+        "stats": period.stats,
+    })
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("period_reopen")
+@auth_required
+@rate_limit("period_close", 10, 60, key="account")
+@admin_required
+def period_reopen(request: AuthorizedRequest):
+    """Переоткрытие месяца. Причина обязательна.
+
+    Переоткрытие — событие, а не рутина: отчёт за период может измениться уже
+    после того, как лёг в основу счёта. Причина попадает в журнал, чтобы через
+    полгода было понятно, почему цифры разошлись с актом.
+
+    @admin_required — то же точечное исключение, что у period_close.
+    """
+    from .period_service import PeriodService
+
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
+
+    payload = _load_request_json(request)
+    year, month = _period_args(payload)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        return JsonResponse(
+            {"error": "Укажите причину переоткрытия.", "code": "reason_required"},
+            status=400,
+        )
+
+    account = request.bitrix24_account
+    period = PeriodService(account).reopen(
+        year, month, reason=reason,
+        by_id=str(account.b24_user_id or ""),
+        by_name=_current_user_display_name(request),
+    )
+    if period is None:
+        return JsonResponse({"error": "Такой закрытый период не найден."}, status=404)
+
+    return JsonResponse({"status": "reopened", "year": year, "month": month})
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("period_close_bulk")
+@auth_required
+@rate_limit("period_close", 10, 60, key="account")
+@admin_required
+def period_close_bulk(request: AuthorizedRequest):
+    """Закрыть все открытые периоды ДО указанного включительно, одной операцией.
+
+    Зачем. Периоды закрываются по порядку, от старых к новым. Для портала с
+    накопленной историей это означает десять последовательных закрытий с
+    разбором блокеров в каждом — на проде это девять месяцев по тысяче записей,
+    которые никто не собирался ревизовать. Требовать этого ради того, чтобы
+    закрыть текущий месяц, бессмысленно.
+
+    Блокеры при этом НЕ ГЛОТАЮТСЯ МОЛЧА. Без acknowledge=true ручка ничего не
+    закрывает, а возвращает разбор: какие периоды затронуты и что в каждом
+    сломано. Человек видит, что именно принимает, и подтверждает это ОДНИМ
+    решением вместо девяти — но осознанно.
+
+    Найденное на момент закрытия пишется в снимок периода (blockers_at_close),
+    чтобы через полгода было понятно, с каким качеством данных месяц
+    замораживали. Без этого «закрыли пачкой» превращается в «неизвестно что
+    заморозили».
+    """
+    from .period_check_service import PeriodCheckService
+    from .period_service import MONTHS, PeriodService
+
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
+
+    payload = _load_request_json(request)
+    year, month = _period_args({"year": payload.get("until_year"),
+                                "month": payload.get("until_month")})
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    account = request.bitrix24_account
+    periods = PeriodService(account)
+    checker = PeriodCheckService(account)
+
+    closed = {
+        (p.year, p.month)
+        for p in periods.list_periods() if p.reopened_at is None
+    }
+    limit = year * 12 + month
+    targets = [
+        (value.year, value.month)
+        for value in TimesheetItem.objects.filter(**scope_to_tenant(account))
+        .exclude(date_reflection__isnull=True)
+        .dates("date_reflection", "month", order="ASC")
+        if (value.year, value.month) not in closed
+        and value.year * 12 + value.month <= limit
+    ]
+
+    if not targets:
+        return JsonResponse({"status": "nothing_to_close", "closed": []})
+
+    plan = []
+    for t_year, t_month in targets:
+        check = checker.run(t_year, t_month)
+        plan.append({
+            "year": t_year,
+            "month": t_month,
+            "title": f"{MONTHS[t_month]} {t_year}",
+            "stats": check["stats"],
+            "blockers": check["blockers"],
+        })
+
+    if not payload.get("acknowledge"):
+        # Показываем, что именно предлагается принять, и ничего не делаем.
+        return JsonResponse({
+            "status": "confirmation_required",
+            "code": "acknowledge_required",
+            "periods": plan,
+            "total": {
+                "periods": len(plan),
+                "hours": round(sum(p["stats"]["hours"] for p in plan), 2),
+                "entries": sum(p["stats"]["entries"] for p in plan),
+                "with_blockers": sum(1 for p in plan if p["blockers"]),
+            },
+        }, status=409)
+
+    by_name = _current_user_display_name(request)
+    for item in plan:
+        stats = dict(item["stats"])
+        # След того, с каким качеством данных месяц заморозили.
+        stats["blockers_at_close"] = item["blockers"]
+        stats["closed_in_bulk"] = True
+        periods.close(
+            item["year"], item["month"], stats=stats,
+            by_id=str(account.b24_user_id or ""), by_name=by_name,
+        )
+
+    audit.info(
+        "Bulk close by %s: %s periods up to %s-%02d, %s with blockers",
+        by_name or "—", len(plan), year, month,
+        sum(1 for p in plan if p["blockers"]),
+    )
+    return JsonResponse({
+        "status": "closed",
+        "closed": [{"year": p["year"], "month": p["month"], "title": p["title"]} for p in plan],
+    })
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("period_late_arrivals")
+@auth_required
+def period_late_arrivals(request: AuthorizedRequest):
+    """Часы, поступившие в закрытый период уже после закрытия."""
+    from .period_check_service import PeriodCheckService
+    from .period_service import PeriodService
+
+    year, month = _period_args(request.GET)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    account = request.bitrix24_account
+    period = next(
+        (p for p in PeriodService(account).list_periods()
+         if p.year == year and p.month == month and p.reopened_at is None),
+        None,
+    )
+    if period is None:
+        return JsonResponse({"items": []})
+
+    return JsonResponse({"items": PeriodCheckService(account).late_arrivals(period)})
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("period_fix")
+@auth_required
+@rate_limit("period_fix", 20, 60, key="account")
+@admin_required
+def period_fix(request: AuthorizedRequest):
+    """Исправление находки проверки одним нажатием.
+
+    Пишет в карточки списаний Битрикса, то есть меняет исходные данные, по
+    которым потом выставляется счёт. Поэтому здесь тот же гейт по роли, что у
+    закрытия и переоткрытия: операция не разрушительная (проект в карточке
+    можно переписать обратно, и каждая правка оставляет комментарий в
+    таймлайне), но доверять её всем подряд незачем.
+
+    Что именно чинится и что осознанно не чинится — в докстринге
+    period_fix_service. Ответ всегда содержит СВЕЖУЮ проверку: экран
+    перерисовывается по факту, а не по нашему прогнозу.
+    """
+    from .period_fix_service import PeriodFixService
+
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
+
+    payload = _load_request_json(request)
+    year, month = _period_args(payload)
+    if year is None:
+        return JsonResponse({"error": "Не указан период."}, status=400)
+
+    code = str(payload.get("code") or "").strip()
+    if not code:
+        return JsonResponse({"error": "Не указана находка."}, status=400)
+
+    account = request.bitrix24_account
+    result = PeriodFixService(account.client, account).fix(year, month, code)
+
+    # Отказы отдаём 409, а не 400: запрос корректен, просто сейчас так делать
+    # нельзя — ровно как при закрытии периода с блокерами.
+    if result.get("status") in {"not_fixable", "period_closed"}:
+        return JsonResponse(result, status=409)
+    return JsonResponse(result)
+
+
+def _reject_stale_client(request):
+    """Отказ вкладке, работающей на снятой с сервера сборке. None — можно.
+
+    Приложение живёт в айфрейме, и жёсткая перезагрузка внешней страницы
+    Битрикса содержимое фрейма НЕ обновляет: вкладка может неделями исполнять
+    код, которого на сервере уже нет (инцидент 31.08.2026).
+
+    Ставится на ВСЕ операции, меняющие данные. Изначально проверка стояла
+    только на списании часов, и этого мало: закрытие и переоткрытие месяца
+    необратимы и определяют, что уйдёт клиенту в счёт, — выполнить их из
+    вкладки со старым кодом ничем не лучше.
+
+    Отсутствие заголовка пропускаем (см. is_version_acceptable): вкладки,
+    открытые до появления проверки, не должны отваливаться на ровном месте.
+    """
+    client_version = request.headers.get("X-App-Version")
+    if is_version_acceptable(client_version):
+        return None
+    logger.info(
+        "Stale client rejected: version=%s, server=%s, account=%s",
+        client_version, get_app_version(), request.bitrix24_account.pk,
+    )
+    return JsonResponse(
+        {
+            "error": "Приложение обновилось. Перезагрузите страницу и повторите.",
+            "code": "app_version_mismatch",
+        },
+        status=409,
+    )
+
+
+def _period_args(source):
+    """(год, месяц) из query-строки или тела. (None, None) — не разобрали."""
+    try:
+        year = int(source.get("year"))
+        month = int(source.get("month"))
+    except (TypeError, ValueError):
+        return None, None
+    if not (1 <= month <= 12) or not (2000 <= year <= 2100):
+        return None, None
+    return year, month
+
+
+def _refresh_task_directory(account):
+    """Актуализирует справочник задач: недостающие и изменённые.
+
+    Две разные дыры, обе обязательны:
+      * отсутствующие — задача, на которую часы списали только что и которая
+        разминулась с фоновым прогоном;
+      * изменённые — перенос или переименование задачи, которая в справочнике
+        уже есть. Без этого «Обновить» не показывал реального положения.
+
+    Стоимость в спокойном случае — один SELECT и ни одного обращения к
+    Битриксу, поэтому зовётся на каждом нажатии, ДО гейта свежести.
+
+    Сбой изолирован: справочник вспомогательный, и его проблемы не должны
+    превращать успешный синк часов в ошибку для пользователя.
+    """
+    try:
+        task_sync = TaskSyncService(account.client, account, interactive=True)
+        task_sync.sync_missing_task_ids()
+        task_sync.sync_changed_since()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Task directory refresh failed: %s", exc)
+
+
+@xframe_options_exempt
 @csrf_exempt
 @require_POST
 @log_errors("timesheet_sync")
 @auth_required
-@rate_limit("sync", 6, 60, key="account")
+@rate_limit("sync", 30, 60, key="account")
 @sync_lock("timesheet")
 def timesheet_sync(request: AuthorizedRequest):
     profiler = ReportProfiler("timesheet_sync", account_id=request.bitrix24_account.pk)
@@ -1825,6 +2327,25 @@ def timesheet_sync(request: AuthorizedRequest):
     # двигается маркер ниже — правка, случившаяся во время обхода, имеет
     # updatedTime >= started_at и попадёт в следующую выборку.
     now = timezone.now()
+
+    # Справочник задач обновляем ДО гейта свежести — это отдельный от списаний
+    # источник, и на него трёхминутный гейт распространяться не должен.
+    #
+    # Ошибка первой версии (боевая проверка 31.08.2026): обновление стояло в
+    # конце обработчика, после гейта. Пользователь назначил задаче новый
+    # проект, нажал «Обновить» — сработало; через пятнадцать секунд поменял
+    # проект снова, нажал «Обновить» — и кнопка не сделала НИЧЕГО, потому что
+    # гейт вернул "fresh" за 110 мс, не дойдя до справочника. В логе это видно
+    # буквально: один ответ "success" за 1805 мс и следом четыре "fresh" по
+    # ~120 мс.
+    #
+    # Гейт защищает от лишних обходов Битрикса за списаниями — операции
+    # дорогой. Обновление справочника стоит один SELECT и, при наличии
+    # изменений, один вызов, поэтому пропускать его незачем: кнопка
+    # «Обновить» обязана показывать реальное положение задач при каждом
+    # нажатии, иначе она врёт.
+    _refresh_task_directory(request.bitrix24_account)
+
     if not is_scoped and should_skip_timesheet_sync(request.bitrix24_account, now):
         db_count = TimesheetItem.objects.filter(**scope_to_tenant(request.bitrix24_account)).count()
         profiler.set_metric("status", "fresh")
@@ -1875,6 +2396,75 @@ def timesheet_sync(request: AuthorizedRequest):
     profiler.attach_to_response(response)
     profiler.log()
     return response
+
+
+def _timesheet_write(request: AuthorizedRequest, is_update: bool):
+    """Общее тело create/update: разбор тела -> сервис -> ответ.
+
+    Обе ручки существуют затем, чтобы у списания появилась ТОЧКА КОНТРОЛЯ на
+    сервере. Раньше часы уходили в Битрикс прямо из браузера
+    ($b24.callMethod('crm.item.add', …) в task.vue, embedded.vue и
+    reports/project-report.client.vue), бэкенд об этом не знал, и наложить на
+    запись серверное правило — в первую очередь запрет списания в закрытый
+    месяц — было физически некуда.
+
+    Автор записи сохраняется: TimesheetWriteService ходит токеном самого
+    сотрудника (см. его докстринг), поэтому карточка создаётся от того же
+    человека, что и раньше, и права Битрикса применяются к нему же.
+    """
+    # Устаревшая вкладка не имеет права писать. После подмены контейнера
+    # приложение во фрейме продолжает работать на старом коде: жёсткая
+    # перезагрузка внешней страницы Битрикса содержимое фрейма не обновляет
+    # (инцидент 31.08.2026, см. app_version.py). Пока правил не было, это
+    # означало лишь запись прежним путём; с закрытием месяца та же вкладка
+    # обошла бы проверку и списала часы в закрытый период.
+    stale = _reject_stale_client(request)
+    if stale is not None:
+        return stale
+
+    payload = _load_request_json(request)
+    account = request.bitrix24_account
+
+    try:
+        service = TimesheetWriteService(account)
+        if is_update:
+            result = service.update(payload.get("id"), payload.get("fields"))
+        else:
+            result = service.create(payload.get("fields"))
+    except TimesheetWriteError as exc:
+        return JsonResponse({"error": exc.message}, status=exc.status)
+
+    return JsonResponse(result)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("timesheet_create")
+@auth_required
+@rate_limit("timesheet_write", 30, 60, key="account")
+def timesheet_create(request: AuthorizedRequest):
+    """Создание карточки списания.
+
+    Порог @rate_limit — 30/60с: списание это обычное частое действие
+    пользователя, а не тяжёлая операция. Столько же с 31.08.2026 у синка —
+    он перестал быть тяжёлым и получил тот же бюджет. Экран
+    «разделить запись» в embedded.vue создаёт несколько карточек подряд, и
+    порог уровня синка ронял бы штатную работу. При этом лимит есть: сама
+    ручка ходит в Битрикс, и безлимитной её оставлять нельзя.
+    """
+    return _timesheet_write(request, is_update=False)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("timesheet_update")
+@auth_required
+@rate_limit("timesheet_write", 30, 60, key="account")
+def timesheet_update(request: AuthorizedRequest):
+    """Правка карточки списания. Лимит общий с созданием (тот же scope)."""
+    return _timesheet_write(request, is_update=True)
 
 
 @xframe_options_exempt
@@ -2017,9 +2607,11 @@ def _save_configuration_with_project_sync(
     секретом (то же значение возвращает get_configuration) — значит любой
     запрос с валидным токеном может выставить его и звать эту ветку в цикле.
 
-    Порог 6/60 — тот же класс риска и то же число, что у соседнего
-    sync_project_board (@rate_limit("sync", 6, 60, key="account")): внутри
-    вызывается тот же ProjectSyncService.sync(). Привязка Project SPA в
+    Порог 6/60 — тот же класс риска, что у соседнего sync_project_board:
+    внутри вызывается тот же ProjectSyncService.sync(). Число при этом
+    осталось 6, тогда как у sync с 31.08.2026 стоит 30: там порог поднимали
+    под частые нажатия «Обновить», а привязка Project SPA — операция
+    первичной настройки, её в цикле не жмут. Привязка Project SPA в
     настройках — операция первичной настройки, которую выполняют редко и
     осознанно (в отличие, например, от автокомплита company_search — 60/60):
     6 запросов в минуту с запасом покрывают ручной цикл «поправил
@@ -2335,6 +2927,9 @@ def report_daily_workload(request: AuthorizedRequest):
         )
     with profiler.stage("project_lookup"):
         project_name_by_item, project_name_by_group = build_project_title_lookups(request.bitrix24_account)
+        # Актуальные название и проект задачи (PortalTask). Снимок в записи
+        # остаётся нетронутым, резолв идёт на чтении.
+        _task_lookup = build_task_lookup(request.bitrix24_account)
     with profiler.stage("materialize"):
         rows = materialize_rows(
             queryset,

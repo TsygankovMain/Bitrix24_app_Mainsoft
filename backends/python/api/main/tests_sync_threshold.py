@@ -8,7 +8,6 @@ Sprint 2, задача 2.1 — DELETE_SAFETY_RATIO + traversal_complete.
 """
 
 from datetime import datetime
-from unittest.mock import Mock
 
 from django.test import TestCase
 from django.utils import timezone

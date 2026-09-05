@@ -15,6 +15,8 @@ const { locales: localesI18n, setLocale } = useI18n()
 const { initApp, processErrorGlobal } = useAppInit('TaskPage')
 const { $initializeB24Frame } = useNuxtApp()
 const toast = useToast()
+// Запись часов идёт через бэкенд (см. createTimesheetEntry в stores/api.ts).
+const apiStore = useApiStore()
 
 let $b24: null | B24Frame = null
 
@@ -180,17 +182,13 @@ async function handleSaveItem(data: EditingItem) {
             return
         }
 
+        // Через наш бэкенд, а не напрямую в Битрикс: только так на списание
+        // можно наложить серверное правило (закрытие месяца). Смарт-процесс
+        // выбирает сервер, поэтому entityTypeId здесь больше не передаётся.
         if (data.id) {
-            await $b24.callMethod('crm.item.update', {
-                entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-                id: data.id,
-                fields
-            })
+            await apiStore.updateTimesheetEntry(data.id, fields)
         } else {
-            await $b24.callMethod('crm.item.add', {
-                entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-                fields
-            })
+            await apiStore.createTimesheetEntry(fields)
         }
 
         editingItem.value = null

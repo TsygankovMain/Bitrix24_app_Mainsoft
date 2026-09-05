@@ -47,7 +47,7 @@ from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
 
-SCOPE_BITS = {"timesheet": 1, "project": 2, "users": 3, "project_create": 4}
+SCOPE_BITS = {"timesheet": 1, "project": 2, "users": 3, "project_create": 4, "tasks": 5}
 
 
 class SyncLockBusy(Exception):

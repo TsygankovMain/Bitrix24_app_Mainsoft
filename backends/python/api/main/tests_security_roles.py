@@ -7,6 +7,13 @@ server-side role gating any more; any authenticated user may call any endpoint (
 valid JWT is still required). The Bitrix `is_b24_user_admin` flag is still synced
 (the UI uses it to show/hide the Settings screen), but it no longer blocks requests.
 
+ИСКЛЮЧЕНИЕ от 31.08.2026: заказчик вернул серверную проверку роли ТОЧЕЧНО —
+только для закрытия и переоткрытия месяца (period_close/period_reopen,
+декоратор main.utils.decorators.admin_required). Это операции необратимые и
+влияющие на то, что уходит клиенту в счёт. Общее решение от 11.06.2026 при
+этом в силе: на остальных эндпоинтах гейта нет, и тесты ниже это закрепляют.
+Списки эндпоинтов ниже периодов не содержат — не добавлять.
+
 These tests verify:
   * No endpoint returns 403 "Недостаточно прав" for a non-admin (gate removed).
   * get_token still refreshes is_b24_user_admin from the Bitrix user.admin method.

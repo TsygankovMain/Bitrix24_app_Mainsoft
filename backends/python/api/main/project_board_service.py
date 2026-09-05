@@ -1,7 +1,7 @@
 import logging
 import traceback
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from b24pysdk import Client
 from django.core.cache import cache
@@ -970,6 +970,18 @@ class ProjectCardService:
 
         cache.set(cache_key, resolved_name or "", COMPANY_INN_CACHE_TTL)
         return resolved_name
+
+    def resolve_reference_inn(self, reference_id: str) -> Optional[str]:
+        """ИНН ОДНОЙ компании/юрлица по её id — один crm.requisite.list с
+        серверным фильтром по ENTITY_ID, результат в кэше на сутки
+        (COMPANY_INN_CACHE_TTL), отрицательный результат тоже кэшируется.
+
+        Публичная точка входа для тех, кому нужны ИНН нескольких конкретных
+        компаний, а не весь справочник портала: звать get_full_company_directory()
+        ради двух-трёх ИНН — это 465 страниц компаний плюс столько же
+        реквизитов (см. его докстринг). Пользуется inn_backfill_service.
+        """
+        return self._fetch_single_reference_inn(reference_id)
 
     def _fetch_single_reference_inn(self, reference_id: str) -> Optional[str]:
         cache_key = build_account_cache_key(self.account, f"company-inn:{reference_id}")

@@ -78,6 +78,19 @@
             <B24Button label="Незаполненные проекты" color="default" @click="router.push('/settings/projects-health')" />
           </template>
         </B24Card>
+
+        <B24Card>
+          <template #header>
+            <span class="text-base font-semibold text-slate-900">Закрытие месяца</span>
+          </template>
+          <p class="text-sm text-slate-500">
+            Заморозка часов за период. После закрытия списать или изменить часы
+            за этот месяц нельзя.
+          </p>
+          <template #footer>
+            <B24Button label="Периоды" color="default" @click="router.push('/settings/periods')" />
+          </template>
+        </B24Card>
       </B24PageGrid>
 
       <!-- Служебные разделы -->

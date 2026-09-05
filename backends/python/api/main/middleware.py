@@ -76,13 +76,30 @@ def _redact_secrets(text: str) -> str:
 
 class RequestLoggingMiddleware(MiddlewareMixin):
     MAX_BODY_LENGTH = 2000
-    SKIPPED_PATH_PREFIXES = (
-        "/api/logs",
-        "/api/health",
-        "/healthz",
+
+    # Пути, которые НИКОГДА не попадают в request_log — ни при каком статусе.
+    # Их тела несут OAuth-пейлоад Битрикса (AUTH_ID, REFRESH_ID, APP_SID, code,
+    # client_secret и прочее), а _redact_secrets маскирует ФИКСИРОВАННЫЙ список
+    # ключей и всего этого не знает. Инвариант закреплён
+    # tests_security_logs.SensitivePathNotLoggedTest — не ослаблять.
+    # Диагностика по ним идёт в system_log без тел: rate_limit пишет туда
+    # предупреждение на каждый отказ, см. utils/decorators/rate_limit.py.
+    SENSITIVE_PATH_PREFIXES = (
         "/api/getToken",
         "/api/install",
     )
+
+    # Пути, которые не пишем, пока всё хорошо: техничные и высокочастотные.
+    # Секретов в них нет, поэтому ОШИБКИ по ним логируем — иначе упавший
+    # healthcheck не оставляет следа.
+    NOISY_PATH_PREFIXES = (
+        "/api/logs",
+        "/api/health",
+        "/healthz",
+    )
+
+    # Совместимость: код и тесты снаружи обращались к одному общему кортежу.
+    SKIPPED_PATH_PREFIXES = SENSITIVE_PATH_PREFIXES + NOISY_PATH_PREFIXES
 
     def process_request(self, request):
         request.start_time = time.time()
@@ -127,11 +144,37 @@ class RequestLoggingMiddleware(MiddlewareMixin):
         return response
 
     def _should_skip_logging(self, request, response) -> bool:
-        if any(request.path.startswith(prefix) for prefix in self.SKIPPED_PATH_PREFIXES):
+        """Секретные пути не пишем никогда; на остальных пропускаем только успех.
+
+        Раньше один общий список префиксов отсекал путь целиком при любом
+        статусе, и это создавало слепое пятно ровно там, где оно дороже всего:
+        в списке стоит /api/getToken, а на нём висит единственный в приложении
+        лимит с ключом по IP+домену. То есть 429, который реально ловят
+        пользователи при одновременном открытии приложения из одного офиса, не
+        попадал в лог НИ РАЗУ — за месяц ноль записей со статусом 429 при живых
+        жалобах.
+
+        Разруливается это НЕ логированием тел getToken/install: там OAuth-
+        пейлоад, который _redact_secrets не покрывает (он знает фиксированный
+        список ключей), и запрет на их запись остаётся жёстким. Видимость по
+        429 даёт rate_limit: он пишет предупреждение в system_log — путь,
+        scope, вид ключа, без единого байта тела.
+
+        Что изменилось здесь: ошибки на ТЕХНИЧНЫХ префиксах (/api/logs,
+        /api/health, /healthz) теперь пишутся. Раньше упавший healthcheck не
+        оставлял следа вообще.
+        """
+        if any(request.path.startswith(prefix) for prefix in self.SENSITIVE_PATH_PREFIXES):
+            return True
+
+        if response.status_code >= 400:
+            return False
+
+        if any(request.path.startswith(prefix) for prefix in self.NOISY_PATH_PREFIXES):
             return True
 
         # High-volume successful reads overwhelm the DB and add low diagnostic value.
-        if request.method in {"GET", "HEAD", "OPTIONS"} and response.status_code < 400:
+        if request.method in {"GET", "HEAD", "OPTIONS"}:
             return True
 
         return False

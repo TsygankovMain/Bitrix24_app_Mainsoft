@@ -15,8 +15,14 @@ def log_errors(message: str):
                 response = func(*args, **kwargs)
             except Exception as exc:
                 tb = traceback.format_exc()
-                logging.error(message + f", args={args}, kwargs={kwargs}" + ": " + str(exc))
-                
+                # skip_db: строку в SystemLog кладём тут же вручную, с
+                # человекочитаемым module. Без этого признака DatabaseLogHandler
+                # (settings.LOGGING) записал бы вторую строку на ту же ошибку.
+                logging.error(
+                    message + f", args={args}, kwargs={kwargs}" + ": " + str(exc),
+                    extra={"skip_db": True},
+                )
+
                 # Save to SystemLog
                 try:
                     SystemLog.objects.create(

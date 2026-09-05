@@ -24,6 +24,7 @@ import type {
 import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
+import type { PeriodBulkPlan, PeriodCheckResult, PeriodEntryRow, PeriodFixResult, PeriodRow } from '~/types/period'
 
 type SaveConfigurationResponse = {
   status?: string
@@ -184,6 +185,20 @@ export const useApiStore = defineStore(
         //     frontend/app/utils/apiErrors.ts) — она закрывает тот же класс
         //     мест (весь код, который зовёт processErrorGlobal(e) в catch),
         //     не трогая этот файл и не рискуя поиском компаний.
+
+        // HTTP 409 app_version_mismatch — вкладка исполняет код, которого на
+        // сервере уже нет. Ловим ЗДЕСЬ, а не на экранах: отказ может прийти
+        // на любую пишущую ручку, и заводить обработчик в каждой было бы
+        // ровно тем дублированием, ради устранения которого этот перехватчик
+        // и существует. Ошибку не подменяем — экран всё так же покажет
+        // серверный текст, — только взводим флаг для баннера с кнопкой
+        // перезагрузки.
+        if (ctx.response?.status === 409) {
+          const data = ctx.response._data as { code?: string } | undefined
+          if (data?.code === 'app_version_mismatch') {
+            useAppOutdated().markOutdated()
+          }
+        }
       }
     })
 
@@ -290,23 +305,6 @@ export const useApiStore = defineStore(
       const value = await loader()
       writeCache(scope, value, ttlMs)
       return value
-    }
-
-    // Health check
-    const checkHealth = async (): Promise<{
-      status: string
-      backend: string
-      timestamp: number
-    }> => {
-      try {
-        return await $api('/api/health', {
-          headers: {
-            Authorization: `Bearer ${tokenJWT.value}`
-          }
-        })
-      } catch {
-        throw new Error('Backend health check failed')
-      }
     }
 
     // API
@@ -632,6 +630,226 @@ export const useApiStore = defineStore(
       })
       clearCache('project-board', 'homepage-portfolio', 'filter-projects')
       return result
+    }
+
+    /**
+     * Версия сборки, на которой работает ЭТА вкладка.
+     *
+     * Смысл в том, что вкладка запоминает версию того кода, который сейчас
+     * исполняет: она загрузилась из этой сборки. После передеплоя сервер
+     * начнёт отдавать другую версию, а вкладка продолжит слать запомненную —
+     * сервер увидит расхождение и запись отклонит.
+     *
+     * Зачем: приложение живёт в айфрейме, и жёсткая перезагрузка страницы
+     * Битрикса содержимое фрейма не обновляет — вкладка может неделями
+     * работать на старом коде (инцидент 31.08.2026). Без этой проверки такая
+     * вкладка обошла бы запрет на списание в закрытый месяц.
+     *
+     * ВЕРСИЯ СПРАШИВАЕТСЯ НА СТАРТЕ, А НЕ ПРИ ПЕРВОЙ ЗАПИСИ, и это
+     * принципиально. В первой версии (31.08.2026) запрос был ленивым, и
+     * защита из-за этого не работала в самом частом случае: вкладка, открытая
+     * ДО передеплоя и ничего не писавшая, при первой же записи спрашивала
+     * версию у УЖЕ ОБНОВЛЁННОГО сервера, получала новую и успешно проходила
+     * проверку — исполняя при этом старый код. Ловились только вкладки,
+     * успевшие что-то записать до выкатки. Спрашивая на старте, мы получаем
+     * версию сервера на момент загрузки страницы, то есть версию собственного
+     * кода.
+     */
+    const appVersion = ref<string | null>(null)
+
+    /**
+     * Единственный запрос версии за жизнь вкладки.
+     *
+     * Промис запоминается, а не только результат: writeHeaders может успеть
+     * дважды до ответа, и без этого получилось бы два параллельных запроса.
+     */
+    let versionCapture: Promise<void> | null = null
+
+    const captureAppVersion = (): Promise<void> => {
+      if (!versionCapture) {
+        versionCapture = $api<{ version: string }>('/api/app-version')
+          .then((res) => {
+            appVersion.value = res?.version || null
+          })
+          .catch(() => {
+            // Версия не критична: сервер трактует её отсутствие как
+            // «проверять нечем» и пропускает запись. Ронять списание из-за
+            // сбоя вспомогательной ручки нельзя.
+          })
+      }
+      return versionCapture
+    }
+
+    // Старт вкладки. Ответ не ждём — он нужен только к первой записи, а
+    // блокировать инициализацию стора сетевым запросом незачем.
+    if (import.meta.client) {
+      void captureAppVersion()
+    }
+
+    /**
+     * Превращает отказ сервера в понятный пользователю текст.
+     *
+     * ofetch кладёт в message строку вида `[POST] "/api/…": 409 Conflict`, и
+     * экраны показывают в тосте именно её — то есть человек видит код вместо
+     * объяснения. Разбор ошибки здесь, а не на каждом экране: сообщение у
+     * бэкенда уже человеческое, его достаточно достать.
+     */
+    const rethrowWithServerMessage = (error: unknown): never => {
+      const data = (error as { data?: { error?: string, code?: string } })?.data
+      if (data?.error) {
+        const friendly = new Error(data.error)
+        if (data.code) {
+          ;(friendly as Error & { code?: string }).code = data.code
+        }
+        throw friendly
+      }
+      throw error
+    }
+
+    /**
+     * Заголовки пишущего запроса: токен и версия сборки.
+     *
+     * Ставятся на ВСЕ операции, меняющие данные, а не только на списание
+     * часов: закрытие и переоткрытие месяца необратимы, и выполнить их из
+     * вкладки со старым кодом — ровно тот случай, ради которого проверка
+     * версии заводилась.
+     */
+    const writeHeaders = async (): Promise<Record<string, string>> => {
+      const headers: Record<string, string> = { Authorization: `Bearer ${tokenJWT.value}` }
+      await captureAppVersion()
+      if (appVersion.value) {
+        headers['X-App-Version'] = appVersion.value
+      }
+      return headers
+    }
+
+    /**
+     * Создание карточки списания через наш бэкенд.
+     *
+     * Раньше экраны звали $b24.callMethod('crm.item.add', …) напрямую из
+     * браузера, минуя Django. Серверного правила на такую запись наложить было
+     * негде — в частности запрет списания в закрытый месяц жил бы только в JS.
+     *
+     * entityTypeId сюда НЕ передаётся: смарт-процесс выбирает сервер из своей
+     * конфигурации. Автор записи не меняется — бэкенд ходит в Битрикс токеном
+     * того же сотрудника (см. TimesheetWriteService).
+     */
+    const createTimesheetEntry = async (fields: Record<string, unknown>): Promise<{ status: string; id: number | null }> => {
+      const result = await $api<{ status: string, id: number | null }>('/api/timesheet/create', {
+        method: 'POST',
+        headers: await writeHeaders(),
+        body: { fields }
+      }).catch(rethrowWithServerMessage)
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    /** Правка карточки списания. Условия те же, что у createTimesheetEntry. */
+    const updateTimesheetEntry = async (id: string | number, fields: Record<string, unknown>): Promise<{ status: string; id: number | null }> => {
+      const result = await $api<{ status: string, id: number | null }>('/api/timesheet/update', {
+        method: 'POST',
+        headers: await writeHeaders(),
+        body: { id, fields }
+      }).catch(rethrowWithServerMessage)
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    // --- Закрытие месяца ---
+    // Спека: docs/architecture/period-closing-spec.md
+    const getPeriods = async (): Promise<{ periods: PeriodRow[] }> => {
+      return await $api('/api/periods', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const checkPeriod = async (year: number, month: number): Promise<PeriodCheckResult> => {
+      return await $api(`/api/periods/check?year=${year}&month=${month}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const getPeriodCheckDetails = async (year: number, month: number, code: string): Promise<{ items: PeriodEntryRow[] }> => {
+      return await $api(`/api/periods/check?year=${year}&month=${month}&code=${encodeURIComponent(code)}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /**
+     * Исправление находки проверки одним нажатием.
+     *
+     * В ответе всегда лежит СВЕЖАЯ проверка — экран перерисовывается по факту,
+     * а не по прогнозу: часть карточек Битрикс может отвергнуть, часть задач
+     * окажется без рабочей группы.
+     *
+     * 409 здесь штатный: «эту находку машина не чинит» или «период закрыт,
+     * сначала переоткройте». Текст берём из ответа сервера.
+     */
+    const fixPeriodFinding = async (
+      year: number, month: number, code: string,
+    ): Promise<PeriodFixResult> => {
+      const result = await $api<PeriodFixResult>('/api/periods/fix', {
+        method: 'POST',
+        headers: await writeHeaders(),
+        body: { year, month, code }
+      }).catch(rethrowWithServerMessage)
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    /**
+     * Закрытие периода. Сервер повторно проверяет блокеры и отвечает 409, даже
+     * если экран считал, что всё чисто — кнопку можно обойти, а закрытие
+     * необратимо. Текст ошибки достаём из ответа (см. rethrowWithServerMessage).
+     */
+    const closePeriod = async (year: number, month: number): Promise<{ status: string }> => {
+      const result = await $api<{ status: string }>('/api/periods/close', {
+        method: 'POST',
+        headers: await writeHeaders(),
+        body: { year, month }
+      }).catch(rethrowWithServerMessage)
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    const reopenPeriod = async (year: number, month: number, reason: string): Promise<{ status: string }> => {
+      const result = await $api<{ status: string }>('/api/periods/reopen', {
+        method: 'POST',
+        headers: await writeHeaders(),
+        body: { year, month, reason }
+      }).catch(rethrowWithServerMessage)
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    /**
+     * Закрыть все открытые периоды до указанного включительно.
+     *
+     * Без acknowledge сервер НИЧЕГО не закрывает, а отвечает 409 с разбором:
+     * какие периоды затронуты и что в каждом сломано. Это не ошибка, а
+     * запрос подтверждения — экран показывает разбор и просит согласия.
+     */
+    const closePeriodsBulk = async (
+      untilYear: number, untilMonth: number, acknowledge = false,
+    ): Promise<PeriodBulkPlan> => {
+      const result = await $api<PeriodBulkPlan>('/api/periods/close-bulk', {
+        method: 'POST',
+        headers: await writeHeaders(),
+        body: { until_year: untilYear, until_month: untilMonth, acknowledge }
+      }).catch((error: unknown) => {
+        // 409 здесь — штатный ответ «подтвердите», а не сбой.
+        const data = (error as { data?: PeriodBulkPlan })?.data
+        if (data?.code === 'acknowledge_required') return data
+        return rethrowWithServerMessage(error)
+      })
+      clearCache('project-board', 'homepage-portfolio', 'filter-projects')
+      return result
+    }
+
+    const getLateArrivals = async (year: number, month: number): Promise<{ items: PeriodEntryRow[] }> => {
+      return await $api(`/api/periods/late?year=${year}&month=${month}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
     }
 
     const getTimesheetSyncStatus = async (): Promise<{ last_synced_at: string | null; count: number }> => {
@@ -1201,7 +1419,6 @@ export const useApiStore = defineStore(
     }
 
     return {
-      checkHealth,
       init,
       getEnum,
       getList,
@@ -1224,7 +1441,17 @@ export const useApiStore = defineStore(
       getReportRevenueLeakage,
       getReportTimeEntryDiscipline,
       getReportFocusAnalysis,
+      getPeriods,
+      checkPeriod,
+      getPeriodCheckDetails,
+      fixPeriodFinding,
+      closePeriod,
+      closePeriodsBulk,
+      reopenPeriod,
+      getLateArrivals,
       syncTimesheets,
+      createTimesheetEntry,
+      updateTimesheetEntry,
       getTimesheetSyncStatus,
       getTimesheetsList,
       getUsers,

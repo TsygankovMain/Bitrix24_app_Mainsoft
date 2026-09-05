@@ -184,34 +184,6 @@ function resolveInnFieldCode(kind: 'OUR_INN' | 'CLIENT_INN'): string {
     ).trim()
 }
 
-function extractCreatedItemId(
-    rawData: { result?: string | number | { id?: unknown, itemId?: unknown, item?: { id?: unknown, ID?: unknown } } | null } | null | undefined
-): string | null {
-    const result = rawData?.result
-    if (!result) {
-        return null
-    }
-
-    if (typeof result === 'string' || typeof result === 'number') {
-        const normalized = String(result).trim()
-        return normalized || null
-    }
-
-    if (typeof result === 'object') {
-        const directId = String(result.id || result.itemId || '').trim()
-        if (directId) {
-            return directId
-        }
-
-        const nestedItemId = String(result.item?.id || result.item?.ID || '').trim()
-        if (nestedItemId) {
-            return nestedItemId
-        }
-    }
-
-    return null
-}
-
 async function getCurrentProjectCard() {
     const normalizedGroupId = String(currentGroupId.value || '').trim()
     if (!normalizedGroupId) {
@@ -328,15 +300,9 @@ const handleSaveMeeting = async () => {
             payloadMycompanyId: fields.mycompanyId,
         })
 
-        const createRes = await $b24!.callMethod('crm.item.add', {
-            entityTypeId: entityTypeId.value,
-            fields
-        })
-        const createdItemId = extractCreatedItemId(createRes?.getData?.())
-        console.info('[ProjectReport][INN] Create result', {
-            createdItemId,
-            rawResult: createRes?.getData?.()?.result,
-        })
+        const createRes = await apiStore.createTimesheetEntry(fields)
+        const createdItemId = createRes?.id ?? null
+        console.info('[ProjectReport][INN] Create result', { createdItemId })
 
         if (createdItemId && (ourInnFieldCode || clientInnFieldCode)) {
             try {

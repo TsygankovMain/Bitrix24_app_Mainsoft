@@ -38,6 +38,31 @@ class FakeClient:
         self._bitrix_token = FakeToken()
 
 
+class FakeBoard:
+    """Подмена ProjectCardService для autofill.
+
+    Отдаёт ИНН точечно и ВЗРЫВАЕТСЯ на полном обходе справочника компаний:
+    именно этот обход autofill звать не имеет права (см. _inn_maps_for_cards).
+    """
+
+    inn_by_reference = {"C1": "7701234567", "L1": "7709876543"}
+
+    def __init__(self, client=None, account=None):
+        self.lookups = []
+        FakeBoard.last = self
+
+    def resolve_reference_inn(self, reference_id):
+        self.lookups.append(reference_id)
+        return self.inn_by_reference.get(reference_id)
+
+    def get_full_company_directory(self):
+        raise AssertionError(
+            "autofill не должен обходить справочник компаний портала: "
+            "это 465 страниц компаний плюс столько же реквизитов, "
+            "5-7 минут под advisory-замком синка"
+        )
+
+
 class PureFnTests(unittest.TestCase):
     def test_is_blank(self):
         for v in (None, "", "   ", [], {}):
@@ -190,6 +215,7 @@ class ScanTests(unittest.TestCase):
         res = svc.scan("2026-05-01", "2026-05-31")
         self.assertIsNotNone(res["warning"])
 
+    @mock.patch("main.inn_backfill_service.ProjectCardService", FakeBoard)
     @mock.patch("main.inn_backfill_service.get_project_card_queryset")
     def test_autofill_resolves_and_writes(self, m_qs):
         m_qs.return_value = [self.card]
@@ -204,6 +230,45 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][1]["id"], 1)
         self.assertEqual(calls[0][1]["fields"], {"UF_OUR": "7709876543", "UF_CLIENT": "7701234567"})
+
+    @mock.patch("main.inn_backfill_service.ProjectCardService", FakeBoard)
+    @mock.patch("main.inn_backfill_service.get_project_card_queryset")
+    def test_autofill_resolves_pointwise_without_directory_traversal(self, m_qs):
+        """Инвариант правки 31.08.2026: autofill резолвит ИНН ТОЧЕЧНО.
+
+        FakeBoard.get_full_company_directory падает с AssertionError, поэтому
+        возврат к полному обходу справочника уронит этот тест, а не прод.
+        Заодно проверяем, что запросов ровно два (компания + юрлицо) на пять
+        карточек одного проекта — то есть резолв идёт по УНИКАЛЬНЫМ id,
+        а не по карточкам.
+        """
+        m_qs.return_value = [self.card]
+        svc = self._service()
+        res = svc.autofill([
+            {"bitrix_id": i, "project_item_id": "100", "project_id": "G1"}
+            for i in range(1, 6)
+        ])
+        self.assertEqual(res["resolved"], 5)
+        self.assertEqual(sorted(FakeBoard.last.lookups), ["C1", "L1"])
+
+    @mock.patch("main.inn_backfill_service.ProjectCardService", FakeBoard)
+    @mock.patch("main.inn_backfill_service.get_project_card_queryset")
+    def test_autofill_caps_number_of_lookups(self, m_qs):
+        """Потолок AUTOFILL_INN_LOOKUP_LIMIT: первый синк портала создаёт
+        карточки тысячами, и точечный резолв без потолка выродился бы в
+        тысячу запросов — то есть в ту же проблему, только другой формы."""
+        cards = [
+            SimpleNamespace(project_item_id=str(i), project_id=f"G{i}",
+                            company_id=f"C{i}", our_legal_entity_id="")
+            for i in range(1000)
+        ]
+        m_qs.return_value = cards
+        svc = self._service()
+        svc.autofill([
+            {"bitrix_id": i, "project_item_id": str(i), "project_id": f"G{i}"}
+            for i in range(1000)
+        ])
+        self.assertEqual(len(FakeBoard.last.lookups), svc_mod.AUTOFILL_INN_LOOKUP_LIMIT)
 
     @mock.patch("main.inn_backfill_service.get_project_card_queryset")
     def test_project_items_blank_only_vs_overwrite(self, m_qs):

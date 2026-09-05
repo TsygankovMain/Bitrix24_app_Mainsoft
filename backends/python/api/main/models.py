@@ -309,6 +309,132 @@ class PortalUser(models.Model):
         ]
 
 
+class PortalTask(models.Model):
+    """Локальная копия справочника задач Bitrix24: актуальные название и группа.
+
+    Зачем. Название задачи и её проект приложение НЕ вычисляет — оно копирует
+    снимок, записанный на карточку списания в момент списания часов
+    (DataProcessingService.normalize_items). Когда задачу переименовывают или
+    переносят в другой проект, меняется ЗАДАЧА, а карточки списания не
+    меняются: их updatedTime не двигается, поэтому инкрементальный синк их не
+    видит, а ночная полная сверка перечитывает те же устаревшие поля с той же
+    карточки. Само это не чинится никогда, ни при каком расписании.
+
+    В цифрах прода на 31.08.2026: 57 задач несут больше одного названия
+    (1 210 записей), 15 задач разошлись по разным проектам (100 записей).
+    Пример: задача 4627 — 237 записей под именем «Тестирование системы
+    Клеверенс.» и 23 под «ЗАДАЧИ ПО ООО ЭЛР» после переименования.
+
+    Отсюда таблица: один источник актуальной правды на портал. Отчёты берут
+    название и проект отсюда, а снимок в timesheet_item остаётся нетронутым
+    как след «под чем списывалось». Резолв идёт НА ЧТЕНИИ, поэтому вся история
+    становится актуальной сразу, без миграции данных.
+
+    Закрытые периоды защищать здесь не нужно: закрытие сделано правами
+    Битрикса и распространяется и на задачи, и на проекты — перенести задачу
+    в закрытом периоде попросту нельзя.
+
+    group_id — это GROUP_ID задачи, то есть рабочая группа Битрикса. Он же
+    project_id в наших карточках проектов и в timesheet_item: подтверждено
+    сверкой на проде (25 = ИТ-ЛАБ, 415 = ПВД сопровождение, 425 = ВСС) и
+    косвенно тем, что словарь в report_queries.build_project_title_lookups
+    называется by_group.
+
+    Устройство один в один как у PortalUser (см. его докстринг): та же пара
+    ключей, та же уникальность, тот же фоновый скоуп в sync_all_portals.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(Bitrix24Account, on_delete=models.CASCADE, related_name="portal_tasks")
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="portal_tasks", db_index=True,
+    )
+    bitrix_id = models.CharField(max_length=50, db_index=True)
+    title = models.CharField(max_length=500, blank=True, default="")
+    group_id = models.CharField(max_length=50, blank=True, default="", db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_task"
+        unique_together = ("bitrix24_account", "bitrix_id")
+        indexes = [
+            models.Index(fields=["bitrix24_account", "group_id"], name="portal_task_acc_group_idx"),
+        ]
+
+
+class ClosedPeriod(models.Model):
+    """Закрытый месяц: часы за него заморожены и правке не подлежат.
+
+    Отчёт по часам — основание для счёта клиенту. Пока месяц открыт, его цифры
+    могут поехать: сотрудник допишет часы задним числом, кто-то перенесёт
+    задачу в другой проект, и приложение честно перепишет проект во всех её
+    карточках (механизм от 31.08.2026). После выставления акта это
+    недопустимо.
+
+    Гранулярность — ПОРТАЛ ЦЕЛИКОМ (решение заказчика 31.08.2026): закрыли
+    август — закрыт у всех проектов и сотрудников. Закрытие по проектам
+    отдельно обсуждалось и отклонено как резко усложняющее и отчёты, и
+    правило «что делать с задачей, переехавшей из закрытого проекта в
+    открытый».
+
+    Признак закрытости на самой записи НЕ заводим: он разъедется с этой
+    таблицей при первом же переоткрытии. Запись считается закрытой, если её
+    date_reflection попадает в закрытый период — вычисляется на лету.
+
+    Опоздавшие часы определяются сравнением source_created_at записи с
+    closed_at её периода. Отдельного поля тоже не нужно.
+
+    Переоткрытие обязано существовать (первая же ошибка иначе становится
+    катастрофой) и обязано объясняться: reopen_reason заполняется всегда,
+    поля переоткрытия — журнал события, а не рутина.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(
+        Bitrix24Account, on_delete=models.CASCADE, related_name="closed_periods",
+    )
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="closed_periods", db_index=True,
+    )
+    year = models.IntegerField()
+    month = models.IntegerField()
+
+    closed_at = models.DateTimeField()
+    closed_by = models.CharField(max_length=50, blank=True, default="")
+    closed_by_name = models.CharField(max_length=255, blank=True, default="")
+
+    # Снимок объёма на момент закрытия — для сверки «столько мы заморозили».
+    # Пересчитывать его потом бессмысленно: данные могли измениться.
+    stats = models.JSONField(default=dict, blank=True)
+
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    reopened_by = models.CharField(max_length=50, blank=True, default="")
+    reopened_by_name = models.CharField(max_length=255, blank=True, default="")
+    reopen_reason = models.TextField(blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "closed_period"
+        unique_together = ("bitrix24_account", "year", "month")
+        ordering = ["-year", "-month"]
+        indexes = [
+            models.Index(fields=["bitrix24_account", "year", "month"], name="closed_period_acc_ym_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.year}-{self.month:02d}"
+
+    @property
+    def is_open(self) -> bool:
+        """Переоткрытый период снова открыт: строка остаётся как журнал."""
+        return self.reopened_at is not None
+
+
 class RequestLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     timestamp = models.DateTimeField(auto_now_add=True)
