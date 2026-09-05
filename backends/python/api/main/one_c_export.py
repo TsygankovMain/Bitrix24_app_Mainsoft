@@ -40,13 +40,30 @@ def _day(value: Any) -> str:
     return text[:10] if len(text) >= 10 else ""
 
 
+def _task_titles(item: Any) -> List[str]:
+    """Иерархия задачи из Битрикса: от верхней задачи к нижней."""
+    titles = getattr(item, "task_hierarchy_titles", None) or []
+    if not isinstance(titles, list):
+        return []
+    return [_clean(t) for t in titles if _clean(t)]
+
+
 def _task_name(item: Any) -> str:
     """Название задачи: последний уровень иерархии — так её видит человек
     в Битриксе. Если иерархии нет, годится название проекта."""
-    titles = getattr(item, "task_hierarchy_titles", None) or []
-    if isinstance(titles, list) and titles:
-        return _clean(titles[-1])
+    titles = _task_titles(item)
+    if titles:
+        return titles[-1]
     return _clean(getattr(item, "project_title", ""))
+
+
+def _task_path(item: Any) -> List[str]:
+    """Путь до задачи: родительские задачи без самой задачи.
+
+    В 1С по нему выстраивается такое же дерево, как в Битриксе, — иначе все
+    задачи клиента лежали бы плоским списком, и найти нужную стало бы нельзя.
+    """
+    return _task_titles(item)[:-1]
 
 
 def build_batch(
@@ -93,6 +110,7 @@ def build_batch(
             "задача": {
                 "идБитрикс": _clean(getattr(item, "task_id", "")),
                 "название": _task_name(item),
+                "путь": _task_path(item),
             },
             "комментарий": _clean(getattr(item, "description", "")),
             "оплачиваемые": bool(getattr(item, "is_billable", False)),

@@ -1,4 +1,5 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
+import type { OneCExportRun } from '~/types/oneC'
 import { withoutTrailingSlash } from 'ufo'
 import { withRefreshParam } from '~/utils/apiCache'
 import { isJwtFresh, readJwtExpiryMs } from '~/utils/jwt'
@@ -812,6 +813,22 @@ export const useApiStore = defineStore(
       return result
     }
 
+    /**
+     * Отправляет часы закрытого периода в 1С.
+     *
+     * Повтор безопасен: 1С помнит принятые строки и второй раз документы
+     * не создаёт, поэтому кнопку можно нажать ещё раз после разбора отказов.
+     */
+    const exportPeriodToOneC = async (
+      periodFrom: string, periodTo: string,
+    ): Promise<OneCExportRun> => {
+      return await $api<OneCExportRun>('/api/one-c/export', {
+        method: 'POST',
+        headers: await writeHeaders(),
+        body: { period_from: periodFrom, period_to: periodTo }
+      }).catch(rethrowWithServerMessage)
+    }
+
     const reopenPeriod = async (year: number, month: number, reason: string): Promise<{ status: string }> => {
       const result = await $api<{ status: string }>('/api/periods/reopen', {
         method: 'POST',
@@ -1443,6 +1460,7 @@ export const useApiStore = defineStore(
       getReportFocusAnalysis,
       getPeriods,
       checkPeriod,
+      exportPeriodToOneC,
       getPeriodCheckDetails,
       fixPeriodFinding,
       closePeriod,

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { OneCExportRun } from '~/types/oneC'
 /**
  * Закрытие месяца. Спека и мокапы:
  *   docs/architecture/period-closing-spec.md
@@ -46,6 +47,33 @@ const detailsTitle = ref('')
 const detailsRows = ref<PeriodEntryRow[]>([])
 
 // Подтверждение и переоткрытие
+// Отправка часов закрытого периода в 1С. Повтор безопасен: 1С помнит
+// принятые строки и второй раз документы не создаёт.
+const exportTarget = ref<PeriodRow | null>(null)
+const exportRun = ref<OneCExportRun | null>(null)
+const exporting = ref(false)
+
+async function sendToOneC(row: PeriodRow) {
+  exporting.value = true
+  exportTarget.value = row
+  exportRun.value = null
+  try {
+    const [year, month] = [row.year, row.month]
+    const from = `${year}-${String(month).padStart(2, '0')}-01`
+    const lastDay = new Date(year, month, 0).getDate()
+    const to = `${year}-${String(month).padStart(2, '0')}-${lastDay}`
+    exportRun.value = await apiStore.exportPeriodToOneC(from, to)
+  } catch (error) {
+    processErrorGlobal(error)
+    exportTarget.value = null
+  } finally {
+    exporting.value = false
+  }
+}
+
+const exportRejected = computed(
+  () => (exportRun.value?.rows || []).filter(row => row.status === 'отклонено'))
+
 const confirmClose = ref(false)
 const reopenTarget = ref<PeriodRow | null>(null)
 const reopenReason = ref('')
@@ -371,12 +399,19 @@ onMounted(async () => {
                   color="primary"
                   @click="runCheck(row)"
                 />
-                <B24Button
-                  v-else-if="row.closed"
-                  label="Переоткрыть"
-                  color="default"
-                  @click="reopenTarget = row"
-                />
+                <template v-else-if="row.closed">
+                  <B24Button
+                    label="Отправить в 1С"
+                    color="primary"
+                    :loading="exporting && exportTarget?.year === row.year && exportTarget?.month === row.month"
+                    @click="sendToOneC(row)"
+                  />
+                  <B24Button
+                    label="Переоткрыть"
+                    color="default"
+                    @click="reopenTarget = row"
+                  />
+                </template>
                 <span v-else class="text-xs text-slate-400">
                   Сначала закройте {{ oldestOpen?.title }}
                 </span>
@@ -574,6 +609,71 @@ onMounted(async () => {
     </B24Card>
 
     <!-- ===== Подтверждение закрытия ===== -->
+    <B24Modal
+      :open="!!exportRun"
+      title="Отправка в 1С"
+      @update:open="(value: boolean) => { if (!value) { exportRun = null; exportTarget = null } }"
+    >
+      <template #body>
+        <div v-if="exportRun" class="space-y-3 text-sm">
+          <p class="font-medium">
+            {{ exportTarget?.title }} · отправка {{ exportRun.sending_id }}
+          </p>
+
+          <p v-if="exportRun.status === 'failed'" class="text-red-600">
+            1С не приняла отправку: {{ exportRun.message || 'причина не названа' }}
+          </p>
+
+          <template v-else>
+            <p>
+              Принято <b class="tabular-nums">{{ exportRun.accepted }}</b>
+              из <b class="tabular-nums">{{ exportRun.sent_rows }}</b> строк,
+              создано документов: <b class="tabular-nums">{{ exportRun.documents.length }}</b>.
+            </p>
+            <p v-if="exportRun.rejected" class="text-amber-700">
+              Отклонено строк: <b class="tabular-nums">{{ exportRun.rejected }}</b> —
+              часы по ним в бухгалтерию не попали.
+            </p>
+            <p v-else class="text-emerald-700">Отклонённых строк нет.</p>
+          </template>
+
+          <div v-if="exportRejected.length" class="max-h-64 overflow-y-auto rounded border border-slate-200">
+            <table class="w-full text-xs">
+              <thead class="bg-slate-50 text-slate-500">
+                <tr>
+                  <th class="px-2 py-1 text-left">Списание</th>
+                  <th class="px-2 py-1 text-left">Причина</th>
+                  <th class="px-2 py-1 text-left">Подробности</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in exportRejected" :key="row.entry_id" class="border-t border-slate-100">
+                  <td class="px-2 py-1 tabular-nums">{{ row.entry_id }}</td>
+                  <td class="px-2 py-1">{{ row.reason_label || row.reason }}</td>
+                  <td class="px-2 py-1 text-slate-500">{{ row.text }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="text-xs text-slate-500">
+            Отправить период повторно безопасно: 1С помнит принятые строки
+            и второй раз документы не создаёт.
+          </p>
+        </div>
+      </template>
+      <template #footer>
+        <B24Button label="Закрыть" color="link" @click="exportRun = null; exportTarget = null" />
+        <B24Button
+          v-if="exportTarget"
+          label="Отправить ещё раз"
+          color="primary"
+          :loading="exporting"
+          @click="sendToOneC(exportTarget)"
+        />
+      </template>
+    </B24Modal>
+
     <B24Modal v-model:open="confirmClose" title="Закрыть период?">
       <template #body>
         <p v-if="check" class="text-sm text-slate-700">

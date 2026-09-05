@@ -97,6 +97,22 @@ class BuildBatchTests(SimpleTestCase):
 
         self.assertEqual(batch["строки"][0]["задача"]["название"], "Доработка отчёта")
 
+    def test_task_path_repeats_bitrix_hierarchy(self):
+        """Дерево задач в 1С должно повторять портал: иначе задачи клиента
+        лягут плоским списком и найти нужную будет нельзя."""
+        batch = self._build([_item(task_hierarchy_titles=[
+            "Разработка Восход 2026", "Этап 2", "Доработка отчёта"])])
+
+        задача = batch["строки"][0]["задача"]
+        self.assertEqual(задача["путь"], ["Разработка Восход 2026", "Этап 2"])
+        self.assertEqual(задача["название"], "Доработка отчёта")
+
+    def test_single_level_task_has_empty_path(self):
+        """Задача без родителей ложится прямо под контрагента."""
+        batch = self._build([_item(task_hierarchy_titles=["Доработка отчёта"])])
+
+        self.assertEqual(batch["строки"][0]["задача"]["путь"], [])
+
     def test_employee_name_is_a_hint_for_humans(self):
         """ФИО едет подсказкой для отчёта об ошибках, сопоставление — по id."""
         batch = self._build([_item()])
