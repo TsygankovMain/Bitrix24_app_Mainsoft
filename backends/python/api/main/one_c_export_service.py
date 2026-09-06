@@ -88,8 +88,10 @@ class OneCExportService:
             ).order_by("date_reflection", "bitrix_id")
         )
 
-    def _projects(self):
-        cards = ProjectCard.objects.filter(bitrix24_account=self.account)
+    def _project_cards(self):
+        return list(ProjectCard.objects.filter(bitrix24_account=self.account))
+
+    def _projects(self, cards):
         by_item, _ = build_project_lookup(cards)
         return by_item
 
@@ -102,15 +104,21 @@ class OneCExportService:
             names[str(user.bitrix_id)] = full
         return names
 
-    def _inn(self) -> Tuple[Mapping[str, str], Mapping[str, str]]:
-        """ИНН клиентов и наших юрлиц. Берётся из Битрикса тем же механизмом,
-        которым приложение дозаполняет ИНН в карточках списаний."""
+    def _inn(self, cards) -> Tuple[Mapping[str, str], Mapping[str, str]]:
+        """ИНН клиентов и наших юрлиц — по компаниям, которые реально встретились
+        в проектах периода.
+
+        Берём _inn_maps_for_cards, а не _inn_maps: первый читает реквизиты
+        адресно (crm.requisite.list по нужным id), второй строит карту из
+        полного обхода справочника компаний, где ИНН попросту нет — на стенде
+        это давало пустые ИНН во всех 796 строках пакета.
+        """
         if self._inn_maps is not None:
             return self._inn_maps
         try:
             from .inn_backfill_service import InnBackfillService
             service = InnBackfillService(self.client or self.account.client, self.account, self.config)
-            return service._inn_maps()  # noqa: SLF001 — единственная точка резолва ИНН в проекте
+            return service._inn_maps_for_cards(list(cards))  # noqa: SLF001
         except Exception:
             logger.warning("Не удалось получить ИНН из Битрикса, строки уедут без ИНН",
                            exc_info=True)
@@ -120,12 +128,13 @@ class OneCExportService:
 
     def run(self, period_from: date, period_to: date, started_by: str = "") -> OneCExportRun:
         items = self._items(period_from, period_to)
-        companies_inn, legal_inn = self._inn()
+        cards = self._project_cards()
+        companies_inn, legal_inn = self._inn(cards)
         sending_id = uuid.uuid4().hex[:16]
 
         batch = build_batch(
             items=items,
-            projects_by_item=self._projects(),
+            projects_by_item=self._projects(cards),
             companies_inn=companies_inn,
             legal_inn=legal_inn,
             employee_names=self._names(),
