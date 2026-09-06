@@ -149,6 +149,36 @@ class OneCExportService:
 
     # --- отправка ---
 
+    def _company_titles(self, cards) -> Dict[str, str]:
+        """Имена компаний из CRM для карточек, где вместо имени стоит id.
+
+        Имя уезжает в 1С рядом с ИНН: по нему приёмник находит клиента, когда
+        реквизиты в CRM не заполнены, и им же называет заведённого контрагента.
+        Без CRM здесь пусто — отправка от этого не падает, просто теряет
+        запасной ключ сопоставления.
+        """
+        if not self.client:
+            return {}
+
+        titles: Dict[str, str] = {}
+        try:
+            from .project_board_service import ProjectCardService
+            board = ProjectCardService(self.client, self.account)
+            for card in cards:
+                company_id = str(getattr(card, "company_id", "") or "").strip()
+                stored = str(getattr(card, "company_name", "") or "").strip()
+                if not company_id or company_id in titles:
+                    continue
+                if stored and stored != company_id:
+                    titles[company_id] = stored
+                    continue
+                titles[company_id] = str(
+                    board._fetch_single_reference_name(company_id) or "").strip()
+        except Exception:  # noqa: BLE001
+            logger.warning("Имена компаний из Битрикса не получены", exc_info=True)
+
+        return {k: v for k, v in titles.items() if v}
+
     def run(self, period_from: date, period_to: date, started_by: str = "") -> OneCExportRun:
         items = self._items(period_from, period_to)
         cards = self._project_cards()
@@ -164,7 +194,8 @@ class OneCExportService:
             period_from=period_from,
             period_to=period_to,
             sending_id=sending_id,
-            overrides=(self.config or {}).get("one_c") or {},
+            overrides={**((self.config or {}).get("one_c") or {}),
+                       "company_titles": self._company_titles(cards)},
         )
 
         run = OneCExportRun(

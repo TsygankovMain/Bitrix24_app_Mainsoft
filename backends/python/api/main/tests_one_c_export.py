@@ -245,3 +245,68 @@ class ProjectFallbackTests(SimpleTestCase):
 
         self.assertEqual(len(batch["строки"]), 1)
         self.assertEqual(batch["строки"][0]["клиент"]["инн"], "")
+
+
+class CounterpartyCreationFlagTests(SimpleTestCase):
+    """Разрешение заводить контрагентов принимает владелец базы, а не отправитель."""
+
+    def _batch(self, overrides=None):
+        item = SimpleNamespace(
+            bitrix_id=1, task_id="1", employee_id="17", hours=1.0, is_billable=True,
+            description="", project_item_id="", project_title="ООО «Тракшина»",
+            date_reflection=datetime(2026, 8, 14, 3, 0, tzinfo=timezone.utc))
+        return build_batch([item], {}, {}, {}, {}, date(2026, 8, 1), date(2026, 8, 31),
+                           "s", overrides=overrides)
+
+    def test_flag_is_off_by_default(self):
+        self.assertFalse(self._batch()["заводитьКонтрагентов"])
+
+    def test_flag_travels_when_enabled(self):
+        self.assertTrue(self._batch({"create_counterparties": True})["заводитьКонтрагентов"])
+
+
+class CompanyTitleTests(SimpleTestCase):
+    """Имя клиента — запасной ключ сопоставления, когда ИНН в CRM не заполнен."""
+
+    def _row(self, card, titles=None):
+        item = SimpleNamespace(
+            bitrix_id=1, task_id="1", employee_id="17", hours=1.0, is_billable=True,
+            description="", project_item_id="10", project_title="Проект",
+            date_reflection=datetime(2026, 8, 14, 3, 0, tzinfo=timezone.utc))
+        return build_batch([item], {"10": card}, {}, {}, {}, date(2026, 8, 1),
+                           date(2026, 8, 31), "s",
+                           overrides={"company_titles": titles or {}})["строки"][0]
+
+    def test_identifier_instead_of_name_is_replaced_by_crm_title(self):
+        """В карточке на месте имени стоит id — в пакет он попасть не должен."""
+        card = SimpleNamespace(company_id="2618", company_name="2618",
+                               our_legal_entity_id="15", our_legal_entity_name="Наше")
+        row = self._row(card, {"2618": "ООО «Тракшина»"})
+        self.assertEqual(row["клиент"]["название"], "ООО «Тракшина»")
+
+    def test_real_name_in_card_wins_without_crm(self):
+        card = SimpleNamespace(company_id="2618", company_name="ООО «Тракшина»",
+                               our_legal_entity_id="15", our_legal_entity_name="Наше")
+        self.assertEqual(self._row(card)["клиент"]["название"], "ООО «Тракшина»")
+
+
+class DefaultLegalEntityTests(SimpleTestCase):
+    """Юрлицо по умолчанию спасает часы, у которых карточки проекта нет."""
+
+    def _row(self, overrides):
+        item = SimpleNamespace(
+            bitrix_id=1, task_id="1", employee_id="17", hours=1.0, is_billable=True,
+            description="", project_item_id="", project_title="ООО «OPKA»",
+            date_reflection=datetime(2026, 8, 14, 3, 0, tzinfo=timezone.utc))
+        return build_batch([item], {}, {}, {}, {}, date(2026, 8, 1), date(2026, 8, 31),
+                           "s", overrides=overrides)["строки"][0]
+
+    def test_default_is_used_when_nothing_else_known(self):
+        self.assertEqual(self._row({"default_legal_inn": "7325175133"})["юрлицо"]["инн"],
+                         "7325175133")
+
+    def test_project_mapping_wins_over_default(self):
+        """Заданное для проекта важнее умолчания: умолчание — последний рубеж."""
+        row = self._row({"default_legal_inn": "7325175133",
+                         "projects": {"ООО «OPKA»": {"client_inn": "", "legal_inn": "7719021450"}}})
+        self.assertEqual(row["юрлицо"]["инн"], "7719021450")

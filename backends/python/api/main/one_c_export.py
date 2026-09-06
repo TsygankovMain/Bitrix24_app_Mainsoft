@@ -66,6 +66,23 @@ def _task_path(item: Any) -> List[str]:
     return _task_titles(item)[:-1]
 
 
+def _company_title(card: Any, titles: Mapping[str, str], fallback: str) -> str:
+    """Читаемое имя клиента: из CRM, из карточки или из названия проекта."""
+    if not card:
+        return fallback
+
+    company_id = _clean(getattr(card, "company_id", ""))
+    stored = _clean(getattr(card, "company_name", ""))
+    resolved = _clean(titles.get(company_id, ""))
+
+    if resolved:
+        return resolved
+    # «2618» вместо имени — это идентификатор, а не название компании.
+    if stored and stored != company_id:
+        return stored
+    return fallback
+
+
 def build_batch(
     items: Iterable[Any],
     projects_by_item: Mapping[str, Any],
@@ -94,10 +111,18 @@ def build_batch(
     единственное, что у такой строки есть, поэтому сопоставление идёт по нему.
     """
     maps = overrides or {}
+    company_titles = (overrides or {}).get("company_titles") or {}
+    # Разрешение заводить недостающих контрагентов уезжает в пакет: решение
+    # принимает владелец базы 1С, а приёмник без флага только ищет.
+    create_counterparties = bool((overrides or {}).get("create_counterparties"))
     employee_map = maps.get("employees") or {}
     company_map = maps.get("companies") or {}
     legal_map = maps.get("legal_entities") or {}
     project_map = maps.get("projects") or {}
+    # Юрлицо по умолчанию: у строки без карточки проекта своего нет вовсе,
+    # а работаем мы почти всегда от одной и той же организации. Без него
+    # такие часы не уедут никогда — ИНН взять неоткуда.
+    default_legal = _clean(maps.get("default_legal_inn", ""))
     rows: List[Dict[str, Any]] = []
 
     for item in items:
@@ -117,7 +142,7 @@ def build_batch(
         if not client:
             client = _clean(by_project.get("client_inn", ""))
         if not our:
-            our = _clean(by_project.get("legal_inn", ""))
+            our = _clean(by_project.get("legal_inn", "")) or default_legal
 
         employee_id = _clean(getattr(item, "employee_id", ""))
         employee_in_1c = _clean(employee_map.get(employee_id, ""))
@@ -135,8 +160,10 @@ def build_batch(
             },
             "клиент": {
                 "инн": client,
-                "название": (_clean(getattr(card, "company_name", "")) if card
-                             else project_title),
+                # Имя важно не меньше ИНН: по нему 1С находит клиента, когда
+                # реквизиты в CRM не заполнены. В карточке на месте имени
+                # часто стоит идентификатор — тогда берётся имя из CRM.
+                "название": _company_title(card, company_titles, project_title),
             },
             "юрлицо": {
                 "инн": our,
@@ -156,6 +183,7 @@ def build_batch(
         "период": {"с": period_from.isoformat(), "по": period_to.isoformat()},
         "отправка": sending_id,
         "кореньЗадач": tasks_root,
+        "заводитьКонтрагентов": create_counterparties,
         "строки": rows,
     }
 

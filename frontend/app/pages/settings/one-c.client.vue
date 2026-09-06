@@ -31,7 +31,8 @@ const { locales: localesI18n, setLocale } = useI18n()
 const isInit = ref(false)
 const saving = ref(false)
 const lastRun = ref<OneCExportRun | null>(null)
-const form = ref({ inbox_url: '', token: '', user: '', password: '' })
+const form = ref({ inbox_url: '', token: '', user: '', password: '',
+  create_counterparties: false, default_legal_inn: '' })
 
 // Сопоставления: кто списывал часы и какие компании участвуют. Списки
 // строятся по факту списаний, а не по всему справочнику портала.
@@ -123,6 +124,8 @@ onMounted(async () => {
     const oneC = ((config as Record<string, unknown>).one_c || {}) as Record<string, string>
     form.value.inbox_url = oneC.inbox_url || ''
     form.value.user = oneC.user || ''
+    form.value.create_counterparties = Boolean((oneC as unknown as Record<string, unknown>).create_counterparties)
+    form.value.default_legal_inn = oneC.default_legal_inn || ''
 
     const history = await apiStore.getOneCExportHistory()
     lastRun.value = history.runs?.[0] || null
@@ -189,7 +192,9 @@ async function save() {
       inbox_url: form.value.inbox_url,
       user: form.value.user,
       token: form.value.token || current.token || '',
-      password: form.value.password || current.password || ''
+      password: form.value.password || current.password || '',
+      create_counterparties: form.value.create_counterparties,
+      default_legal_inn: form.value.default_legal_inn
     }
     await apiStore.saveConfiguration({ ...(config as object), one_c: next } as never)
     toast.add({ title: 'Настройки обмена сохранены', color: 'success' })
@@ -277,6 +282,49 @@ async function save() {
             Публикация 1С закрыта обычной авторизацией: без пользователя веб-сервер
             отвечает 401 ещё до того, как запрос дойдёт до приёмника.
           </p>
+
+          <label class="block">
+            <span class="text-sm font-medium text-slate-700">Наше юрлицо по умолчанию</span>
+            <select
+              v-if="hasOrganizations"
+              v-model="form.default_legal_inn"
+              class="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">— не задано —</option>
+              <option
+                v-for="option in innOptions(organizations, form.default_legal_inn)"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </option>
+            </select>
+            <input
+              v-else
+              v-model.trim="form.default_legal_inn"
+              type="text"
+              placeholder="ИНН нашей организации"
+              class="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm tabular-nums"
+            >
+            <span class="mt-1 block text-xs text-slate-500">
+              Подставляется там, где юрлицо не задано: у часов, списанных
+              на проект без карточки, своего юрлица нет вовсе.
+            </span>
+          </label>
+
+          <label class="flex items-start gap-2 rounded border border-slate-200 p-3">
+            <input v-model="form.create_counterparties" type="checkbox" class="mt-1">
+            <span>
+              <span class="text-sm font-medium text-slate-700">
+                Заводить в 1С недостающих контрагентов
+              </span>
+              <span class="mt-1 block text-xs text-slate-500">
+                Без этого часы клиента, которого нет в справочнике 1С, возвращаются
+                отклонёнными. С этим 1С создаёт контрагента по названию и ИНН —
+                договоры и реквизиты остаются за бухгалтером.
+              </span>
+            </span>
+          </label>
         </div>
 
         <template #footer>
