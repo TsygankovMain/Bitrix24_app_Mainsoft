@@ -212,3 +212,36 @@ class ParseResponseTests(SimpleTestCase):
 
         self.assertFalse(parsed["ok"])
         self.assertEqual(parsed["accepted"], 0)
+
+
+class ProjectFallbackTests(SimpleTestCase):
+    """Часы, списанные на проект без карточки, доезжают по названию проекта."""
+
+    def _item(self, **kwargs):
+        return SimpleNamespace(
+            bitrix_id=7, task_id="1", employee_id="17", hours=2.0, is_billable=True,
+            description="", project_item_id="", project_title="ООО «Тракшина»",
+            date_reflection=datetime(2026, 8, 14, 3, 0, tzinfo=timezone.utc), **kwargs)
+
+    def test_inn_is_taken_from_project_mapping(self):
+        batch = build_batch(
+            [self._item()], {}, {}, {}, {"17": "Иванов"},
+            date(2026, 8, 1), date(2026, 8, 31), "s-1",
+            overrides={"projects": {"ООО «Тракшина»": {"client_inn": "7719021450",
+                                                       "legal_inn": "7325175133"}}},
+        )
+
+        row = batch["строки"][0]
+        self.assertEqual(row["клиент"]["инн"], "7719021450")
+        self.assertEqual(row["юрлицо"]["инн"], "7325175133")
+        # Название клиента берётся из проекта: по нему 1С заведёт контрагента,
+        # если такого ИНН у неё ещё нет.
+        self.assertEqual(row["клиент"]["название"], "ООО «Тракшина»")
+
+    def test_without_mapping_row_still_goes_and_gets_refused(self):
+        """Несопоставленная строка не выбрасывается: отклонённое видно, потерянное — нет."""
+        batch = build_batch(
+            [self._item()], {}, {}, {}, {}, date(2026, 8, 1), date(2026, 8, 31), "s-2")
+
+        self.assertEqual(len(batch["строки"]), 1)
+        self.assertEqual(batch["строки"][0]["клиент"]["инн"], "")

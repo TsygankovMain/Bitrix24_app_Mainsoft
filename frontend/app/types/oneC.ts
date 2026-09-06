@@ -17,6 +17,8 @@ export interface OneCExportRun {
   sent_rows: number
   accepted: number
   rejected: number
+  /** Строки, принятые прежней отправкой: повтор их не дублирует */
+  skipped: number
   documents: string[]
   rows: OneCExportRow[]
   message: string
@@ -40,8 +42,18 @@ export interface OneCCompanyRow {
   inn_manual: string
 }
 
+/** Проект, которого нет в смарт-процессе: часы на него списаны, а ИНН взять неоткуда. */
+export interface OneCProjectRow {
+  title: string
+  /** Сколько списаний завязано на это название */
+  rows: number
+  client_inn: string
+  legal_inn: string
+}
+
 export interface OneCMappingPayload {
   employees: OneCEmployeeRow[]
+  projects: OneCProjectRow[]
   companies: OneCCompanyRow[]
   legal_entities: OneCCompanyRow[]
 }

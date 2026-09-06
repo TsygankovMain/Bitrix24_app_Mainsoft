@@ -3522,6 +3522,12 @@ def _serialize_export_run(run):
         "sent_rows": run.sent_rows,
         "accepted": run.accepted,
         "rejected": run.rejected,
+        # Пропущенные считаются из строк, а не хранятся полем: так цифра
+        # появляется и у отправок, сделанных до её появления. Без неё
+        # «принято 0 из 796» читается как провал, хотя 683 строки уже
+        # лежат в бухгалтерии с прошлой отправки.
+        "skipped": len([r for r in (run.rows or [])
+                        if isinstance(r, dict) and r.get("status") == "пропущено"]),
         "documents": run.documents,
         "rows": run.rows,
         "message": run.message,
@@ -3598,18 +3604,51 @@ def one_c_mapping(request: AuthorizedRequest):
         logger.warning("ИНН из Битрикса не получены для экрана сопоставления", exc_info=True)
         auto_companies, auto_legal = {}, {}
 
+    # Названия компаний в карточке часто равны их id: на этом портале поле
+    # смарт-процесса хранит идентификатор, а не имя. Сопоставлять «2618» с
+    # контрагентом 1С человек не может, поэтому имя достаётся точечно из CRM.
+    def readable(entity_id: str, stored: str) -> str:
+        stored = (stored or "").strip()
+        if stored and stored != entity_id:
+            return stored
+        try:
+            return ProjectCardService(account.client, account)._fetch_single_reference_name(
+                entity_id) or stored
+        except Exception:  # noqa: BLE001
+            logger.warning("Имя компании %s из Битрикса не получено", entity_id, exc_info=True)
+            return stored
+
+    # Часы, списанные на проект, которого нет в смарт-процессе. У такой строки
+    # нет ни компании, ни нашего юрлица — только название проекта, и без
+    # сопоставления по нему часы не уедут никогда.
+    manual_projects = one_c.get("projects") or {}
+    known_items = {str(c.project_item_id) for c in cards if c.project_item_id}
+    orphan_titles = {}
+    for item in TimesheetItem.objects.filter(bitrix24_account=account):
+        if str(item.project_item_id or "") in known_items and item.project_item_id:
+            continue
+        title = (item.project_title or "").strip()
+        if title:
+            orphan_titles[title] = orphan_titles.get(title, 0) + 1
+
     return JsonResponse({
         "employees": [
             {"id": eid, "name": names.get(eid, ""), "mapped_to": manual_employees.get(eid, "")}
             for eid in employee_ids
         ],
+        "projects": [
+            {"title": title, "rows": count,
+             "client_inn": (manual_projects.get(title) or {}).get("client_inn", ""),
+             "legal_inn": (manual_projects.get(title) or {}).get("legal_inn", "")}
+            for title, count in sorted(orphan_titles.items(), key=lambda kv: -kv[1])
+        ],
         "companies": [
-            {"id": cid, "name": name,
+            {"id": cid, "name": readable(cid, name),
              "inn_auto": auto_companies.get(cid, ""), "inn_manual": manual_companies.get(cid, "")}
             for cid, name in sorted(companies.items(), key=lambda kv: kv[1] or kv[0])
         ],
         "legal_entities": [
-            {"id": lid, "name": name,
+            {"id": lid, "name": readable(lid, name),
              "inn_auto": auto_legal.get(lid, ""), "inn_manual": manual_legal.get(lid, "")}
             for lid, name in sorted(legal_entities.items(), key=lambda kv: kv[1] or kv[0])
         ],

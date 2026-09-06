@@ -630,6 +630,10 @@ onMounted(async () => {
               из <b class="tabular-nums">{{ exportRun.sent_rows }}</b> строк,
               создано документов: <b class="tabular-nums">{{ exportRun.documents.length }}</b>.
             </p>
+            <p v-if="exportRun.skipped" class="text-slate-600">
+              Уже были в бухгалтерии: <b class="tabular-nums">{{ exportRun.skipped }}</b> —
+              приняты прежней отправкой, повторно документы по ним не создаются.
+            </p>
             <p v-if="exportRun.rejected" class="text-amber-700">
               Отклонено строк: <b class="tabular-nums">{{ exportRun.rejected }}</b> —
               часы по ним в бухгалтерию не попали.

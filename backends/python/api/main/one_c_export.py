@@ -87,11 +87,17 @@ def build_batch(
     employees (пользователь портала -> ФИО физлица в 1С), companies и
     legal_entities (id -> ИНН). Они важнее того, что нашлось автоматически:
     ради них экран и делался — чинить случаи, где Битрикс данных не даёт.
+
+    projects (название проекта -> {client_inn, legal_inn}) закрывает случай,
+    когда карточки проекта нет вовсе: часть часов списана на проект, которого
+    в смарт-процессе не заведено, и брать ИНН неоткуда. Название проекта —
+    единственное, что у такой строки есть, поэтому сопоставление идёт по нему.
     """
     maps = overrides or {}
     employee_map = maps.get("employees") or {}
     company_map = maps.get("companies") or {}
     legal_map = maps.get("legal_entities") or {}
+    project_map = maps.get("projects") or {}
     rows: List[Dict[str, Any]] = []
 
     for item in items:
@@ -102,6 +108,16 @@ def build_batch(
         # Заданное руками важнее найденного автоматически.
         our = _clean(legal_map.get(legal_id) or legal_inn.get(legal_id, ""))
         client = _clean(company_map.get(company_id) or companies_inn.get(company_id, ""))
+
+        # Карточки нет — ИНН берётся по названию проекта, если его сопоставили
+        # руками. Это последний рубеж: иначе строка гарантированно вернётся
+        # с причиной «нет ИНН».
+        project_title = _clean(getattr(item, "project_title", ""))
+        by_project = project_map.get(project_title) or {}
+        if not client:
+            client = _clean(by_project.get("client_inn", ""))
+        if not our:
+            our = _clean(by_project.get("legal_inn", ""))
 
         employee_id = _clean(getattr(item, "employee_id", ""))
         employee_in_1c = _clean(employee_map.get(employee_id, ""))
@@ -119,7 +135,8 @@ def build_batch(
             },
             "клиент": {
                 "инн": client,
-                "название": _clean(getattr(card, "company_name", "")) if card else "",
+                "название": (_clean(getattr(card, "company_name", "")) if card
+                             else project_title),
             },
             "юрлицо": {
                 "инн": our,

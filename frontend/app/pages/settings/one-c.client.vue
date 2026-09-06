@@ -13,7 +13,7 @@
  */
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import type {
-  OneCCompanyRow, OneCDirectoryItem, OneCEmployeeRow, OneCExportRun
+  OneCCompanyRow, OneCDirectoryItem, OneCEmployeeRow, OneCExportRun, OneCProjectRow
 } from '~/types/oneC'
 
 const router = useRouter()
@@ -38,6 +38,7 @@ const form = ref({ inbox_url: '', token: '', user: '', password: '' })
 const employees = ref<OneCEmployeeRow[]>([])
 const companies = ref<OneCCompanyRow[]>([])
 const legalEntities = ref<OneCCompanyRow[]>([])
+const projects = ref<OneCProjectRow[]>([])
 const savingMapping = ref(false)
 
 // Справочники 1С — то, из чего выбирают. Пока они не загружены, поля
@@ -49,6 +50,11 @@ const counterparties = ref<OneCDirectoryItem[]>([])
 const directoriesMessage = ref('')
 const loadingDirectories = ref(false)
 
+const unmappedProjects = computed(
+  () => projects.value.filter(row => !row.client_inn || !row.legal_inn).length)
+const unmappedProjectRows = computed(
+  () => projects.value.filter(row => !row.client_inn || !row.legal_inn)
+    .reduce((sum, row) => sum + row.rows, 0))
 const unmappedEmployees = computed(() => employees.value.filter(row => !row.mapped_to).length)
 const companiesWithoutInn = computed(
   () => [...companies.value, ...legalEntities.value]
@@ -125,6 +131,7 @@ onMounted(async () => {
     employees.value = mapping.employees || []
     companies.value = mapping.companies || []
     legalEntities.value = mapping.legal_entities || []
+    projects.value = mapping.projects || []
 
     // Списки тянем сразу, если подключение уже настроено: чаще всего человек
     // приходит на экран именно доделывать сопоставление.
@@ -151,7 +158,16 @@ async function saveMapping() {
       employees: asMap(employees.value.map(r => ({ id: r.id, value: (r.mapped_to || '').trim() }))),
       companies: asMap(companies.value.map(r => ({ id: r.id, value: (r.inn_manual || '').trim() }))),
       legal_entities: asMap(
-        legalEntities.value.map(r => ({ id: r.id, value: (r.inn_manual || '').trim() })))
+        legalEntities.value.map(r => ({ id: r.id, value: (r.inn_manual || '').trim() }))),
+      // Проекты хранятся парой ИНН: у таких строк нет ни компании, ни юрлица,
+      // подставлять нужно оба.
+      projects: projects.value
+        .filter(row => row.client_inn || row.legal_inn)
+        .reduce<Record<string, { client_inn: string, legal_inn: string }>>(
+          (acc, row) => ({ ...acc, [row.title]: {
+            client_inn: (row.client_inn || '').trim(),
+            legal_inn: (row.legal_inn || '').trim()
+          } }), {})
     }
 
     await apiStore.saveConfiguration({ ...(config as object), one_c: next } as never)
@@ -340,6 +356,89 @@ async function save() {
                     type="text"
                     placeholder="Фамилия Имя Отчество"
                     class="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  >
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </B24Card>
+
+      <B24Card v-if="projects.length">
+        <template #header>
+          <div class="flex items-center justify-between">
+            <span class="text-base font-semibold text-slate-900">Проекты без карточки</span>
+            <span v-if="unmappedProjects" class="text-xs text-amber-700">
+              не сопоставлено: {{ unmappedProjects }} ({{ unmappedProjectRows }} списаний)
+            </span>
+          </div>
+        </template>
+
+        <p class="mb-3 text-sm text-slate-500">
+          Часы списаны на проект, которого нет в смарт-процессе: ни клиента, ни
+          нашего юрлица у такой строки нет, и в 1С она уходит без ИНН — то есть
+          возвращается отклонённой. Укажите, кому эти часы принадлежат.
+        </p>
+
+        <div class="max-h-80 overflow-y-auto rounded border border-slate-200">
+          <table class="w-full text-sm">
+            <thead class="sticky top-0 bg-slate-50 text-xs text-slate-500">
+              <tr>
+                <th class="px-2 py-1 text-left">Проект в списаниях</th>
+                <th class="px-2 py-1 text-left">Клиент в 1С</th>
+                <th class="px-2 py-1 text-left">Наше юрлицо</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in projects" :key="row.title" class="border-t border-slate-100">
+                <td class="px-2 py-1">
+                  {{ row.title }}
+                  <span class="text-xs text-slate-400">{{ row.rows }} списаний</span>
+                </td>
+                <td class="px-2 py-1">
+                  <select
+                    v-if="hasCounterparties"
+                    v-model="row.client_inn"
+                    class="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  >
+                    <option value="">— не выбран —</option>
+                    <option
+                      v-for="option in innOptions(counterparties, row.client_inn)"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                  <input
+                    v-else
+                    v-model.trim="row.client_inn"
+                    type="text"
+                    placeholder="ИНН клиента"
+                    class="w-full rounded border border-slate-300 px-2 py-1 text-sm tabular-nums"
+                  >
+                </td>
+                <td class="px-2 py-1">
+                  <select
+                    v-if="hasOrganizations"
+                    v-model="row.legal_inn"
+                    class="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  >
+                    <option value="">— не выбрано —</option>
+                    <option
+                      v-for="option in innOptions(organizations, row.legal_inn)"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                  <input
+                    v-else
+                    v-model.trim="row.legal_inn"
+                    type="text"
+                    placeholder="ИНН нашего юрлица"
+                    class="w-full rounded border border-slate-300 px-2 py-1 text-sm tabular-nums"
                   >
                 </td>
               </tr>
