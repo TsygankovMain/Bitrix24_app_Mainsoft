@@ -45,6 +45,18 @@
 
         <B24Card>
           <template #header>
+            <span class="text-base font-semibold text-slate-900">Обмен с 1С</span>
+          </template>
+          <p class="text-sm text-slate-500">
+            Адрес приёмника часов и реквизиты подключения к 1С:Бухгалтерии.
+          </p>
+          <template #footer>
+            <B24Button label="Настроить обмен" color="primary" @click="router.push('/settings/one-c')" />
+          </template>
+        </B24Card>
+
+        <B24Card>
+          <template #header>
             <span class="text-base font-semibold text-slate-900">Данные</span>
           </template>
           <p class="text-sm text-slate-500">

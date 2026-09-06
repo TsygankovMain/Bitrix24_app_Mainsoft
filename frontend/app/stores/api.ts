@@ -829,6 +829,13 @@ export const useApiStore = defineStore(
       }).catch(rethrowWithServerMessage)
     }
 
+    /** История отправок в 1С: последние прогоны с построчным результатом. */
+    const getOneCExportHistory = async (): Promise<{ runs: OneCExportRun[] }> => {
+      return await $api<{ runs: OneCExportRun[] }>('/api/one-c/exports', {
+        headers: await writeHeaders(),
+      }).catch(rethrowWithServerMessage)
+    }
+
     const reopenPeriod = async (year: number, month: number, reason: string): Promise<{ status: string }> => {
       const result = await $api<{ status: string }>('/api/periods/reopen', {
         method: 'POST',
@@ -1461,6 +1468,7 @@ export const useApiStore = defineStore(
       getPeriods,
       checkPeriod,
       exportPeriodToOneC,
+      getOneCExportHistory,
       getPeriodCheckDetails,
       fixPeriodFinding,
       closePeriod,

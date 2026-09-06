@@ -28,10 +28,16 @@ class HttpTransport:
     штатный робот Битрикс24, и приёмник коннектора рассчитан именно на это.
     """
 
-    def __init__(self, url: str, token: str, timeout: int = 120):
+    def __init__(self, url: str, token: str, timeout: int = 120,
+                 user: str = "", password: str = ""):
         self.url = url
         self.token = token
         self.timeout = timeout
+        # Публикация 1С закрыта basic-авторизацией пользователя информационной
+        # базы: без неё веб-сервер отдаёт 401 ещё до того, как запрос дойдёт
+        # до точки приёма.
+        self.user = user
+        self.password = password
 
     def __call__(self, payload: Dict[str, Any]) -> Any:
         import requests  # локально: без отправки в 1С модуль не нужен
@@ -49,6 +55,7 @@ class HttpTransport:
             url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json; charset=utf-8"},
+            auth=(self.user, self.password) if self.user else None,
             timeout=self.timeout,
         )
         try:
@@ -72,10 +79,26 @@ class OneCExportService:
         self.config = config or {}
         self._inn_maps = inn_maps
         self._employee_names = employee_names
-        self.transport = transport or HttpTransport(
-            url=getattr(settings, "ONE_C_INBOX_URL", "") or "",
-            token=getattr(settings, "ONE_C_TOKEN", "") or "",
-        )
+        self.transport = transport or HttpTransport(**self._connection())
+
+    def _connection(self) -> Dict[str, str]:
+        """Реквизиты приёмника: сначала настройки портала, потом окружение.
+
+        Настройки портала важнее: адрес 1С у каждого клиента свой, и менять
+        его должен администратор на экране настроек, а не мы в .env на сервере.
+        Переменные окружения остаются запасным путём для стенда.
+        """
+        one_c = (self.config or {}).get("one_c") or {}
+
+        def value(key: str, env_name: str) -> str:
+            return str(one_c.get(key) or getattr(settings, env_name, "") or "").strip()
+
+        return {
+            "url": value("inbox_url", "ONE_C_INBOX_URL"),
+            "token": value("token", "ONE_C_TOKEN"),
+            "user": value("user", "ONE_C_USER"),
+            "password": value("password", "ONE_C_PASSWORD"),
+        }
 
     # --- источники данных ---
 

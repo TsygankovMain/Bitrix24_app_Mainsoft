@@ -134,3 +134,48 @@ class OneCExportServiceTests(TestCase):
 
         self.assertNotEqual(first.sending_id, second.sending_id)
         self.assertEqual(transport.sent[0]["отправка"], first.sending_id)
+
+
+class ConnectionSettingsTests(TestCase):
+    """Откуда сервис берёт адрес приёмника и реквизиты."""
+
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m-one-c-conn",
+            is_master_account=True, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def test_portal_settings_win_over_environment(self):
+        """Адрес 1С у каждого портала свой: настройка портала важнее .env."""
+        service = OneCExportService(
+            account=self.account,
+            config={"one_c": {"inbox_url": "http://1c.local/hs/msbx24/v1/inbox/timesheet",
+                              "token": "portal-token", "user": "admin", "password": ""}},
+        )
+
+        connection = service._connection()
+
+        self.assertEqual(connection["url"], "http://1c.local/hs/msbx24/v1/inbox/timesheet")
+        self.assertEqual(connection["token"], "portal-token")
+        self.assertEqual(connection["user"], "admin")
+
+    def test_environment_is_a_fallback(self):
+        """Пока настройки портала не заполнены, работает конфигурация стенда."""
+        with self.settings(ONE_C_INBOX_URL="http://stand/inbox", ONE_C_TOKEN="env-token",
+                           ONE_C_USER="admin", ONE_C_PASSWORD=""):
+            service = OneCExportService(account=self.account, config={})
+
+            connection = service._connection()
+
+        self.assertEqual(connection["url"], "http://stand/inbox")
+        self.assertEqual(connection["token"], "env-token")
+
+    def test_empty_settings_produce_readable_failure(self):
+        """Без адреса отправка не падает 500, а объясняет, чего не хватает."""
+        with self.settings(ONE_C_INBOX_URL="", ONE_C_TOKEN="", ONE_C_USER="", ONE_C_PASSWORD=""):
+            service = OneCExportService(account=self.account, config={})
+            run = service.run(date(2026, 8, 1), date(2026, 8, 31))
+
+        self.assertEqual(run.status, OneCExportRun.STATUS_FAILED)
+        self.assertIn("адрес приёмника", run.message.lower())

@@ -50,6 +50,8 @@ class Config:
     # Пусто — отправка выключена: сервис ответит внятной ошибкой, а не молча.
     one_c_inbox_url: str
     one_c_token: str
+    one_c_user: str
+    one_c_password: str
     use_portal_scoping: bool
 
 
@@ -78,6 +80,8 @@ def load_config() -> Config:
         django_admin_enabled=env.bool("DJANGO_ADMIN_ENABLED", False),
         one_c_inbox_url=env.str("ONE_C_INBOX_URL", ""),
         one_c_token=env.str("ONE_C_TOKEN", ""),
+        one_c_user=env.str("ONE_C_USER", ""),
+        one_c_password=env.str("ONE_C_PASSWORD", ""),
         use_portal_scoping=env.bool("USE_PORTAL_SCOPING", False),
     )
 

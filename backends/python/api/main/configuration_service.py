@@ -140,6 +140,15 @@ class ConfigurationService:
             'finance_fields_mapping': {},
             'is_configured': False,
             'hourly_rate': 0,
+            # Приёмник часов в 1С. Хранится в настройках портала, а не в
+            # переменных окружения: адрес и токен свои у каждого портала,
+            # и заполнять их должен администратор на экране настроек.
+            'one_c': {
+                'inbox_url': '',
+                'token': '',
+                'user': '',
+                'password': '',
+            },
             'legal_entity_directory': {
                 'iblock_type_id': 'lists',
                 'iblock_id': 0,
