@@ -120,6 +120,52 @@ class BuildBatchTests(SimpleTestCase):
         self.assertEqual(batch["строки"][0]["сотрудник"]["идБитрикс"], "17")
         self.assertEqual(batch["строки"][0]["сотрудник"]["фамилияИмя"], "Иванов Пётр")
 
+    def test_manual_mapping_wins_over_autodetected_inn(self):
+        """Ради этого экран и делался: Битрикс не всегда отдаёт ИНН, и человек
+        должен иметь возможность задать его сам."""
+        batch = build_batch(
+            items=[_item()],
+            projects_by_item=self.projects,
+            companies_inn={},          # автоматически ничего не нашлось
+            legal_inn={},
+            employee_names=self.names,
+            period_from=date(2026, 8, 1),
+            period_to=date(2026, 8, 31),
+            sending_id="b0e1",
+            overrides={"companies": {"8047": "7722377665"},
+                       "legal_entities": {"15": "7325175133"}},
+        )
+
+        row = batch["строки"][0]
+        self.assertEqual(row["клиент"]["инн"], "7722377665")
+        self.assertEqual(row["юрлицо"]["инн"], "7325175133")
+
+    def test_employee_mapping_names_a_person_in_1c(self):
+        """Сопоставление сотрудников ведётся на портале: 1С получает готовое
+        физлицо и не заглядывает в свой регистр."""
+        batch = self._build_with({"employees": {"17": "Иванов Пётр Сергеевич"}})
+
+        self.assertEqual(batch["строки"][0]["сотрудник"]["физлицо1С"], "Иванов Пётр Сергеевич")
+
+    def test_without_mapping_employee_field_is_empty(self):
+        """Пока сопоставление не задано, поле пустое — 1С ищет сама."""
+        batch = self._build([_item()])
+
+        self.assertEqual(batch["строки"][0]["сотрудник"]["физлицо1С"], "")
+
+    def _build_with(self, overrides):
+        return build_batch(
+            items=[_item()],
+            projects_by_item=self.projects,
+            companies_inn=self.companies_inn,
+            legal_inn=self.legal_inn,
+            employee_names=self.names,
+            period_from=date(2026, 8, 1),
+            period_to=date(2026, 8, 31),
+            sending_id="b0e1",
+            overrides=overrides,
+        )
+
     def test_period_and_contract_version_in_envelope(self):
         batch = self._build([_item()])
 

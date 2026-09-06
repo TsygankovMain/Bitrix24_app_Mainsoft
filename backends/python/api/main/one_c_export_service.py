@@ -164,6 +164,7 @@ class OneCExportService:
             period_from=period_from,
             period_to=period_to,
             sending_id=sending_id,
+            overrides=(self.config or {}).get("one_c") or {},
         )
 
         run = OneCExportRun(

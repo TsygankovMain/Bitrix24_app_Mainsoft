@@ -148,6 +148,15 @@ class ConfigurationService:
                 'token': '',
                 'user': '',
                 'password': '',
+                # Сопоставления ведутся здесь, а не в 1С: данные о людях и
+                # клиентах живут на портале, и правит их тот, кто работает
+                # в приложении. 1С остаётся исполнителем.
+                # employees:      id пользователя портала -> ФИО физлица в 1С
+                # companies:      id компании             -> ИНН
+                # legal_entities: id нашего юрлица        -> ИНН
+                'employees': {},
+                'companies': {},
+                'legal_entities': {},
             },
             'legal_entity_directory': {
                 'iblock_type_id': 'lists',

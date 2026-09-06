@@ -76,20 +76,35 @@ def build_batch(
     period_to: date,
     sending_id: str,
     tasks_root: str = "Б-24",
+    overrides: Optional[Mapping[str, Mapping[str, str]]] = None,
 ) -> Dict[str, Any]:
     """Собирает пакет часов за период.
 
     Строки без проекта не выбрасываются: пусть 1С вернёт причину, и она попадёт
     в отчёт. Молча потерянный час хуже отклонённого — отклонённый видно.
+
+    overrides — сопоставления, заданные человеком на экране настроек:
+    employees (пользователь портала -> ФИО физлица в 1С), companies и
+    legal_entities (id -> ИНН). Они важнее того, что нашлось автоматически:
+    ради них экран и делался — чинить случаи, где Битрикс данных не даёт.
     """
+    maps = overrides or {}
+    employee_map = maps.get("employees") or {}
+    company_map = maps.get("companies") or {}
+    legal_map = maps.get("legal_entities") or {}
     rows: List[Dict[str, Any]] = []
 
     for item in items:
         card = projects_by_item.get(_clean(getattr(item, "project_item_id", "")))
-        our = _clean(legal_inn.get(_clean(getattr(card, "our_legal_entity_id", "")), "")) if card else ""
-        client = _clean(companies_inn.get(_clean(getattr(card, "company_id", "")), "")) if card else ""
+        legal_id = _clean(getattr(card, "our_legal_entity_id", "")) if card else ""
+        company_id = _clean(getattr(card, "company_id", "")) if card else ""
+
+        # Заданное руками важнее найденного автоматически.
+        our = _clean(legal_map.get(legal_id) or legal_inn.get(legal_id, ""))
+        client = _clean(company_map.get(company_id) or companies_inn.get(company_id, ""))
 
         employee_id = _clean(getattr(item, "employee_id", ""))
+        employee_in_1c = _clean(employee_map.get(employee_id, ""))
 
         rows.append({
             "идЗаписи": _clean(getattr(item, "bitrix_id", "")),
@@ -98,6 +113,9 @@ def build_batch(
             "сотрудник": {
                 "идБитрикс": employee_id,
                 "фамилияИмя": _clean(employee_names.get(employee_id, "")),
+                # Заполнено — 1С возьмёт это физлицо, не заглядывая в свой
+                # регистр соответствий: сопоставление ведётся на портале.
+                "физлицо1С": employee_in_1c,
             },
             "клиент": {
                 "инн": client,

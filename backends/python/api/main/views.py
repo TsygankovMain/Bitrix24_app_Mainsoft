@@ -3527,3 +3527,68 @@ def _serialize_export_run(run):
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
+@xframe_options_exempt
+@csrf_exempt
+@log_errors("one_c_mapping")
+@auth_required
+def one_c_mapping(request: AuthorizedRequest):
+    """Что нужно сопоставить для обмена с 1С и что уже сопоставлено.
+
+    Экран получает всё одним вызовом: людей, которые реально списывали часы,
+    компании и наши юрлица из проектов — вместе с ИНН, который удалось найти
+    автоматически, и тем, что человек задал руками. Списки строятся по факту
+    списаний, а не по всему справочнику портала: сопоставлять два десятка
+    строк осмысленно, двадцать тысяч — нет.
+    """
+    account = request.bitrix24_account
+    config = ConfigurationService(account.client, account).get_configuration_sync()
+    one_c = config.get("one_c") or {}
+    manual_employees = one_c.get("employees") or {}
+    manual_companies = one_c.get("companies") or {}
+    manual_legal = one_c.get("legal_entities") or {}
+
+    employee_ids = sorted(
+        {str(v) for v in TimesheetItem.objects
+         .filter(bitrix24_account=account)
+         .values_list("employee_id", flat=True) if v}
+    )
+    names = {}
+    for user in PortalUser.objects.filter(bitrix24_account=account):
+        names[str(user.bitrix_id)] = " ".join(
+            p for p in (user.last_name, user.name) if p).strip()
+
+    cards = list(ProjectCard.objects.filter(bitrix24_account=account))
+    companies, legal_entities = {}, {}
+    for card in cards:
+        if card.company_id:
+            companies.setdefault(str(card.company_id), card.company_name or "")
+        if card.our_legal_entity_id:
+            legal_entities.setdefault(str(card.our_legal_entity_id),
+                                      card.our_legal_entity_name or "")
+
+    # ИНН, найденный автоматически, показывается рядом: человеку видно,
+    # где вмешательство нужно, а где всё нашлось само.
+    try:
+        auto_companies, auto_legal = InnBackfillService(
+            account.client, account, config)._inn_maps_for_cards(cards)
+    except Exception:
+        logger.warning("ИНН из Битрикса не получены для экрана сопоставления", exc_info=True)
+        auto_companies, auto_legal = {}, {}
+
+    return JsonResponse({
+        "employees": [
+            {"id": eid, "name": names.get(eid, ""), "mapped_to": manual_employees.get(eid, "")}
+            for eid in employee_ids
+        ],
+        "companies": [
+            {"id": cid, "name": name,
+             "inn_auto": auto_companies.get(cid, ""), "inn_manual": manual_companies.get(cid, "")}
+            for cid, name in sorted(companies.items(), key=lambda kv: kv[1] or kv[0])
+        ],
+        "legal_entities": [
+            {"id": lid, "name": name,
+             "inn_auto": auto_legal.get(lid, ""), "inn_manual": manual_legal.get(lid, "")}
+            for lid, name in sorted(legal_entities.items(), key=lambda kv: kv[1] or kv[0])
+        ],
+    })
+

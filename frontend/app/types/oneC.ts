@@ -22,3 +22,26 @@ export interface OneCExportRun {
   message: string
   created_at: string | null
 }
+
+/** Строки для экрана сопоставления. */
+export interface OneCEmployeeRow {
+  id: string
+  name: string
+  /** ФИО физлица в 1С, заданное человеком */
+  mapped_to: string
+}
+
+export interface OneCCompanyRow {
+  id: string
+  name: string
+  /** ИНН, найденный в Битриксе автоматически */
+  inn_auto: string
+  /** ИНН, заданный руками; важнее автоматического */
+  inn_manual: string
+}
+
+export interface OneCMappingPayload {
+  employees: OneCEmployeeRow[]
+  companies: OneCCompanyRow[]
+  legal_entities: OneCCompanyRow[]
+}
