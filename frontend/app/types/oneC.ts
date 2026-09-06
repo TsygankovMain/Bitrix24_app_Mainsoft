@@ -45,3 +45,20 @@ export interface OneCMappingPayload {
   companies: OneCCompanyRow[]
   legal_entities: OneCCompanyRow[]
 }
+
+/** Элемент справочника 1С: то, из чего человек выбирает в сопоставлении. */
+export interface OneCDirectoryItem {
+  id: string
+  name: string
+  full_name: string
+  inn: string
+}
+
+export interface OneCDirectories {
+  ok: boolean
+  /** Почему списков нет: показывается вместо подсказок, экран остаётся рабочим */
+  message: string
+  people: OneCDirectoryItem[]
+  organizations: OneCDirectoryItem[]
+  counterparties: OneCDirectoryItem[]
+}

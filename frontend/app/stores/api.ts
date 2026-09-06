@@ -1,5 +1,5 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import type { OneCExportRun, OneCMappingPayload } from '~/types/oneC'
+import type { OneCDirectories, OneCExportRun, OneCMappingPayload } from '~/types/oneC'
 import { withoutTrailingSlash } from 'ufo'
 import { withRefreshParam } from '~/utils/apiCache'
 import { isJwtFresh, readJwtExpiryMs } from '~/utils/jwt'
@@ -837,6 +837,13 @@ export const useApiStore = defineStore(
     }
 
     /** История отправок в 1С: последние прогоны с построчным результатом. */
+    /** Справочники 1С для выбора в сопоставлении: физлица, юрлица, клиенты. */
+    const getOneCDirectories = async (): Promise<OneCDirectories> => {
+      return await $api<OneCDirectories>('/api/one-c/directories', {
+        method: 'GET'
+      })
+    }
+
     const getOneCExportHistory = async (): Promise<{ runs: OneCExportRun[] }> => {
       return await $api<{ runs: OneCExportRun[] }>('/api/one-c/exports', {
         headers: await writeHeaders(),
@@ -1477,6 +1484,7 @@ export const useApiStore = defineStore(
       exportPeriodToOneC,
       getOneCExportHistory,
       getOneCMapping,
+      getOneCDirectories,
       getPeriodCheckDetails,
       fixPeriodFinding,
       closePeriod,

@@ -61,6 +61,7 @@ from .report_excel import (
     _safe_cell_text,
 )
 from .inn_backfill_service import InnBackfillService
+from .one_c_directory_service import OneCDirectoryError, OneCDirectoryService
 from .one_c_export_service import OneCExportService
 from .company_search_service import CompanySearchService
 from .project_creation_service import ProjectCreationService
@@ -3529,6 +3530,28 @@ def _serialize_export_run(run):
 
 @xframe_options_exempt
 @csrf_exempt
+@log_errors("one_c_directories")
+@auth_required
+def one_c_directories(request: AuthorizedRequest):
+    """Списки из 1С для выбора в сопоставлении.
+
+    Экран зовёт эту точку после того, как заданы реквизиты подключения:
+    вместо ручного ввода ФИО и ИНН человек выбирает из того, что реально
+    заведено в базе. Недоступная 1С — не ошибка приложения: экран остаётся
+    рабочим, просто без подсказок, поэтому ответ всегда 200 с пояснением.
+    """
+    account = request.bitrix24_account
+    config = ConfigurationService(account.client, account).get_configuration_sync()
+
+    try:
+        data = OneCDirectoryService(config).fetch()
+    except OneCDirectoryError as error:
+        return JsonResponse({"ok": False, "message": str(error),
+                             "people": [], "organizations": [], "counterparties": []})
+
+    return JsonResponse({"ok": True, "message": "", **data})
+
+
 @log_errors("one_c_mapping")
 @auth_required
 def one_c_mapping(request: AuthorizedRequest):

@@ -1,14 +1,20 @@
 <script setup lang="ts">
 /**
- * Настройки обмена с 1С: куда приложение отправляет часы за период.
+ * Настройки обмена с 1С: куда приложение отправляет часы за период
+ * и кому эти часы принадлежат на стороне 1С.
  *
  * Адрес и токен живут в настройках портала, а не в переменных окружения:
  * у каждого портала своя 1С, и менять адрес должен администратор, а не
  * правка файла на сервере. Пустые поля токена и пароля означают
  * «оставить прежнее значение» — секреты обратно на экран не возвращаются.
+ *
+ * Сопоставления выбираются из справочников самой 1С: ФИО и ИНН, набранные
+ * руками, ошибаются молча — отказ всплывает только при отправке часов.
  */
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import type { OneCCompanyRow, OneCEmployeeRow, OneCExportRun } from '~/types/oneC'
+import type {
+  OneCCompanyRow, OneCDirectoryItem, OneCEmployeeRow, OneCExportRun
+} from '~/types/oneC'
 
 const router = useRouter()
 const apiStore = useApiStore()
@@ -34,10 +40,72 @@ const companies = ref<OneCCompanyRow[]>([])
 const legalEntities = ref<OneCCompanyRow[]>([])
 const savingMapping = ref(false)
 
+// Справочники 1С — то, из чего выбирают. Пока они не загружены, поля
+// остаются обычным вводом: экран не должен становиться неработоспособным
+// из-за недоступной 1С.
+const people = ref<OneCDirectoryItem[]>([])
+const organizations = ref<OneCDirectoryItem[]>([])
+const counterparties = ref<OneCDirectoryItem[]>([])
+const directoriesMessage = ref('')
+const loadingDirectories = ref(false)
+
 const unmappedEmployees = computed(() => employees.value.filter(row => !row.mapped_to).length)
 const companiesWithoutInn = computed(
   () => [...companies.value, ...legalEntities.value]
     .filter(row => !row.inn_manual && !row.inn_auto).length)
+
+const hasPeople = computed(() => people.value.length > 0)
+const hasCounterparties = computed(() => counterparties.value.length > 0)
+const hasOrganizations = computed(() => organizations.value.length > 0)
+
+/** Варианты для списка ИНН: без ИНН выбирать нечего — такие строки не показываем. */
+function innOptions(items: OneCDirectoryItem[], current: string) {
+  const options = items
+    .filter(item => item.inn)
+    .map(item => ({ value: item.inn, label: `${item.name} — ${item.inn}` }))
+
+  // Сохранённое значение, которого нет в 1С, не должно молча пропасть из поля.
+  if (current && !options.some(option => option.value === current)) {
+    options.unshift({ value: current, label: `${current} (нет в 1С)` })
+  }
+  return options
+}
+
+function nameOptions(items: OneCDirectoryItem[], current: string) {
+  const options = items.map(item => ({ value: item.name, label: item.name }))
+  if (current && !options.some(option => option.value === current)) {
+    options.unshift({ value: current, label: `${current} (нет в 1С)` })
+  }
+  return options
+}
+
+async function loadDirectories(quiet = true) {
+  loadingDirectories.value = true
+  try {
+    const data = await apiStore.getOneCDirectories()
+    people.value = data.people || []
+    organizations.value = data.organizations || []
+    counterparties.value = data.counterparties || []
+    directoriesMessage.value = data.ok ? '' : (data.message || '')
+
+    if (!quiet) {
+      if (data.ok) {
+        toast.add({
+          title: `Загружено из 1С: физлиц ${people.value.length}, `
+            + `юрлиц ${organizations.value.length}, клиентов ${counterparties.value.length}`,
+          color: 'success'
+        })
+      } else {
+        toast.add({ title: data.message || 'Справочники 1С не получены', color: 'warning' })
+      }
+    }
+  } catch (error) {
+    directoriesMessage.value = 'Справочники 1С не получены'
+    if (!quiet) processErrorGlobal(error)
+  } finally {
+    loadingDirectories.value = false
+  }
+}
 
 onMounted(async () => {
   try {
@@ -57,6 +125,10 @@ onMounted(async () => {
     employees.value = mapping.employees || []
     companies.value = mapping.companies || []
     legalEntities.value = mapping.legal_entities || []
+
+    // Списки тянем сразу, если подключение уже настроено: чаще всего человек
+    // приходит на экран именно доделывать сопоставление.
+    if (form.value.inbox_url) await loadDirectories(true)
   } catch (error) {
     processErrorGlobal(error)
   }
@@ -76,9 +148,10 @@ async function saveMapping() {
 
     const next = {
       ...current,
-      employees: asMap(employees.value.map(r => ({ id: r.id, value: r.mapped_to.trim() }))),
-      companies: asMap(companies.value.map(r => ({ id: r.id, value: r.inn_manual.trim() }))),
-      legal_entities: asMap(legalEntities.value.map(r => ({ id: r.id, value: r.inn_manual.trim() })))
+      employees: asMap(employees.value.map(r => ({ id: r.id, value: (r.mapped_to || '').trim() }))),
+      companies: asMap(companies.value.map(r => ({ id: r.id, value: (r.inn_manual || '').trim() }))),
+      legal_entities: asMap(
+        legalEntities.value.map(r => ({ id: r.id, value: (r.inn_manual || '').trim() })))
     }
 
     await apiStore.saveConfiguration({ ...(config as object), one_c: next } as never)
@@ -96,6 +169,7 @@ async function save() {
     const config = await apiStore.getConfiguration(true)
     const current = ((config as Record<string, unknown>).one_c || {}) as Record<string, string>
     const next = {
+      ...current,
       inbox_url: form.value.inbox_url,
       user: form.value.user,
       token: form.value.token || current.token || '',
@@ -105,6 +179,9 @@ async function save() {
     toast.add({ title: 'Настройки обмена сохранены', color: 'success' })
     form.value.token = ''
     form.value.password = ''
+
+    // Реквизиты изменились — самое время проверить их делом и получить списки.
+    await loadDirectories(false)
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -187,9 +264,25 @@ async function save() {
         </div>
 
         <template #footer>
-          <B24Button label="Сохранить" color="primary" :loading="saving" @click="save" />
+          <div class="flex items-center gap-3">
+            <B24Button label="Сохранить" color="primary" :loading="saving" @click="save" />
+            <B24Button
+              label="Проверить связь и обновить списки"
+              color="link"
+              :loading="loadingDirectories"
+              @click="loadDirectories(false)"
+            />
+          </div>
         </template>
       </B24Card>
+
+      <div
+        v-if="directoriesMessage"
+        class="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+      >
+        Списки из 1С не получены: {{ directoriesMessage }}.
+        Сопоставление ниже можно заполнить вручную.
+      </div>
 
       <B24Card>
         <template #header>
@@ -204,7 +297,12 @@ async function save() {
         <p class="mb-3 text-sm text-slate-500">
           Кому в 1С принадлежат часы. Пока сотрудник не сопоставлен, его строки
           возвращаются с причиной «сотрудник не связан с физлицом».
-          Пустое поле — 1С попробует найти сама по своему регистру.
+          <template v-if="hasPeople">
+            Список физлиц загружен из 1С — выберите нужного.
+          </template>
+          <template v-else>
+            Пустое поле — 1С попробует найти сама по своему регистру.
+          </template>
         </p>
 
         <div class="max-h-80 overflow-y-auto rounded border border-slate-200">
@@ -222,7 +320,22 @@ async function save() {
                   <span class="text-xs text-slate-400">id {{ row.id }}</span>
                 </td>
                 <td class="px-2 py-1">
+                  <select
+                    v-if="hasPeople"
+                    v-model="row.mapped_to"
+                    class="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  >
+                    <option value="">— не сопоставлен —</option>
+                    <option
+                      v-for="option in nameOptions(people, row.mapped_to)"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
                   <input
+                    v-else
                     v-model.trim="row.mapped_to"
                     type="text"
                     placeholder="Фамилия Имя Отчество"
@@ -247,7 +360,7 @@ async function save() {
 
         <p class="mb-3 text-sm text-slate-500">
           По ИНН 1С находит контрагента и организацию. Найденное в Битриксе
-          подставляется само — заполняйте, только если там пусто или неверно.
+          подставляется само — выбирайте вручную, только если там пусто или неверно.
         </p>
 
         <div class="max-h-80 overflow-y-auto rounded border border-slate-200">
@@ -256,18 +369,37 @@ async function save() {
               <tr>
                 <th class="px-2 py-1 text-left">Компания</th>
                 <th class="px-2 py-1 text-left">ИНН из Битрикса</th>
-                <th class="px-2 py-1 text-left">ИНН вручную</th>
+                <th class="px-2 py-1 text-left">Соответствие в 1С</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in legalEntities" :key="'l' + row.id" class="border-t border-slate-100 bg-slate-50/50">
+              <tr
+                v-for="row in legalEntities"
+                :key="'l' + row.id"
+                class="border-t border-slate-100 bg-slate-50/50"
+              >
                 <td class="px-2 py-1">
                   {{ row.name || '—' }}
                   <span class="text-xs text-slate-400">наше юрлицо</span>
                 </td>
                 <td class="px-2 py-1 tabular-nums text-slate-500">{{ row.inn_auto || '—' }}</td>
                 <td class="px-2 py-1">
+                  <select
+                    v-if="hasOrganizations"
+                    v-model="row.inn_manual"
+                    class="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  >
+                    <option value="">— как в Битриксе —</option>
+                    <option
+                      v-for="option in innOptions(organizations, row.inn_manual)"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
                   <input
+                    v-else
                     v-model.trim="row.inn_manual"
                     type="text"
                     class="w-full rounded border border-slate-300 px-2 py-1 text-sm tabular-nums"
@@ -278,7 +410,22 @@ async function save() {
                 <td class="px-2 py-1">{{ row.name || '—' }}</td>
                 <td class="px-2 py-1 tabular-nums text-slate-500">{{ row.inn_auto || '—' }}</td>
                 <td class="px-2 py-1">
+                  <select
+                    v-if="hasCounterparties"
+                    v-model="row.inn_manual"
+                    class="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  >
+                    <option value="">— как в Битриксе —</option>
+                    <option
+                      v-for="option in innOptions(counterparties, row.inn_manual)"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
                   <input
+                    v-else
                     v-model.trim="row.inn_manual"
                     type="text"
                     class="w-full rounded border border-slate-300 px-2 py-1 text-sm tabular-nums"
