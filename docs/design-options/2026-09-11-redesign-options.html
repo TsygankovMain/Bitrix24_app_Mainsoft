@@ -1,0 +1,1385 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="mainsoft-group" content="Учёт трудозатрат">
+<title>Редизайн «Учёта трудозатрат» — варианты</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Fira+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ---------- Витрина (сама страница, не макеты) ---------- */
+:root{
+  --page:#eceff3; --ink:#1d2530; --muted:#5a6573; --line:#d8dde4; --card:#fff; --acc:#0062d6;
+  --sys:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important;animation:none!important}}
+body{margin:0;background:var(--page);color:var(--ink);font:15px/1.5 var(--sys)}
+.wrap{max-width:1900px;margin:0 auto;padding-inline:24px;padding-block:28px 72px}
+@media (max-width:640px){.wrap{padding-inline:16px}}
+h1.page-title{font-size:28px;line-height:1.2;margin:0 0 8px;text-wrap:balance}
+.lead{max-width:90ch;color:var(--muted);margin:0 0 16px}
+.findings{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:0 0 8px}
+.findings h2{font-size:16px;margin:0 0 6px}
+.findings ol{margin:0;padding-left:20px;display:grid;gap:6px;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));column-gap:32px}
+.findings code{font-size:12.5px;background:#f1f4f6;padding:1px 4px;border-radius:4px}
+.tabs{position:sticky;top:0;z-index:40;display:flex;gap:8px;flex-wrap:wrap;padding:12px 0;background:var(--page);border-bottom:1px solid var(--line)}
+.tab{border:1px solid var(--line);background:#fff;border-radius:10px;padding:6px 14px;font:inherit;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;min-height:44px;color:inherit;text-decoration:none;line-height:1.3;transition:border-color .15s,background .15s}
+.tab:hover{border-color:#9fb3cc}
+.tab:focus-visible,.x-btn:focus-visible,button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.tab[aria-selected="true"]{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc);background:#eef5ff}
+.tab b{font-size:14px}
+.tab small{font-size:12px;color:var(--muted)}
+.variant{padding-top:24px;scroll-margin-top:80px}
+.v-head{display:grid;gap:8px;margin-bottom:18px;max-width:1300px}
+.v-title{font-size:24px;line-height:1.25;margin:0;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.boldness{font-size:12px;font-weight:600;border-radius:999px;padding:3px 10px;background:#fff;border:1px solid var(--line);color:var(--muted)}
+.v-idea{font-size:16px;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:6px 20px;font-size:13px;color:var(--muted)}
+.meta b{color:var(--ink);font-weight:600}
+.sw{display:inline-flex;gap:3px;vertical-align:-2px;margin-left:4px}
+.sw i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.12)}
+.v-grid{display:grid;grid-template-columns:minmax(0,1fr) 660px;gap:28px;align-items:start}
+@media (max-width:1560px){.v-grid{grid-template-columns:minmax(0,1fr)}}
+.col-full{display:grid;grid-template-columns:minmax(0,1fr);gap:28px;min-width:0}
+.col-full>*{min-width:0}
+.cap{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.note{font-size:13px;color:var(--muted);margin:8px 0 0;max-width:110ch}
+.fit{overflow-x:auto;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.06),0 8px 24px rgba(20,30,45,.08);background:#fff}
+.fit>.portal{width:1100px;zoom:var(--z,1)}
+.tf-col{min-width:0}
+@media (min-width:1561px){.tf-col{position:sticky;top:84px}}
+.tf-controls{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.x-btn{font:inherit;font-size:13px;border:1px solid var(--line);background:#fff;border-radius:8px;padding:4px 10px;min-height:32px;cursor:pointer;color:var(--ink)}
+.x-btn[aria-pressed="true"]{border-color:var(--acc);background:#eef5ff;color:var(--acc);font-weight:600}
+.tf{width:var(--tw,660px);max-width:100%;transition:width .2s ease}
+.compare{margin-top:48px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+.compare h2{margin:0 0 10px;font-size:20px}
+.cmp-scroll{overflow-x:auto}
+.cmp{border-collapse:collapse;width:100%;min-width:860px;font-size:14px}
+.cmp th,.cmp td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+.cmp th{background:#f6f8fa;font-size:13px}
+.cmp td.n{font-variant-numeric:tabular-nums;white-space:nowrap}
+.reco{margin-top:16px;padding:14px 16px;border-left:4px solid var(--acc);background:#eef5ff;border-radius:0 10px 10px 0}
+.reco h3{margin:0 0 6px;font-size:16px}
+.reco ul{margin:6px 0 0;padding-left:20px}
+
+/* ---------- Хром портала Битрикс24 (общий для макетов) ---------- */
+.portal{display:grid;grid-template-columns:56px minmax(0,1fr);grid-template-rows:48px auto;background:#eef2f4;font-family:var(--sys);color:#333;font-size:14px}
+.p-top{grid-column:1/3;display:flex;align-items:center;gap:16px;padding:0 16px;background:#fff;border-bottom:1px solid #e3e6ea}
+.p-logo{font-weight:700;color:#0075ff;font-size:17px;letter-spacing:-.01em}
+.p-logo span{color:#2fc6f6}
+.p-search{flex:0 1 320px;height:32px;border-radius:16px;background:#f1f4f6;display:flex;align-items:center;gap:8px;padding:0 12px;color:#6b7580;font-size:13px}
+.p-sp{flex:1}
+.p-ava{width:30px;height:30px;border-radius:50%;background:#7a8ca3;color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700}
+.p-rail{background:#fff;border-right:1px solid #e3e6ea;display:flex;flex-direction:column;align-items:center;gap:6px;padding-top:12px}
+.p-rail span{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:#6b7580}
+.p-rail .on{background:#e8f3ff;color:#0075ff}
+.p-main{padding:14px 18px 18px;min-width:0}
+.p-apptitle{font-size:20px;font-weight:600;margin:0 0 10px;color:#333;display:flex;align-items:center;gap:10px}
+.p-apptitle small{font-size:12px;font-weight:400;color:#6b7580}
+.app{border-radius:12px;overflow:hidden;background:var(--bg);font-family:var(--font);color:var(--ink);font-size:14px;line-height:1.45;position:relative}
+
+/* ---------- Хром карточки задачи (узкий фрейм) ---------- */
+.tcard{background:#fff;border-radius:12px;overflow:hidden;border:1px solid #dfe3e8;font-family:var(--sys);box-shadow:0 1px 2px rgba(0,0,0,.06),0 8px 24px rgba(20,30,45,.08)}
+.tcard-h{padding:12px 16px;border-bottom:1px solid #e6e9ed}
+.tcard-h .crumb{font-size:12px;color:#6b7580}
+.tcard-h h3{margin:2px 0 0;font-size:16px;line-height:1.3;color:#222}
+.tcard-tabs{display:flex;gap:4px;padding:0 12px;border-bottom:1px solid #e6e9ed;overflow-x:auto;font-size:13px;scrollbar-width:none}
+.tcard-tabs span{padding:10px 8px;white-space:nowrap;color:#5a6573;border-bottom:2px solid transparent}
+.tcard-tabs .on{color:#0075ff;border-color:#0075ff;font-weight:600}
+.tframe{position:relative;background:var(--bg);font-family:var(--font);color:var(--ink);font-size:14px;line-height:1.45;min-height:560px;overflow:hidden}
+
+/* ---------- Примитивы макетов (на токенах варианта) ---------- */
+.ic{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.ic.lg{width:20px;height:20px}
+.m-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--r-btn,8px);border:1px solid var(--line);background:var(--surface);color:var(--ink);font:600 13px/1 var(--font);cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s}
+.m-btn:hover{border-color:var(--muted)}
+.m-btn.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent,#fff)}
+.m-btn.pri:hover{filter:brightness(.94)}
+.m-btn.ghost{border-color:transparent;background:transparent;color:var(--accent)}
+.m-btn.sm{height:28px;padding:0 10px;font-size:12px}
+.m-btn.icon{width:32px;padding:0}
+.badge{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border-radius:11px;font-size:12px;font-weight:600;white-space:nowrap;line-height:1}
+.b-ok{background:var(--ok-soft);color:var(--ok)}
+.b-warn{background:var(--warn-soft);color:var(--warn)}
+.b-bad{background:var(--bad-soft);color:var(--bad)}
+.b-info{background:var(--accent-soft);color:var(--accent-ink,var(--accent))}
+.b-mute{background:var(--mute-soft,#eef1f4);color:var(--muted)}
+.b-sub{background:#fff3dc;color:#7a4f00}
+.bar{height:6px;border-radius:3px;background:var(--track,#e3e7ec);overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--ok);border-radius:3px}
+.bar>i.w{background:var(--warn)} .bar>i.b{background:var(--bad)} .bar>i.a{background:var(--accent)}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.av{width:24px;height:24px;border-radius:50%;display:inline-grid;place-items:center;font-size:10.5px;font-weight:700;color:#fff;flex:none}
+.av1{background:#5b7bd5}.av2{background:#2f9e8f}.av3{background:#c0673a}.av4{background:#8a5cc2}.av5{background:#4f8a3c}.av6{background:#b8455f}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{font-size:12px;color:var(--muted);text-align:left;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--th,transparent);white-space:nowrap}
+.tbl td{padding:8px 10px;border-bottom:1px solid var(--line-soft,var(--line));vertical-align:middle}
+.tbl .r{text-align:right}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.field{display:grid;gap:4px;font-size:12px;color:var(--muted);font-weight:600}
+.inp{height:34px;border:1px solid var(--line);border-radius:var(--r-inp,8px);background:var(--surface);padding:0 10px;display:flex;align-items:center;gap:6px;color:var(--ink);font:400 14px/1 var(--font)}
+.inp.ta{height:auto;min-height:56px;align-items:flex-start;padding:8px 10px;line-height:1.4}
+.switch{width:34px;height:20px;border-radius:10px;background:var(--accent);position:relative;flex:none}
+.switch::after{content:"";position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:#fff}
+.switch.off{background:#c3cad3}.switch.off::after{right:auto;left:2px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20h16M7 16v-5M12 16V7M17 16v-8"/></symbol>
+    <symbol id="i-board" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></symbol>
+    <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/></symbol>
+    <symbol id="i-wallet" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M3 10h18M16 15h2"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+    <symbol id="i-chevr" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 8v6l-4-2v-4z"/></symbol>
+    <symbol id="i-split" viewBox="0 0 24 24"><path d="M6 3v6a4 4 0 0 0 4 4h8M14 9l4 4-4 4M6 21v-6"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3.2"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></symbol>
+    <symbol id="i-building" viewBox="0 0 24 24"><path d="M4 21V5l8-2v18M12 8h8v13M8 8h.01M8 12h.01M8 16h.01M16 12h.01M16 16h.01"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+  <h1 class="page-title">Редизайн «Учёта трудозатрат»: четыре варианта</h1>
+  <p class="lead">Макеты к обсуждению, 11.09.2026. У каждого варианта три экрана: главная полной версии (фрейм пункта левого меню портала, 1100 px),
+    один ключевой экран и вкладка задачи, где сотрудник списывает часы. Ширину вкладки задачи переключайте кнопками 660 / 480 / 400 px.
+    Все проекты, компании, сотрудники и суммы вымышленные.</p>
+
+  <section class="findings" aria-labelledby="f-h">
+    <h2 id="f-h">Что в текущем интерфейсе мешает (по коду ветки <code>dev_ver2.0</code>)</h2>
+    <ol>
+      <li><b>Нет постоянной навигации.</b> Каждый раздел — отдельная страница с кнопкой «Назад». Семь отчётов — плитки внизу главной, а «Закрытие месяца» и «Проверка данных (ИНН)» спрятаны в «Настройках» рядом с диагностикой.</li>
+      <li><b>Три разных каркаса.</b> Главная и настройки собраны на <code>B24PageHeader</code>, отчёты и доска — на <code>ms-page-shell</code> с <code>ProseH2</code>, а вкладка задачи — на самописных кнопках, <code>&lt;select&gt;</code> и <code>&lt;input type=date&gt;</code>.</li>
+      <li><b>Вкладка задачи не рассчитана на узкий фрейм.</b> В <code>embedded.vue</code> сетка <code>1fr 380px</code> без брейкпоинта: при фрейме 640 px дереву остаётся около 230 px, а на 400 px вёрстка ломается. Сумма и часы в шапке каждой задачи занимают ещё ~300 px.</li>
+      <li><b>Остатки лаймового бренда и контраст.</b> На вкладке задачи остались лаймовые иконка (<code>#d9f99d</code>), ховер кнопки (<code>#c7f04f</code>) и тень. У главной кнопки тёмный текст на синем <code>#0075ff</code> — контраст ≈4,2:1, ниже AA. Кнопки «Изменить» и «Удалить» появляются только при наведении, поэтому на тачскрине их не видно.</li>
+      <li><b>Лишнее на рабочем экране сотрудника.</b> В шапке вкладки задачи всем открыто редактируемое поле «Стоимость часа» и «Сумма для клиента». Поля «Сотрудник / Дата от / Дата до» — фильтр, а не форма списания.</li>
+      <li><b>Два экрана списания.</b> Есть <code>task.vue</code> (модалка) и <code>embedded.vue</code> (две колонки), placement в проде смотрит на <code>/embedded</code>. Любой редизайн стоит начинать с того, чтобы оставить один.</li>
+    </ol>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="Варианты редизайна">
+    <a class="tab" role="tab" href="#var-a" data-var="var-a" aria-selected="true"><b>A. Родной портал</b><small>эволюция UI Kit · смелость 1/4</small></a>
+    <a class="tab" role="tab" href="#var-b" data-var="var-b" aria-selected="false"><b>B. Рабочее место</b><small>дашборд по ролям · 2/4</small></a>
+    <a class="tab" role="tab" href="#var-c" data-var="var-c" aria-selected="false"><b>C. Проект в центре</b><small>бенто-карточки · 3/4</small></a>
+    <a class="tab" role="tab" href="#var-d" data-var="var-d" aria-selected="false"><b>D. Лента времени</b><small>таймшит + палитра команд · 4/4</small></a>
+    <a class="tab" role="tab" href="#compare" data-var="compare" aria-selected="false"><b>Сравнение</b><small>оценка и рекомендация</small></a>
+  </nav>
+
+<style>
+.tframe{container-type:inline-size}
+/* ===== Вариант A: токены — нативные значения Air из main.css проекта ===== */
+.A{--bg:#f1f4f6;--surface:#fff;--ink:#333;--muted:#525c69;--line:#dfe0e3;--line-soft:#edeef0;--accent:#0075ff;--accent-soft:#e8f3ff;--accent-ink:#0062d6;--ok:#16794a;--ok-soft:#e1f5e9;--warn:#8a5b00;--warn-soft:#fff1d6;--bad:#c0322b;--bad-soft:#fde8e7;--font:var(--sys);--th:#f7f8f9}
+.A .card{background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.A .card-h{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.A .card-h h3{margin:0;font-size:15px}
+.a-head{display:flex;align-items:center;gap:8px;background:#fff;border-bottom:1px solid var(--line);padding:0 12px;height:48px;position:relative}
+.a-nav{display:flex;gap:2px;align-items:stretch;height:100%}
+.a-nav a{display:flex;align-items:center;gap:6px;padding:0 11px;color:var(--muted);text-decoration:none;font-weight:600;font-size:13.5px;border-bottom:2px solid transparent;white-space:nowrap}
+.a-nav a.on{color:var(--ink);border-bottom-color:var(--accent)}
+.a-nav a.open{color:var(--ink);background:#f5f7f9}
+.a-per{margin-left:auto;display:flex;gap:8px;align-items:center}
+.a-pop{position:absolute;top:46px;left:352px;width:380px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.16);padding:8px;z-index:5}
+.a-pop .ttl{display:flex;align-items:center;justify-content:space-between;padding:6px 10px 8px;font-size:12px;color:var(--muted);font-weight:600}
+.a-pop .it{display:flex;gap:10px;padding:10px;border-radius:8px}
+.a-pop .it:hover{background:#f5f7f9}
+.a-pop .ico{width:32px;height:32px;border-radius:8px;background:#fff3dc;color:#7a4f00;display:grid;place-items:center;flex:none}
+.a-pop .it b{display:flex;gap:6px;align-items:center;font-size:13.5px}
+.a-pop .it p{margin:2px 0 0;font-size:12.5px;color:var(--muted)}
+.a-pop .ft{display:flex;gap:8px;align-items:center;border-top:1px solid var(--line);margin-top:6px;padding:10px 10px 4px;font-size:12px;color:var(--muted)}
+.a-pop .ft .m-btn{margin-left:auto}
+.a-body{padding:16px}
+.a-ph{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:14px}
+.a-ph h2{margin:0;font-size:20px}
+.a-ph p{margin:2px 0 0;color:var(--muted);font-size:13px}
+.a-ph .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.a-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+.a-kpi{padding:12px 14px}
+.a-kpi .l{font-size:12px;color:var(--muted)}
+.a-kpi .v{font-size:24px;font-weight:700;margin-top:2px;display:flex;align-items:baseline;gap:8px}
+.a-kpi .v small{font-size:12px;font-weight:600}
+.a-kpi .s{font-size:12px;color:var(--muted)}
+.a-two{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:12px;align-items:start}
+.A .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:10px 14px}
+.A .chip{height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--line);display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;color:var(--muted);background:#fff;white-space:nowrap}
+.A .chip.on{background:var(--accent-soft);border-color:transparent;color:var(--accent-ink)}
+.a-search{margin-left:auto;width:220px}
+.A tr.sel td{background:#f0f7ff}
+.A tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+.pn{font-weight:600;color:var(--ink)}
+.pc{font-size:12px;color:var(--muted)}
+.who{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.a-side{padding:14px;display:grid;gap:12px;align-content:start}
+.a-side h3{margin:0;font-size:17px}
+.a-stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.a-stat{background:#f7f8f9;border-radius:8px;padding:8px 10px}
+.a-stat .l{font-size:11.5px;color:var(--muted)}
+.a-stat .v{font-weight:600;margin-top:2px}
+.a-acts{display:grid;gap:6px}
+.a-act{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;font-weight:600;font-size:13px;background:#fff}
+.a-act .ic{color:var(--accent-ink)}
+.a-act .r{margin-left:auto}
+.a-act.locked{background:#fcfaf5;border-style:dashed}
+.a-act.locked .ic{color:#7a4f00}
+.a-filter{display:flex;flex-wrap:wrap;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:6px 8px;margin-bottom:12px}
+.a-filter .fc{height:28px;border-radius:6px;background:#eef2f6;padding:0 8px;display:inline-flex;gap:6px;align-items:center;font-size:12.5px;white-space:nowrap}
+.a-filter .fc b{font-weight:600}
+.a-filter .grow{flex:1;min-width:120px;color:var(--muted);font-size:13px;padding-left:6px}
+.a-strip{display:flex;gap:28px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--line)}
+.a-strip div{font-size:12px;color:var(--muted)}
+.a-strip b{display:block;font-size:20px;color:var(--ink)}
+.tree td:first-child{white-space:nowrap}
+.tree .l1 td:first-child{padding-left:32px}
+.tree .l2 td:first-child{padding-left:56px}
+.caret{display:inline-grid;place-items:center;width:18px;height:18px;margin-right:4px;color:var(--muted);vertical-align:-4px}
+.caret.open .ic{transform:rotate(90deg)}
+.tree tr.tot td{font-weight:700;background:#f7f8f9;border-bottom:0}
+.minibar{display:inline-flex;align-items:center;gap:6px}
+.minibar .bar{width:56px}
+.fresh{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+/* A — вкладка задачи */
+.at-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:12px 14px;background:#fff;border-bottom:1px solid var(--line)}
+.at-h h4{margin:0;font-size:15px}
+.at-sum{font-size:12.5px;color:var(--muted);flex:1 1 200px}
+.at-sum b{color:var(--ink)}
+.at-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:10px 14px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
+.seg span{padding:5px 10px;font-size:12.5px;font-weight:600;color:var(--muted);white-space:nowrap}
+.seg .on{background:var(--accent-soft);color:var(--accent-ink)}
+.at-list{padding:0 14px 76px;display:grid;gap:8px}
+.at-task{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.at-trow{display:flex;align-items:flex-start;gap:8px;padding:10px 10px 10px 8px}
+.at-trow .t{flex:1;min-width:0;font-weight:600;font-size:13.5px}
+.at-trow .t small{display:block;font-weight:400;color:var(--muted);font-size:12px}
+.at-trow .h{font-size:12px;text-align:right;white-space:nowrap;color:var(--muted)}
+.at-trow .h b{font-size:13.5px;color:var(--ink)}
+.at-e{display:flex;align-items:flex-start;gap:8px;padding:8px 10px 8px 34px;border-top:1px solid var(--line-soft);font-size:13px}
+.at-e .d{flex:1;min-width:0}
+.at-e .d small{display:block;color:var(--muted);font-size:12px}
+.at-e .hrs{font-weight:700;white-space:nowrap}
+.st{font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;white-space:nowrap;line-height:1.3}
+.st.y{background:var(--ok-soft);color:var(--ok)}
+.st.n{background:#eef1f4;color:var(--muted)}
+.at-subs{border-top:1px solid var(--line-soft);background:#f8f9fa;padding:8px;display:grid;gap:8px}
+.at-foot{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;flex-wrap:wrap;gap:8px;padding:9px;background:#fff;border-top:1px solid var(--line);box-shadow:0 -4px 12px rgba(0,0,0,.05)}
+.icb{width:32px;height:32px;border-radius:8px;display:inline-grid;place-items:center;color:var(--muted);border:1px solid transparent;background:transparent;flex:none}
+.icb.acc{color:var(--accent-ink);border-color:var(--line);background:#fff}
+.slider{position:absolute;inset:0;background:rgba(30,40,55,.45);display:flex;justify-content:flex-end;z-index:6}
+.slider[hidden]{display:none}
+.sl-panel{width:min(94%,560px);background:#f1f4f6;height:100%;display:flex;flex-direction:column;box-shadow:-8px 0 24px rgba(0,0,0,.18)}
+.sl-h{background:#fff;padding:12px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.sl-h h4{margin:0;font-size:16px;flex:1}
+.sl-b{padding:14px;display:grid;gap:12px;overflow:auto;flex:1;align-content:start}
+.sl-b .box{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;display:grid;gap:12px}
+.qchips{display:flex;gap:6px;flex-wrap:wrap}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.sl-f{background:#fff;border-top:1px solid var(--line);padding:10px 14px;display:flex;gap:8px}
+.hint{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:flex-start;font-weight:400}
+.hint .ic{margin-top:1px}
+@container (max-width:520px){
+  .at-e{padding-left:14px}
+  .at-trow .h .nu{display:none}
+  .frow{grid-template-columns:1fr}
+  .at-sum{flex-basis:100%;order:3}
+}
+</style>
+
+<section class="variant" id="var-a" aria-labelledby="va-t">
+  <div class="v-head">
+    <h2 class="v-title" id="va-t">A. Родной портал <span class="boldness">смелость 1/4 · эволюция текущего UI Kit</span></h2>
+    <p class="v-idea">Приложение выглядит как штатный раздел Битрикс24: горизонтальное меню раздела, фильтр как в CRM, форма списания в слайдере портала.</p>
+    <div class="meta">
+      <span><b>Стиль:</b> Minimalism &amp; Swiss (подобран скилом для enterprise/SaaS), наложен на токены Air</span>
+      <span><b>Палитра:</b> Air из <code>main.css</code> <span class="sw"><i style="background:#0075ff"></i><i style="background:#f1f4f6"></i><i style="background:#333"></i><i style="background:#16794a"></i><i style="background:#8a5b00"></i><i style="background:#c0322b"></i></span></span>
+      <span><b>Шрифт:</b> системный, как у портала (без веб-шрифтов)</span>
+    </div>
+  </div>
+
+  <div class="v-grid">
+    <div class="col-full">
+      <!-- A1: главная -->
+      <div>
+        <p class="cap">Полная версия · главная · открыто меню «Финансы» (функции не подключены)</p>
+        <div class="fit"><div class="portal">
+          <div class="p-top"><div class="p-logo">Битрикс<span>24</span></div><div class="p-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Искать сотрудника, документ, прочее…</div><div class="p-sp"></div><svg class="ic lg" aria-hidden="true" style="color:#6b7580"><use href="#i-bell"/></svg><div class="p-ava">АВ</div></div>
+          <div class="p-rail"><span><svg class="ic lg" aria-hidden="true"><use href="#i-home"/></svg></span><span><svg class="ic lg" aria-hidden="true"><use href="#i-list"/></svg></span><span class="on"><svg class="ic lg" aria-hidden="true"><use href="#i-clock"/></svg></span><span><svg class="ic lg" aria-hidden="true"><use href="#i-folder"/></svg></span></div>
+          <div class="p-main">
+            <div class="p-apptitle">Учёт трудозатрат</div>
+            <div class="app A">
+              <div class="a-head">
+                <nav class="a-nav" aria-label="Разделы приложения">
+                  <a class="on" href="#var-a">Главная</a>
+                  <a href="#var-a">Проекты</a>
+                  <a href="#var-a">Отчёты <svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></a>
+                  <a href="#var-a">Контроль <span class="badge b-warn">2</span></a>
+                  <a class="open" href="#var-a">Финансы <span class="badge b-sub"><svg class="ic" style="width:12px;height:12px" aria-hidden="true"><use href="#i-lock"/></svg>подписка</span></a>
+                </nav>
+                <div class="a-per"><span class="m-btn sm"><svg class="ic" aria-hidden="true"><use href="#i-cal"/></svg>Сентябрь 2026 <svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></span><span class="m-btn sm icon" aria-label="Настройки"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></span></div>
+                <div class="a-pop" role="menu" aria-label="Финансы">
+                  <div class="ttl"><span>ФИНАНСЫ · ПО ПОДПИСКЕ</span><span class="badge b-sub">не подключено</span></div>
+                  <div class="it"><span class="ico"><svg class="ic" aria-hidden="true"><use href="#i-wallet"/></svg></span><div><b>БДДС по проектам <svg class="ic" style="width:13px;height:13px;color:#7a4f00" aria-hidden="true"><use href="#i-lock"/></svg></b><p>Поступления и выплаты по каждому проекту: план, факт, кассовые разрывы по месяцам.</p></div></div>
+                  <div class="it"><span class="ico"><svg class="ic" aria-hidden="true"><use href="#i-doc"/></svg></span><div><b>Счёт и акт по фильтру <svg class="ic" style="width:13px;height:13px;color:#7a4f00" aria-hidden="true"><use href="#i-lock"/></svg></b><p>Документы по учтённым часам за период, проект, сотрудника или задачу — в пару кликов.</p></div></div>
+                  <div class="ft">14 дней бесплатно, потом по подписке <span class="m-btn sm pri">Подключить</span></div>
+                </div>
+              </div>
+              <div class="a-body">
+                <div class="a-ph">
+                  <div><h2>Главная</h2><p>Портфель проектов и часы за сентябрь</p></div>
+                  <div class="acts"><span class="m-btn">Канбан проектов</span><span class="m-btn pri"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Создать проект</span></div>
+                </div>
+                <div class="a-kpis">
+                  <div class="card a-kpi"><div class="l">Часы за сентябрь</div><div class="v num">842 <small class="muted">ч</small></div><div class="s">учтено 691 ч</div></div>
+                  <div class="card a-kpi"><div class="l">Учтённость</div><div class="v num">82% <small class="badge b-ok">+3 п.п.</small></div><div class="s">к августу</div></div>
+                  <div class="card a-kpi"><div class="l">Без списаний 30+ дней</div><div class="v num" style="color:var(--warn)">2 <small class="muted">проекта</small></div><div class="s">1 из них — 90+ дней</div></div>
+                  <div class="card a-kpi"><div class="l">Закрытие месяца</div><div class="v" style="font-size:17px;padding-block:4px"><span class="badge b-ok"><svg class="ic" style="width:13px;height:13px" aria-hidden="true"><use href="#i-check"/></svg>Август закрыт</span></div><div class="s">02.09 · после закрытия пришло 2 записи</div></div>
+                </div>
+                <div class="a-two">
+                  <div class="card">
+                    <div class="card-h"><h3>Проекты</h3><span class="m-btn sm ghost">Все проекты <svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span></div>
+                    <div class="chips"><span class="chip on">Активные · 14</span><span class="chip">Поддержка · 4</span><span class="chip">Под риском · 3</span><span class="chip">Мои</span><div class="inp a-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><span class="muted">Проект, компания, куратор</span></div></div>
+                    <style>.a-two{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}.a-pt{font-size:12.5px}.a-pt td,.a-pt th{padding:7px 6px}.a-pt .pn,.a-pt .pc{white-space:nowrap}.a-pt .who{font-size:12px}.a-pt .minibar .bar{width:40px}</style>
+                    <table class="tbl a-pt">
+                      <thead><tr><th>Проект</th><th>Куратор</th><th>Стадия</th><th>Освоение</th><th class="r">Списание</th></tr></thead>
+                      <tbody>
+                        <tr class="sel"><td><div class="pn">Внедрение CRM</div><div class="pc">ООО «Северный ветер»</div></td><td><span class="who"><span class="av av1">АВ</span>Анна Воронцова</span></td><td><span class="badge b-ok">В работе</span></td><td><span class="minibar"><span class="bar"><i style="width:78%"></i></span><span class="num">78%</span></span></td><td class="r num">сегодня</td></tr>
+                        <tr><td><div class="pn">Портал поставщиков</div><div class="pc">ТК «Ладожский берег»</div></td><td><span class="who"><span class="av av2">ИП</span>Илья Петренко</span></td><td><span class="badge b-ok">В работе</span></td><td><span class="minibar"><span class="bar"><i class="b" style="width:100%"></i></span><span class="num" style="color:var(--bad)">117%</span></span></td><td class="r num">вчера</td></tr>
+                        <tr><td><div class="pn">Поддержка 1С и Б24</div><div class="pc">АО «Полярный круг»</div></td><td><span class="who"><span class="av av3">МС</span>Марина Соколова</span></td><td><span class="badge b-info">Поддержка</span></td><td><span class="muted">46 ч в сент.</span></td><td class="r num">сегодня</td></tr>
+                        <tr><td><div class="pn">Интеграция склада</div><div class="pc">ООО «Кедр-Логистик»</div></td><td><span class="who"><span class="av av4">ДК</span>Дмитрий Каширин</span></td><td><span class="badge b-mute">В просчёте</span></td><td><span class="minibar"><span class="bar"><i style="width:11%"></i></span><span class="num">11%</span></span></td><td class="r num">сегодня</td></tr>
+                        <tr><td><div class="pn">Бизнес-процессы закупок</div><div class="pc">ООО «Горный ручей»</div></td><td><span class="who"><span class="av av5">ОЛ</span>Олег Лазарев</span></td><td><span class="badge b-warn">Нет списаний 1 мес</span></td><td><span class="minibar"><span class="bar"><i class="w" style="width:80%"></i></span><span class="num">80%</span></span></td><td class="r num">34 дня</td></tr>
+                        <tr><td><div class="pn">Приложение курьера</div><div class="pc">ООО «Быстрый след»</div></td><td><span class="who"><span class="av av6">СК</span>Светлана Ким</span></td><td><span class="badge b-bad">Нет списаний 3 мес</span></td><td><span class="minibar"><span class="bar"><i class="w" style="width:13%"></i></span><span class="num">13%</span></span></td><td class="r num">97 дней</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="card a-side">
+                    <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="badge b-ok">В работе</span><span class="badge b-mute">ID 412</span></div>
+                    <div><h3>Внедрение CRM</h3><div class="pc">ООО «Северный ветер» · куратор Анна Воронцова</div></div>
+                    <div class="a-stats">
+                      <div class="a-stat"><div class="l">Бюджет / факт</div><div class="v num">400 / 312 ч</div></div>
+                      <div class="a-stat"><div class="l">Ставка</div><div class="v num">3 500 ₽/ч</div></div>
+                      <div class="a-stat"><div class="l">Факт, ₽</div><div class="v num">1 092 000 ₽</div></div>
+                      <div class="a-stat"><div class="l">Наше юрлицо</div><div class="v">ООО «Вектор Софт»</div></div>
+                    </div>
+                    <div class="a-acts">
+                      <div class="a-act"><svg class="ic" aria-hidden="true"><use href="#i-folder"/></svg>Группа проекта в Битрикс24<svg class="ic r muted" aria-hidden="true"><use href="#i-chevr"/></svg></div>
+                      <div class="a-act"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg>Отчёт по проекту за сентябрь<svg class="ic r muted" aria-hidden="true"><use href="#i-chevr"/></svg></div>
+                      <div class="a-act"><svg class="ic" aria-hidden="true"><use href="#i-edit"/></svg>Карточка проекта: ставка, юрлицо, сроки<svg class="ic r muted" aria-hidden="true"><use href="#i-chevr"/></svg></div>
+                      <div class="a-act locked"><svg class="ic" aria-hidden="true"><use href="#i-doc"/></svg>Счёт и акт за август<span class="badge b-sub r">по подписке</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div></div>
+        <p class="note">Что меняется: семь плиток отчётов уходят в меню «Отчёты» (две группы: «Часы» и «Аналитика»). Закрытие месяца и проверка данных — в «Контроль» со счётчиком проблем. Список проектов из карточек превращается в таблицу с быстрыми фильтрами. Служебные экраны (диагностика, опции слайдера) остаются только в «Настройках».</p>
+      </div>
+
+      <!-- A2: отчёт -->
+      <div>
+        <p class="cap">Полная версия · отчёт «Учёт по проектам/задачам»</p>
+        <div class="fit"><div class="portal">
+          <div class="p-top"><div class="p-logo">Битрикс<span>24</span></div><div class="p-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Искать сотрудника, документ, прочее…</div><div class="p-sp"></div><div class="p-ava">АВ</div></div>
+          <div class="p-rail"><span><svg class="ic lg" aria-hidden="true"><use href="#i-home"/></svg></span><span class="on"><svg class="ic lg" aria-hidden="true"><use href="#i-clock"/></svg></span></div>
+          <div class="p-main">
+            <div class="p-apptitle">Учёт трудозатрат</div>
+            <div class="app A">
+              <div class="a-head"><nav class="a-nav" aria-label="Разделы приложения"><a href="#var-a">Главная</a><a href="#var-a">Проекты</a><a class="on" href="#var-a">Отчёты <svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></a><a href="#var-a">Контроль <span class="badge b-warn">2</span></a><a href="#var-a">Финансы <span class="badge b-sub"><svg class="ic" style="width:12px;height:12px" aria-hidden="true"><use href="#i-lock"/></svg>подписка</span></a></nav><div class="a-per"><span class="m-btn sm icon" aria-label="Настройки"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></span></div></div>
+              <div class="a-body">
+                <div class="a-ph">
+                  <div><h2>Учёт по проектам/задачам</h2><p>Проект → задача → сотрудник → метки времени</p></div>
+                  <div class="acts"><span class="fresh"><span class="dot" aria-hidden="true"></span>Данные на 11.09, 14:20</span><span class="m-btn sm ghost"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg>Обновить</span><span class="m-btn"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Excel</span><span class="m-btn pri">Сформировать</span></div>
+                </div>
+                <div class="a-filter" role="search">
+                  <svg class="ic muted" aria-hidden="true" style="margin-left:4px"><use href="#i-filter"/></svg>
+                  <span class="fc">Период: <b>01.09 – 11.09.2026</b><svg class="ic" aria-hidden="true" style="width:12px;height:12px"><use href="#i-x"/></svg></span>
+                  <span class="fc">Проекты: <b>5 из 18</b><svg class="ic" aria-hidden="true" style="width:12px;height:12px"><use href="#i-x"/></svg></span>
+                  <span class="fc">Сотрудники: <b>все</b></span>
+                  <span class="grow">+ поиск и фильтр</span>
+                  <span class="m-btn sm">Мой отдел <svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></span>
+                </div>
+                <div class="card">
+                  <div class="a-strip"><div>Всего<b class="num">842 ч</b></div><div>Учтено<b class="num" style="color:var(--ok)">691 ч</b></div><div>Не учтено<b class="num" style="color:var(--bad)">151 ч</b></div><div>Учтённость<b class="num">82%</b></div><div>К выставлению<b class="num">1 566 200 ₽</b></div></div>
+                  <table class="tbl tree">
+                    <thead><tr><th>Проект / задача / сотрудник</th><th class="r">Всего, ч</th><th class="r">Учтено</th><th class="r">Не учтено</th><th>Учтённость</th><th class="r">Сумма, ₽</th></tr></thead>
+                    <tbody>
+                      <tr><td><span class="caret open"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><b>Внедрение CRM</b> <span class="pc">· ООО «Северный ветер»</span></td><td class="r num"><b>214</b></td><td class="r num">188</td><td class="r num">26</td><td><span class="minibar"><span class="bar"><i style="width:88%"></i></span><span class="num">88%</span></span></td><td class="r num">658 000</td></tr>
+                      <tr class="l1"><td><span class="caret open"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span>Настройка воронок продаж</td><td class="r num">86</td><td class="r num">80</td><td class="r num">6</td><td><span class="minibar"><span class="bar"><i style="width:93%"></i></span><span class="num">93%</span></span></td><td class="r num">280 000</td></tr>
+                      <tr class="l2"><td><span class="who"><span class="av av1">АВ</span>Анна Воронцова</span></td><td class="r num">48</td><td class="r num">46</td><td class="r num">2</td><td><span class="minibar"><span class="bar"><i style="width:96%"></i></span><span class="num">96%</span></span></td><td class="r num">161 000</td></tr>
+                      <tr class="l2"><td><span class="who"><span class="av av5">ОЛ</span>Олег Лазарев</span></td><td class="r num">38</td><td class="r num">34</td><td class="r num">4</td><td><span class="minibar"><span class="bar"><i style="width:89%"></i></span><span class="num">89%</span></span></td><td class="r num">119 000</td></tr>
+                      <tr class="l1"><td><span class="caret"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span>Импорт клиентской базы</td><td class="r num">64</td><td class="r num">58</td><td class="r num">6</td><td><span class="minibar"><span class="bar"><i style="width:91%"></i></span><span class="num">91%</span></span></td><td class="r num">203 000</td></tr>
+                      <tr class="l1"><td><span class="caret"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span>Обучение пользователей</td><td class="r num">64</td><td class="r num">50</td><td class="r num">14</td><td><span class="minibar"><span class="bar"><i class="w" style="width:78%"></i></span><span class="num">78%</span></span></td><td class="r num">175 000</td></tr>
+                      <tr><td><span class="caret"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><b>Портал поставщиков</b> <span class="pc">· ТК «Ладожский берег»</span></td><td class="r num"><b>176</b></td><td class="r num">132</td><td class="r num">44</td><td><span class="minibar"><span class="bar"><i class="w" style="width:75%"></i></span><span class="num">75%</span></span></td><td class="r num">422 400</td></tr>
+                      <tr><td><span class="caret"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><b>Поддержка 1С и Б24</b> <span class="pc">· АО «Полярный круг»</span></td><td class="r num"><b>146</b></td><td class="r num">146</td><td class="r num">0</td><td><span class="minibar"><span class="bar"><i style="width:100%"></i></span><span class="num">100%</span></span></td><td class="r num">408 800</td></tr>
+                      <tr><td><span class="caret"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><b>Интеграция склада</b> <span class="pc">· ООО «Кедр-Логистик»</span></td><td class="r num"><b>27</b></td><td class="r num">22</td><td class="r num">5</td><td><span class="minibar"><span class="bar"><i style="width:81%"></i></span><span class="num">81%</span></span></td><td class="r num">77 000</td></tr>
+                      <tr><td><span class="caret"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><b>Внутренние задачи</b></td><td class="r num"><b>279</b></td><td class="r num">203</td><td class="r num">76</td><td><span class="minibar"><span class="bar"><i class="w" style="width:73%"></i></span><span class="num">73%</span></span></td><td class="r muted">не выставляется</td></tr>
+                      <tr class="tot"><td>Итого</td><td class="r num">842</td><td class="r num">691</td><td class="r num">151</td><td class="num">82%</td><td class="r num">1 566 200</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div></div>
+        <p class="note">Рекурсивная таблица (главная ценность продукта) остаётся как есть, меняется только обвязка: один каркас для всех семи отчётов, фильтр в строку в стиле CRM с сохранёнными пресетами, итоги и индикатор свежести данных в одном месте.</p>
+      </div>
+    </div>
+
+    <!-- A3: вкладка задачи -->
+    <div class="tf-col">
+      <p class="cap">Вкладка задачи · списание часов</p>
+      <div class="tf-controls" role="group" aria-label="Ширина фрейма варианта A">Ширина: <button class="x-btn" data-w="660" aria-pressed="true">660</button><button class="x-btn" data-w="480" aria-pressed="false">480</button><button class="x-btn" data-w="400" aria-pressed="false">400</button> <button class="x-btn" data-toggle="a-slider" aria-pressed="false">Показать форму</button></div>
+      <div class="tf">
+        <div class="tcard">
+          <div class="tcard-h"><div class="crumb">Задача #24817 · проект «Интеграция склада»</div><h3>Настроить обмен остатками с 1С</h3></div>
+          <div class="tcard-tabs"><span>Описание</span><span>Чек-лист</span><span class="on">Учёт трудозатрат</span><span>Файлы</span><span>История</span></div>
+          <div class="tframe A">
+            <div class="at-h"><h4>Трудозатраты</h4><span class="at-sum">Всего <b class="num">15 ч</b> · учтено <b class="num">12 ч</b> · не учтено <b class="num">3 ч</b></span><span class="m-btn pri" role="button" tabindex="0" data-toggle="a-slider"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Отразить часы</span></div>
+            <div class="at-tools"><div class="seg"><span class="on">Все записи</span><span>Мои</span></div><span class="m-btn sm"><svg class="ic" aria-hidden="true"><use href="#i-cal"/></svg>Весь период</span></div>
+            <div class="at-list">
+              <div class="at-task">
+                <div class="at-trow"><span class="caret open"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><div class="t">Настроить обмен остатками с 1С<small>основная задача · с подзадачами 15 ч</small></div><div class="h"><b class="num">12 ч</b> учт.<div class="nu num">3 ч не учт.</div></div><span class="icb acc" role="button" aria-label="Отразить часы на эту задачу"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg></span></div>
+                <div class="at-e"><span class="st y">учт.</span><div class="d">Созвон с клиентом, уточнение сценариев<small>Дмитрий Каширин · 10.09</small></div><span class="hrs num">2 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+                <div class="at-subs">
+                  <div class="at-task">
+                    <div class="at-trow"><span class="caret open"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><div class="t">Схема обмена и маппинг полей<small>#24818</small></div><div class="h"><b class="num">3,5 ч</b> учт.<div class="nu num">1,5 ч не учт.</div></div><span class="icb acc" role="button" aria-label="Отразить часы на подзадачу"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg></span></div>
+                    <div class="at-e"><span class="st y">учт.</span><div class="d">Маппинг номенклатуры и складов<small>Анна Воронцова · 08.09</small></div><span class="hrs num">3,5 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+                    <div class="at-e"><span class="st n">не учт.</span><div class="d">Переделка после смены справочника<small>Илья Петренко · 09.09</small></div><span class="hrs num">1,5 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+                  </div>
+                  <div class="at-task">
+                    <div class="at-trow"><span class="caret open"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><div class="t">Выгрузка остатков по расписанию<small>#24819</small></div><div class="h"><b class="num">6,5 ч</b> учт.<div class="nu num">0 ч не учт.</div></div><span class="icb acc" role="button" aria-label="Отразить часы на подзадачу"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg></span></div>
+                    <div class="at-e"><span class="st y">учт.</span><div class="d">Обработка ошибок обмена<small>Илья Петренко · 11.09</small></div><span class="hrs num">2,5 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+                    <div class="at-e"><span class="st y">учт.</span><div class="d">Регламентное задание, логирование<small>Илья Петренко · 10.09</small></div><span class="hrs num">4 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+                  </div>
+                  <div class="at-task">
+                    <div class="at-trow"><span class="caret"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><div class="t">Тестирование на копии базы<small>#24820 · 1 запись</small></div><div class="h"><b class="num">0 ч</b> учт.<div class="nu num">1,5 ч не учт.</div></div><span class="icb acc" role="button" aria-label="Отразить часы на подзадачу"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg></span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="at-foot"><span class="m-btn sm">В отчёт Битрикс24</span><span class="m-btn sm"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Excel</span></div>
+
+            <div class="slider" id="a-slider" hidden>
+              <div class="sl-panel" role="dialog" aria-label="Отразить часы">
+                <div class="sl-h"><h4>Отразить часы</h4><span class="icb" role="button" tabindex="0" aria-label="Закрыть" data-toggle="a-slider"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></span></div>
+                <div class="sl-b">
+                  <div class="box">
+                    <label class="field">Задача<span class="inp">Выгрузка остатков по расписанию <span class="muted">#24819</span><svg class="ic" aria-hidden="true" style="margin-left:auto"><use href="#i-chev"/></svg></span></label>
+                    <label class="field">Сотрудник<span class="inp"><span class="av av2">ИП</span>Илья Петренко<svg class="ic" aria-hidden="true" style="margin-left:auto"><use href="#i-chev"/></svg></span></label>
+                    <div class="frow">
+                      <label class="field">Дата<span class="inp num">11.09.2026<svg class="ic" aria-hidden="true" style="margin-left:auto"><use href="#i-cal"/></svg></span><span class="qchips"><span class="chip on">Сегодня</span><span class="chip">Вчера</span></span></label>
+                      <label class="field">Часы<span class="inp num"><b>2,5</b></span><span class="qchips"><span class="chip">0,5</span><span class="chip">1</span><span class="chip">2</span><span class="chip">4</span></span></label>
+                    </div>
+                    <label class="field" style="grid-auto-flow:column;justify-content:space-between;align-items:center;color:var(--ink);font-size:13px">Учитывать в аналитике и счёте<span class="switch" aria-hidden="true"></span></label>
+                    <label class="field">Что сделано<span class="inp ta">Обработка ошибок обмена: повтор при таймауте, письмо ответственному</span></label>
+                    <p class="hint"><svg class="ic" aria-hidden="true"><use href="#i-lock"/></svg>Август закрыт 02.09 — даты до 01.09 недоступны.</p>
+                  </div>
+                  <div class="box"><b style="font-size:13px;display:flex;gap:6px;align-items:center"><svg class="ic" aria-hidden="true"><use href="#i-split"/></svg>Разделить запись</b><p class="hint" style="margin:0">Свёрнуто. Нужно редко — только при правке существующей записи.</p></div>
+                </div>
+                <div class="sl-f"><span class="m-btn pri">Отразить</span><span class="m-btn ghost">Отмена</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="note">Одна колонка вместо сетки <code>1fr 380px</code>. Форма списания открывается в слайдере портала (<code>BX24.openApplication</code>, в проекте уже есть лейаут <code>slider</code>), а не модалкой внутри фрейма: модалка во фрейме с автовысотой может оказаться за краем экрана. Поле «Стоимость часа» уходит из вкладки; сумму видят только руководители.</p>
+    </div>
+  </div>
+</section>
+
+<style>
+/* ===== Вариант B: Data-Dense Dashboard, Onest ===== */
+.B{--bg:#f4f6f8;--surface:#fff;--ink:#1c2430;--muted:#566170;--line:#e1e5ea;--line-soft:#eef1f4;--accent:#0062d6;--accent-soft:#e7f0fc;--ok:#0f7a6c;--ok-soft:#e0f3ef;--warn:#8a5b00;--warn-soft:#fff1d6;--bad:#b42318;--bad-soft:#fde8e6;--font:"Onest",var(--sys);--r-btn:8px}
+.b-shell{display:grid;grid-template-columns:212px minmax(0,1fr);min-height:760px}
+.b-side{background:#fff;border-right:1px solid var(--line);padding:12px 10px;display:flex;flex-direction:column;gap:2px;font-size:13.5px}
+.b-grp{font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--muted);padding:12px 10px 4px}
+.b-it{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;color:var(--ink);font-weight:500}
+.b-it .ic{color:var(--muted)}
+.b-it.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.b-it.on .ic{color:var(--accent)}
+.b-it .badge{margin-left:auto;height:20px;font-size:11px;padding:0 7px}
+.b-it.lk{color:var(--muted)}
+.b-it.lk .ic.l{margin-left:auto;color:#7a4f00}
+.b-promo{margin:8px 4px 0;border:1px dashed #e7c98a;background:#fffaf0;border-radius:10px;padding:10px;font-size:12px;color:#5c4200;display:grid;gap:6px}
+.b-side .sp{flex:1}
+.b-main{padding:16px;min-width:0}
+.b-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.b-top h2{margin:0;font-size:19px;font-weight:700;margin-right:auto}
+.B .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
+.B .seg span{padding:6px 11px;font-size:12.5px;font-weight:600;color:var(--muted);white-space:nowrap}
+.B .seg .on{background:var(--ink);color:#fff}
+.b-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}
+.w{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0;position:relative;overflow:hidden}
+.w h3{margin:0 0 10px;font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+.w h3 .m-btn{margin-left:auto}
+.s5{grid-column:span 5}.s7{grid-column:span 7}.s4{grid-column:span 4}.s12{grid-column:span 12}
+.wk{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:end;height:120px;position:relative;padding-top:6px}
+.wk .norm{position:absolute;left:0;right:0;bottom:calc(20px + 80px);border-top:1.5px dashed #9aa5b1}
+.wk .norm span{position:absolute;right:0;top:-16px;font-size:11px;color:var(--muted);background:#fff;padding-left:4px}
+.wk .col{display:grid;gap:4px;justify-items:center;font-size:11.5px;color:var(--muted)}
+.wk .b{width:100%;max-width:38px;border-radius:5px 5px 2px 2px;background:var(--ok);position:relative}
+.wk .b.part{background:repeating-linear-gradient(135deg,var(--ok) 0 6px,#3a9a8d 6px 12px)}
+.wk .v{font-weight:600;color:var(--ink);font-size:12px}
+.wk .today{color:var(--accent);font-weight:700}
+.w-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.rk{display:grid;gap:10px}
+.rk .r{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:12px;align-items:center;font-size:13px}
+.rk .r .pc{font-size:12px}
+.li{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line-soft);font-size:13px}
+.li:first-of-type{border-top:0}
+.li .t{flex:1;min-width:0}
+.li .t small{display:block;color:var(--muted);font-size:12px}
+.locked .blur{filter:blur(3px);opacity:.55;pointer-events:none;user-select:none}
+.locked .ov{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;text-align:center;gap:6px;padding:14px;background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.92))}
+.locked .ov .lk{width:36px;height:36px;border-radius:10px;background:#fff3dc;color:#7a4f00;display:grid;place-items:center}
+.locked .ov b{font-size:14px}
+.locked .ov p{margin:0;font-size:12.5px;color:var(--muted);max-width:30ch}
+.fbars{display:flex;align-items:end;gap:8px;height:110px}
+.fbars i{flex:1;border-radius:4px 4px 0 0;background:#9cc1ee}
+.fbars i:nth-child(odd){background:#e9a79e}
+.banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#fffaf0;border:1px dashed #e7c98a;border-radius:12px;padding:10px 14px;font-size:13px;color:#4d3800}
+.banner .lk{width:32px;height:32px;border-radius:8px;background:#fff3dc;display:grid;place-items:center;color:#7a4f00}
+.banner .grow{flex:1;min-width:220px}
+/* B — доска */
+.b-filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.B .chip{height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--line);display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;background:#fff;white-space:nowrap}
+.B .chip b{font-weight:600}
+.b-sum{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-bottom:12px}
+.b-sum b{color:var(--ink);font-size:14px}
+.kb{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(196px,1fr);gap:10px;overflow-x:auto;padding-bottom:6px}
+.kc{background:#eceff3;border-radius:12px;padding:8px;display:grid;gap:8px;align-content:start}
+.kc-h{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:2px 4px}
+.kc-h .n{margin-left:auto;color:var(--muted);font-weight:500}
+.kc-h i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.kcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px;display:grid;gap:7px;font-size:12.5px}
+.kcard .pn{font-size:13px}
+.kcard .row{display:flex;align-items:center;gap:6px;justify-content:space-between}
+.kcard .row .bar{flex:1}
+/* B — вкладка задачи */
+.bt-h{padding:12px 14px 10px;background:#fff;border-bottom:1px solid var(--line);display:grid;gap:8px}
+.bt-h .ttl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bt-h h4{margin:0;font-size:15px;margin-right:auto}
+.bt-est{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted)}
+.bt-est .bar{flex:1;height:8px}
+.qe{margin:12px 14px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:10px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.qe-r{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.qe .inp{height:34px}
+.qe .grow{flex:1 1 220px}
+.hchip{height:34px;min-width:40px;padding:0 10px;border-radius:8px;border:1px solid var(--line);display:inline-grid;place-items:center;font-weight:600;font-size:13px;background:#fff}
+.hchip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.tgl{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:500}
+.bt-list{padding:0 14px 70px}
+.bt-lh{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0 8px}
+.bt-lh b{font-size:13.5px}
+.bt-g{font-size:11.5px;font-weight:600;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;padding:10px 2px 4px;display:flex;gap:8px;justify-content:space-between}
+.bt-e{display:flex;align-items:flex-start;gap:8px;padding:9px 10px;background:#fff;border:1px solid var(--line);border-radius:10px;margin-bottom:6px;font-size:13px}
+.bt-e .d{flex:1;min-width:0}
+.bt-e .d small{display:block;color:var(--muted);font-size:12px}
+.bt-e .hrs{font-weight:700;white-space:nowrap}
+.bt-e.ed{display:grid;gap:10px;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.ed-g{display:grid;grid-template-columns:1.2fr 1fr .7fr;gap:8px}
+.ed-a{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ed-a .sp{flex:1}
+.toast{position:absolute;left:14px;right:14px;bottom:12px;background:#1c2430;color:#fff;border-radius:10px;padding:10px 12px;font-size:13px;display:flex;gap:10px;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.toast .ic{color:#6fd3c4}
+.toast a{color:#9cc8ff;margin-left:auto;font-weight:600;text-decoration:none;white-space:nowrap}
+@container (max-width:520px){
+  .ed-g{grid-template-columns:1fr 1fr}
+  .ed-g .dsc{grid-column:1/3}
+  .qe .grow{flex-basis:100%}
+}
+</style>
+
+<section class="variant" id="var-b" aria-labelledby="vb-t">
+  <div class="v-head">
+    <h2 class="v-title" id="vb-t">B. Рабочее место по ролям <span class="boldness">смелость 2/4 · дашборд</span></h2>
+    <p class="v-idea">Главная сама показывает, что делать сегодня: сотруднику — его неделю, руководителю — проекты под риском, бухгалтеру — готовность месяца к закрытию.</p>
+    <div class="meta">
+      <span><b>Стиль:</b> Data-Dense Dashboard (из базы скила: KPI, плотные таблицы, отступы 8–12 px)</span>
+      <span><b>Палитра:</b> синий Б24, затемнённый до AA, + данные <span class="sw"><i style="background:#0062d6"></i><i style="background:#0f7a6c"></i><i style="background:#8a5b00"></i><i style="background:#b42318"></i><i style="background:#f4f6f8"></i><i style="background:#1c2430"></i></span></span>
+      <span><b>Шрифт:</b> Onest (кириллица, подтверждено по базе)</span>
+    </div>
+  </div>
+
+  <div class="v-grid">
+    <div class="col-full">
+      <div>
+        <p class="cap">Полная версия · главная, роль «Руководитель проекта»</p>
+        <div class="fit"><div class="portal">
+          <div class="p-top"><div class="p-logo">Битрикс<span>24</span></div><div class="p-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Искать сотрудника, документ, прочее…</div><div class="p-sp"></div><div class="p-ava">АВ</div></div>
+          <div class="p-rail"><span><svg class="ic lg" aria-hidden="true"><use href="#i-home"/></svg></span><span class="on"><svg class="ic lg" aria-hidden="true"><use href="#i-clock"/></svg></span></div>
+          <div class="p-main">
+            <div class="p-apptitle">Учёт трудозатрат</div>
+            <div class="app B"><div class="b-shell">
+              <nav class="b-side" aria-label="Разделы приложения">
+                <div class="b-grp">РАБОТА</div>
+                <div class="b-it on"><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg>Рабочее место</div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-clock"/></svg>Моё время</div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-board"/></svg>Проекты</div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg>Отчёты<span class="badge b-mute">7</span></div>
+                <div class="b-grp">КОНТРОЛЬ</div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Закрытие месяца<span class="badge b-warn">2</span></div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg>Проверка данных<span class="badge b-bad">12</span></div>
+                <div class="b-grp">ФИНАНСЫ</div>
+                <div class="b-it lk"><svg class="ic" aria-hidden="true"><use href="#i-wallet"/></svg>БДДС по проектам<svg class="ic l" aria-hidden="true"><use href="#i-lock"/></svg></div>
+                <div class="b-it lk"><svg class="ic" aria-hidden="true"><use href="#i-doc"/></svg>Счёт и акт<svg class="ic l" aria-hidden="true"><use href="#i-lock"/></svg></div>
+                <div class="b-promo"><b>Финансы по подписке</b>БДДС и документы по часам. 14 дней бесплатно.<span class="m-btn sm">Подробнее</span></div>
+                <div class="sp"></div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg>Настройки</div>
+              </nav>
+              <div class="b-main">
+                <div class="b-top"><h2>Рабочее место</h2><div class="seg" role="group" aria-label="Роль"><span>Сотрудник</span><span class="on">Руководитель</span><span>Бухгалтер</span></div><span class="m-btn sm"><svg class="ic" aria-hidden="true"><use href="#i-cal"/></svg>7–11 сентября</span></div>
+                <div class="b-grid">
+                  <div class="w s5">
+                    <h3>Моя неделя <span class="badge b-info">33 из 40 ч</span></h3>
+                    <div class="wk">
+                      <div class="norm"><span>норма 8 ч</span></div>
+                      <div class="col"><span class="v num">8</span><span class="b" style="height:80px"></span>Пн</div>
+                      <div class="col"><span class="v num">7,5</span><span class="b" style="height:75px"></span>Вт</div>
+                      <div class="col"><span class="v num">8,5</span><span class="b" style="height:85px"></span>Ср</div>
+                      <div class="col"><span class="v num">6</span><span class="b" style="height:60px"></span>Чт</div>
+                      <div class="col"><span class="v num">3</span><span class="b part" style="height:30px"></span><span class="today">Пт</span></div>
+                    </div>
+                    <div class="w-foot"><span>Сегодня отражено 3 ч. Четверг — на 2 ч меньше нормы.</span><span class="m-btn sm pri"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Отразить</span></div>
+                  </div>
+                  <div class="w s7">
+                    <h3>Проекты под риском <span class="badge b-bad">3</span><span class="m-btn sm ghost">Доска <svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span></h3>
+                    <div class="rk">
+                      <div class="r"><div><div class="pn">Портал поставщиков</div><div class="pc">ТК «Ладожский берег» · Илья Петренко</div></div><div><div class="bar"><i class="b" style="width:100%"></i></div><div class="pc num" style="margin-top:3px">188 из 160 ч</div></div><span class="badge b-bad">перерасход 17%</span></div>
+                      <div class="r"><div><div class="pn">Электронный документооборот</div><div class="pc">АО «Светлый путь» · Анна Воронцова</div></div><div><div class="bar"><i class="w" style="width:53%"></i></div><div class="pc num" style="margin-top:3px">64 из 120 ч, срок прошёл на 80%</div></div><span class="badge b-warn">отстаёт</span></div>
+                      <div class="r"><div><div class="pn">Бизнес-процессы закупок</div><div class="pc">ООО «Горный ручей» · Олег Лазарев</div></div><div><div class="bar"><i class="w" style="width:80%"></i></div><div class="pc num" style="margin-top:3px">96 из 120 ч</div></div><span class="badge b-warn">нет списаний 34 дня</span></div>
+                    </div>
+                  </div>
+                  <div class="w s4">
+                    <h3>Задачи команды без списаний 3+ дня</h3>
+                    <div class="li"><div class="t">Импорт клиентской базы<small>Внедрение CRM · Олег Лазарев</small></div><span class="badge b-mute">5 дн</span></div>
+                    <div class="li"><div class="t">Согласование маршрута документов<small>ЭДО · Светлана Ким</small></div><span class="badge b-mute">4 дн</span></div>
+                    <div class="li"><div class="t">Отчёт по остаткам для склада<small>Интеграция склада · Дмитрий Каширин</small></div><span class="badge b-mute">3 дн</span></div>
+                    <div class="w-foot"><span class="m-btn sm">Напомнить в чате</span></div>
+                  </div>
+                  <div class="w s4">
+                    <h3>Контроль</h3>
+                    <div class="li"><svg class="ic" aria-hidden="true" style="color:var(--ok)"><use href="#i-shield"/></svg><div class="t">Август закрыт 02.09<small>после закрытия пришло 2 записи на 3,5 ч</small></div><span class="m-btn sm ghost">Разобрать</span></div>
+                    <div class="li"><svg class="ic" aria-hidden="true" style="color:var(--bad)"><use href="#i-alert"/></svg><div class="t">12 записей без ИНН клиента<small>2 проекта без компании в карточке</small></div><span class="m-btn sm ghost">Исправить</span></div>
+                    <div class="li"><svg class="ic" aria-hidden="true" style="color:var(--muted)"><use href="#i-cal"/></svg><div class="t">Сентябрь открыт<small>закрытие после 1 октября</small></div></div>
+                  </div>
+                  <div class="w s4 locked">
+                    <h3>БДДС по проектам</h3>
+                    <div class="blur" aria-hidden="true"><div class="fbars"><i style="height:60%"></i><i style="height:40%"></i><i style="height:80%"></i><i style="height:55%"></i><i style="height:70%"></i><i style="height:35%"></i><i style="height:90%"></i><i style="height:50%"></i></div></div>
+                    <div class="ov"><span class="lk"><svg class="ic lg" aria-hidden="true"><use href="#i-lock"/></svg></span><b>Доступно по подписке</b><p>Поступления и выплаты по каждому проекту и кассовые разрывы на 3 месяца вперёд.</p><span class="m-btn sm pri">Попробовать 14 дней</span></div>
+                  </div>
+                  <div class="s12 banner"><span class="lk"><svg class="ic lg" aria-hidden="true"><use href="#i-doc"/></svg></span><div class="grow"><b>Счёт и акт по фильтру.</b> За август учтено 5 проектов на 1 482 600 ₽. С подпиской документы формируются из этих часов в пару кликов.</div><span class="badge b-sub"><svg class="ic" style="width:12px;height:12px" aria-hidden="true"><use href="#i-lock"/></svg>по подписке</span><span class="m-btn sm">Подробнее</span></div>
+                </div>
+              </div>
+            </div></div>
+          </div>
+        </div></div>
+        <p class="note">Виджеты зависят от роли: сотрудник видит свою неделю, задачи без списаний и опоздавшие записи; бухгалтер — закрытие месяца, ИНН и выставление. Закрытые платные функции показывают пользу на данных портала, а не пустой замок.</p>
+      </div>
+
+      <div>
+        <p class="cap">Полная версия · доска проектов</p>
+        <div class="fit"><div class="portal">
+          <div class="p-top"><div class="p-logo">Битрикс<span>24</span></div><div class="p-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Искать сотрудника, документ, прочее…</div><div class="p-sp"></div><div class="p-ava">АВ</div></div>
+          <div class="p-rail"><span><svg class="ic lg" aria-hidden="true"><use href="#i-home"/></svg></span><span class="on"><svg class="ic lg" aria-hidden="true"><use href="#i-clock"/></svg></span></div>
+          <div class="p-main">
+            <div class="p-apptitle">Учёт трудозатрат</div>
+            <div class="app B"><div class="b-shell">
+              <nav class="b-side" aria-label="Разделы приложения">
+                <div class="b-grp">РАБОТА</div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg>Рабочее место</div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-clock"/></svg>Моё время</div>
+                <div class="b-it on"><svg class="ic" aria-hidden="true"><use href="#i-board"/></svg>Проекты</div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg>Отчёты<span class="badge b-mute">7</span></div>
+                <div class="b-grp">КОНТРОЛЬ</div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Закрытие месяца<span class="badge b-warn">2</span></div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg>Проверка данных<span class="badge b-bad">12</span></div>
+                <div class="b-grp">ФИНАНСЫ</div>
+                <div class="b-it lk"><svg class="ic" aria-hidden="true"><use href="#i-wallet"/></svg>БДДС по проектам<svg class="ic l" aria-hidden="true"><use href="#i-lock"/></svg></div>
+                <div class="b-it lk"><svg class="ic" aria-hidden="true"><use href="#i-doc"/></svg>Счёт и акт<svg class="ic l" aria-hidden="true"><use href="#i-lock"/></svg></div>
+                <div class="sp"></div>
+                <div class="b-it"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg>Настройки</div>
+              </nav>
+              <div class="b-main">
+                <div class="b-top"><h2>Проекты</h2><div class="seg" role="group" aria-label="Вид"><span class="on">Канбан</span><span>Таблица</span><span>Хронология</span><span>Архив</span></div><span class="m-btn sm icon" aria-label="Синхронизировать"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg></span><span class="m-btn sm pri"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Проект</span></div>
+                <div class="b-filters"><div class="inp" style="width:220px;height:28px"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><span class="muted" style="font-size:12.5px">Проект, компания, ИНН</span></div><span class="chip">Куратор: <b>все</b><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></span><span class="chip">Тип: <b>все</b><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></span><span class="chip">Наше юрлицо: <b>все</b><svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></span></div>
+                <div class="b-sum"><span><b class="num">14</b> активных</span><span><b class="num">4</b> поддержка</span><span><b class="num" style="color:var(--bad)">1</b> перерасход</span><span><b class="num">2</b> без списаний</span><span><b class="num">23</b> в архиве</span></div>
+                <div class="kb">
+                  <div class="kc"><div class="kc-h"><i style="background:#8a94a3"></i>В просчёте<span class="n">2</span></div>
+                    <div class="kcard"><div><div class="pn">Интеграция склада</div><div class="pc">ООО «Кедр-Логистик»</div></div><div class="row"><div class="bar"><i style="width:11%"></i></div><span class="num">27/240 ч</span></div><div class="row"><span class="who"><span class="av av4">ДК</span>Каширин</span><span class="pc">сегодня</span></div></div>
+                    <div class="kcard"><div><div class="pn">Аудит портала</div><div class="pc">ООО «Тихая гавань»</div></div><div class="row"><div class="bar"><i style="width:25%"></i></div><span class="num">4/16 ч</span></div><div class="row"><span class="who"><span class="av av3">МС</span>Соколова</span><span class="pc">вчера</span></div></div>
+                  </div>
+                  <div class="kc"><div class="kc-h"><i style="background:var(--ok)"></i>В работе<span class="n">3</span></div>
+                    <div class="kcard"><div><div class="pn">Внедрение CRM</div><div class="pc">ООО «Северный ветер»</div></div><div class="row"><div class="bar"><i style="width:78%"></i></div><span class="num">312/400 ч</span></div><div class="row"><span class="who"><span class="av av1">АВ</span>Воронцова</span><span class="pc">сегодня</span></div></div>
+                    <div class="kcard" style="border-color:#f1b8b0"><div><div class="pn">Портал поставщиков</div><div class="pc">ТК «Ладожский берег»</div></div><div class="row"><div class="bar"><i class="b" style="width:100%"></i></div><span class="num" style="color:var(--bad)">188/160 ч</span></div><div class="row"><span class="who"><span class="av av2">ИП</span>Петренко</span><span class="badge b-bad">перерасход</span></div></div>
+                    <div class="kcard"><div><div class="pn">Электронный документооборот</div><div class="pc">АО «Светлый путь»</div></div><div class="row"><div class="bar"><i class="w" style="width:53%"></i></div><span class="num">64/120 ч</span></div><div class="row"><span class="who"><span class="av av1">АВ</span>Воронцова</span><span class="pc">вчера</span></div></div>
+                  </div>
+                  <div class="kc"><div class="kc-h"><i style="background:var(--accent)"></i>Поддержка<span class="n">2</span></div>
+                    <div class="kcard"><div><div class="pn">Поддержка 1С и Б24</div><div class="pc">АО «Полярный круг»</div></div><div class="row"><span class="pc">сентябрь</span><span class="num"><b>46 ч</b> · +128 800 ₽</span></div><div class="row"><span class="who"><span class="av av3">МС</span>Соколова</span><span class="pc">сегодня</span></div></div>
+                    <div class="kcard"><div><div class="pn">Сопровождение портала</div><div class="pc">ООО «Верный курс»</div></div><div class="row"><span class="pc">сентябрь</span><span class="num"><b>18 ч</b> · +50 400 ₽</span></div><div class="row"><span class="who"><span class="av av6">СК</span>Ким</span><span class="pc">3 дня</span></div></div>
+                  </div>
+                  <div class="kc"><div class="kc-h"><i style="background:var(--warn)"></i>Нет списаний 1 мес<span class="n">1</span></div>
+                    <div class="kcard"><div><div class="pn">Бизнес-процессы закупок</div><div class="pc">ООО «Горный ручей»</div></div><div class="row"><div class="bar"><i class="w" style="width:80%"></i></div><span class="num">96/120 ч</span></div><div class="row"><span class="who"><span class="av av5">ОЛ</span>Лазарев</span><span class="badge b-warn">34 дня</span></div></div>
+                  </div>
+                  <div class="kc"><div class="kc-h"><i style="background:var(--bad)"></i>Нет списаний 3 мес<span class="n">1</span></div>
+                    <div class="kcard"><div><div class="pn">Приложение курьера</div><div class="pc">ООО «Быстрый след»</div></div><div class="row"><div class="bar"><i class="w" style="width:13%"></i></div><span class="num">40/300 ч</span></div><div class="row"><span class="who"><span class="av av6">СК</span>Ким</span><span class="badge b-bad">97 дней</span></div></div>
+                  </div>
+                </div>
+              </div>
+            </div></div>
+          </div>
+        </div></div>
+        <p class="note">Карточка на доске ужата с 12 полей до 5: название, компания, освоение, куратор, давность списания. Ставка, юрлицо и сроки — в карточке-слайдере по клику. Для 30+ проектов есть вид «Таблица».</p>
+      </div>
+    </div>
+
+    <div class="tf-col">
+      <p class="cap">Вкладка задачи · быстрая строка и правка в списке</p>
+      <div class="tf-controls" role="group" aria-label="Ширина фрейма варианта B">Ширина: <button class="x-btn" data-w="660" aria-pressed="true">660</button><button class="x-btn" data-w="480" aria-pressed="false">480</button><button class="x-btn" data-w="400" aria-pressed="false">400</button></div>
+      <div class="tf">
+        <div class="tcard">
+          <div class="tcard-h"><div class="crumb">Задача #24817 · проект «Интеграция склада»</div><h3>Настроить обмен остатками с 1С</h3></div>
+          <div class="tcard-tabs"><span>Описание</span><span>Чек-лист</span><span class="on">Учёт трудозатрат</span><span>Файлы</span></div>
+          <div class="tframe B">
+            <div class="bt-h">
+              <div class="ttl"><h4>Трудозатраты</h4><span class="badge b-ok num">учтено 12 ч</span><span class="badge b-mute num">не учтено 3 ч</span></div>
+              <div class="bt-est"><span class="num">Оценка 16 ч</span><div class="bar"><i class="w" style="width:94%"></i></div><span class="num"><b style="color:var(--ink)">15 ч</b> · 94%</span></div>
+            </div>
+            <div class="qe" aria-label="Быстрое списание">
+              <div class="qe-r"><div class="inp grow">Выгрузка остатков по расписанию<svg class="ic" aria-hidden="true" style="margin-left:auto"><use href="#i-chev"/></svg></div><div class="seg"><span class="on">Сегодня</span><span>Вчера</span><span><svg class="ic" aria-hidden="true" style="vertical-align:-3px"><use href="#i-cal"/></svg></span></div></div>
+              <div class="qe-r"><span class="hchip">0,5</span><span class="hchip">1</span><span class="hchip on">2</span><span class="hchip">4</span><div class="inp num" style="width:64px;justify-content:center">2 ч</div><label class="tgl"><span class="switch" aria-hidden="true"></span>учитывать</label></div>
+              <div class="qe-r"><div class="inp grow muted">Что сделано — обязательно</div><span class="m-btn pri" style="height:34px">Отразить</span></div>
+            </div>
+            <div class="bt-list">
+              <div class="bt-lh"><b>Записи · 6</b><div class="seg"><span class="on">Все</span><span>Мои</span></div></div>
+              <div class="bt-g"><span>Выгрузка остатков по расписанию</span><span class="num">6,5 ч</span></div>
+              <div class="bt-e"><span class="st y">учт.</span><div class="d">Обработка ошибок обмена<small>Илья Петренко · сегодня</small></div><span class="hrs num">2,5 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+              <div class="bt-e"><span class="st y">учт.</span><div class="d">Регламентное задание, логирование<small>Илья Петренко · вчера</small></div><span class="hrs num">4 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+              <div class="bt-g"><span>Схема обмена и маппинг полей</span><span class="num">5 ч</span></div>
+              <div class="bt-e ed">
+                <div class="ed-g"><label class="field">Сотрудник<span class="inp">Илья Петренко</span></label><label class="field">Дата<span class="inp num">09.09.2026</span></label><label class="field">Часы<span class="inp num">1,5</span></label><label class="field dsc" style="grid-column:1/-1">Что сделано<span class="inp">Переделка после смены справочника</span></label></div>
+                <div class="ed-a"><label class="tgl"><span class="switch off" aria-hidden="true"></span>учитывать</label><span class="sp"></span><span class="m-btn sm ghost"><svg class="ic" aria-hidden="true"><use href="#i-split"/></svg>Разделить</span><span class="m-btn sm ghost">Отмена</span><span class="m-btn sm pri">Сохранить</span></div>
+              </div>
+              <div class="bt-e"><span class="st y">учт.</span><div class="d">Маппинг номенклатуры и складов<small>Анна Воронцова · 08.09</small></div><span class="hrs num">3,5 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+              <div class="bt-g"><span>Основная задача и тесты</span><span class="num">3,5 ч</span></div>
+              <div class="bt-e"><span class="st y">учт.</span><div class="d">Созвон с клиентом, уточнение сценариев<small>Дмитрий Каширин · вчера</small></div><span class="hrs num">2 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+              <div class="bt-e"><span class="st n">не учт.</span><div class="d">Подготовка копии базы<small>Светлана Ким · 07.09 · тесты</small></div><span class="hrs num">1,5 ч</span><span class="icb" role="button" aria-label="Действия с записью"><svg class="ic" aria-hidden="true"><use href="#i-dots"/></svg></span></div>
+            </div>
+            <div class="toast" role="status"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span>Отражено 2,5 ч на «Выгрузка остатков…»</span><a href="#var-b">Отменить</a></div>
+          </div>
+        </div>
+      </div>
+      <p class="note">Частый сценарий — «списать два часа на эту задачу» — проходит без формы: выбрать часы, написать, что сделано, нажать «Отразить». Правка раскрывается прямо в списке, поэтому модалки во фрейме с автовысотой не нужны.</p>
+    </div>
+  </div>
+</section>
+
+<style>
+/* ===== Вариант C: Bento Box Grid, Manrope ===== */
+.C{--bg:#f3f5f9;--surface:#fff;--ink:#18202b;--muted:#566070;--line:#e3e7ee;--line-soft:#eef1f5;--accent:#0062d6;--accent-soft:#e8f0fd;--ok:#0f7a55;--ok-soft:#e2f4ec;--warn:#8a5b00;--warn-soft:#fff1d6;--bad:#b42318;--bad-soft:#fde8e6;--font:"Manrope",var(--sys);--r-btn:10px}
+.c-top{display:flex;align-items:center;gap:10px;padding:12px 16px;flex-wrap:wrap}
+.c-nav{display:flex;gap:4px;background:#e7ebf1;border-radius:12px;padding:4px}
+.c-nav span{display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:9px;font-weight:600;font-size:13px;color:var(--muted);white-space:nowrap}
+.c-nav .on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.c-nav .badge{height:18px;font-size:11px;padding:0 6px}
+.c-top .r{margin-left:auto;display:flex;gap:6px}
+.bento{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-auto-rows:minmax(104px,auto);gap:12px;padding:4px 16px 16px}
+.tile{background:#fff;border-radius:16px;padding:14px 16px;border:1px solid var(--line);min-width:0;position:relative;overflow:hidden;display:flex;flex-direction:column;gap:8px}
+.tile h3{margin:0;font-size:13px;font-weight:700;color:var(--muted);display:flex;align-items:center;gap:8px;letter-spacing:.01em}
+.tile h3 .m-btn{margin-left:auto}
+.tile .big{font-size:30px;font-weight:800;line-height:1.1;letter-spacing:-.02em}
+.c7{grid-column:span 7}.c5{grid-column:span 5}.c4{grid-column:span 4}.c8{grid-column:span 8}.c12{grid-column:span 12}.c6{grid-column:span 6}
+.r2{grid-row:span 2}
+.ring{width:64px;height:64px;flex:none}
+.ring circle{fill:none;stroke-width:3.6}
+.ring .tr{stroke:#e6eaf0}
+.ring .vl{stroke:var(--ok);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%}
+.ring text{font:800 8.5px var(--font);fill:var(--ink);text-anchor:middle;dominant-baseline:central}
+.mp{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;flex:1}
+.mpc{border:1px solid var(--line-soft);background:#f8fafc;border-radius:12px;padding:10px;display:grid;gap:6px;align-content:start}
+.mpc .pn{font-size:13px}
+.mpc .row{display:flex;gap:8px;align-items:center}
+.mpc .row>div{min-width:0}
+.mpc .ring{width:50px;height:50px}
+.mpc .pn{hyphens:auto;overflow-wrap:anywhere}
+.rep{display:grid;gap:2px}
+.rep span{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:8px;font-size:13px;font-weight:600}
+.rep span .ic{color:var(--accent)}
+.tile.lockt{background:linear-gradient(135deg,#fffaf0,#fff);border:1px dashed #e7c98a}
+.tile.lockt .lk{width:34px;height:34px;border-radius:10px;background:#fff3dc;color:#7a4f00;display:grid;place-items:center}
+.tile.lockt p{margin:0;font-size:12.5px;color:var(--muted)}
+.leak{display:grid;gap:6px;font-size:12.5px}
+.leak div{display:flex;justify-content:space-between;gap:8px}
+.c-ph{display:flex;align-items:flex-start;gap:14px;padding:4px 16px 12px;flex-wrap:wrap}
+.c-ph .crumb{font-size:12px;color:var(--muted)}
+.c-ph h2{margin:2px 0 4px;font-size:22px;font-weight:800;letter-spacing:-.01em}
+.c-ph .acts{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.c-tabs{display:flex;gap:18px;padding:0 16px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.c-tabs span{padding:8px 0;font-weight:700;font-size:13px;color:var(--muted);border-bottom:2px solid transparent;display:flex;gap:6px;align-items:center}
+.c-tabs .on{color:var(--ink);border-color:var(--accent)}
+.c-tabs .lkd{color:#8c6a2a}
+.wbars{display:flex;align-items:end;gap:8px;flex:1;min-height:130px;padding-top:8px}
+.wbars div{flex:1;display:grid;justify-items:center;gap:4px;font-size:11px;color:var(--muted)}
+.wbars i{display:block;width:100%;max-width:34px;border-radius:6px 6px 2px 2px;background:#9ec2ef}
+.wbars .cur i{background:var(--accent)}
+.plist{display:grid;gap:7px;font-size:13px}
+.plist .row{display:grid;grid-template-columns:minmax(0,1fr) 70px 42px;gap:8px;align-items:center}
+.plist .row .nm{display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.money{display:grid;gap:6px;font-size:13px}
+.money .ln{display:flex;justify-content:space-between;gap:8px}
+.money .ln b{font-size:15px}
+/* C — вкладка задачи */
+.ct{padding:12px;display:grid;gap:10px;padding-bottom:20px}
+.ct-sum{background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.ct-sum .txt{flex:1;min-width:180px;display:grid;gap:4px}
+.ct-sum .txt b{font-size:18px;font-weight:800}
+.ct-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px 14px;display:grid;gap:8px}
+.ct-card.sub{margin-left:14px}
+.ct-card .hd{display:flex;gap:8px;align-items:flex-start}
+.ct-card .hd .t{flex:1;min-width:0;font-weight:700;font-size:13.5px}
+.ct-card .hd .t small{display:block;font-weight:500;color:var(--muted);font-size:12px}
+.ct-card .hd .h{font-weight:800;white-space:nowrap}
+.stack{display:flex;height:8px;border-radius:4px;overflow:hidden;background:#e6eaf0}
+.stack i{display:block;height:100%}
+.stack .y{background:var(--ok)}.stack .n{background:#c9a060}
+.qa{display:flex;gap:6px;flex-wrap:wrap}
+.qa .m-btn{height:30px;border-radius:15px;padding:0 12px}
+.ent{display:grid;gap:4px;font-size:12.5px;color:var(--muted)}
+.ent div{display:flex;gap:8px;align-items:baseline}
+.ent div span:first-child{flex:1;min-width:0;color:var(--ink)}
+.conf{border:1px solid var(--accent);background:var(--accent-soft);border-radius:12px;padding:10px;display:grid;gap:8px;font-size:12.5px}
+.conf .r{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.conf .inp{flex:1 1 180px;height:32px}
+@container (max-width:520px){ .ct-card.sub{margin-left:0} }
+</style>
+
+<section class="variant" id="var-c" aria-labelledby="vc-t">
+  <div class="v-head">
+    <h2 class="v-title" id="vc-t">C. Проект в центре <span class="boldness">смелость 3/4 · бенто-карточки</span></h2>
+    <p class="v-idea">Всё строится вокруг проекта: у каждого есть «карточка 360» с часами, командой, задачами, деньгами, а позже — с БДДС и актами.</p>
+    <div class="meta">
+      <span><b>Стиль:</b> Bento Box Grid (из базы скила: модульные плитки разного размера, радиус 16 px)</span>
+      <span><b>Палитра:</b> <span class="sw"><i style="background:#0062d6"></i><i style="background:#0f7a55"></i><i style="background:#c9a060"></i><i style="background:#b42318"></i><i style="background:#f3f5f9"></i><i style="background:#18202b"></i></span></span>
+      <span><b>Шрифт:</b> Manrope (кириллица, подтверждено по базе)</span>
+    </div>
+  </div>
+
+  <div class="v-grid">
+    <div class="col-full">
+      <div>
+        <p class="cap">Полная версия · обзор</p>
+        <div class="fit"><div class="portal">
+          <div class="p-top"><div class="p-logo">Битрикс<span>24</span></div><div class="p-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Искать сотрудника, документ, прочее…</div><div class="p-sp"></div><div class="p-ava">АВ</div></div>
+          <div class="p-rail"><span><svg class="ic lg" aria-hidden="true"><use href="#i-home"/></svg></span><span class="on"><svg class="ic lg" aria-hidden="true"><use href="#i-clock"/></svg></span></div>
+          <div class="p-main">
+            <div class="p-apptitle">Учёт трудозатрат</div>
+            <div class="app C">
+              <div class="c-top">
+                <nav class="c-nav" aria-label="Разделы приложения"><span class="on"><svg class="ic" aria-hidden="true"><use href="#i-grid"/></svg>Обзор</span><span><svg class="ic" aria-hidden="true"><use href="#i-folder"/></svg>Проекты</span><span><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg>Отчёты</span><span><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Контроль<span class="badge b-warn">2</span></span><span><svg class="ic" aria-hidden="true"><use href="#i-wallet"/></svg>Финансы<svg class="ic" aria-hidden="true" style="color:#7a4f00;width:13px;height:13px"><use href="#i-lock"/></svg></span></nav>
+                <div class="r"><span class="m-btn icon" aria-label="Поиск"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg></span><span class="m-btn icon" aria-label="Настройки"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></span></div>
+              </div>
+              <div class="bento">
+                <div class="tile c7 r2">
+                  <h3>Мои проекты<span class="m-btn sm ghost">Все 14 <svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span></h3>
+                  <div class="mp">
+                    <div class="mpc"><div class="row"><svg class="ring" viewBox="0 0 36 36" role="img" aria-label="Освоено 78%"><circle class="tr" cx="18" cy="18" r="15.915"/><circle class="vl" cx="18" cy="18" r="15.915" stroke-dasharray="78 100"/><text x="18" y="18">78%</text></svg><div><div class="pn">Внедрение CRM</div><div class="pc">«Северный ветер»</div></div></div><div class="pc num">312 из 400 ч · сегодня</div><span class="badge b-ok" style="justify-self:start">В работе</span></div>
+                    <div class="mpc"><div class="row"><svg class="ring" viewBox="0 0 36 36" role="img" aria-label="Освоено 117%"><circle class="tr" cx="18" cy="18" r="15.915"/><circle class="vl" cx="18" cy="18" r="15.915" stroke-dasharray="100 100" style="stroke:var(--bad)"/><text x="18" y="18">117%</text></svg><div><div class="pn">Портал поставщиков</div><div class="pc">«Ладожский берег»</div></div></div><div class="pc num">188 из 160 ч · вчера</div><span class="badge b-bad" style="justify-self:start">Перерасход</span></div>
+                    <div class="mpc"><div class="row"><svg class="ring" viewBox="0 0 36 36" role="img" aria-label="Освоено 53%"><circle class="tr" cx="18" cy="18" r="15.915"/><circle class="vl" cx="18" cy="18" r="15.915" stroke-dasharray="53 100" style="stroke:var(--warn)"/><text x="18" y="18">53%</text></svg><div><div class="pn">Электронный документооборот</div><div class="pc">«Светлый путь»</div></div></div><div class="pc num">64 из 120 ч · вчера</div><span class="badge b-warn" style="justify-self:start">Отстаёт от срока</span></div>
+                  </div>
+                </div>
+                <div class="tile c5">
+                  <h3>Сегодня, пятница 11.09</h3>
+                  <div style="display:flex;align-items:end;gap:12px;flex-wrap:wrap"><span class="big num">3 <span style="font-size:16px;color:var(--muted)">из 8 ч</span></span><span class="m-btn pri" style="margin-left:auto"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Отразить часы</span></div>
+                  <div class="bar" style="height:8px"><i class="a" style="width:37%"></i></div>
+                </div>
+                <div class="tile c5">
+                  <h3>Закрытие месяца</h3>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="badge b-ok"><svg class="ic" style="width:13px;height:13px" aria-hidden="true"><use href="#i-check"/></svg>Август закрыт 02.09</span><span class="badge b-mute">Сентябрь открыт</span></div>
+                  <div class="pc">После закрытия пришло 2 записи на 3,5 ч — <b style="color:var(--accent)">разобрать</b></div>
+                </div>
+                <div class="tile c4 r2">
+                  <h3>Потери выручки, сентябрь</h3>
+                  <span class="big num" style="color:var(--bad)">151 ч</span>
+                  <div class="pc">не учтено ≈ 480 тыс. ₽ по средним ставкам</div>
+                  <div class="leak"><div><span>Внутренние задачи</span><b class="num">76 ч</b></div><div><span>Портал поставщиков</span><b class="num">44 ч</b></div><div><span>Внедрение CRM</span><b class="num">26 ч</b></div><div><span>Интеграция склада</span><b class="num">5 ч</b></div></div>
+                </div>
+                <div class="tile c4 r2">
+                  <h3>Отчёты</h3>
+                  <div class="rep"><span><svg class="ic" aria-hidden="true"><use href="#i-folder"/></svg>По проектам</span><span><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Проекты / задачи</span><span><svg class="ic" aria-hidden="true"><use href="#i-user"/></svg>По сотрудникам</span><span><svg class="ic" aria-hidden="true"><use href="#i-cal"/></svg>Ежедневная нагрузка</span><span><svg class="ic" aria-hidden="true"><use href="#i-alert"/></svg>Потери выручки</span><span><svg class="ic" aria-hidden="true"><use href="#i-clock"/></svg>Дисциплина внесения</span><span><svg class="ic" aria-hidden="true"><use href="#i-bolt"/></svg>Фокус и распыление</span></div>
+                </div>
+                <div class="tile c4 lockt">
+                  <div style="display:flex;gap:10px;align-items:center"><span class="lk"><svg class="ic lg" aria-hidden="true"><use href="#i-wallet"/></svg></span><div><b>БДДС по проектам</b><p>План и факт денег по проекту, разрывы.</p></div></div>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge b-sub"><svg class="ic" style="width:12px;height:12px" aria-hidden="true"><use href="#i-lock"/></svg>по подписке</span><span class="m-btn sm" style="margin-left:auto">Попробовать</span></div>
+                </div>
+                <div class="tile c4 lockt">
+                  <div style="display:flex;gap:10px;align-items:center"><span class="lk"><svg class="ic lg" aria-hidden="true"><use href="#i-doc"/></svg></span><div><b>Счёт и акт</b><p>Документы по учтённым часам за период.</p></div></div>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge b-sub"><svg class="ic" style="width:12px;height:12px" aria-hidden="true"><use href="#i-lock"/></svg>по подписке</span><span class="m-btn sm" style="margin-left:auto">Попробовать</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div></div>
+        <p class="note">Плитки разного веса: главное (мои проекты, сегодня) крупнее. Отчёты — компактный список в одной плитке. Платные функции — две равноправные плитки: видно, что это отдельный продукт, но он не мешает работать.</p>
+      </div>
+
+      <div>
+        <p class="cap">Полная версия · карточка проекта 360 (новый экран)</p>
+        <div class="fit"><div class="portal">
+          <div class="p-top"><div class="p-logo">Битрикс<span>24</span></div><div class="p-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Искать сотрудника, документ, прочее…</div><div class="p-sp"></div><div class="p-ava">АВ</div></div>
+          <div class="p-rail"><span><svg class="ic lg" aria-hidden="true"><use href="#i-home"/></svg></span><span class="on"><svg class="ic lg" aria-hidden="true"><use href="#i-clock"/></svg></span></div>
+          <div class="p-main">
+            <div class="p-apptitle">Учёт трудозатрат</div>
+            <div class="app C">
+              <div class="c-top"><nav class="c-nav" aria-label="Разделы приложения"><span><svg class="ic" aria-hidden="true"><use href="#i-grid"/></svg>Обзор</span><span class="on"><svg class="ic" aria-hidden="true"><use href="#i-folder"/></svg>Проекты</span><span><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg>Отчёты</span><span><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Контроль<span class="badge b-warn">2</span></span><span><svg class="ic" aria-hidden="true"><use href="#i-wallet"/></svg>Финансы<svg class="ic" aria-hidden="true" style="color:#7a4f00;width:13px;height:13px"><use href="#i-lock"/></svg></span></nav></div>
+              <div class="c-ph">
+                <div><div class="crumb">Проекты / ООО «Северный ветер»</div><h2>Внедрение CRM</h2><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span class="badge b-ok">В работе</span><span class="badge b-mute num">01.06 – 30.10.2026</span><span class="who pc"><span class="av av1">АВ</span>куратор Анна Воронцова</span></div></div>
+                <div class="acts"><span class="m-btn sm">Группа проекта</span><span class="m-btn sm">Отчёт</span><span class="m-btn sm icon" aria-label="Изменить карточку"><svg class="ic" aria-hidden="true"><use href="#i-edit"/></svg></span></div>
+              </div>
+              <div class="c-tabs" role="tablist"><span class="on">Обзор</span><span>Задачи · 18</span><span>Команда · 5</span><span class="lkd"><svg class="ic" aria-hidden="true" style="width:13px;height:13px"><use href="#i-lock"/></svg>Финансы</span><span class="lkd"><svg class="ic" aria-hidden="true" style="width:13px;height:13px"><use href="#i-lock"/></svg>Документы</span></div>
+              <div class="bento" style="padding-top:0">
+                <div class="tile c4 r2">
+                  <h3>Освоение бюджета</h3>
+                  <div style="display:flex;gap:14px;align-items:center"><svg class="ring" style="width:96px;height:96px" viewBox="0 0 36 36" role="img" aria-label="Освоено 78%"><circle class="tr" cx="18" cy="18" r="15.915"/><circle class="vl" cx="18" cy="18" r="15.915" stroke-dasharray="78 100"/><text x="18" y="18">78%</text></svg><div><div class="big num" style="font-size:24px">312 ч</div><div class="pc num">из 400 ч</div></div></div>
+                  <div class="pc">Прогноз к 30.10: <b style="color:var(--warn)" class="num">≈ 410 ч</b>, перерасход 2–3%</div>
+                </div>
+                <div class="tile c8 r2">
+                  <h3>Часы по неделям<span class="m-btn sm ghost">10 недель <svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></span></h3>
+                  <div class="wbars" role="img" aria-label="Часы по неделям: от 20 до 40 часов, всего 312">
+                    <div><span class="num">22</span><i style="height:55px"></i>6.07</div><div><span class="num">28</span><i style="height:70px"></i>13.07</div><div><span class="num">35</span><i style="height:88px"></i>20.07</div><div><span class="num">31</span><i style="height:78px"></i>27.07</div><div><span class="num">40</span><i style="height:100px"></i>3.08</div><div><span class="num">36</span><i style="height:90px"></i>10.08</div><div><span class="num">33</span><i style="height:83px"></i>17.08</div><div><span class="num">29</span><i style="height:73px"></i>24.08</div><div><span class="num">38</span><i style="height:95px"></i>31.08</div><div class="cur"><span class="num">20</span><i style="height:50px"></i>7.09</div>
+                  </div>
+                </div>
+                <div class="tile c4 r2">
+                  <h3>Команда</h3>
+                  <div class="plist">
+                    <div class="row"><span class="nm"><span class="av av1">АВ</span>Анна Воронцова</span><div class="bar"><i class="a" style="width:100%"></i></div><b class="num">96</b></div>
+                    <div class="row"><span class="nm"><span class="av av5">ОЛ</span>Олег Лазарев</span><div class="bar"><i class="a" style="width:92%"></i></div><b class="num">88</b></div>
+                    <div class="row"><span class="nm"><span class="av av2">ИП</span>Илья Петренко</span><div class="bar"><i class="a" style="width:67%"></i></div><b class="num">64</b></div>
+                    <div class="row"><span class="nm"><span class="av av3">МС</span>Марина Соколова</span><div class="bar"><i class="a" style="width:42%"></i></div><b class="num">40</b></div>
+                    <div class="row"><span class="nm"><span class="av av6">СК</span>Светлана Ким</span><div class="bar"><i class="a" style="width:25%"></i></div><b class="num">24</b></div>
+                  </div>
+                </div>
+                <div class="tile c4 r2">
+                  <h3>Задачи по часам</h3>
+                  <div class="plist">
+                    <div class="row"><span class="nm">Настройка воронок продаж</span><div class="bar"><i style="width:100%"></i></div><b class="num">118</b></div>
+                    <div class="row"><span class="nm">Импорт клиентской базы</span><div class="bar"><i style="width:69%"></i></div><b class="num">82</b></div>
+                    <div class="row"><span class="nm">Обучение пользователей</span><div class="bar"><i style="width:54%"></i></div><b class="num">64</b></div>
+                    <div class="row"><span class="nm">Интеграция телефонии</span><div class="bar"><i style="width:25%"></i></div><b class="num">30</b></div>
+                    <div class="row"><span class="nm">Прочее</span><div class="bar"><i style="width:15%"></i></div><b class="num">18</b></div>
+                  </div>
+                </div>
+                <div class="tile c4 r2">
+                  <h3>Деньги</h3>
+                  <div class="money">
+                    <div class="ln"><span class="muted">План</span><b class="num">1 400 000 ₽</b></div>
+                    <div class="ln"><span class="muted">Факт по часам</span><b class="num">1 092 000 ₽</b></div>
+                    <div class="ln"><span class="muted">Ставка</span><span class="num">3 500 ₽/ч</span></div>
+                  </div>
+                  <div style="margin-top:auto;border-top:1px dashed #e7c98a;padding-top:8px;display:grid;gap:6px">
+                    <span class="pc">Выставлено и оплачено, БДДС — в разделе «Финансы»</span>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap"><span class="badge b-sub"><svg class="ic" style="width:12px;height:12px" aria-hidden="true"><use href="#i-lock"/></svg>по подписке</span><span class="m-btn sm">Акт за август</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div></div>
+        <p class="note">Карточка проекта объединяет то, что сейчас разнесено по доске, отчёту по проекту и карточке-слайдеру. Её же можно отдать во вкладку группы проекта (<code>SONET_GROUP_DETAIL_TAB</code>).</p>
+      </div>
+    </div>
+
+    <div class="tf-col">
+      <p class="cap">Вкладка задачи · карточки задач с быстрыми кнопками</p>
+      <div class="tf-controls" role="group" aria-label="Ширина фрейма варианта C">Ширина: <button class="x-btn" data-w="660" aria-pressed="true">660</button><button class="x-btn" data-w="480" aria-pressed="false">480</button><button class="x-btn" data-w="400" aria-pressed="false">400</button></div>
+      <div class="tf">
+        <div class="tcard">
+          <div class="tcard-h"><div class="crumb">Задача #24817 · проект «Интеграция склада»</div><h3>Настроить обмен остатками с 1С</h3></div>
+          <div class="tcard-tabs"><span>Описание</span><span>Чек-лист</span><span class="on">Учёт трудозатрат</span><span>Файлы</span></div>
+          <div class="tframe C">
+            <div class="ct">
+              <div class="ct-sum">
+                <svg class="ring" viewBox="0 0 36 36" role="img" aria-label="94% оценки"><circle class="tr" cx="18" cy="18" r="15.915"/><circle class="vl" cx="18" cy="18" r="15.915" stroke-dasharray="94 100" style="stroke:var(--warn)"/><text x="18" y="18">94%</text></svg>
+                <div class="txt"><b class="num">15 из 16 ч</b><span class="pc">по задаче с подзадачами</span><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="badge b-ok num">учтено 12 ч</span><span class="badge b-warn num">не учтено 3 ч</span></div></div>
+              </div>
+              <div class="ct-card">
+                <div class="hd"><div class="t">Настроить обмен остатками с 1С<small>основная задача</small></div><span class="h num">2 ч</span></div>
+                <div class="stack" aria-hidden="true"><i class="y" style="width:100%"></i></div>
+                <div class="ent"><div><span>Созвон с клиентом, уточнение сценариев</span><span>Каширин · 10.09</span><b class="num">2 ч</b></div></div>
+                <div class="qa"><span class="m-btn">+0,5</span><span class="m-btn">+1</span><span class="m-btn">+2</span><span class="m-btn ghost">Другое…</span></div>
+              </div>
+              <div class="ct-card sub">
+                <div class="hd"><div class="t">Выгрузка остатков по расписанию<small>#24819</small></div><span class="h num">6,5 ч</span></div>
+                <div class="stack" aria-hidden="true"><i class="y" style="width:100%"></i></div>
+                <div class="ent"><div><span>Обработка ошибок обмена</span><span>Петренко · 11.09</span><b class="num">2,5 ч</b></div><div><span>Регламентное задание, логирование</span><span>Петренко · 10.09</span><b class="num">4 ч</b></div></div>
+                <div class="conf" role="group" aria-label="Подтверждение списания">
+                  <div class="r"><b>+1 ч · сегодня · учитывать</b><span class="m-btn sm ghost" style="margin-left:auto">изменить</span></div>
+                  <div class="r"><div class="inp">Что сделано?</div><span class="m-btn sm pri">Сохранить</span></div>
+                </div>
+              </div>
+              <div class="ct-card sub">
+                <div class="hd"><div class="t">Схема обмена и маппинг полей<small>#24818</small></div><span class="h num">5 ч</span></div>
+                <div class="stack" aria-label="3,5 ч учтено, 1,5 ч не учтено"><i class="y" style="width:70%"></i><i class="n" style="width:30%"></i></div>
+                <div class="ent"><div><span>Переделка после смены справочника</span><span>Петренко · 09.09</span><b class="num">1,5 ч</b></div><div><span>Маппинг номенклатуры и складов</span><span>Воронцова · 08.09</span><b class="num">3,5 ч</b></div></div>
+                <div class="qa"><span class="m-btn">+0,5</span><span class="m-btn">+1</span><span class="m-btn">+2</span><span class="m-btn ghost">Другое…</span></div>
+              </div>
+              <div class="ct-card sub">
+                <div class="hd"><div class="t">Тестирование на копии базы<small>#24820</small></div><span class="h num">1,5 ч</span></div>
+                <div class="stack" aria-label="1,5 ч не учтено"><i class="n" style="width:100%"></i></div>
+                <div class="qa"><span class="m-btn">+0,5</span><span class="m-btn">+1</span><span class="m-btn">+2</span><span class="m-btn ghost">Другое…</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="note">Быстрые кнопки «+0,5 / +1 / +2» не пишут сразу: они раскрывают строку подтверждения с обязательным «Что сделано?». Так быстрый ввод не порождает записей без описания.</p>
+    </div>
+  </div>
+</section>
+
+<style>
+/* ===== Вариант D: таймшит + палитра команд, Fira Sans / Fira Code, палитра Productivity Tool ===== */
+.D{--bg:#f6f7f9;--surface:#fff;--ink:#1a2230;--muted:#55606e;--line:#e2e6eb;--line-soft:#eef1f4;--accent:#0f766e;--accent-soft:#e0f2ef;--accent-ink:#0f766e;--hot:#c2410c;--hot-soft:#fff0e6;--ok:#0f766e;--ok-soft:#e0f2ef;--warn:#8a5b00;--warn-soft:#fff1d6;--bad:#b42318;--bad-soft:#fde8e6;--font:"Fira Sans",var(--sys);--mono:"Fira Code",ui-monospace,monospace;--r-btn:8px}
+.D .num,.D .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.d-top{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#fff;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.d-mark{font-weight:700;display:flex;gap:8px;align-items:center}
+.d-mark .ic{color:var(--accent)}
+.d-cmd{flex:1 1 320px;max-width:460px;height:36px;border:1px solid var(--line);border-radius:10px;background:#f6f7f9;display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--muted);font-size:13.5px}
+.kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 5px;background:#fff;color:var(--muted);white-space:nowrap}
+.d-cmd .kbd{margin-left:auto}
+.d-top .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+.D .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
+.D .seg span{padding:6px 11px;font-size:12.5px;font-weight:600;color:var(--muted);white-space:nowrap}
+.D .seg .on{background:var(--accent);color:#fff}
+.d-body{padding:14px;position:relative}
+.d-body:has(.pal-wrap){min-height:600px}
+.d-wk{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.d-wk h2{margin:0;font-size:18px;margin-right:auto}
+.ts{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px}
+.ts th,.ts td{padding:9px 10px;border-bottom:1px solid var(--line-soft);text-align:center}
+.ts th{font-size:12px;color:var(--muted);font-weight:600;background:#fafbfc}
+.ts th:first-child,.ts td:first-child{text-align:left}
+.ts .today{background:var(--hot-soft);color:var(--hot)}
+.ts td.today{background:#fffaf5}
+.ts .we{background:repeating-linear-gradient(135deg,#f7f8fa 0 6px,#f0f2f5 6px 12px);color:#8a939e}
+.ts .cell{font-family:var(--mono)}
+.ts .emp{color:#b3bac3}
+.ts .foc{outline:2px solid var(--hot);outline-offset:-3px;border-radius:6px;background:#fff}
+.ts tfoot td{font-weight:700;background:#fafbfc}
+.ts .add td{color:var(--accent);font-weight:600;text-align:left}
+.d-status{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;color:var(--muted)}
+.d-status span{display:flex;gap:6px;align-items:center}
+.pal-wrap{position:absolute;inset:0;background:rgba(20,28,40,.38);display:flex;justify-content:center;align-items:flex-start;padding-top:28px;z-index:4}
+.pal-wrap[hidden]{display:none}
+.pal{width:560px;max-width:92%;background:#fff;border-radius:14px;box-shadow:0 24px 64px rgba(0,0,0,.28);overflow:hidden;font-size:13.5px}
+.pal-in{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);font-size:15px}
+.pal-in .caret-b{width:1.5px;height:18px;background:var(--ink);display:inline-block;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.pal-g{padding:6px}
+.pal-g .gh{font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--muted);padding:8px 8px 4px;display:flex;gap:6px;align-items:center}
+.pal-i{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px}
+.pal-i .ic{color:var(--muted)}
+.pal-i.hl{background:var(--accent-soft)}
+.pal-i.hl .ic{color:var(--accent)}
+.pal-i .sub{color:var(--muted);font-size:12px;margin-left:auto;white-space:nowrap}
+.pal-i.lk{color:var(--muted)}
+.pal-f{display:flex;gap:14px;padding:8px 14px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);background:#fafbfc;flex-wrap:wrap}
+/* D — тепловая карта */
+.hm-wrap{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;position:relative}
+.hm{width:100%;border-collapse:separate;border-spacing:3px;font-size:12px}
+.hm th{font-weight:600;color:var(--muted);font-size:11.5px;padding:2px}
+.hm th small{display:block;font-weight:400}
+.hm td{height:34px;border-radius:6px;text-align:center;font-family:var(--mono);font-size:12px;color:#0b2e2a}
+.hm td.nm{text-align:left;font-family:var(--font);color:var(--ink);white-space:nowrap;padding-right:8px;font-size:12.5px}
+.hm td.tot{font-weight:700;color:var(--ink);background:#f6f7f9}
+.h0{background:#f1f3f5;color:#9aa3ad!important}
+.h1{background:#d7efec}.h2{background:#9fd8d0}.h3{background:#3aa99b}.h4{background:#f4a06b}
+.hm .we{background:repeating-linear-gradient(135deg,#f7f8fa 0 5px,#eceff2 5px 10px);color:#8a939e}
+.hm .tdy{box-shadow:inset 0 0 0 2px var(--hot)}
+.hm-leg{display:flex;gap:12px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--muted);margin-top:10px}
+.hm-leg i{display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;margin-right:4px}
+.tip{position:absolute;background:#1a2230;color:#fff;border-radius:10px;padding:10px 12px;font-size:12.5px;width:260px;box-shadow:0 12px 32px rgba(0,0,0,.25);z-index:2}
+.tip b{display:block;margin-bottom:4px}
+.tip div{display:flex;justify-content:space-between;gap:8px;color:#d6dde6}
+.tip::after{content:"";position:absolute;top:-6px;left:50%;margin-left:-6px;border:6px solid transparent;border-top:0;border-bottom-color:#1a2230}
+/* D — вкладка задачи */
+.dt{padding:12px 14px 20px;display:grid;gap:12px}
+.nl{background:#fff;border:1.5px solid var(--accent);border-radius:12px;box-shadow:0 0 0 4px var(--accent-soft)}
+.nl-in{display:flex;align-items:center;gap:8px;padding:10px 12px;font-size:15px;flex-wrap:wrap}
+.nl-in .txt{flex:1 1 200px}
+.nl-in mark{background:var(--hot-soft);color:var(--hot);border-radius:4px;padding:0 3px;font-family:var(--mono);font-size:14px}
+.nl-p{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px 12px;border-top:1px solid var(--line-soft);background:#fafbfc;border-radius:0 0 12px 12px}
+.pchip{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;border-radius:13px;background:#fff;border:1px solid var(--line);font-size:12px;font-weight:600;white-space:nowrap}
+.pchip .ic{width:13px;height:13px;color:var(--muted)}
+.nl-p .m-btn{margin-left:auto}
+.nl-hint{font-size:12px;color:var(--muted);padding:0 2px}
+.D .chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+.D .chip{height:28px;padding:0 11px;border-radius:14px;border:1px solid var(--line);display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--muted);background:#fff;white-space:nowrap}
+.D .chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.D .chip i{width:8px;height:8px;border-radius:2px;display:inline-block}
+.day{display:grid;gap:6px}
+.day-h{display:flex;align-items:center;gap:10px;font-size:12.5px;font-weight:600}
+.day-h .bar{flex:1;max-width:140px;height:5px}
+.day-h .num{margin-left:auto;color:var(--muted)}
+.blk{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-left:4px solid var(--c,#999);border-radius:8px;padding:8px 10px;font-size:13px}
+.blk .d{flex:1;min-width:0}
+.blk .d small{display:block;color:var(--muted);font-size:12px}
+.blk .hrs{font-weight:600;white-space:nowrap}
+.c-root{--c:#6b7280}.c-map{--c:#7c3aed}.c-exp{--c:#0f766e}.c-test{--c:#c2410c}
+@container (max-width:520px){ .nl-p .m-btn{margin-left:0;width:100%} }
+</style>
+
+<section class="variant" id="var-d" aria-labelledby="vd-t">
+  <div class="v-head">
+    <h2 class="v-title" id="vd-t">D. Лента времени и палитра команд <span class="boldness">смелость 4/4 · радикальный</span></h2>
+    <p class="v-idea">От «отчётов про часы» к «неделе, которую я заполняю»: главная — таймшит, любое действие — через Ctrl/⌘+K, во вкладке задачи — ввод одной фразой.</p>
+    <div class="meta">
+      <span><b>Стиль:</b> Data-Dense Dashboard + палитра команд (в базе стилей палитры нет — решение по общим принципам и документации <code>B24CommandPalette</code>)</span>
+      <span><b>Палитра:</b> Productivity Tool из базы (бирюза + оранжевый), бирюза затемнена до AA <span class="sw"><i style="background:#0f766e"></i><i style="background:#c2410c"></i><i style="background:#9fd8d0"></i><i style="background:#f4a06b"></i><i style="background:#f6f7f9"></i><i style="background:#1a2230"></i></span></span>
+      <span><b>Шрифт:</b> Fira Sans + Fira Code для цифр (пара «Dashboard Data», кириллица подтверждена)</span>
+    </div>
+  </div>
+
+  <div class="v-grid">
+    <div class="col-full">
+      <div>
+        <p class="cap">Полная версия · таймшит недели, открыта палитра команд</p>
+        <div class="tf-controls"><button class="x-btn" data-toggle="d-pal" aria-pressed="true">Палитра команд</button></div>
+        <div class="fit"><div class="portal">
+          <div class="p-top"><div class="p-logo">Битрикс<span>24</span></div><div class="p-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Искать сотрудника, документ, прочее…</div><div class="p-sp"></div><div class="p-ava">АВ</div></div>
+          <div class="p-rail"><span><svg class="ic lg" aria-hidden="true"><use href="#i-home"/></svg></span><span class="on"><svg class="ic lg" aria-hidden="true"><use href="#i-clock"/></svg></span></div>
+          <div class="p-main">
+            <div class="p-apptitle">Учёт трудозатрат</div>
+            <div class="app D">
+              <div class="d-top">
+                <span class="d-mark"><svg class="ic lg" aria-hidden="true"><use href="#i-clock"/></svg>Моё время</span>
+                <div class="d-cmd" role="button" tabindex="0" data-toggle="d-pal"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Найти проект, задачу, отчёт или действие…<span class="kbd">Ctrl K</span></div>
+                <div class="r"><div class="seg"><span class="on">Я</span><span>Команда</span></div><span class="m-btn sm icon" aria-label="Настройки"><svg class="ic" aria-hidden="true"><use href="#i-gear"/></svg></span></div>
+              </div>
+              <div class="d-body">
+                <div class="d-wk"><h2>Неделя 7–13 сентября</h2><span class="m-btn sm icon" aria-label="Предыдущая неделя"><svg class="ic" aria-hidden="true" style="transform:rotate(180deg)"><use href="#i-chevr"/></svg></span><span class="m-btn sm">Эта неделя</span><span class="m-btn sm icon" aria-label="Следующая неделя"><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg></span><span class="badge b-info num">33 из 40 ч</span></div>
+                <table class="ts">
+                  <thead><tr><th>Проект / задача</th><th>Пн 7</th><th>Вт 8</th><th>Ср 9</th><th>Чт 10</th><th class="today">Пт 11</th><th class="we">Сб 12</th><th class="we">Вс 13</th><th>Итого</th></tr></thead>
+                  <tbody>
+                    <tr><td><b>Настройка воронок продаж</b><div class="pc">Внедрение CRM</div></td><td class="cell">4</td><td class="cell">2</td><td class="cell">5</td><td class="cell">2</td><td class="cell today">2</td><td class="we"></td><td class="we"></td><td class="cell"><b>15</b></td></tr>
+                    <tr><td><b>Обучение пользователей</b><div class="pc">Внедрение CRM</div></td><td class="cell">2</td><td class="cell">2</td><td class="cell emp">·</td><td class="cell">2</td><td class="cell today emp">·</td><td class="we"></td><td class="we"></td><td class="cell"><b>6</b></td></tr>
+                    <tr><td><b>Схема обмена и маппинг полей</b><div class="pc">Интеграция склада</div></td><td class="cell emp">·</td><td class="cell">3,5</td><td class="cell emp">·</td><td class="cell emp">·</td><td class="cell today emp">·</td><td class="we"></td><td class="we"></td><td class="cell"><b>3,5</b></td></tr>
+                    <tr><td><b>Согласование маршрута документов</b><div class="pc">Электронный документооборот</div></td><td class="cell">2</td><td class="cell emp">·</td><td class="cell">3,5</td><td class="cell">2</td><td class="cell today"><span class="foc" style="display:inline-block;padding:2px 10px">1</span></td><td class="we"></td><td class="we"></td><td class="cell"><b>8,5</b></td></tr>
+                    <tr class="add"><td colspan="9"><svg class="ic" aria-hidden="true" style="vertical-align:-3px"><use href="#i-plus"/></svg> Добавить строку: проект и задача</td></tr>
+                  </tbody>
+                  <tfoot><tr><td>Итого за день</td><td class="cell">8</td><td class="cell">7,5</td><td class="cell">8,5</td><td class="cell" style="color:var(--warn)">6</td><td class="cell today">3</td><td class="we"></td><td class="we"></td><td class="cell">33</td></tr></tfoot>
+                </table>
+                <div class="d-status"><span><svg class="ic" aria-hidden="true" style="color:var(--ok)"><use href="#i-shield"/></svg>Август закрыт 02.09</span><span><svg class="ic" aria-hidden="true"><use href="#i-cal"/></svg>Сентябрь открыт</span><span><svg class="ic" aria-hidden="true" style="color:var(--warn)"><use href="#i-alert"/></svg>Чт 10.09 — на 2 ч меньше нормы</span></div>
+
+                <div class="pal-wrap" id="d-pal">
+                  <div class="pal" role="dialog" aria-label="Палитра команд">
+                    <div class="pal-in"><svg class="ic lg" aria-hidden="true" style="color:var(--muted)"><use href="#i-search"/></svg><span class="caret-b" aria-hidden="true"></span><span class="muted">Найти или сделать…</span><span class="kbd" style="margin-left:auto">Esc</span></div>
+                    <div class="pal-g">
+                      <div class="gh">БЫСТРЫЕ ДЕЙСТВИЯ</div>
+                      <div class="pal-i hl"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Отразить часы на «Согласование маршрута документов»<span class="kbd" style="margin-left:auto">Enter</span></div>
+                      <div class="pal-i"><svg class="ic" aria-hidden="true"><use href="#i-chart"/></svg>Отчёт «Проекты / задачи» за сентябрь<span class="sub">отчёты</span></div>
+                      <div class="pal-i"><svg class="ic" aria-hidden="true"><use href="#i-shield"/></svg>Разобрать 2 записи, пришедшие после закрытия августа<span class="sub">контроль</span></div>
+                      <div class="gh">НЕДАВНИЕ</div>
+                      <div class="pal-i"><svg class="ic" aria-hidden="true"><use href="#i-folder"/></svg>Внедрение CRM<span class="sub">проект · 78%</span></div>
+                      <div class="pal-i"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Выгрузка остатков по расписанию<span class="sub">задача #24819</span></div>
+                      <div class="gh">ФИНАНСЫ <span class="badge b-sub"><svg class="ic" style="width:11px;height:11px" aria-hidden="true"><use href="#i-lock"/></svg>по подписке</span></div>
+                      <div class="pal-i lk"><svg class="ic" aria-hidden="true"><use href="#i-wallet"/></svg>БДДС по проектам<span class="sub">не подключено · подробнее</span></div>
+                      <div class="pal-i lk"><svg class="ic" aria-hidden="true"><use href="#i-doc"/></svg>Счёт и акт по фильтру<span class="sub">14 дней бесплатно</span></div>
+                    </div>
+                    <div class="pal-f"><span><span class="kbd">↑</span> <span class="kbd">↓</span> выбрать</span><span><span class="kbd">Enter</span> выполнить</span><span><span class="kbd">Esc</span> закрыть</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div></div>
+        <p class="note">Меню почти нет: разделы, отчёты, проекты и платные функции доступны из палитры. На главной — неделя, которую сотрудник заполняет в ячейках. В ячейке «проект × день» задача обязательна, поэтому строки таймшита — это задачи, а не проекты.</p>
+      </div>
+
+      <div>
+        <p class="cap">Полная версия · отчёт «Ежедневная нагрузка» тепловой картой</p>
+        <div class="fit"><div class="portal">
+          <div class="p-top"><div class="p-logo">Битрикс<span>24</span></div><div class="p-search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Искать сотрудника, документ, прочее…</div><div class="p-sp"></div><div class="p-ava">АВ</div></div>
+          <div class="p-rail"><span><svg class="ic lg" aria-hidden="true"><use href="#i-home"/></svg></span><span class="on"><svg class="ic lg" aria-hidden="true"><use href="#i-clock"/></svg></span></div>
+          <div class="p-main">
+            <div class="p-apptitle">Учёт трудозатрат</div>
+            <div class="app D">
+              <div class="d-top"><span class="d-mark"><svg class="ic lg" aria-hidden="true"><use href="#i-chart"/></svg>Ежедневная нагрузка</span><div class="d-cmd"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>Найти проект, задачу, отчёт или действие…<span class="kbd">Ctrl K</span></div><div class="r"><span class="m-btn sm"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Excel</span></div></div>
+              <div class="d-body">
+                <div class="d-wk"><h2>01 – 11 сентября · отдел внедрения</h2><div class="seg"><span>Часы</span><span class="on">Нагрузка</span><span>Учтённость</span></div></div>
+                <div class="hm-wrap">
+                  <table class="hm">
+                    <thead><tr><th></th><th>1<small>вт</small></th><th>2<small>ср</small></th><th>3<small>чт</small></th><th>4<small>пт</small></th><th>5<small>сб</small></th><th>6<small>вс</small></th><th>7<small>пн</small></th><th>8<small>вт</small></th><th>9<small>ср</small></th><th>10<small>чт</small></th><th>11<small>пт</small></th><th>Всего</th></tr></thead>
+                    <tbody>
+                      <tr><td class="nm">Анна Воронцова</td><td class="h3">8</td><td class="h3">8</td><td class="h3">7,5</td><td class="h3">8</td><td class="we"></td><td class="we"></td><td class="h3">8</td><td class="h3">7,5</td><td class="h3">8,5</td><td class="h2">6</td><td class="h1 tdy">3</td><td class="tot">64,5</td></tr>
+                      <tr><td class="nm">Илья Петренко</td><td class="h3">8</td><td class="h3">9</td><td class="h3">8</td><td class="h3">7</td><td class="we"></td><td class="we h1">2</td><td class="h3">8</td><td class="h3">8</td><td class="h3">8,5</td><td class="h4" id="hm-hot">9,5</td><td class="h2 tdy">6</td><td class="tot">74</td></tr>
+                      <tr><td class="nm">Марина Соколова</td><td class="h3">7</td><td class="h3">7,5</td><td class="h3">8</td><td class="h2">6</td><td class="we"></td><td class="we"></td><td class="h3">8</td><td class="h3">8</td><td class="h3">7</td><td class="h3">8</td><td class="h2 tdy">4</td><td class="tot">63,5</td></tr>
+                      <tr><td class="nm">Дмитрий Каширин</td><td class="h2">6</td><td class="h3">8</td><td class="h3">8</td><td class="h3">8</td><td class="we"></td><td class="we"></td><td class="h3">7</td><td class="h2">6,5</td><td class="h3">8</td><td class="h3">8</td><td class="h2 tdy">5</td><td class="tot">64,5</td></tr>
+                      <tr><td class="nm">Олег Лазарев</td><td class="h3">8</td><td class="h3">8</td><td class="h2">4</td><td class="h0">—</td><td class="we"></td><td class="we"></td><td class="h3">8</td><td class="h3">8</td><td class="h3">8</td><td class="h3">7,5</td><td class="h1 tdy">3</td><td class="tot">54,5</td></tr>
+                      <tr><td class="nm">Светлана Ким</td><td class="h2">5</td><td class="h2">6</td><td class="h2">6</td><td class="h2">5</td><td class="we"></td><td class="we"></td><td class="h2">6</td><td class="h2">5</td><td class="h2">5,5</td><td class="h2">6</td><td class="h1 tdy">1,5</td><td class="tot">46</td></tr>
+                      <tr><td class="nm">Павел Широков</td><td class="h3">8</td><td class="h3">8</td><td class="h3">8</td><td class="h3">8</td><td class="we h2">4</td><td class="we"></td><td class="h3">8</td><td class="h3">8</td><td class="h3">8</td><td class="h3">8</td><td class="h2 tdy">4</td><td class="tot">72</td></tr>
+                      <tr><td class="nm">Екатерина Мельник</td><td class="h3">8</td><td class="h3">7</td><td class="h3">8</td><td class="h3">8</td><td class="we"></td><td class="we"></td><td class="h3">9</td><td class="h4">10</td><td class="h4">9,5</td><td class="h3">8</td><td class="h2 tdy">4</td><td class="tot">71,5</td></tr>
+                    </tbody>
+                  </table>
+                  <div class="tip" style="left:640px;top:148px" role="tooltip"><b>Илья Петренко · чт 10.09 · 9,5 ч</b><div><span>Выгрузка остатков по расписанию</span><span class="mono">4</span></div><div><span>Портал поставщиков: ЛК</span><span class="mono">5,5</span></div></div>
+                  <div class="hm-leg"><span><i class="h0"></i>нет записей</span><span><i class="h1"></i>до 4 ч</span><span><i class="h2"></i>4–7 ч</span><span><i class="h3"></i>7–9 ч</span><span><i class="h4"></i>больше 9 ч</span><span><i style="background:repeating-linear-gradient(135deg,#f7f8fa 0 4px,#e3e7eb 4px 8px)"></i>выходной</span><span><i style="box-shadow:inset 0 0 0 2px #c2410c;background:#fff"></i>сегодня, день не закончен</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div></div>
+        <p class="note">Текущая матрица часов по дням становится тепловой картой: переработки и недоработки видны без чтения цифр, но цифры в ячейках остаются — цвет не единственный носитель смысла.</p>
+      </div>
+    </div>
+
+    <div class="tf-col">
+      <p class="cap">Вкладка задачи · ввод фразой и лента по дням</p>
+      <div class="tf-controls" role="group" aria-label="Ширина фрейма варианта D">Ширина: <button class="x-btn" data-w="660" aria-pressed="true">660</button><button class="x-btn" data-w="480" aria-pressed="false">480</button><button class="x-btn" data-w="400" aria-pressed="false">400</button></div>
+      <div class="tf">
+        <div class="tcard">
+          <div class="tcard-h"><div class="crumb">Задача #24817 · проект «Интеграция склада»</div><h3>Настроить обмен остатками с 1С</h3></div>
+          <div class="tcard-tabs"><span>Описание</span><span>Чек-лист</span><span class="on">Учёт трудозатрат</span><span>Файлы</span></div>
+          <div class="tframe D">
+            <div class="dt">
+              <div class="nl">
+                <div class="nl-in"><svg class="ic lg" aria-hidden="true" style="color:var(--accent)"><use href="#i-bolt"/></svg><span class="txt"><mark>2ч</mark> <mark>вчера</mark> разбор ошибок обмена с клиентом</span></div>
+                <div class="nl-p"><span class="pchip"><svg class="ic" aria-hidden="true"><use href="#i-clock"/></svg><span class="num">2 ч</span></span><span class="pchip"><svg class="ic" aria-hidden="true"><use href="#i-cal"/></svg>чт 10.09</span><span class="pchip"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg>учитывается</span><span class="pchip"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Выгрузка остатков…<svg class="ic" aria-hidden="true"><use href="#i-chev"/></svg></span><span class="m-btn sm pri">Отразить <span class="kbd" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.5)">Enter</span></span></div>
+              </div>
+              <div class="nl-hint">Понимаю «1,5ч», «полчаса», «вчера», «в пн», «#неучт». Всё разобранное видно в чипах до сохранения.</div>
+              <div class="chips" role="group" aria-label="Фильтр по подзадачам"><span class="chip on">Все · 15 ч</span><span class="chip"><i style="background:#6b7280"></i>Основная</span><span class="chip"><i style="background:#7c3aed"></i>Схема обмена</span><span class="chip"><i style="background:#0f766e"></i>Выгрузка</span><span class="chip"><i style="background:#c2410c"></i>Тесты</span></div>
+              <div class="day"><div class="day-h">Сегодня, пт 11.09<div class="bar"><i class="a" style="width:31%"></i></div><span class="num">2,5 ч</span></div>
+                <div class="blk c-exp"><div class="d">Обработка ошибок обмена<small>Илья Петренко · Выгрузка остатков</small></div><span class="st y">учт.</span><span class="hrs num">2,5 ч</span></div></div>
+              <div class="day"><div class="day-h">Чт 10.09<div class="bar"><i class="a" style="width:75%"></i></div><span class="num">6 ч</span></div>
+                <div class="blk c-exp"><div class="d">Регламентное задание, логирование<small>Илья Петренко · Выгрузка остатков</small></div><span class="st y">учт.</span><span class="hrs num">4 ч</span></div>
+                <div class="blk c-root"><div class="d">Созвон с клиентом, уточнение сценариев<small>Дмитрий Каширин · основная задача</small></div><span class="st y">учт.</span><span class="hrs num">2 ч</span></div></div>
+              <div class="day"><div class="day-h">Ср 09.09<div class="bar"><i class="a" style="width:19%"></i></div><span class="num">1,5 ч</span></div>
+                <div class="blk c-map"><div class="d">Переделка после смены справочника<small>Илья Петренко · Схема обмена</small></div><span class="st n">не учт.</span><span class="hrs num">1,5 ч</span></div></div>
+              <div class="day"><div class="day-h">Вт 08.09<div class="bar"><i class="a" style="width:44%"></i></div><span class="num">3,5 ч</span></div>
+                <div class="blk c-map"><div class="d">Маппинг номенклатуры и складов<small>Анна Воронцова · Схема обмена</small></div><span class="st y">учт.</span><span class="hrs num">3,5 ч</span></div></div>
+              <div class="day"><div class="day-h">Пн 07.09<div class="bar"><i class="a" style="width:19%"></i></div><span class="num">1,5 ч</span></div>
+                <div class="blk c-test"><div class="d">Подготовка копии базы<small>Светлана Ким · Тесты</small></div><span class="st n">не учт.</span><span class="hrs num">1,5 ч</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="note">Ввод одной фразой — самый быстрый путь, но разбор русских дат и часов нужно покрыть тестами. Встроенные <code>\w</code> и <code>\b</code> в регулярках не видят кириллицу, это известная ловушка.</p>
+    </div>
+  </div>
+</section>
+
+<section class="compare" id="compare" aria-labelledby="cmp-t">
+  <h2 id="cmp-t">Сравнение и рекомендация</h2>
+  <div class="cmp-scroll">
+    <table class="cmp">
+      <thead><tr><th></th><th>A. Родной портал</th><th>B. Рабочее место</th><th>C. Проект в центре</th><th>D. Лента времени</th></tr></thead>
+      <tbody>
+        <tr><th>Смелость</th><td>1/4</td><td>2/4</td><td>3/4</td><td>4/4</td></tr>
+        <tr><th>Главный выигрыш</th><td>порядок, узнаваемость, ноль обучения</td><td>меньше кликов, проблемы на виду</td><td>проект как на ладони, витрина финансов</td><td>скорость ежедневного ввода</td></tr>
+        <tr><th>Главный риск</th><td>мало нового для продаж</td><td>нужны роли и 3–4 эндпоинта</td><td>тяжёлая агрегация, «чужой» шрифт</td><td>смена привычек, Ctrl+K во фрейме, разбор фраз</td></tr>
+        <tr><th>Ощущение «родного»</th><td>полное</td><td>высокое</td><td>среднее</td><td>низкое</td></tr>
+        <tr><th>Машинная часть</th><td class="n">18–26 ч</td><td class="n">45–65 ч</td><td class="n">55–75 ч</td><td class="n">75–110 ч</td></tr>
+        <tr><th>Ручная часть</th><td class="n">10–14 ч</td><td class="n">22–30 ч</td><td class="n">24–32 ч</td><td class="n">32–45 ч</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="reco">
+    <h3>Рекомендация: каркас A, две вещи из B, остальное — по мере платных функций</h3>
+    <ul>
+      <li><b>Первая итерация.</b>
+        <ul>
+          <li>Меню раздела из A с пунктами «Контроль» и «Финансы» (состояния «не подключено / пробный / подключено»), единая обвязка отчётов, таблица проектов.</li>
+          <li>Вкладка задачи в одну колонку со строкой быстрого ввода из B.</li>
+          <li>Счётчики «Контроля» из B.</li>
+          <li>Заодно: убрать <code>task.vue</code>, лайм, поле ставки и кнопки, видимые только при наведении.</li>
+        </ul>
+        Оценка: машинная часть 24–32 ч, ручная — 12–16 ч.</li>
+      <li><b>С запуском БДДС</b> — карточка проекта из C: финансы естественно живут внутри проекта.</li>
+      <li><b>Палитра команд из D</b> — как ускоритель поверх готового меню, не вместо него. Таймшит и ввод фразой — только после пилота с живыми пользователями.</li>
+    </ul>
+  </div>
+</section>
+
+<script>
+(function(){
+  var tabs=[].slice.call(document.querySelectorAll('.tab'));
+  var ids=['var-a','var-b','var-c','var-d','compare'];
+  var secs=ids.map(function(id){return document.getElementById(id)});
+  function fit(){
+    document.querySelectorAll('.fit').forEach(function(f){
+      var w=f.clientWidth; if(!w) return;
+      f.style.setProperty('--z',String(Math.min(1,Math.floor(w/1100*1000)/1000)));
+    });
+  }
+  function show(id,push){
+    secs.forEach(function(s){ s.hidden = s.id!==id; });
+    tabs.forEach(function(t){ t.setAttribute('aria-selected', String(t.dataset.var===id)); });
+    if(push){ try{ history.replaceState(null,'','#'+id); }catch(e){} }
+    fit();
+  }
+  tabs.forEach(function(t){
+    t.addEventListener('click',function(e){
+      e.preventDefault(); show(t.dataset.var,true);
+      var bar=document.querySelector('.tabs'); window.scrollTo({top:bar.offsetTop,behavior:'smooth'});
+    });
+  });
+  var init=location.hash.slice(1);
+  show(ids.indexOf(init)>=0?init:'var-a',false);
+  window.addEventListener('resize',fit);
+
+  document.querySelectorAll('.tf-controls').forEach(function(c){
+    var tf=c.parentElement.querySelector('.tf'); if(!tf) return;
+    var bs=c.querySelectorAll('[data-w]');
+    bs.forEach(function(b){
+      b.addEventListener('click',function(){
+        bs.forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); });
+        tf.style.setProperty('--tw', b.dataset.w+'px');
+      });
+    });
+  });
+
+  function setToggle(id,open){
+    var t=document.getElementById(id); if(!t) return;
+    t.hidden=!open;
+    document.querySelectorAll('.x-btn[data-toggle="'+id+'"]').forEach(function(b){ b.setAttribute('aria-pressed', String(open)); });
+  }
+  document.querySelectorAll('[data-toggle]').forEach(function(el){
+    var id=el.dataset.toggle;
+    function act(){ var t=document.getElementById(id); setToggle(id, t.hidden); }
+    el.addEventListener('click',act);
+    el.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); act(); } });
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){ setToggle('a-slider',false); setToggle('d-pal',false); }
+  });
+})();
+</script>
+</div>
+</body>
+</html>
