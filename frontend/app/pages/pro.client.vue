@@ -752,15 +752,6 @@ function goBack() {
                 <dt class="text-slate-500">Код портала для платежа</dt>
                 <dd class="font-mono font-semibold text-slate-900">{{ portalCode }} <span class="font-sans text-xs font-normal text-slate-500">попадёт в счёт</span></dd>
               </dl>
-              <details class="mt-2 text-sm text-slate-500">
-                <summary class="cursor-pointer text-slate-600">Почему в форме нет member_id</summary>
-                <p class="mt-2">
-                  member_id — 32-значный технический идентификатор портала. Человеку он ничего не говорит, в назначение
-                  платежа не влезает, а в поле формы его можно было бы подменить. Поэтому сервер берёт портал из
-                  авторизации приложения, а не из формы: запросить счёт на чужой портал нельзя. Людям — домен и
-                  короткий код {{ portalCode }}, который не меняется, даже если портал сменит домен.
-                </p>
-              </details>
 
               <div class="mt-4 grid grid-cols-1 gap-4 min-[700px]:grid-cols-2">
                 <div>
