@@ -204,9 +204,17 @@ class GroupingTest(BillingFixture):
         )
 
     def test_group_by_project(self):
+        """У варианта «по проектам» СВОЯ формулировка, а не «{задача}, {месяц}».
+
+        Одного шаблона на все варианты не хватало: в строке на проект он
+        давал «Мейнсофт, август 2026» — имя карточки без слова о работах.
+        """
         selection = self.service().collect(self.filters(company_id="15", grouping="project"))
 
-        self.assertEqual([line["title"] for line in selection.lines], ["Мейнсофт, август 2026"])
+        self.assertEqual(
+            [line["title"] for line in selection.lines],
+            ["Разработка по проекту „Мейнсофт“, август 2026"],
+        )
         self.assertEqual(selection.lines[0]["hours"], 5.0)
         self.assertEqual(selection.lines[0]["amount"], 10000.0)
 

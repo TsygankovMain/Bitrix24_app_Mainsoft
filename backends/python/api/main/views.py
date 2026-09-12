@@ -82,7 +82,7 @@ from .bdds_settings import load_bdds_settings
 from .billing_features import FEATURE_BDDS, FEATURE_BILLING, feature_required, feature_states
 from .finance_operation_service import FinanceOperationService
 from .project_budget_notifier import ProjectBudgetNotifier
-from .billing_service import BillingError, BillingFilter, BillingService
+from .billing_service import BillingError, BillingService
 from .billing_settings import (
     billing_manager_required,
     has_selected_templates,
@@ -3806,7 +3806,7 @@ def billing_preview(request: AuthorizedRequest):
     """
     service = _billing_service(request)
     try:
-        filters = BillingFilter.from_payload(_load_request_json(request))
+        filters = service.build_filter(_load_request_json(request))
         selection = service.collect(filters)
         # Наше юрлицо разбирается ЗДЕСЬ, а не внутри Selection: ответ обязан
         # сказать не только «какое», но и «откуда» (настройка приложения или
@@ -3858,7 +3858,7 @@ def _billing_issue_under_lock(request: AuthorizedRequest):
     user_id, user_name = _billing_actor(request)
 
     try:
-        filters = BillingFilter.from_payload(payload)
+        filters = service.build_filter(payload)
         selection = service.collect(filters)
         service.validate_for_issue(selection, filters)
         # Утверждённые строки применяются ПОСЛЕ проверок отбора: блокеры

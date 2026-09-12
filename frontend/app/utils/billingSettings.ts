@@ -18,11 +18,15 @@
 import { normalizeAccountantIds } from './billingFeature'
 import {
   BILLING_LINE_TASK_LEVEL_KEY,
-  BILLING_LINE_TEMPLATE_KEY,
+  BILLING_LINE_VARIANT_KEY,
+  BILLING_LINE_VARIANTS,
+  BILLING_SERVICE_NAME_KEY,
   normalizeBillingLineTemplate,
+  normalizeBillingLineVariant,
+  normalizeBillingServiceName,
   normalizeBillingTaskLevel,
 } from './billingLineTemplate'
-import type { BillingTaskLevel } from './billingLineTemplate'
+import type { BillingLineVariant, BillingTaskLevel } from './billingLineTemplate'
 import type { AppConfigurationPayload } from '~/types/config'
 
 export const BILLING_ALLOW_OPEN_PERIOD_KEY = 'billing_allow_open_period'
@@ -71,7 +75,12 @@ export const BILLING_OUR_COMPANY_NAME_KEY = 'billing_our_company_name'
 export const BILLING_ACT_TEMPLATE_ID_KEY = 'billing_act_template_id'
 export const BILLING_INVOICE_TEMPLATE_ID_KEY = 'billing_invoice_template_id'
 
-export { BILLING_LINE_TASK_LEVEL_KEY, BILLING_LINE_TEMPLATE_KEY } from './billingLineTemplate'
+export {
+  BILLING_LINE_TASK_LEVEL_KEY,
+  BILLING_LINE_TEMPLATE_KEY,
+  BILLING_LINE_VARIANT_KEY,
+  BILLING_SERVICE_NAME_KEY,
+} from './billingLineTemplate'
 
 export type BillingSettings = {
   /** Разрешить выставление за незакрытый месяц. */
@@ -83,10 +92,19 @@ export type BillingSettings = {
   /** Название нашего юрлица на момент выбора — только для показа. */
   ourCompanyName: string
   /**
-   * Формулировка строки счёта: «{задача}, {месяц}» и далее по вкусу
-   * бухгалтерии. Текст строк собирает сервер, эта настройка — его правило.
+   * Вариант наполнения счёта, который мастер подставляет при открытии.
+   *
+   * Раньше «по задачам» было зашито в код, и портал, выставляющий одной
+   * строкой, переключал вариант в каждом счёте руками.
    */
-  lineTemplate: string
+  lineVariant: BillingLineVariant
+  /**
+   * Формулировка строки — СВОЯ У КАЖДОГО варианта. Текст строк собирает
+   * сервер, эти настройки — его правила.
+   */
+  lineTemplates: Record<BillingLineVariant, string>
+  /** Текст услуги для подстановки `{услуга}` («Разработка»). */
+  serviceName: string
   /**
    * Уровень задачи в строке: сама задача («task») или её родитель верхнего
    * уровня («root»). Влияет только на группировку по задачам.
@@ -138,6 +156,40 @@ export function readTemplateId(value: unknown): string {
 }
 
 /**
+ * Формулировки всех вариантов из конфигурации.
+ *
+ * Ключ варианта «по задачам» — прежний `billing_line_template` без суффикса:
+ * под ним формулировка уже лежит в конфигурации порталов, и новый ключ
+ * молча вернул бы им текст по умолчанию.
+ */
+export function readBillingLineTemplates(
+  config: AppConfigurationPayload | null | undefined
+): Record<BillingLineVariant, string> {
+  const result = {} as Record<BillingLineVariant, string>
+
+  for (const variant of BILLING_LINE_VARIANTS) {
+    result[variant.id] = normalizeBillingLineTemplate(config?.[variant.settingKey], variant.id)
+  }
+
+  return result
+}
+
+/** Формулировки всех вариантов -> ключи конфигурации. */
+export function applyBillingLineTemplates(
+  templates: Record<string, string> | null | undefined
+): AppConfigurationPayload {
+  const result: AppConfigurationPayload = {}
+
+  for (const variant of BILLING_LINE_VARIANTS) {
+    result[variant.settingKey] = normalizeBillingLineTemplate(
+      templates?.[variant.id], variant.id,
+    )
+  }
+
+  return result
+}
+
+/**
  * Настройки из конфигурации.
  *
  * Отсутствие ключа — это «запрещено» и «список пуст», то есть самое строгое
@@ -162,9 +214,13 @@ export function readBillingSettings(config: AppConfigurationPayload | null | und
     // Название без идентификатора бессмысленно: выставлять по одному названию
     // нельзя, а показывать «настройка задана» при пустом id — врать.
     ourCompanyName: ourCompanyId ? readText(config?.[BILLING_OUR_COMPANY_NAME_KEY]) : '',
-    // Пустой шаблон читается как «как по умолчанию»: иначе каждая строка
-    // счёта осталась бы без наименования работ.
-    lineTemplate: normalizeBillingLineTemplate(config?.[BILLING_LINE_TEMPLATE_KEY]),
+    lineVariant: normalizeBillingLineVariant(config?.[BILLING_LINE_VARIANT_KEY]),
+    // Пустой шаблон читается как «как по умолчанию ЭТОГО варианта»: иначе
+    // строка счёта осталась бы без наименования работ, а формулировка
+    // варианта «по задачам» в счёте на одну строку прочиталась бы как
+    // «Услуги по договору, август 2026».
+    lineTemplates: readBillingLineTemplates(config),
+    serviceName: normalizeBillingServiceName(config?.[BILLING_SERVICE_NAME_KEY]),
     taskLevel: normalizeBillingTaskLevel(config?.[BILLING_LINE_TASK_LEVEL_KEY]),
     actTemplateId: readTemplateId(config?.[BILLING_ACT_TEMPLATE_ID_KEY]),
     invoiceTemplateId: readTemplateId(config?.[BILLING_INVOICE_TEMPLATE_ID_KEY]),
@@ -192,7 +248,9 @@ export function applyBillingSettings(
     [BILLING_OUR_COMPANY_NAME_KEY]: readText(settings.ourCompanyId)
       ? readText(settings.ourCompanyName)
       : '',
-    [BILLING_LINE_TEMPLATE_KEY]: normalizeBillingLineTemplate(settings.lineTemplate),
+    [BILLING_LINE_VARIANT_KEY]: normalizeBillingLineVariant(settings.lineVariant),
+    ...applyBillingLineTemplates(settings.lineTemplates),
+    [BILLING_SERVICE_NAME_KEY]: normalizeBillingServiceName(settings.serviceName),
     [BILLING_LINE_TASK_LEVEL_KEY]: normalizeBillingTaskLevel(settings.taskLevel),
     // Числом, как это хранит сервер: строка из <select> и число из ответа
     // сервера иначе стали бы двумя формами одного значения, и живая проверка
@@ -215,10 +273,23 @@ export function billingSettingsChanged(left: BillingSettings, right: BillingSett
     return true
   }
 
-  // Шаблон сравниваем нормализованным: пустое поле и значение по умолчанию —
-  // одно и то же состояние, и кнопка «Сохранить» не должна гореть из-за
-  // стёртого пробела.
-  if (normalizeBillingLineTemplate(left.lineTemplate) !== normalizeBillingLineTemplate(right.lineTemplate)) {
+  if (normalizeBillingLineVariant(left.lineVariant) !== normalizeBillingLineVariant(right.lineVariant)) {
+    return true
+  }
+
+  if (normalizeBillingServiceName(left.serviceName) !== normalizeBillingServiceName(right.serviceName)) {
+    return true
+  }
+
+  // Шаблоны сравниваем нормализованными, каждый со своим вариантом: пустое
+  // поле и значение по умолчанию — одно и то же состояние, и кнопка
+  // «Сохранить» не должна гореть из-за стёртого пробела.
+  const changedWording = BILLING_LINE_VARIANTS.some(
+    variant => normalizeBillingLineTemplate(left.lineTemplates?.[variant.id], variant.id)
+      !== normalizeBillingLineTemplate(right.lineTemplates?.[variant.id], variant.id)
+  )
+
+  if (changedWording) {
     return true
   }
 
