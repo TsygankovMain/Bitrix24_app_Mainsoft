@@ -139,6 +139,39 @@ watch(() => route.fullPath, () => {
   openSectionId.value = ''
 })
 
+/**
+ * Настройки классов у B24NavigationMenu — почему они тут, а не в теме.
+ *
+ * `viewportWrapper: z-50` — слой выпадающих списков над содержимым страницы.
+ * В теме UI Kit сам viewport стоит на `z-[1]`, а стекинг-контекста между
+ * шапкой и контентом страницы нет: значит любой элемент страницы с большим
+ * z-index рисуется ПОВЕРХ раскрытого меню. Именно это и было на доске
+ * проектов — липкие заголовки колонок канбана (`sticky top-0 z-10` плюс
+ * полупрозрачный `bg-slate-50/95 backdrop-blur`, см. ProjectBoardColumn.vue)
+ * проступали сквозь список «Отчётов», и со стороны это читалось как
+ * полупрозрачное меню. Правим один раз здесь, а не z-index'ами на каждой
+ * странице: 50 выше внутристраничных списков (z-30 у MultiSelectFilter и
+ * ReportFilterBar) и ниже оверлеев и дроверов (z-[1000] у SearchableSelect и
+ * ProgressOverlay, z-[9990] и выше у дроверов) — меню перекрывает страницу,
+ * но не лезет поверх модальных окон.
+ *
+ * `content` — ширина и свой фон панели. Фон в теме лежит на viewport, а его
+ * размер reka берёт из ResizeObserver'а элемента content; content же у
+ * горизонтальной ориентации зафиксирован темой в `w-[240px]`
+ * (compoundVariants, а twMerge съедает идущий раньше `w-full`). Пока ширину
+ * задавал div ВНУТРИ слота, получалось 560 px содержимого в 240 px
+ * закрашенной панели: правая часть списка оставалась без фона и обрезалась.
+ * Поэтому ширина теперь на самом content, а на нём же непрозрачный фон —
+ * viewport анимирует свой размер 200 мс, и на это время фон темы отстаёт от
+ * содержимого. Значение ширины явное: про именованные `w-*`/`max-w-*` в
+ * Tailwind 4 с UI Kit см. предупреждение в app/assets/css/main.css.
+ */
+const menuUi = {
+  root: 'h-full w-full',
+  viewportWrapper: 'z-50',
+  content: 'w-[min(92vw,560px)] bg-white',
+}
+
 function sectionOf(item: unknown): NavSection | null {
   return (item as { section?: NavSection } | null)?.section || null
 }
@@ -159,11 +192,11 @@ function linkClasses(link: NavLink) {
       v-model="openSectionId"
       :items="menuItems"
       orientation="horizontal"
-      :b24ui="{ root: 'h-full w-full' }"
+      :b24ui="menuUi"
       aria-label="Разделы приложения"
     >
       <template #section-content="{ item }">
-        <div class="w-[min(92vw,560px)] p-2">
+        <div class="w-full p-2">
           <div
             v-for="group in sectionOf(item)?.groups || []"
             :key="group.id"
