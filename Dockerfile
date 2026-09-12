@@ -28,6 +28,9 @@ ARG NUXT_PUBLIC_API_URL=""
 ENV VIRTUAL_HOST=${VIRTUAL_HOST}
 ENV NUXT_PUBLIC_APP_URL=${VIRTUAL_HOST}
 ENV NUXT_PUBLIC_API_URL=${NUXT_PUBLIC_API_URL}
+# Метка стенда на каждом экране (DEV_ver2 и т. п.). Прод собирается без неё.
+ARG APP_ENV_LABEL=""
+ENV NUXT_PUBLIC_ENV_LABEL=${APP_ENV_LABEL}
 # Nuxt 4 + Vite 7 SSG build spikes >1.7GB heap during the "transforming" stage
 # with ~1100 node_modules packages. Without this override Node is killed silently
 # (SIGKILL from OOM) and the deploy log just cuts off mid-build.

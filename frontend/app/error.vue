@@ -1,17 +1,23 @@
 <script setup lang="ts">
 import type { NuxtError } from '#app'
 import { createError as createH3Error } from "h3"
+import EnvLabelBadge from '~/components/common/EnvLabelBadge.vue'
+import { normalizeEnvLabel, withEnvLabel } from '~/utils/envLabel'
 
 const props = defineProps<{
   error: NuxtError
 }>()
+
+// Экран ошибки рендерится вместо app.vue, поэтому метку стенда ставим и здесь
+const envLabel = normalizeEnvLabel(useRuntimeConfig().public.envLabel)
 
 useHead({
   meta: [
     { name: 'viewport', content: 'width=device-width, initial-scale=1' }
   ],
   link: [],
-  htmlAttrs: { lang: 'en' }
+  htmlAttrs: { lang: 'en' },
+  titleTemplate: title => withEnvLabel(title || '', envLabel)
 })
 
 const getError = computed(() => {
@@ -42,5 +48,6 @@ console.log(props?.error.message)
         />
       </B24Card>
     </B24SidebarLayout>
+    <EnvLabelBadge />
   </B24App>
 </template>

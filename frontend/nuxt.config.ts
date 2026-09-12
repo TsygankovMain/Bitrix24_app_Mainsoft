@@ -83,7 +83,9 @@ export default defineNuxtConfig({
      */
     public: {
       appUrl: publicAppUrl,
-      apiUrl: publicApiUrl
+      apiUrl: publicApiUrl,
+      // Метка стенда (DEV_ver2 и т. п.); на проде пусто — метки нет
+      envLabel: String(process.env.NUXT_PUBLIC_ENV_LABEL || '').trim()
     }
   },
 
