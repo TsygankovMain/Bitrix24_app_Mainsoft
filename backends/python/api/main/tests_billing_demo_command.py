@@ -239,10 +239,12 @@ class SelectionTest(DemoCommandFixture):
     def test_lines_are_grouped_per_project_of_one_client(self):
         self.generate("--close-month", "2026-08")
 
-        selection = self.service().collect(self.filters(company_id="15"))
+        selection = self.service().collect(
+            self.filters(company_id="15", grouping="project"),
+        )
 
         self.assertEqual(
-            sorted(line["title"] for line in selection.lines),
+            sorted(line["subject"] for line in selection.lines),
             ["Мейнсофт", "Мейнсофт-2"],
         )
 

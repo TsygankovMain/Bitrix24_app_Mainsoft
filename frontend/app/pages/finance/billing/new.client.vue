@@ -44,6 +44,7 @@ import {
   BILLING_GROUPING_OPTIONS,
   buildBillingFilterBody,
   createBillingFilterForm,
+  normalizeBillingGrouping,
   parseTaskIdsInput,
   validateBillingFilter,
 } from '~/utils/billingFilter'
@@ -57,6 +58,7 @@ import {
   toggleDraftExcluded,
   type BillingLineDraft,
 } from '~/utils/billingPreview'
+import { describeBillingGrouping } from '~/utils/billingGrouping'
 import { splitBillingWarnings } from '~/utils/billingWarnings'
 import { extractMixedCompanies, type BillingCompanyChoice } from '~/utils/billingCompanies'
 import { describeBillingOurCompany } from '~/utils/billingOurCompany'
@@ -382,6 +384,43 @@ async function runPreview() {
   }
 }
 
+/**
+ * По какому признаку собраны показанные строки.
+ *
+ * Признак берётся из ОТВЕТА сервера, а не из формы: переключатель
+ * группировки доступен и на шаге предпросмотра, и между запросом и ответом
+ * значение в форме успевает измениться — подпись разошлась бы со строками,
+ * которые человек видит.
+ *
+ * Уровень задачи в ответе тоже серверный: это настройка портала, а не поле
+ * мастера, и врать о ней экран не должен.
+ */
+const groupingView = computed(() => describeBillingGrouping(
+  normalizeBillingGrouping(preview.value?.grouping ?? form.value.grouping),
+  String(preview.value?.task_level || 'task'),
+))
+
+/** Подсказка под селектом группировки на шаге отбора. */
+const groupingFormHint = computed(
+  () => describeBillingGrouping(form.value.grouping).hint
+)
+
+/**
+ * Переключение группировки в предпросмотре пересобирает строки заново.
+ *
+ * Пересчитать их на клиенте нельзя: группировка меняет СОСТАВ строк, а часы
+ * и ставки лежат в списаниях, которых у экрана нет. Сделанные правки текста
+ * и цены при этом теряются — они относились к другим строкам, и переносить
+ * их на новые было бы подлогом.
+ */
+async function changeGrouping() {
+  if (step.value !== 'preview') {
+    return
+  }
+
+  await runPreview()
+}
+
 function backToFilter() {
   step.value = 'filter'
   error.value = null
@@ -605,9 +644,7 @@ onMounted(async () => {
               {{ option.label }}
             </option>
           </select>
-          <p class="mt-1 text-xs text-slate-500">
-            {{ BILLING_GROUPING_OPTIONS.find(option => option.id === form.grouping)?.hint }}
-          </p>
+          <p class="mt-1 text-xs text-slate-500">{{ groupingFormHint }}</p>
         </div>
 
         <div>
@@ -776,6 +813,40 @@ onMounted(async () => {
           </p>
         </div>
 
+        <!--
+          Признак, по которому собраны строки, и переключатель рядом с ним.
+          Переключатель оставлен на шаге предпросмотра намеренно: иначе,
+          увидев не то наименование работ, человек возвращается в отбор и
+          собирает документ заново, а это тот же тупик, что и погасшая кнопка.
+        -->
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <p class="text-slate-600">
+              <span class="text-slate-500">Строки собраны:</span>
+              <span class="font-medium text-slate-900">{{ groupingView.label }}</span>
+              <span class="text-slate-500"> · {{ groupingView.summary }}</span>
+            </p>
+            <label class="flex items-center gap-2 text-xs text-slate-500">
+              Пересобрать
+              <select
+                v-model="form.grouping"
+                class="text-sm"
+                aria-label="Признак группировки строк счёта"
+                :disabled="isPreviewLoading"
+                @change="changeGrouping"
+              >
+                <option v-for="option in BILLING_GROUPING_OPTIONS" :key="option.id" :value="option.id">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <p class="mt-1 text-xs text-slate-500">{{ groupingView.hint }}</p>
+          <p v-if="edited" class="mt-1 text-xs text-amber-700">
+            Пересборка строк отменит правки текста и цены: они относились к прежним строкам.
+          </p>
+        </div>
+
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="text-sm text-slate-600">
             <span v-if="preview?.company_name" class="font-medium text-slate-900">
@@ -847,6 +918,18 @@ onMounted(async () => {
                   >
                   <p v-if="draft.titleEdited" class="mt-1 text-xs text-slate-500">
                     было: {{ draft.originalTitle }}
+                  </p>
+                  <!--
+                    Предмет строки показывается, только когда он не читается
+                    в самом наименовании: после правки текста человеком или
+                    при шаблоне, который название задачи не выводит. Иначе это
+                    был бы дубль строки прямо под строкой.
+                  -->
+                  <p
+                    v-if="draft.subject && groupingView.subjectLabel && !draft.title.includes(draft.subject)"
+                    class="mt-1 text-xs text-slate-500"
+                  >
+                    {{ groupingView.subjectLabel }}: {{ draft.subject }}
                   </p>
                 </td>
                 <td class="text-right">{{ formatBillingHours(draft.hours) }}</td>

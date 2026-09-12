@@ -71,13 +71,27 @@ class BillingFixture(TestCase):
 
     def entry(self, bitrix_id, *, hours=2.0, rate=2000.0, project_id="73",
               employee_id="11", task_id="8365", day=15, month=8, billable=True,
-              description="работа"):
+              description="работа", task_title=None, parent_task=None):
+        """Списание. Название задачи по умолчанию своё у каждого task_id.
+
+        Так и на проде: снимок иерархии несёт название задачи, и группировка
+        по задачам обязана давать РАЗНЫЕ строки для разных задач. Одно
+        название на все записи скрывало бы склейку строк.
+
+        ``parent_task`` — пара (id, название) родителя верхнего уровня: с ней
+        запись становится подзадачей, и иерархия в снимке — из двух звеньев.
+        """
+        titles = [task_title or f"Задача {task_id}"]
+        ids = [task_id]
+        if parent_task:
+            ids = [parent_task[0]] + ids
+            titles = [parent_task[1]] + titles
         return TimesheetItem.objects.create(
             bitrix24_account=self.account, bitrix_id=bitrix_id, task_id=task_id,
             employee_id=employee_id, hours=hours, is_billable=billable,
             project_id=project_id, project_title="Мейнсофт" if project_id == "73" else "Другой",
             hourly_rate_snapshot=rate, description=description,
-            task_hierarchy_ids=[task_id], task_hierarchy_titles=["Задача"],
+            task_hierarchy_ids=ids, task_hierarchy_titles=titles,
             date_reflection=timezone.make_aware(datetime(2026, month, day, 0, 0)),
         )
 
@@ -174,23 +188,38 @@ class GroupingTest(BillingFixture):
         self.entry(2, task_id="200", employee_id="12", hours=3.0)
         self.entry(3, task_id="200", employee_id="11", hours=1.0, project_id="88", rate=1000.0)
 
-    def test_group_by_project(self):
+    def test_grouping_by_task_is_the_default(self):
+        """Значение по умолчанию — ПО ЗАДАЧАМ, и в тексте название задачи.
+
+        Раньше по умолчанию группировали по проектам, и в счёт уходило имя
+        карточки проекта: у НУОЛАБ карточка названа по клиенту, и
+        наименованием работ оказалось «НУОЛАБ».
+        """
         selection = self.service().collect(self.filters(company_id="15"))
 
-        self.assertEqual([line["title"] for line in selection.lines], ["Мейнсофт"])
+        self.assertEqual(selection.grouping, "task")
+        self.assertEqual(
+            sorted(line["title"] for line in selection.lines),
+            ["Задача 100, август 2026", "Задача 200, август 2026"],
+        )
+
+    def test_group_by_project(self):
+        selection = self.service().collect(self.filters(company_id="15", grouping="project"))
+
+        self.assertEqual([line["title"] for line in selection.lines], ["Мейнсофт, август 2026"])
         self.assertEqual(selection.lines[0]["hours"], 5.0)
         self.assertEqual(selection.lines[0]["amount"], 10000.0)
 
     def test_group_by_task(self):
         selection = self.service().collect(self.filters(company_id="15", grouping="task"))
 
-        hours = {line["title"]: line["hours"] for line in selection.lines}
+        hours = {line["subject"]: line["hours"] for line in selection.lines}
         self.assertEqual(hours, {"Задача 100": 2.0, "Задача 200": 3.0})
 
     def test_group_by_employee(self):
         selection = self.service().collect(self.filters(company_id="15", grouping="employee"))
 
-        hours = {line["title"]: line["hours"] for line in selection.lines}
+        hours = {line["subject"]: line["hours"] for line in selection.lines}
         self.assertEqual(hours, {"Цыганков Егор": 2.0, "Петрова Анна": 3.0})
 
     def test_group_single(self):
@@ -198,6 +227,7 @@ class GroupingTest(BillingFixture):
 
         self.assertEqual(len(selection.lines), 1)
         self.assertEqual(selection.lines[0]["hours"], 5.0)
+        self.assertEqual(selection.lines[0]["subject"], "Услуги по договору")
 
     def test_line_rate_is_weighted_not_borrowed(self):
         """Ставка строки — сумма/часы, а не «ставка первой записи».
@@ -207,7 +237,7 @@ class GroupingTest(BillingFixture):
         """
         TimesheetItem.objects.filter(bitrix_id=2).update(hourly_rate_snapshot=1000.0)
 
-        selection = self.service().collect(self.filters(company_id="15"))
+        selection = self.service().collect(self.filters(company_id="15", grouping="project"))
 
         line = selection.lines[0]
         self.assertEqual(line["amount"], 7000.0)
@@ -536,7 +566,7 @@ class ApprovedLinesTest(BillingFixture):
         self.entry(2, employee_id="12", hours=3.0)
         service, selection = self.selection(grouping="employee")
         self.assertEqual(len(selection.lines), 2)
-        kept = next(line for line in selection.lines if line["title"] == "Цыганков Егор")
+        kept = next(line for line in selection.lines if line["subject"] == "Цыганков Егор")
 
         result = service.apply_approved_lines(selection, [self.approved(kept)])
 

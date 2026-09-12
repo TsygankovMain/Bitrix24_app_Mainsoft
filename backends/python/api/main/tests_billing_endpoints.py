@@ -266,7 +266,9 @@ class IssueEndpointTest(BillingEndpointFixture):
         row = self.portal.sent_rows[0]
         self.assertEqual(row["quantity"], 3.0)
         self.assertEqual(row["price"], 2000.0)
-        self.assertEqual(row["productName"], "Мейнсофт")
+        # В товарную строку счёта уходит НАЗВАНИЕ ЗАДАЧИ по шаблону портала,
+        # а не имя карточки проекта: обе записи отражены в одной задаче.
+        self.assertEqual(row["productName"], "Задача, август 2026")
 
     def test_repeat_issue_of_same_entries_is_409(self):
         self.entry(1)
@@ -848,7 +850,11 @@ class ApprovedLinesEndpointTest(BillingEndpointFixture):
         self.entry(2, project_id="74", rate=1000.0)
         self.close_august()
 
-        first = self.post("/api/billing/documents", self.default_filter(lines=[self.line()]))
+        # Группировка задана явно: строки этого теста — по проектам, а обе
+        # записи отражены в одной и той же задаче.
+        first = self.post("/api/billing/documents", self.default_filter(
+            grouping="project", lines=[self.line()],
+        ))
 
         self.assertEqual(first.status_code, 201)
         document = BillingDocument.objects.get()
@@ -859,7 +865,9 @@ class ApprovedLinesEndpointTest(BillingEndpointFixture):
         self.assertEqual(len(self.portal.sent_rows), 1)
 
         # Часы исключённой строки не потреблены — второй счёт их забирает.
-        second = self.post("/api/billing/documents", self.default_filter(lines=[self.second_line()]))
+        second = self.post("/api/billing/documents", self.default_filter(
+            grouping="project", lines=[self.second_line()],
+        ))
 
         self.assertEqual(second.status_code, 201)
         self.assertEqual(BillingDocument.objects.count(), 2)
@@ -944,7 +952,7 @@ class ApprovedLinesEndpointTest(BillingEndpointFixture):
         self.entry(2, project_id="74", rate=1000.0)
         self.close_august()
 
-        response = self.post("/api/billing/documents", self.default_filter())
+        response = self.post("/api/billing/documents", self.default_filter(grouping="project"))
 
         self.assertEqual(response.status_code, 201)
         document = BillingDocument.objects.get()

@@ -21,7 +21,7 @@ test('createBillingFilterForm: по умолчанию прошлый месяц
   assert.equal(form.billableOnly, true)
   assert.equal(form.excludeInvoiced, true)
   assert.equal(form.onlyClosedPeriods, true)
-  assert.equal(form.grouping, 'project')
+  assert.equal(form.grouping, 'task')
 })
 
 test('createBillingFilterForm: январь берёт декабрь предыдущего года', () => {
@@ -31,13 +31,20 @@ test('createBillingFilterForm: январь берёт декабрь преды
   assert.equal(form.dateTo, '2025-12-31')
 })
 
-test('normalizeBillingGrouping: чужая группировка превращается в «по проектам»', () => {
+test('normalizeBillingGrouping: чужая группировка превращается в «по задачам»', () => {
   for (const option of BILLING_GROUPING_OPTIONS) {
     assert.equal(normalizeBillingGrouping(option.id), option.id)
   }
 
-  assert.equal(normalizeBillingGrouping('company'), 'project')
-  assert.equal(normalizeBillingGrouping(undefined), 'project')
+  assert.equal(normalizeBillingGrouping('company'), 'task')
+  assert.equal(normalizeBillingGrouping(undefined), 'task')
+})
+
+test('createBillingFilterForm: группировка по умолчанию — по задачам', () => {
+  // Строка счёта обязана описывать работы. Группировка по проектам брала имя
+  // карточки проекта, и у клиента НУОЛАБ в счёт ушло «НУОЛАБ».
+  assert.equal(createBillingFilterForm(new Date(2026, 8, 12)).grouping, 'task')
+  assert.equal(buildBillingFilterBody(createBillingFilterForm(new Date(2026, 8, 12))).grouping, 'task')
 })
 
 test('buildBillingFilterBody: в теле только поля контракта', () => {

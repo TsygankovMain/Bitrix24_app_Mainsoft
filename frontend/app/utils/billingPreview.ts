@@ -43,6 +43,14 @@ export type BillingLineDraft = {
   key: string
   projectId: string
   title: string
+  /**
+   * Предмет строки — задача, проект или сотрудник, по которому она собрана.
+   *
+   * Нужен отдельно от `title`: наименование работ собрано по шаблону портала
+   * и может быть переписано человеком, и тогда понять, чем строка была,
+   * иначе нельзя. Пусто — сервер предмета не передал (старый ответ).
+   */
+  subject: string
   hours: number
   rate: number
   amount: number
@@ -67,7 +75,9 @@ export type BillingLineDraft = {
  * поправил цену — тогда старая сумма заведомо неверна.
  *
  * Строка без названия получает подстановку: пустая строка в счёте выглядит
- * как потерянные данные, а «Работы по проекту» честно описывает, что это.
+ * как потерянные данные. Порядок подстановки — предмет строки (задача,
+ * проект, сотрудник), затем название проекта, и только потом общее «Работы
+ * по проекту»: предмет описывает работы точнее всего.
  */
 export function createBillingLineDrafts(lines: BillingLinePayload[] | null | undefined): BillingLineDraft[] {
   if (!Array.isArray(lines)) {
@@ -79,12 +89,15 @@ export function createBillingLineDrafts(lines: BillingLinePayload[] | null | und
     const rate = round2(toNumber(line?.rate))
     const serverAmount = round2(toNumber(line?.amount))
     const amount = serverAmount || round2(hours * rate)
-    const title = String(line?.title || line?.project_name || '').trim() || 'Работы по проекту'
+    const subject = String(line?.subject ?? '').trim()
+    const title = String(line?.title || subject || line?.project_name || '').trim()
+      || 'Работы по проекту'
 
     return {
       key: `line-${index}`,
       projectId: String(line?.project_id ?? '').trim(),
       title,
+      subject,
       hours,
       rate,
       amount,

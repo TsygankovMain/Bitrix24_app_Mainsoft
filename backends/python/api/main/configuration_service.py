@@ -3,6 +3,12 @@ import json
 import logging
 from typing import Dict, Any, Optional, List
 
+from .billing_line_template import (
+    DEFAULT_LINE_TEMPLATE,
+    TASK_LEVEL_TASK,
+    TASK_LEVELS,
+)
+
 logger = logging.getLogger(__name__)
 
 class ConfigurationService:
@@ -101,6 +107,20 @@ class ConfigurationService:
         )
         normalized['billing_our_company_name'] = self._normalize_text(
             normalized.get('billing_our_company_name')
+        )
+        # Формулировка строки счёта. Пустое значение НЕ сохраняется как пустое:
+        # оно оставило бы каждую строку счёта без наименования работ, поэтому
+        # «ничего не задано» приводится к значению по умолчанию.
+        normalized['billing_line_template'] = (
+            self._normalize_text(normalized.get('billing_line_template'))
+            or DEFAULT_LINE_TEMPLATE
+        )
+        # Уровень задачи в строке: только два допустимых значения. Чужое
+        # значение читается как «по задаче» — укрупнять строки счёта из-за
+        # опечатки в настройке нельзя.
+        task_level = self._normalize_text(normalized.get('billing_line_task_level')).lower()
+        normalized['billing_line_task_level'] = (
+            task_level if task_level in TASK_LEVELS else TASK_LEVEL_TASK
         )
         try:
             normalized['billing_act_template_id'] = int(normalized.get('billing_act_template_id') or 0)
@@ -225,6 +245,11 @@ class ConfigurationService:
             # перечитывается (billing_service.verify_our_company).
             'billing_our_company_id': '',
             'billing_our_company_name': '',
+            # Формулировка строки счёта и уровень задачи в ней. По умолчанию
+            # «{задача}, {месяц}» и «по задаче» — то есть в наименовании работ
+            # название задачи и месяц, а не название карточки проекта.
+            'billing_line_template': DEFAULT_LINE_TEMPLATE,
+            'billing_line_task_level': TASK_LEVEL_TASK,
             'legal_entity_directory': {
                 'iblock_type_id': 'lists',
                 'iblock_id': 0,

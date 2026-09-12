@@ -15,6 +15,13 @@
  */
 
 import { normalizeAccountantIds } from './billingFeature'
+import {
+  BILLING_LINE_TASK_LEVEL_KEY,
+  BILLING_LINE_TEMPLATE_KEY,
+  normalizeBillingLineTemplate,
+  normalizeBillingTaskLevel,
+} from './billingLineTemplate'
+import type { BillingTaskLevel } from './billingLineTemplate'
 import type { AppConfigurationPayload } from '~/types/config'
 
 export const BILLING_ALLOW_OPEN_PERIOD_KEY = 'billing_allow_open_period'
@@ -45,6 +52,8 @@ export const BILLING_ACCOUNTANT_IDS_KEY = 'billing_accountants'
 export const BILLING_OUR_COMPANY_ID_KEY = 'billing_our_company_id'
 export const BILLING_OUR_COMPANY_NAME_KEY = 'billing_our_company_name'
 
+export { BILLING_LINE_TASK_LEVEL_KEY, BILLING_LINE_TEMPLATE_KEY } from './billingLineTemplate'
+
 export type BillingSettings = {
   /** Разрешить выставление за незакрытый месяц. */
   allowOpenPeriod: boolean
@@ -54,6 +63,16 @@ export type BillingSettings = {
   ourCompanyId: string
   /** Название нашего юрлица на момент выбора — только для показа. */
   ourCompanyName: string
+  /**
+   * Формулировка строки счёта: «{задача}, {месяц}» и далее по вкусу
+   * бухгалтерии. Текст строк собирает сервер, эта настройка — его правило.
+   */
+  lineTemplate: string
+  /**
+   * Уровень задачи в строке: сама задача («task») или её родитель верхнего
+   * уровня («root»). Влияет только на группировку по задачам.
+   */
+  taskLevel: BillingTaskLevel
 }
 
 /**
@@ -99,6 +118,10 @@ export function readBillingSettings(config: AppConfigurationPayload | null | und
     // Название без идентификатора бессмысленно: выставлять по одному названию
     // нельзя, а показывать «настройка задана» при пустом id — врать.
     ourCompanyName: ourCompanyId ? readText(config?.[BILLING_OUR_COMPANY_NAME_KEY]) : '',
+    // Пустой шаблон читается как «как по умолчанию»: иначе каждая строка
+    // счёта осталась бы без наименования работ.
+    lineTemplate: normalizeBillingLineTemplate(config?.[BILLING_LINE_TEMPLATE_KEY]),
+    taskLevel: normalizeBillingTaskLevel(config?.[BILLING_LINE_TASK_LEVEL_KEY]),
   }
 }
 
@@ -123,6 +146,8 @@ export function applyBillingSettings(
     [BILLING_OUR_COMPANY_NAME_KEY]: readText(settings.ourCompanyId)
       ? readText(settings.ourCompanyName)
       : '',
+    [BILLING_LINE_TEMPLATE_KEY]: normalizeBillingLineTemplate(settings.lineTemplate),
+    [BILLING_LINE_TASK_LEVEL_KEY]: normalizeBillingTaskLevel(settings.taskLevel),
   }
 }
 
@@ -136,6 +161,17 @@ export function billingSettingsChanged(left: BillingSettings, right: BillingSett
   // отличаться регистром или пробелами, а кнопка «Сохранить» не должна
   // гореть из-за того, что справочник загрузился.
   if (readText(left.ourCompanyId) !== readText(right.ourCompanyId)) {
+    return true
+  }
+
+  // Шаблон сравниваем нормализованным: пустое поле и значение по умолчанию —
+  // одно и то же состояние, и кнопка «Сохранить» не должна гореть из-за
+  // стёртого пробела.
+  if (normalizeBillingLineTemplate(left.lineTemplate) !== normalizeBillingLineTemplate(right.lineTemplate)) {
+    return true
+  }
+
+  if (normalizeBillingTaskLevel(left.taskLevel) !== normalizeBillingTaskLevel(right.taskLevel)) {
     return true
   }
 
