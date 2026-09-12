@@ -9,6 +9,7 @@ from django.core.cache import cache
 
 from config import config
 
+from .bdds_settings import DEFAULT_NOTIFY_COOLDOWN_HOURS, load_bdds_settings, normalize_bdds_settings
 from .models import Bitrix24Account, ProjectCard, SystemLog
 from .project_board_shared import build_account_cache_key, get_project_card_queryset
 from .project_budget_service import ProjectBudgetService
@@ -18,7 +19,23 @@ logger = logging.getLogger(__name__)
 
 
 class ProjectBudgetNotifier:
-    COOLDOWN_HOURS = 12
+    """Уведомления о риске и перерасходе бюджета проекта.
+
+    Три события: проект вошёл в «Риск», проект вошёл в «Перерасход»,
+    финансовый результат скакнул. События срабатывают на СМЕНЕ состояния, а
+    не на самом состоянии: иначе каждый прогон присылал бы одно и то же про
+    один и тот же проект. Плюс пауза (``notify_cooldown_hours``, по
+    умолчанию 12 часов) на пару «проект + событие» — она нужна на случай,
+    когда статус мигает через границу порога.
+
+    Адресаты: куратор проекта и фиксированный список «финансы» из настроек
+    портала (``bdds_notify_user_ids``). Роли «руководитель практики» из
+    макета в приложении нет, и заводить её на первом этапе не решено
+    (вопрос 4 записки), поэтому второй адресат — список в настройках.
+    Проект без куратора не остаётся без уведомления, если список задан.
+    """
+
+    COOLDOWN_HOURS = DEFAULT_NOTIFY_COOLDOWN_HOURS
     LARGE_CHANGE_ABS_THRESHOLD = 100000.0
     LARGE_CHANGE_RATIO_THRESHOLD = 0.10
 
@@ -28,9 +45,23 @@ class ProjectBudgetNotifier:
         "Минус": "support_minus",
     }
 
-    def __init__(self, client: Optional[Client], account: Bitrix24Account):
+    def __init__(
+        self,
+        client: Optional[Client],
+        account: Bitrix24Account,
+        *,
+        settings: Optional[Dict[str, Any]] = None,
+    ):
         self.client = client or account.client
         self.account = account
+        # Настройки читаются ОДИН раз на прогон: внутри них живой
+        # app.option.get, а прогон перебирает все карточки портала.
+        self.settings = (
+            normalize_bdds_settings(settings)
+            if isinstance(settings, dict)
+            else load_bdds_settings(account, self.client)
+        )
+        self.cooldown_hours = int(self.settings.get("notify_cooldown_hours") or self.COOLDOWN_HOURS)
 
     def evaluate_all(self, source: str = "manual") -> Dict[str, Any]:
         cards = list(get_project_card_queryset(self.account).filter(is_archived=False))
@@ -59,10 +90,20 @@ class ProjectBudgetNotifier:
         return self._evaluate_cards(cards, source=source)
 
     def _evaluate_cards(self, cards: List[ProjectCard], *, source: str) -> Dict[str, Any]:
+        if not self.settings.get("notifications_enabled", True):
+            # Настройка выключена — прогон не молчит, а честно отвечает
+            # «disabled»: тот, кто дёрнул ручку или поставил её в cron,
+            # обязан увидеть причину, а не пустой отчёт «проверено 0».
+            result = self._empty_result(source)
+            result["status"] = "disabled"
+            return result
+
         if not cards:
             return self._empty_result(source)
 
-        metrics_map = ProjectBudgetService(self.account).build_metrics_map(cards)
+        metrics_map = ProjectBudgetService(
+            self.account, settings=self.settings
+        ).build_metrics_map(cards)
         summary = self._empty_result(source)
         summary["checked"] = len(cards)
 
@@ -146,14 +187,16 @@ class ProjectBudgetNotifier:
             "event_code": event.get("code"),
             "status": "skipped",
             "reason": "",
+            "recipients": [],
         }
 
-        curator_user_id = self._clean_str(card.curator_user_id)
-        if not curator_user_id:
-            result["reason"] = "curator_user_id is empty"
+        recipients = self._resolve_recipients(card)
+        result["recipients"] = list(recipients)
+        if not recipients:
+            result["reason"] = "no recipients: curator is not assigned and settings list is empty"
             self._log_event(
                 level="INFO",
-                message="Skip notifier event: curator is not assigned",
+                message="Skip notifier event: no recipients",
                 payload={"result": result, "source": source},
             )
             return result
@@ -171,10 +214,20 @@ class ProjectBudgetNotifier:
 
         message = self._build_message(card, metrics, event, source=source)
         tag = f"project-budget:{card.project_id}:{event.get('code')}"
-        sent, error_message = self._send_notification(curator_user_id, message, tag)
+        # Отправка всем адресатам, успех — если дошло ХОТЯ БЫ до одного.
+        # Пауза ставится только при успехе: иначе первая же сетевая ошибка
+        # гасила бы событие на 12 часов.
+        sent = False
+        error_message: Optional[str] = None
+        for recipient in recipients:
+            delivered, error = self._send_notification(recipient, message, tag)
+            if delivered:
+                sent = True
+            else:
+                error_message = error or error_message
 
         if sent:
-            cache.set(cooldown_key, "1", timeout=self.COOLDOWN_HOURS * 3600)
+            cache.set(cooldown_key, "1", timeout=self.cooldown_hours * 3600)
             result["status"] = "sent"
             self._log_event(
                 level="INFO",
@@ -192,8 +245,20 @@ class ProjectBudgetNotifier:
         )
         return result
 
-    def _send_notification(self, curator_user_id: str, message: str, tag: str) -> tuple[bool, Optional[str]]:
-        user_id = int(curator_user_id) if str(curator_user_id).isdigit() else curator_user_id
+    def _resolve_recipients(self, card: ProjectCard) -> List[str]:
+        """Куратор проекта плюс список «финансы» из настроек, без дублей."""
+        recipients: List[str] = []
+        curator_user_id = self._clean_str(card.curator_user_id)
+        if curator_user_id:
+            recipients.append(curator_user_id)
+        for user_id in self.settings.get("notify_user_ids") or []:
+            normalized = self._clean_str(user_id)
+            if normalized and normalized not in recipients:
+                recipients.append(normalized)
+        return recipients
+
+    def _send_notification(self, recipient_user_id: str, message: str, tag: str) -> tuple[bool, Optional[str]]:
+        user_id = int(recipient_user_id) if str(recipient_user_id).isdigit() else recipient_user_id
         params = {
             "USER_ID": user_id,
             "MESSAGE": message,
@@ -228,10 +293,22 @@ class ProjectBudgetNotifier:
             f"Факт затрат: {cost:.2f}",
             f"Доход/Расход: {income:.2f} / {expense:.2f}",
             f"Финрезультат: {financial_result:.2f}",
-            f"Источник события: {source}",
         ]
+
+        forecast = metrics.get("forecast_cost_amount")
+        overrun = metrics.get("forecast_overrun_amount")
+        if forecast is not None:
+            forecast_line = f"Прогноз затрат: {self._to_float(forecast):.2f}"
+            if overrun is not None and self._to_float(overrun) > 0:
+                forecast_line += f" (выход за план на {self._to_float(overrun):.2f})"
+            lines.append(forecast_line)
+
+        lines.append(f"Источник события: {source}")
         if project_link:
             lines.append(f"Карточка проекта: {project_link}")
+        bdds_link = self._build_bdds_link(card)
+        if bdds_link:
+            lines.append(f"Бюджет проекта: {bdds_link}")
         return "\n".join(lines)
 
     def _persist_state(self, card: ProjectCard, metrics: Dict[str, Any]) -> None:
@@ -248,6 +325,19 @@ class ProjectBudgetNotifier:
 
     def _cooldown_key(self, project_id: str, event_code: str) -> str:
         return build_account_cache_key(self.account, f"budget-notifier-cooldown:{project_id}:{event_code}")
+
+    def _build_bdds_link(self, card: ProjectCard) -> str:
+        """Ссылка на экран «Бюджет проекта» — туда человек и идёт из уведомления.
+
+        Без app_base_url ссылки нет: относительный адрес в уведомлении
+        портала никуда не ведёт, а угадывать домен приложения нельзя.
+        """
+        app_url = str(config.app_base_url or "").strip()
+        if not app_url:
+            return ""
+        if not app_url.startswith("http"):
+            app_url = f"https://{app_url}"
+        return f"{app_url}/finance/bdds/{card.project_id}"
 
     def _build_project_link(self, card: ProjectCard) -> str:
         group_link = ""

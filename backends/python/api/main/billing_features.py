@@ -27,6 +27,14 @@ FEATURE_BILLING = PortalFeature.CODE_BILLING
 FEATURE_BDDS = PortalFeature.CODE_BDDS
 KNOWN_FEATURES = (FEATURE_BILLING, FEATURE_BDDS)
 
+#: Название функции для текста отказа. Человек читает «Счёт и акт» или
+#: «БДДС по проектам», а не код: сообщение с чужим названием отправило бы
+#: его к администратору не за той подпиской.
+FEATURE_TITLES = {
+    FEATURE_BILLING: "Счёт и акт",
+    FEATURE_BDDS: "БДДС по проектам",
+}
+
 
 def feature_queryset(account, code: Optional[str] = None):
     """Строки PortalFeature всех учёток портала (см. докстринг модуля)."""
@@ -80,12 +88,17 @@ def feature_enabled(account, code: str) -> bool:
 
 
 def feature_required(code: str):
-    """Декоратор на ПИШУЩИЕ эндпоинты платной функции.
+    """Декоратор на эндпоинты платной функции.
 
-    Контракт: при выключенной подписке создание и печать запрещены (403,
-    код feature_disabled), а чтение реестра и ОТМЕНА разрешены — отключение
-    подписки не должно лишать клиента уже выставленных документов и
-    возможности исправить ошибку.
+    Контракт «Счёта и акта»: при выключенной подписке создание и печать
+    запрещены (403, код feature_disabled), а чтение реестра и ОТМЕНА
+    разрешены — отключение подписки не должно лишать клиента уже
+    выставленных документов и возможности исправить ошибку.
+
+    У БДДС такого исключения нет и быть не может: там нет документа,
+    который клиент уже создал и обязан видеть дальше. Поэтому у неё
+    декоратор стоит и на ЧТЕНИИ — это и есть серверная проверка подписки,
+    которой фронтовый флаг никогда не был.
 
     Применять ПОСЛЕ @auth_required — нужен request.bitrix24_account.
     """
@@ -95,9 +108,10 @@ def feature_required(code: str):
         def wrapped(request, *args, **kwargs):
             account = getattr(request, "bitrix24_account", None)
             if account is None or not feature_enabled(account, code):
+                title = FEATURE_TITLES.get(code, code)
                 return JsonResponse(
                     {
-                        "error": "Функция «Счёт и акт» не подключена на этом портале.",
+                        "error": f"Функция «{title}» не подключена на этом портале.",
                         "code": "feature_disabled",
                         "feature": code,
                     },

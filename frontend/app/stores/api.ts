@@ -22,6 +22,11 @@ import type {
   SmartProcessOption,
 } from '~/types/config'
 import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
+import type {
+  BddsNotifierRunResult,
+  BddsProjectResponse,
+  BddsProjectsResponse,
+} from '~/types/bdds'
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
 import type { PeriodBulkPlan, PeriodCheckResult, PeriodEntryRow, PeriodFixResult, PeriodRow } from '~/types/period'
@@ -995,26 +1000,32 @@ export const useApiStore = defineStore(
       })
     }
 
-    // --- Финансовый функционал (в планах) изолирован ---
-    // Бэкенд-endpoint `/api/finance-operations` отключён (см. backends/python/api/main/urls.py).
-    // Заглушка не выполняет сетевой вызов, чтобы не было битых запросов.
-    // Для восстановления: удалить throw и раскомментировать оригинальное тело ниже.
-    const getFinanceOperations = async (_params: {
+    // region БДДС по проектам ////
+    //
+    // Ручки включены (этап 1). Все закрыты подпиской портала на сервере —
+    // @feature_required('bdds'), в том числе на чтении: при выключенной
+    // подписке они отвечают 403 с кодом feature_disabled, и экран показывает
+    // ту же заглушку с замком, что и до появления функции.
+    //
+    // Кэша у этих ручек нет намеренно, как и у «Счёта и акта»: БДДС — про
+    // деньги, и показать вчерашний остаток бюджета из localStorage хуже, чем
+    // подождать запрос.
+
+    /** Операции «доход/расход» смарт-процесса портала. */
+    const getFinanceOperations = async (params: {
       project_item_id?: string | null
       deal_id?: string | null
       limit?: number
     }): Promise<FinanceOperationsResponse> => {
-      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-operations отключён.')
-      /*
       const search = new URLSearchParams()
-      if (_params.project_item_id) {
-        search.set('project_item_id', String(_params.project_item_id))
+      if (params.project_item_id) {
+        search.set('project_item_id', String(params.project_item_id))
       }
-      if (_params.deal_id) {
-        search.set('deal_id', String(_params.deal_id))
+      if (params.deal_id) {
+        search.set('deal_id', String(params.deal_id))
       }
-      if (_params.limit && Number(_params.limit) > 0) {
-        search.set('limit', String(_params.limit))
+      if (params.limit && Number(params.limit) > 0) {
+        search.set('limit', String(params.limit))
       }
 
       const query = search.toString()
@@ -1023,25 +1034,27 @@ export const useApiStore = defineStore(
           Authorization: `Bearer ${tokenJWT.value}`
         }
       })
-      */
     }
 
-    // --- Финансовый функционал (в планах) изолирован ---
-    // Бэкенд-endpoint `/api/finance-operations/create` отключён (см. backends/python/api/main/urls.py).
-    // Для восстановления: удалить throw и раскомментировать оригинальное тело ниже.
-    const createFinanceOperation = async (_payload: FinanceOperationCreatePayload): Promise<{
+    /**
+     * Создание операции. Идемпотентность — на сервере (SHA-256 от полей),
+     * повтор возвращает status=duplicate, а не вторую операцию.
+     *
+     * Сбрасываем кэш доски и главной: финансовый результат проекта считается
+     * из этих же операций, и оставить там прежнее число значило бы показать
+     * две разные цифры на двух экранах одного приложения.
+     */
+    const createFinanceOperation = async (payload: FinanceOperationCreatePayload): Promise<{
       status: string
       operation?: FinanceOperationRecord
       idempotency_key?: string
     }> => {
-      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-operations/create отключён.')
-      /*
       const result = await $api('/api/finance-operations/create', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         },
-        body: JSON.stringify(_payload)
+        body: JSON.stringify(payload)
       })
       clearCache('project-board', 'homepage-portfolio', 'filter-projects')
       return result as {
@@ -1049,7 +1062,21 @@ export const useApiStore = defineStore(
         operation?: FinanceOperationRecord
         idempotency_key?: string
       }
-      */
+    }
+
+    /** Реестр проектов с бюджетами: строки, итог по портфелю, пороги. */
+    const getBddsProjects = async (includeArchived = false): Promise<BddsProjectsResponse> => {
+      const query = includeArchived ? '?archived=1' : ''
+      return await $api<BddsProjectsResponse>(`/api/bdds/projects${query}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Бюджет одного проекта: показатели, прогноз, последние операции. */
+    const getBddsProject = async (projectId: string): Promise<BddsProjectResponse> => {
+      return await $api<BddsProjectResponse>(`/api/bdds/projects/${encodeURIComponent(projectId)}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
     }
 
     const getHomepagePortfolio = async (forceRefresh = false): Promise<unknown> => {
@@ -1173,24 +1200,26 @@ export const useApiStore = defineStore(
       return result
     }
 
-    // --- Финансовый функционал (в планах) изолирован ---
-    // Бэкенд-endpoint `/api/project-budget/notify` отключён (см. backends/python/api/main/urls.py).
-    // В фронте больше не вызывается; заглушка оставлена для лёгкого восстановления.
-    const runProjectBudgetNotifier = async (_payload?: {
+    /**
+     * Прогон уведомлений о риске и перерасходе бюджета.
+     *
+     * Ручка ПИШУЩАЯ: рассылает уведомления в портал. Без параметров — по
+     * всему портфелю; project_ids сужают прогон до нужных проектов.
+     * Выключатель — настройка портала «Уведомления о бюджете»: при ней
+     * ответ приходит со status=disabled и ничего не отправляется.
+     */
+    const runProjectBudgetNotifier = async (payload?: {
       project_ids?: string[]
       project_item_ids?: string[]
-    }): Promise<unknown> => {
-      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/project-budget/notify отключён.')
-      /*
-      return await $api('/api/project-budget/notify', {
+    }): Promise<BddsNotifierRunResult> => {
+      return await $api<BddsNotifierRunResult>('/api/project-budget/notify', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(_payload || {})
+        body: JSON.stringify(payload || {})
       })
-      */
     }
 
     const runProjectSpaBackfill = async (): Promise<unknown> => {
@@ -1334,11 +1363,14 @@ export const useApiStore = defineStore(
       })
     }
 
-    // --- Финансовый функционал (в планах) изолирован ---
-    // Бэкенд-endpoint `/api/finance-spa/validation` отключён (см. backends/python/api/main/urls.py).
-    // В фронте больше не вызывается; заглушка оставлена для лёгкого восстановления.
+    // Валидация смарт-процесса «Доходы-расходы (App)» остаётся выключенной, и
+    // это не забытая заглушка: её смысл появится на ЭТАПЕ 2, когда у операции
+    // добавится десятое поле «статья ДДС» и проверять станет что. Сегодня
+    // операции читаются и пишутся (getFinanceOperations выше), а неполное
+    // сопоставление полей приходит кодом finance_spa_not_configured прямо
+    // оттуда. Из интерфейса эта функция не вызывается.
     const getFinanceSpaValidation = async (): Promise<FinanceSpaValidationPayload> => {
-      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-spa/validation отключён.')
+      throw new Error('Валидация смарт-процесса «Доходы-расходы» появится на этапе 2 (статьи ДДС): endpoint /api/finance-spa/validation выключен.')
       /*
       return await $api('/api/finance-spa/validation', {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
@@ -1604,6 +1636,8 @@ export const useApiStore = defineStore(
       createProject,
       getFinanceOperations,
       createFinanceOperation,
+      getBddsProjects,
+      getBddsProject,
       getHomepagePortfolio,
       getSupportStatus,
       connectSupportLine,

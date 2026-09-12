@@ -77,7 +77,11 @@ from .inn_backfill_service import InnBackfillService
 from .company_search_service import CompanySearchService
 from .project_creation_service import ProjectCreationService
 from .billing_crm_service import BillingCrmService
-from .billing_features import FEATURE_BILLING, feature_required, feature_states
+from .bdds_service import BddsService
+from .bdds_settings import load_bdds_settings
+from .billing_features import FEATURE_BDDS, FEATURE_BILLING, feature_required, feature_states
+from .finance_operation_service import FinanceOperationService
+from .project_budget_notifier import ProjectBudgetNotifier
 from .billing_service import BillingError, BillingFilter, BillingService
 from .billing_settings import (
     billing_manager_required,
@@ -148,6 +152,12 @@ __all__ = [
     "create_fields",
     "create_mapped_field",
     "export_raw_data",
+    # БДДС по проектам
+    "get_bdds_projects",
+    "get_bdds_project",
+    "get_finance_operations",
+    "create_finance_operation",
+    "run_project_budget_notifier",
     # Счёт и акт
     "get_features",
     "billing_templates",
@@ -203,7 +213,17 @@ def _parse_refresh_flag(request) -> bool:
     парсился по-разному в разных местах. Один разбор на все три места, а не
     копия в каждом, — чтобы не завести третий такой дефект.
     """
-    return str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "y", "yes"}
+    return _parse_bool_param(request, "refresh")
+
+
+def _parse_bool_param(request, name: str) -> bool:
+    """Любой булев флаг из query string. Тот же разбор, что у ?refresh.
+
+    Вынесено из _parse_refresh_flag, когда у БДДС появился ?archived: два
+    флага, разобранные по-разному, — это ровно тот класс дефекта, ради
+    которого разбор ?refresh в своё время и собрали в одно место.
+    """
+    return str(request.GET.get(name, "")).strip().lower() in {"1", "true", "y", "yes"}
 
 
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
@@ -3501,6 +3521,169 @@ def serve_spa(request):
             "Please ensure 'npm run generate' ran successfully during build.",
             status=404
         )
+
+
+# ---------------------------------------------------------------------------
+# БДДС по проектам (bdds)
+# ---------------------------------------------------------------------------
+#
+# Макет и модель: docs/design-options/2026-09-12-bdds-mockup.html и .md
+# (ветка claude/bdds-mockup). Здесь реализован ЭТАП 1: включение готовой
+# расчётной части и бюджет проекта одним числом. Статей ДДС, плана по
+# месяцам и корректировок с согласованием тут нет — это этапы 2 и 3.
+#
+# Подписка. На ВСЕХ ручках БДДС стоит @feature_required(FEATURE_BDDS), в том
+# числе на чтении. Это отличие от «Счёта и акта», и оно осознанное: там
+# чтение реестра открыто, потому что отключённая подписка не должна лишать
+# клиента уже выставленных документов. У БДДС такого документа нет — есть
+# только расчёт, и он и есть предмет подписки. До этой правки функцию
+# «охранял» фронтовый флаг FINANCE_BDDS_ENABLED, в комментарии к которому
+# было прямо написано, что он ничего не охраняет.
+#
+# Прав по ролям здесь нет, и это не упущение: общего серверного гейта по
+# ролям в приложении нет (решение от 11.06.2026), а точечные исключения
+# сделаны только там, где операция превращается в деньги клиента (закрытие
+# месяца, выставление счёта). БДДС ничего не выставляет. Кто видит суммы
+# чужих проектов — открытый вопрос 4 записки, и решать его вёрсткой
+# бессмысленно.
+
+
+def _bdds_service(request: AuthorizedRequest) -> BddsService:
+    account = request.bitrix24_account
+    return BddsService(account, settings=load_bdds_settings(account))
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_bdds_projects")
+@auth_required
+@feature_required(FEATURE_BDDS)
+def get_bdds_projects(request: AuthorizedRequest):
+    """Реестр проектов с бюджетами: строки, итог по портфелю, пороги.
+
+    Архив по умолчанию не отдаётся: бюджет закрытого проекта — история, а
+    реестр открывают, чтобы увидеть, где горит сейчас. ?archived=1 его
+    возвращает, потому что сверить закрытый проект с итогом года всё-таки
+    иногда нужно.
+    """
+    include_archived = _parse_bool_param(request, "archived")
+    payload = _bdds_service(request).list_projects(include_archived=include_archived)
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_bdds_project")
+@auth_required
+@feature_required(FEATURE_BDDS)
+def get_bdds_project(request: AuthorizedRequest, project_id: str):
+    """Бюджет одного проекта: показатели, прогноз, последние операции.
+
+    Ответ 404 при несуществующем проекте, а не пустые метрики: пустые
+    метрики читались бы как «проект есть, денег нет», и человек искал бы
+    ошибку в данных вместо опечатки в адресе.
+    """
+    payload = _bdds_service(request).get_project(project_id)
+    if payload is None:
+        return JsonResponse(
+            {"error": "Проект не найден в карточках проектов.", "code": "project_not_found"},
+            status=404,
+        )
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_finance_operations")
+@auth_required
+@feature_required(FEATURE_BDDS)
+def get_finance_operations(request: AuthorizedRequest):
+    """Операции «доход/расход» из смарт-процесса портала.
+
+    Ненастроенный смарт-процесс — это 409, а не 500: приложение работает
+    (часы, отчёты, проекты), не настроена именно эта функция, и текст отказа
+    обязан вести в настройки, а не в поддержку.
+    """
+    try:
+        limit = int(request.GET.get("limit") or 20)
+    except (TypeError, ValueError):
+        limit = 20
+
+    service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        payload = service.list_operations(
+            project_item_id=request.GET.get("project_item_id"),
+            deal_id=request.GET.get("deal_id"),
+            limit=limit,
+        )
+    except ValueError as exc:
+        return JsonResponse(
+            {"error": str(exc), "code": "finance_spa_not_configured"},
+            status=409,
+        )
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("create_finance_operation")
+@auth_required
+@feature_required(FEATURE_BDDS)
+@rate_limit("finance_operation_create", 20, 60, key="account")
+def create_finance_operation(request: AuthorizedRequest):
+    """Создание операции в смарт-процессе портала.
+
+    Идемпотентность — внутри сервиса: ключ SHA-256 от полей операции, и
+    повтор возвращает status=duplicate с уже существующим элементом, а не
+    второй элемент с той же суммой. Двойной клик по «Сохранить» на слабой
+    связи — самый обычный сценарий, и он не должен раздваивать деньги.
+    """
+    service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        payload = service.create_operation(_load_request_json(request))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc), "code": "invalid_operation"}, status=400)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("create_finance_operation: сбой записи операции")
+        return JsonResponse(
+            {"error": f"Не удалось создать операцию в смарт-процессе: {exc}", "code": "portal_write_failed"},
+            status=502,
+        )
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("run_project_budget_notifier")
+@auth_required
+@feature_required(FEATURE_BDDS)
+@rate_limit("project_budget_notify", 6, 60, key="account")
+def run_project_budget_notifier(request: AuthorizedRequest):
+    """Прогон уведомлений о риске и перерасходе.
+
+    Ручка пишущая (рассылает уведомления в портал), поэтому и POST, и
+    ограничение частоты: прогон по всему портфелю — это N уведомлений и
+    чтение смарт-процесса, и дёргать его в цикле нельзя.
+
+    Выключатель — настройка bdds_notifications_enabled: при ней прогон
+    отвечает status=disabled и ничего не отправляет.
+    """
+    payload = _load_request_json(request)
+    account = request.bitrix24_account
+    notifier = ProjectBudgetNotifier(account.client, account, settings=load_bdds_settings(account))
+
+    project_ids = payload.get("project_ids")
+    project_item_ids = payload.get("project_item_ids")
+    if isinstance(project_ids, list) and project_ids:
+        result = notifier.evaluate_project_ids(project_ids, source="manual")
+    elif isinstance(project_item_ids, list) and project_item_ids:
+        result = notifier.evaluate_project_item_ids(project_item_ids, source="manual")
+    else:
+        result = notifier.evaluate_all(source="manual")
+
+    return JsonResponse(result)
 
 
 # ---------------------------------------------------------------------------

@@ -325,6 +325,126 @@
         </template>
       </B24Card>
 
+      <!--
+        Настройки «БДДС по проектам».
+
+        Отдельной картой рядом с «Счётом и актом», а не внутри него: это
+        другая платная функция с другой подпиской, и смешивать их настройки
+        в одном блоке значит обещать, что они включаются вместе.
+
+        Сохраняются тем же POST /api/configuration/save: пороги и адресатов
+        читает СЕРВЕР (main/bdds_settings.py), а настройка, которой сервер не
+        видит, ничего не меняет. Выключателя подписки здесь нет и быть не
+        может — он на нашем сервере (PortalFeature), иначе платную функцию
+        включали бы через app.option из консоли браузера.
+      -->
+      <B24Card>
+        <template #header>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-base font-semibold text-slate-900">БДДС по проектам</span>
+            <span
+              v-if="bddsAccess.badge"
+              class="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+            >
+              {{ bddsAccess.badge }}
+            </span>
+          </div>
+        </template>
+
+        <div v-if="billingSettingsError" class="ms-note ms-note-danger">
+          {{ billingSettingsError }}
+        </div>
+
+        <div v-else-if="!billingSettingsReady" class="text-sm text-slate-500">
+          Загружаем настройки…
+        </div>
+
+        <div v-else class="space-y-6">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-sm font-medium text-slate-700">Уведомления о бюджете</p>
+              <p class="mt-1 text-sm text-slate-500">
+                Куратор проекта получает уведомление, когда проект входит в «Риск» или
+                «Перерасход», а поддержка уходит в минус. Повтор одного и того же события
+                по одному проекту не чаще раза в 12 часов.
+              </p>
+            </div>
+            <label class="relative ml-4 inline-flex cursor-pointer items-center">
+              <input v-model="bddsSettings.notificationsEnabled" type="checkbox" class="sr-only peer">
+              <div class="h-6 w-11 rounded-full bg-slate-300 transition peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-200 peer-checked:bg-[#0075ff] peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-white after:transition-all after:content-['']" />
+            </label>
+          </div>
+
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label class="block text-sm font-medium text-slate-700" for="bdds-risk">
+                Порог «Риск», %
+              </label>
+              <input
+                id="bdds-risk"
+                v-model.number="bddsSettings.riskPercent"
+                type="number"
+                min="1"
+                max="1000"
+                class="mt-2 w-full"
+              >
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700" for="bdds-overrun">
+                Порог «Перерасход», %
+              </label>
+              <input
+                id="bdds-overrun"
+                v-model.number="bddsSettings.overrunPercent"
+                type="number"
+                min="1"
+                max="1000"
+                class="mt-2 w-full"
+              >
+            </div>
+          </div>
+          <p class="text-sm text-slate-500">{{ bddsThresholdsHint }}</p>
+
+          <div>
+            <p class="text-sm font-medium text-slate-700">Кому ещё уходит уведомление</p>
+            <p class="mt-1 mb-2 text-sm text-slate-500">
+              Кроме куратора проекта. Пусто — только куратор; у проекта без куратора
+              уведомление тогда никому не уходит.
+            </p>
+            <MultiSelectFilter
+              label="Сотрудники"
+              :options="employeeOptions"
+              :model-value="bddsSettings.notifyUserIds"
+              @update:model-value="bddsSettings.notifyUserIds = ($event as string[]).map(String)"
+            />
+          </div>
+
+          <div v-if="bddsSaveNotice" class="ms-note ms-note-success">{{ bddsSaveNotice }}</div>
+          <div v-if="bddsSaveError" class="ms-note ms-note-danger">{{ bddsSaveError }}</div>
+          <div v-if="bddsNotifierNotice" class="ms-note ms-note-info">{{ bddsNotifierNotice }}</div>
+        </div>
+
+        <template #footer>
+          <div class="flex flex-wrap items-center gap-3">
+            <B24Button
+              label="Сохранить"
+              color="success"
+              :disabled="!canSaveBddsSettings"
+              :loading="isSavingBdds"
+              @click="saveBddsSettings"
+            />
+            <B24Button
+              label="Проверить сейчас"
+              color="default"
+              :disabled="!canRunBddsNotifier"
+              :loading="isRunningBddsNotifier"
+              @click="runBddsNotifier"
+            />
+            <span v-if="bddsSettingsDirty" class="text-sm text-slate-500">Есть несохранённые изменения</span>
+          </div>
+        </template>
+      </B24Card>
+
       <!-- Грид основных разделов -->
       <B24PageGrid>
         <B24Card>
@@ -433,6 +553,16 @@ import {
   unknownBillingPlaceholders,
 } from '~/utils/billingLineTemplate'
 import { describeOurCompanySetting } from '~/utils/billingOurCompany'
+import { describeBddsError } from '~/utils/bddsErrors'
+import { describeBddsNotifierRun } from '~/utils/bddsRegistry'
+import {
+  applyBddsSettings,
+  bddsSettingsChanged,
+  defaultBddsSettings,
+  describeBddsThresholds,
+  readBddsSettings,
+  type BddsSettings,
+} from '~/utils/bddsSettings'
 import {
   BILLING_TEMPLATE_SOURCE_HINT,
   billingTemplateOptionLabel,
@@ -474,6 +604,7 @@ const userSettings = useUserSettingsStore()
 const userStore = useUserStore()
 const apiStore = useApiStore()
 const { access: billingAccess } = useBillingFeature()
+const { access: bddsAccess } = useBddsFeature()
 
 const { initApp } = useAppInit('SettingsPage')
 const { $initializeB24Frame } = useNuxtApp()
@@ -485,6 +616,13 @@ const billingSaveNotice = ref('')
 const isSavingBilling = ref(false)
 
 const configuration = ref<AppConfigurationPayload>({})
+const bddsSettings = ref<BddsSettings>(defaultBddsSettings())
+const savedBddsSettings = ref<BddsSettings>(defaultBddsSettings())
+const bddsSaveNotice = ref('')
+const bddsSaveError = ref('')
+const isSavingBdds = ref(false)
+const bddsNotifierNotice = ref('')
+const isRunningBddsNotifier = ref(false)
 const billingSettings = ref<BillingSettings>(emptyBillingSettings())
 const savedBillingSettings = ref<BillingSettings>(emptyBillingSettings())
 const employeeOptions = ref<FilterOption[]>([])
@@ -618,6 +756,89 @@ async function saveBillingSettings() {
   }
 }
 
+const bddsThresholdsHint = computed(() => describeBddsThresholds(bddsSettings.value))
+
+const bddsSettingsDirty = computed(() => bddsSettingsChanged(
+  bddsSettings.value,
+  savedBddsSettings.value
+))
+
+const canSaveBddsSettings = computed(() => userStore.isAdmin
+  && billingSettingsReady.value
+  && bddsSettingsDirty.value
+  && !isSavingBdds.value)
+
+const canRunBddsNotifier = computed(() => userStore.isAdmin
+  && bddsAccess.value.enabled
+  && !isRunningBddsNotifier.value)
+
+/**
+ * Сохранение шлёт конфигурацию целиком с подменёнными ключами БДДС — тем же
+ * приёмом, что у «Счёта и акта» (см. saveBillingSettings выше).
+ *
+ * Оговорка, общая для обоих блоков: конфигурация одна, и сохранение одного
+ * блока отправляет её в том виде, в каком она пришла с сервера, плюс СВОИ
+ * ключи. То есть несохранённые правки соседнего блока при этом не уезжают —
+ * но и не сохраняются. Каждый блок сохраняется своей кнопкой.
+ */
+async function saveBddsSettings() {
+  if (!canSaveBddsSettings.value) {
+    return
+  }
+
+  isSavingBdds.value = true
+  bddsSaveNotice.value = ''
+  bddsSaveError.value = ''
+
+  try {
+    const next = applyBddsSettings(configuration.value, bddsSettings.value)
+    const result = await apiStore.saveConfiguration(next)
+
+    configuration.value = result?.config || next
+    savedBddsSettings.value = readBddsSettings(configuration.value)
+    bddsSettings.value = readBddsSettings(configuration.value)
+    bddsSaveNotice.value = 'Настройки «БДДС по проектам» сохранены.'
+  } catch (e) {
+    bddsSaveError.value = e instanceof Error && e.message
+      ? e.message
+      : 'Не удалось сохранить настройки. Попробуйте ещё раз.'
+  } finally {
+    isSavingBdds.value = false
+  }
+}
+
+/**
+ * Прогон уведомлений руками.
+ *
+ * Нотификатор рассчитан на внешнее расписание, и без этой кнопки убедиться,
+ * что уведомления доходят, было бы можно только дождавшись ночного прогона.
+ * Кнопка доступна только при включённой подписке: ручка закрыта
+ * @feature_required('bdds') и на выключенном портале ответила бы 403.
+ *
+ * Прогон ничего не меняет в данных — он рассылает уведомления и ставит
+ * паузу на отправленные события. Поэтому «Проверить сейчас» не требует
+ * сохранённых изменений и не мешает несохранённым: сервер считает по тому,
+ * что у него уже сохранено, и текст итога об этом честен.
+ */
+async function runBddsNotifier() {
+  if (!canRunBddsNotifier.value) {
+    return
+  }
+
+  isRunningBddsNotifier.value = true
+  bddsNotifierNotice.value = ''
+
+  try {
+    const result = await apiStore.runProjectBudgetNotifier()
+    bddsNotifierNotice.value = describeBddsNotifierRun(result)
+      || 'Прогон завершён.'
+  } catch (e) {
+    bddsNotifierNotice.value = describeBddsError(e).title
+  } finally {
+    isRunningBddsNotifier.value = false
+  }
+}
+
 onMounted(async () => {
   try {
     const $b24 = await $initializeB24Frame()
@@ -649,6 +870,8 @@ onMounted(async () => {
   configuration.value = configResult.value || {}
   billingSettings.value = readBillingSettings(configuration.value)
   savedBillingSettings.value = readBillingSettings(configuration.value)
+  bddsSettings.value = readBddsSettings(configuration.value)
+  savedBddsSettings.value = readBddsSettings(configuration.value)
   employeeOptions.value = employeesResult.status === 'fulfilled' ? employeesResult.value : []
 
   // Отказ справочника юрлиц НЕ закрывает блок: остальные настройки менять

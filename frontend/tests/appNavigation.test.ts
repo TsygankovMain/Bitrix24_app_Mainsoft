@@ -367,3 +367,48 @@ test('buildAppNavigation: бейдж «Счёта и акта» не проте�
   assert.equal(bdds?.locked, true)
   assert.equal(bdds?.badge, 'по подписке')
 })
+
+function bddsLink(options: Parameters<typeof buildAppNavigation>[0]) {
+  const finance = buildAppNavigation(options).find(section => section.id === 'finance')
+
+  return finance?.groups?.[0].links.find(link => link.paidFeature === 'bdds')
+}
+
+test('buildAppNavigation: выключенная подписка оставляет БДДС замок', () => {
+  const link = bddsLink(BASE_OPTIONS)
+
+  assert.equal(link?.locked, true)
+  assert.equal(link?.badge, 'по подписке')
+  assert.equal(link?.to, '/finance/bdds')
+})
+
+test('buildAppNavigation: включённая подписка снимает у БДДС замок и бейдж', () => {
+  const link = bddsLink({ ...BASE_OPTIONS, financeBddsEnabled: true })
+
+  assert.equal(link?.locked, false)
+  assert.equal(link?.badge, undefined)
+})
+
+test('buildAppNavigation: пробный период БДДС показывает остаток дней', () => {
+  const link = bddsLink({
+    ...BASE_OPTIONS,
+    financeBddsEnabled: true,
+    financeBddsBadge: 'пробный, осталось 3 дня',
+  })
+
+  assert.equal(link?.locked, false)
+  assert.equal(link?.badge, 'пробный, осталось 3 дня')
+})
+
+test('buildAppNavigation: бейдж БДДС не протекает в «Счёт и акт»', () => {
+  const finance = buildAppNavigation({
+    ...BASE_OPTIONS,
+    financeBddsEnabled: true,
+    financeBddsBadge: 'пробный, осталось 3 дня',
+  }).find(section => section.id === 'finance')
+
+  const billing = finance?.groups?.[0].links.find(link => link.paidFeature === 'billing')
+
+  assert.equal(billing?.locked, true)
+  assert.equal(billing?.badge, 'по подписке')
+})

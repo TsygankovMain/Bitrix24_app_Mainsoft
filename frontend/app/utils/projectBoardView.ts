@@ -21,6 +21,40 @@
 
 import type { ProjectBoardCardRecord, ProjectBoardResponse } from '../types/project-board'
 
+/**
+ * Что читает функция доски — и ничего сверх того.
+ *
+ * Понадобилось экрану БДДС: строка его реестра — та же карточка проекта, но
+ * без служебных полей доски (id записи, ручная стадия, источник стадии), и
+ * рисовать её обязаны ТЕ ЖЕ функции. Требовать полный ProjectBoardCardRecord
+ * означало бы либо копию этих функций под БДДС, либо выдуманные поля в её
+ * контракте. Сужение обратно совместимо: полная карточка доски подходит под
+ * любой из типов ниже.
+ */
+type BoardSearchable = Partial<Pick<
+  ProjectBoardCardRecord,
+  'project_name' | 'project_id' | 'curator_name' | 'company_name'
+  | 'company_inn' | 'our_legal_entity_name' | 'our_legal_entity_inn' | 'stage'
+>>
+
+type BoardRiskable = Partial<Pick<
+  ProjectBoardCardRecord,
+  'last_writeoff_days' | 'stage' | 'budget_health_status'
+>>
+
+type BoardSupportable = Partial<Pick<ProjectBoardCardRecord, 'is_support' | 'project_type'>>
+
+type BoardCurated = Partial<Pick<ProjectBoardCardRecord, 'curator_user_id'>>
+
+type BoardActive = Partial<Pick<ProjectBoardCardRecord, 'last_writeoff_at' | 'last_writeoff_days'>>
+
+type BoardBudgeted = Partial<Pick<
+  ProjectBoardCardRecord,
+  'budget_utilization_percent' | 'budget_health_status' | 'budget_utilization_mode'
+  | 'planned_hours' | 'planned_amount' | 'project_hours_budget' | 'planned_budget_amount'
+  | 'actual_cost_amount' | 'actual_hours'
+>>
+
 // --- Риск ---
 
 /**
@@ -47,7 +81,7 @@ const BOARD_RISK_BUDGET_STATUSES = new Set(['Риск', 'Перерасход', 
  * нарисован на каждой карточке, и человек, нажавший «Под риском», ждёт, что
  * перерасход тоже попадёт в отбор.
  */
-export function boardCardRiskReasons(card: ProjectBoardCardRecord): string[] {
+export function boardCardRiskReasons(card: BoardRiskable): string[] {
   const reasons: string[] = []
   const days = Number(card.last_writeoff_days || 0)
   const stage = String(card.stage || '')
@@ -64,11 +98,11 @@ export function boardCardRiskReasons(card: ProjectBoardCardRecord): string[] {
   return reasons
 }
 
-export function isBoardCardAtRisk(card: ProjectBoardCardRecord): boolean {
+export function isBoardCardAtRisk(card: BoardRiskable): boolean {
   return boardCardRiskReasons(card).length > 0
 }
 
-export function isBoardCardMine(card: ProjectBoardCardRecord, currentUserId?: string | number | null): boolean {
+export function isBoardCardMine(card: BoardCurated, currentUserId?: string | number | null): boolean {
   const userId = String(currentUserId ?? '').trim()
 
   if (!userId || userId === '0') {
@@ -78,7 +112,7 @@ export function isBoardCardMine(card: ProjectBoardCardRecord, currentUserId?: st
   return String(card.curator_user_id || '').trim() === userId
 }
 
-export function isBoardCardSupport(card: ProjectBoardCardRecord): boolean {
+export function isBoardCardSupport(card: BoardSupportable): boolean {
   return Boolean(card.is_support || String(card.project_type || '').toLowerCase() === 'support')
 }
 
@@ -165,7 +199,7 @@ export function countActiveBoardFilters(filters: ProjectBoardFilterState): numbe
   return count
 }
 
-export function matchesBoardSearch(card: ProjectBoardCardRecord, rawQuery: string): boolean {
+export function matchesBoardSearch(card: BoardSearchable, rawQuery: string): boolean {
   const query = String(rawQuery || '').trim().toLowerCase()
 
   if (!query) {
@@ -328,7 +362,7 @@ export function formatBoardMoneyShort(value?: number | null): string {
 }
 
 /** «сегодня» / «вчера» / «34 дн.» — давность последнего списания. */
-export function formatBoardActivity(card: ProjectBoardCardRecord): string {
+export function formatBoardActivity(card: BoardActive): string {
   if (!card.last_writeoff_at) {
     return 'Списаний нет'
   }
@@ -419,7 +453,7 @@ export type BoardUtilization = {
  * неправда, поэтому в таком случае полосы нет вовсе — только фактические часы.
  * Режим (часы или деньги) берём у бэкенда: он же считает и процент.
  */
-export function buildBoardUtilization(card: ProjectBoardCardRecord): BoardUtilization {
+export function buildBoardUtilization(card: BoardBudgeted): BoardUtilization {
   const percentValue = Number(card.budget_utilization_percent)
   const hasPercent = Number.isFinite(percentValue)
   const status = String(card.budget_health_status || '').trim()
