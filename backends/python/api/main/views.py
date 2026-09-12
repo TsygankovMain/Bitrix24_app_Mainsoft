@@ -45,7 +45,6 @@ from .services import (
 from .installation_service import InstallationService, InstallationError
 from .project_board_shared import invalidate_account_cache
 from .app_version import get_app_version, is_version_acceptable
-from .utils.decorators.admin_required import admin_required
 from .task_sync_service import TaskSyncService
 from .timesheet_write_service import TimesheetWriteError, TimesheetWriteService
 from .timesheet_sync_service import resolve_sync_mode
@@ -80,12 +79,33 @@ from .project_creation_service import ProjectCreationService
 from .billing_crm_service import BillingCrmService
 from .bdds_service import BddsService
 from .bdds_settings import bdds_operations_manager_required, load_bdds_settings
-from .billing_features import FEATURE_BDDS, FEATURE_BILLING, feature_required, feature_states
+from .billing_features import FEATURE_BDDS, FEATURE_BILLING, FEATURE_ROLES, feature_required, feature_states
 from .finance_operation_service import FinanceOperationService
+from .roles import (
+    PERM_MONEY_VIEW,
+    PERM_PERIOD_CLOSE,
+    PERM_RATES_EDIT,
+    PERM_ROLES_MANAGE,
+    PERM_SETTINGS_MANAGE,
+    RoleAssignmentError,
+    assign_role,
+    assignable_roles,
+    denial_response,
+    ensure_accountants_imported,
+    has_permission,
+    list_assignments,
+    normalize_role,
+    permission_required,
+    resolve_access,
+    roles_catalog,
+    roles_feature_state,
+)
 from .project_budget_notifier import ProjectBudgetNotifier
 from .billing_service import BillingError, BillingService
 from .billing_settings import (
+    billing_cancel_required,
     billing_manager_required,
+    billing_money_view_required,
     has_selected_templates,
     validate_template_settings,
 )
@@ -169,6 +189,9 @@ __all__ = [
     "billing_document_act",
     "billing_document_invoice_print",
     "billing_document_detail_export",
+    "roles_me",
+    "roles_list",
+    "roles_assign",
 ]
 
 config = load_config()
@@ -1198,6 +1221,19 @@ def create_project_board(request: AuthorizedRequest):
     return JsonResponse(result)
 
 
+def _rate_changed(current, incoming) -> bool:
+    """Отличается ли присланная ставка от сохранённой. Мусор — не изменение.
+
+    ProjectCardService на нечисловую ставку оставляет прежнюю, значит и
+    отказывать за неё незачем.
+    """
+    try:
+        incoming_value = float(str(incoming).replace(",", ".").replace(" ", ""))
+    except (TypeError, ValueError):
+        return False
+    return abs(float(current or 0.0) - incoming_value) > 1e-6
+
+
 @xframe_options_exempt
 @csrf_exempt
 @require_POST
@@ -1210,6 +1246,20 @@ def update_project_board(request: AuthorizedRequest):
         return JsonResponse({"error": "project_id is required"}, status=400)
 
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+
+    # Ставка проекта — деньги (право rates_edit). Карточку отправляют целиком,
+    # вместе с неизменённой ставкой, поэтому отказ — только когда ставку
+    # действительно пытаются ПОМЕНЯТЬ: иначе без права нельзя было бы
+    # поправить даже название проекта.
+    if "hourly_rate" in payload and not has_permission(request.bitrix24_account, PERM_RATES_EDIT):
+        card = ProjectCard.objects.filter(
+            **scope_to_tenant(request.bitrix24_account), project_id=str(project_id),
+        ).first()
+        if card is not None and _rate_changed(card.hourly_rate, payload.get("hourly_rate")):
+            return denial_response(
+                request.bitrix24_account, PERM_RATES_EDIT,
+                code="rates_forbidden", action="Менять ставку проекта",
+            )
 
     try:
         result = service.update_project_card(str(project_id), payload)
@@ -1984,7 +2034,7 @@ def period_check(request: AuthorizedRequest):
 @log_errors("period_close")
 @auth_required
 @rate_limit("period_close", 10, 60, key="account")
-@admin_required
+@permission_required(PERM_PERIOD_CLOSE, code="period_forbidden", legacy_code="admin_required")
 def period_close(request: AuthorizedRequest):
     """Закрытие месяца. Блокеры проверяются НА СЕРВЕРЕ, а не только на экране.
 
@@ -1993,10 +2043,10 @@ def period_close(request: AuthorizedRequest):
     данными — необратимая операция, и защищать её только в браузере
     несерьёзно.
 
-    @admin_required — точечное исключение из решения от 11.06.2026, снявшего
-    серверный гейт по роли со всех эндпоинтов. Возвращено заказчиком
-    31.08.2026 только для закрытия и переоткрытия: операции необратимые и
-    влияют на то, что уходит клиенту в счёт. См. докстринг декоратора.
+    Право ``period_close`` ролевой модели (main/roles.py). Пока ограничения
+    ролей не действуют (тарифа Pro нет) — прежнее точечное исключение от
+    31.08.2026: только администратор портала, с тем же кодом отказа
+    admin_required. При действующих — «Администратор» и «Бухгалтерия».
     """
     from .period_check_service import PeriodCheckService
     from .period_service import PeriodService
@@ -2063,7 +2113,7 @@ def period_close(request: AuthorizedRequest):
 @log_errors("period_reopen")
 @auth_required
 @rate_limit("period_close", 10, 60, key="account")
-@admin_required
+@permission_required(PERM_PERIOD_CLOSE, code="period_forbidden", legacy_code="admin_required")
 def period_reopen(request: AuthorizedRequest):
     """Переоткрытие месяца. Причина обязательна.
 
@@ -2071,7 +2121,7 @@ def period_reopen(request: AuthorizedRequest):
     после того, как лёг в основу счёта. Причина попадает в журнал, чтобы через
     полгода было понятно, почему цифры разошлись с актом.
 
-    @admin_required — то же точечное исключение, что у period_close.
+    Право ``period_close`` — то же, что у period_close.
     """
     from .period_service import PeriodService
 
@@ -2109,7 +2159,7 @@ def period_reopen(request: AuthorizedRequest):
 @log_errors("period_close_bulk")
 @auth_required
 @rate_limit("period_close", 10, 60, key="account")
-@admin_required
+@permission_required(PERM_PERIOD_CLOSE, code="period_forbidden", legacy_code="admin_required")
 def period_close_bulk(request: AuthorizedRequest):
     """Закрыть все открытые периоды ДО указанного включительно, одной операцией.
 
@@ -2241,7 +2291,7 @@ def period_late_arrivals(request: AuthorizedRequest):
 @log_errors("period_fix")
 @auth_required
 @rate_limit("period_fix", 20, 60, key="account")
-@admin_required
+@permission_required(PERM_PERIOD_CLOSE, code="period_forbidden", legacy_code="admin_required")
 def period_fix(request: AuthorizedRequest):
     """Исправление находки проверки одним нажатием.
 
@@ -2591,6 +2641,20 @@ def get_users(request: AuthorizedRequest):
     if active_only:
         queryset = queryset.filter(active=True)
 
+    # Поиск по имени и фамилии — для экрана ролей: на портале сотни людей, и
+    # листать справочник страницами, чтобы назначить роль одному, нельзя.
+    # Каждое слово ищется отдельно, поэтому «Цыганков Егор» и «Егор Цыг»
+    # находят одного и того же человека.
+    search = str(request.GET.get("search", "") or "").strip()
+    if search:
+        from django.db.models import Q
+
+        for word in search.split()[:4]:
+            condition = Q(name__icontains=word) | Q(last_name__icontains=word)
+            if word.isdigit():
+                condition |= Q(bitrix_id=word)
+            queryset = queryset.filter(condition)
+
     page_number = request.GET.get("page", 1)
     # Клэмп сверху (200) не даёт ?limit=100000 сериализовать весь справочник
     # сотрудников в один ответ. См. ревью Задачи 5, Important #1.
@@ -2794,6 +2858,7 @@ def _save_configuration_with_project_sync(
 @require_POST
 @log_errors("save_configuration")
 @auth_required
+@permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")
 def save_configuration(request: AuthorizedRequest):
     service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     try:
@@ -2938,6 +3003,7 @@ def get_project_spa_stages(request: AuthorizedRequest):
 @require_POST
 @log_errors("create_smart_process")
 @auth_required
+@permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")
 def create_smart_process(request: AuthorizedRequest):
     """Create a new Smart Process from settings page."""
     try:
@@ -2956,6 +3022,7 @@ def create_smart_process(request: AuthorizedRequest):
 @require_POST
 @log_errors("create_fields")
 @auth_required
+@permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")
 def create_fields(request: AuthorizedRequest):
     """Create all required fields in the selected Smart Process."""
     import json as json_module
@@ -2986,6 +3053,7 @@ def create_fields(request: AuthorizedRequest):
 @require_POST
 @log_errors("create_mapped_field")
 @auth_required
+@permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")
 def create_mapped_field(request: AuthorizedRequest):
     import json as json_module
     try:
@@ -3602,12 +3670,11 @@ def serve_spa(request):
 # billing_features. У «Счёта и акта» чтение реестра открыто и без тарифа:
 # там клиент уже выставил документы и обязан их видеть.
 #
-# Прав по ролям здесь нет, и это не упущение: общего серверного гейта по
-# ролям в приложении нет (решение от 11.06.2026), а точечные исключения
-# сделаны только там, где операция превращается в деньги клиента (закрытие
-# месяца, выставление счёта). БДДС ничего не выставляет. Кто видит суммы
-# чужих проектов — открытый вопрос 4 записки, и решать его вёрсткой
-# бессмысленно.
+# Права — ролевая модель (main/roles.py). Чтение закрыто правом money_view
+# («видеть суммы»), запись операций — operations_create. Порядок гейтов:
+# сначала подписка на БДДС, потом право — человеку без подписки нечего
+# объяснять про роли. Пока ограничения ролей не действуют
+# (тарифа нет или он выключен), money_view есть у всех.
 
 
 def _bdds_service(request: AuthorizedRequest) -> BddsService:
@@ -3620,6 +3687,7 @@ def _bdds_service(request: AuthorizedRequest) -> BddsService:
 @log_errors("get_bdds_projects")
 @auth_required
 @feature_required(FEATURE_BDDS)
+@permission_required(PERM_MONEY_VIEW, code="money_forbidden")
 def get_bdds_projects(request: AuthorizedRequest):
     """Реестр проектов с бюджетами: строки, итог по портфелю, пороги.
 
@@ -3638,6 +3706,7 @@ def get_bdds_projects(request: AuthorizedRequest):
 @log_errors("get_bdds_project")
 @auth_required
 @feature_required(FEATURE_BDDS)
+@permission_required(PERM_MONEY_VIEW, code="money_forbidden")
 def get_bdds_project(request: AuthorizedRequest, project_id: str):
     """Бюджет одного проекта: показатели, прогноз, последние операции.
 
@@ -3659,6 +3728,7 @@ def get_bdds_project(request: AuthorizedRequest, project_id: str):
 @log_errors("get_finance_operations")
 @auth_required
 @feature_required(FEATURE_BDDS)
+@permission_required(PERM_MONEY_VIEW, code="money_forbidden")
 def get_finance_operations(request: AuthorizedRequest):
     """Операции «доход/расход» из смарт-процесса портала.
 
@@ -3739,6 +3809,7 @@ def create_finance_operation(request: AuthorizedRequest):
 @log_errors("run_project_budget_notifier")
 @auth_required
 @feature_required(FEATURE_BDDS)
+@permission_required(PERM_MONEY_VIEW, code="money_forbidden")
 @rate_limit("project_budget_notify", 6, 60, key="account")
 def run_project_budget_notifier(request: AuthorizedRequest):
     """Прогон уведомлений о риске и перерасходе.
@@ -3775,10 +3846,11 @@ def run_project_budget_notifier(request: AuthorizedRequest):
 # billing_crm_service (смарт-счёт, товарные строки, печать акта).
 #
 # Два гейта на пишущих эндпоинтах, и они РАЗНЫЕ по смыслу:
-# - @billing_manager_required — права: админ портала или «Бухгалтерия» из
-#   настроек приложения. Точечное исключение из решения от 11.06.2026,
-#   снявшего серверный гейт по ролям, — того же класса, что @admin_required
-#   на закрытии месяца: операция превращается в деньги клиента;
+# - права — ролевая модель (main/roles.py): @billing_manager_required
+#   (выставить, напечатать), @billing_cancel_required (отменить),
+#   @billing_money_view_required (реестр, карточка, детализация). Пока
+#   ролевая модель на портале не действует, реестр читают все, а выставляют
+#   и отменяют админ портала и «Бухгалтерия» — как до ролей;
 # - @feature_required("billing") — подписка. Без действующего тарифа Pro
 #   (выключен или истёк после грейса) нельзя создавать и печатать, но ЧИТАТЬ
 #   реестр, ВЫГРУЖАТЬ детализацию и ОТМЕНЯТЬ можно: эти ручки декоратор не
@@ -3986,6 +4058,7 @@ def _billing_issue_under_lock(request: AuthorizedRequest):
     return response
 
 
+@billing_money_view_required
 def _billing_documents_list(request: AuthorizedRequest):
     """Реестр документов: фильтр по клиенту, периоду и статусу."""
     service = _billing_service(request)
@@ -4041,6 +4114,7 @@ def billing_documents(request: AuthorizedRequest):
 @require_GET
 @log_errors("billing_document_detail")
 @auth_required
+@billing_money_view_required
 def billing_document_detail(request: AuthorizedRequest, document_id: str):
     """Карточка: документ, строки, потреблённые списания и расхождения."""
     service = _billing_service(request)
@@ -4056,7 +4130,7 @@ def billing_document_detail(request: AuthorizedRequest, document_id: str):
 @require_POST
 @log_errors("billing_document_cancel")
 @auth_required
-@billing_manager_required
+@billing_cancel_required
 @rate_limit("billing_cancel", 20, 60, key="account")
 def billing_document_cancel(request: AuthorizedRequest, document_id: str):
     """Отмена: освобождает списания. Причина обязательна.
@@ -4189,6 +4263,7 @@ def billing_document_invoice_print(request: AuthorizedRequest, document_id: str)
 @require_GET
 @log_errors("billing_document_detail_export")
 @auth_required
+@billing_money_view_required
 @rate_limit("export", 12, 60, key="account")
 def billing_document_detail_export(request: AuthorizedRequest, document_id: str):
     """XLSX-детализация к акту по снимку документа."""
@@ -4223,3 +4298,97 @@ def billing_document_detail_export(request: AuthorizedRequest, document_id: str)
         f"filename*=UTF-8\'\'{quote(human_name)}"
     )
     return response
+
+
+# ---------------------------------------------------------------------------
+# Роли и права (функция «roles» тарифа Pro)
+# ---------------------------------------------------------------------------
+#
+# Модель, матрица и довод «почему в нашей БД» — в докстринге main/roles.py.
+# Здесь три ручки: свои права (для кнопок интерфейса), каталог с
+# назначениями (для экрана настроек) и назначение роли.
+#
+# Тариф закрывает ИЗМЕНЕНИЕ ролей, а не их действие. Проверка прав по
+# назначенным ролям идёт по billing_features.feature_restrictions_active: она
+# действует и при живом Pro, и после его окончания («только чтение») — иначе
+# в этот день все сотрудники разом увидели бы ставки и суммы. Назначение и
+# правка ролей закрыты @feature_required(FEATURE_ROLES).
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("roles_me")
+@auth_required
+def roles_me(request: AuthorizedRequest):
+    """Права текущего человека. Интерфейс по ним прячет кнопки, сервер — отказывает."""
+    access = resolve_access(request.bitrix24_account)
+    payload = access.as_payload()
+    payload["feature"] = roles_feature_state(request.bitrix24_account)
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("roles_list")
+@auth_required
+def roles_list(request: AuthorizedRequest):
+    """Каталог ролей, матрица прав и текущие назначения портала.
+
+    Открыт всем: таблица «роль → что может» и список «кто в какой роли»
+    отвечают на вопрос «к кому идти», который возникает как раз у того, кому
+    отказали. Менять что-либо — только /api/roles/assign.
+
+    Перенос прежнего списка «Бухгалтерия» запускается и отсюда: администратор
+    портала при проверке прав его не запускает (ему не нужно), а экран ролей
+    он откроет первым делом — и должен увидеть перенесённых бухгалтеров.
+    """
+    account = request.bitrix24_account
+    imported = ensure_accountants_imported(account)
+    access = resolve_access(account)
+    return JsonResponse({
+        "me": access.as_payload(),
+        "feature": roles_feature_state(account),
+        "roles_enabled": access.roles_enabled,
+        "subscription_active": access.subscription_active,
+        "assignable_roles": assignable_roles(access),
+        "can_manage": access.has(PERM_ROLES_MANAGE),
+        "accountants_imported": imported,
+        "catalog": roles_catalog(),
+        "assignments": list_assignments(account),
+    })
+
+
+def _roles_assign(request: AuthorizedRequest, user_id, role):
+    account = request.bitrix24_account
+    try:
+        result = assign_role(
+            account, user_id, role,
+            by_id=str(account.b24_user_id or ""),
+            by_name=_current_user_display_name(request),
+        )
+    except RoleAssignmentError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    return JsonResponse({"status": "ok", **result, "assignments": list_assignments(account)})
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("roles_assign")
+@auth_required
+@feature_required(FEATURE_ROLES)
+@permission_required(PERM_ROLES_MANAGE, code="roles_forbidden", legacy_code="roles_forbidden")
+@rate_limit("roles_assign", 60, 60, key="account")
+def roles_assign(request: AuthorizedRequest):
+    """Назначить сотруднику роль. «Сотрудник» снимает назначенную роль.
+
+    Сначала тариф (@feature_required(FEATURE_ROLES)): без живого Pro роли не
+    меняются — ни на портале без тарифа, ни после его окончания, когда
+    назначенные роли продолжают действовать. Потом право roles_manage — роль
+    «Администратор» (администраторы портала имеют её всегда).
+    """
+    payload = _load_request_json(request)
+    role = str(payload.get("role") or "").strip().lower()
+    if normalize_role(role) is None:
+        return JsonResponse({"error": "Такой роли нет.", "code": "unknown_role"}, status=400)
+    return _roles_assign(request, payload.get("user_id"), role)

@@ -475,20 +475,22 @@ export function validateBddsOperationForm(options: {
 export function describeBddsOperationFormBlock(options: {
   projectItemId: string | null | undefined
   canCreate: boolean
+  /** Текст отказа по правам: с ролевой моделью он называет роли (appRoles.ts). */
+  noRightsText?: string
 }): string {
   if (!String(options.projectItemId ?? '').trim()) {
     return 'У проекта нет элемента в смарт-процессе проектов, и привязать операцию не к чему.'
       + ' Откройте «Проекты» и обновите доску: карточка синхронизируется с портала.'
   }
   if (!options.canCreate) {
-    return BDDS_OPERATION_NO_RIGHTS_TEXT
+    return options.noRightsText || BDDS_OPERATION_NO_RIGHTS_TEXT
   }
   return ''
 }
 
-/** Кто заводит операции — тот же список, что выставляет счета. */
+/** Кто заводит операции без ролевой модели — те же люди, что выставляют счета. */
 export const BDDS_OPERATION_NO_RIGHTS_TEXT = 'Заводить операции может администратор портала'
-  + ' или сотрудник из списка «Бухгалтерия» в настройках приложения — как и выставлять счета.'
+  + ' или сотрудник с ролью «Бухгалтерия» (Настройки → Роли и права) — как и выставлять счета.'
   + ' Смотреть операции может любой, у кого открыт раздел.'
 
 // ---------------------------------------------------------------------------

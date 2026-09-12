@@ -44,9 +44,11 @@ const EXISTING_ROUTES = new Set([
   '/settings/mapping',
   '/settings/periods',
   '/settings/projects-health',
+  '/settings/roles',
   '/reports/raw-data',
   '/finance/bdds',
   '/finance/billing',
+  '/finance/bdds/operations',
 ])
 
 test('buildAppNavigation: пять разделов в рабочем порядке', () => {
@@ -477,4 +479,35 @@ test('buildAppNavigation: сопоставление полей есть и в �
   const routes = (control?.groups || []).flatMap(group => group.links.map(link => link.to))
 
   assert.ok(routes.includes('/settings/mapping'))
+})
+
+// --- «Начисления и списания» ---
+
+function operationsLink(options: Parameters<typeof buildAppNavigation>[0]) {
+  const finance = buildAppNavigation(options).find(section => section.id === 'finance')
+  return finance?.groups?.find(group => group.id === 'finance-money')?.links[0]
+}
+
+test('buildAppNavigation: «Начисления и списания» — свой пункт в «Финансах»', () => {
+  const link = operationsLink({ ...BASE_OPTIONS, financeBddsEnabled: true })
+
+  assert.equal(link?.label, 'Начисления и списания')
+  assert.equal(link?.to, '/finance/bdds/operations')
+  assert.equal(link?.locked, false)
+  assert.equal(link?.badge, undefined)
+})
+
+test('buildAppNavigation: без Pro пункт с замком, пробный — с бейджем БДДС', () => {
+  const locked = operationsLink(BASE_OPTIONS)
+  assert.equal(locked?.locked, true)
+  assert.equal(locked?.badge, 'Pro')
+
+  const trial = operationsLink({ ...BASE_OPTIONS, financeBddsEnabled: true, financeBddsBadge: 'пробный, осталось 3 дня' })
+  assert.equal(trial?.locked, false)
+  assert.equal(trial?.badge, 'пробный, осталось 3 дня')
+})
+
+test('buildAppNavigation: реестр операций подсвечивает раздел «Финансы»', () => {
+  const sections = buildAppNavigation(BASE_OPTIONS)
+  assert.equal(resolveActiveSectionId('/finance/bdds/operations', sections), 'finance')
 })

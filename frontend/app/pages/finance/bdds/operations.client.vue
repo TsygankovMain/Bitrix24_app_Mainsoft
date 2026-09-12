@@ -1,6 +1,15 @@
 <script setup lang="ts">
 /**
- * Реестр всех операций поступлений и списаний — отдельный экран раздела.
+ * «Начисления и списания» — реестр всех операций поступлений и списаний.
+ *
+ * Отдельный пункт меню «Финансы» (appNavigation.ts), а не только ссылка из
+ * реестра БДДС: запрос пользователя от 12.09.2026 — «нужен раздел по
+ * начислению и списанию». Экран тот же, что был под адресом
+ * /finance/bdds/operations; второй экран с той же таблицей не заводился.
+ * Здесь же добавляется операция — той же формой, что на карточке проекта
+ * (BddsOperationForm), с выбором проекта. Добавлять может право
+ * operations_create ролевой модели; сервер проверяет его сам
+ * (@bdds_operations_manager_required).
  *
  * ПОЧЕМУ ОТДЕЛЬНЫЙ ЭКРАН, А НЕ ТАБЛИЦА НА РЕЕСТРЕ БДДС. У этих двух
  * реестров разная единица строки. На /finance/bdds строка — проект: план,
@@ -28,7 +37,9 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref, watch } from 'vue'
 import BddsGate from '~/components/finance/BddsGate.vue'
+import BddsOperationForm from '~/components/finance/BddsOperationForm.vue'
 import BddsOperationsTable from '~/components/finance/BddsOperationsTable.vue'
+import { describeOperationsNoRights } from '~/utils/appRoles'
 import { describeBddsError, type BddsErrorView } from '~/utils/bddsErrors'
 import {
   BDDS_OPERATIONS_PAGE_SIZE,
@@ -38,24 +49,27 @@ import {
   buildBddsOperationsQuery,
   countActiveBddsOperationFilters,
   describeBddsOperationPeriodError,
+  describeBddsOperationDuplicate,
   describeBddsOperationTotals,
   describeBddsOperationsEmpty,
   firstDayOfMonth,
   formatBddsOperationAmount,
+  normalizeBddsOperation,
   parseBddsOperationsPage,
   toIsoDate,
   type BddsOperationFilterState,
   type BddsOperationRow,
   type BddsOperationsPage,
 } from '~/utils/bddsOperations'
-import type { BddsProjectRecord } from '~/types/bdds'
+import type { BddsOperationCreatePayload, BddsProjectRecord } from '~/types/bdds'
 
 const route = useRoute()
 const router = useRouter()
 const apiStore = useApiStore()
 const { access } = useBddsFeature()
+const { permissions, moneyDenied, restrictionsActive, loadPermissions } = useAppPermissions()
 
-useHead({ title: 'Операции по проектам' })
+useHead({ title: 'Начисления и списания' })
 
 const { initApp, processErrorGlobal } = useAppInit('BddsOperationsRegistryPage')
 const { $initializeB24Frame } = useNuxtApp()
@@ -70,6 +84,19 @@ const page = ref<BddsOperationsPage | null>(null)
 const filters = ref<BddsOperationFilterState>({ ...DEFAULT_BDDS_OPERATION_FILTERS })
 const projects = ref<BddsProjectRecord[]>([])
 const authorNames = ref<Record<string, string>>({})
+
+/** Форма добавления: открыта ли, к какому проекту, что ответил сервер. */
+const formOpen = ref(false)
+const formProjectItemId = ref('')
+const formSaving = ref(false)
+const formServerError = ref('')
+const formNotice = ref('')
+
+/** Роль без права видеть суммы: запросы не шлём, экран объясняет (BddsGate). */
+// Запись: нужны и право operations_create, и живой Pro (после окончания — только чтение).
+const canCreateOperation = computed(() => Boolean(permissions.value.operations_create) && access.value.canWrite)
+const noRightsText = computed(() => describeOperationsNoRights(restrictionsActive.value))
+const formProjectName = computed(() => projectNames.value[formProjectItemId.value] || '')
 
 /**
  * project_item_id -> название проекта.
@@ -121,7 +148,7 @@ const totalLabel = computed(() => {
 })
 
 async function loadProjects() {
-  if (!access.value.enabled) {
+  if (!access.value.enabled || moneyDenied.value) {
     return
   }
 
@@ -136,7 +163,7 @@ async function loadProjects() {
 }
 
 async function loadOperations(options: { append?: boolean } = {}) {
-  if (!access.value.enabled) {
+  if (!access.value.enabled || moneyDenied.value) {
     return
   }
   if (periodError.value) {
@@ -225,6 +252,51 @@ function selectCurrentMonth() {
   void loadOperations()
 }
 
+/**
+ * Открыть форму. Проект подставляется из фильтра: человек, отфильтровавший
+ * реестр по проекту, почти всегда добавляет операцию именно к нему.
+ */
+function toggleForm() {
+  formOpen.value = !formOpen.value
+  formServerError.value = ''
+  formNotice.value = ''
+  if (formOpen.value && !formProjectItemId.value) {
+    formProjectItemId.value = filters.value.projectItemId || ''
+  }
+}
+
+/**
+ * Сохранение и перечитывание реестра с сервера: итоги по выборке считает
+ * сервер, и дописывать строку в таблицу руками значило бы показать итог,
+ * который с ней не сходится.
+ */
+async function saveOperation(payload: BddsOperationCreatePayload) {
+  formSaving.value = true
+  formServerError.value = ''
+  formNotice.value = ''
+
+  try {
+    const result = await apiStore.createFinanceOperation(payload)
+    if (result.status === 'duplicate') {
+      formNotice.value = describeBddsOperationDuplicate(
+        result.operation ? normalizeBddsOperation(result.operation) : null
+      )
+    } else {
+      const projectName = formProjectName.value
+      formNotice.value = projectName
+        ? `Операция записана в смарт-процесс портала и привязана к проекту «${projectName}».`
+        : 'Операция записана в смарт-процесс портала.'
+      formOpen.value = false
+    }
+    await loadOperations()
+  } catch (e) {
+    const view = describeBddsError(e)
+    formServerError.value = [view.title, view.hint].filter(Boolean).join(' ')
+  } finally {
+    formSaving.value = false
+  }
+}
+
 function openFieldSettings() {
   void router.push(BDDS_OPERATIONS_SETTINGS_PATH)
 }
@@ -254,6 +326,10 @@ onMounted(async () => {
     filters.value = { ...filters.value, projectItemId: requestedProject }
   }
 
+  // Права — до данных: и кнопка «Добавить», и сам доступ к суммам решаются
+  // ответом сервера, а не догадкой.
+  await loadPermissions()
+
   await loadProjects()
   await loadOperations()
 })
@@ -261,10 +337,16 @@ onMounted(async () => {
 
 <template>
   <BddsGate
-    title="Операции по проектам"
-    description="Поступления и списания мимо часов: авансы, этапы договора, подрядчики, лицензии. Элементы смарт-процесса «Доходы-расходы» портала, из которых считается финансовый результат проектов."
+    title="Начисления и списания"
+    description="Поступления и списания по проектам мимо часов: авансы, этапы договора, подрядчики, лицензии. Элементы смарт-процесса «Доходы-расходы» портала, из которых считается финансовый результат проектов."
   >
     <template #actions>
+      <B24Button
+        v-if="canCreateOperation && !notConfigured"
+        :label="formOpen ? 'Свернуть форму' : 'Добавить операцию'"
+        color="success"
+        @click="toggleForm"
+      />
       <B24Button label="Обновить" color="default" :loading="isLoading" @click="loadOperations()" />
       <B24Button label="К реестру БДДС" color="link" @click="router.push('/finance/bdds')" />
     </template>
@@ -338,6 +420,46 @@ onMounted(async () => {
       </div>
     </template>
 
+    <!--
+      Форма добавления. Проект выбирается здесь же: на карточке проекта он
+      задан адресом, а в общем реестре его надо указать. Проекты без элемента
+      в смарт-процессе проектов в списке не показываются — операцию к ним
+      привязать не к чему (сервер отказал бы).
+    -->
+    <section v-if="formOpen && canCreateOperation" class="ms-surface flex flex-col gap-4 p-5">
+      <div class="flex flex-col gap-1">
+        <label class="text-sm font-medium text-slate-700" for="bdds-ops-form-project">Проект</label>
+        <select
+          id="bdds-ops-form-project"
+          v-model="formProjectItemId"
+          class="w-full"
+        >
+          <option value="">Выберите проект</option>
+          <option v-for="option in projectOptions" :key="option.id" :value="option.id">
+            {{ option.label }}
+          </option>
+        </select>
+        <p v-if="!projectOptions.length" class="text-xs text-amber-700">
+          Нет проектов, связанных со смарт-процессом проектов: откройте «Проекты» и обновите доску.
+        </p>
+        <p v-else-if="!formProjectItemId" class="text-xs text-slate-500">
+          Операция всегда относится к проекту — без него её не сохранить.
+        </p>
+      </div>
+
+      <BddsOperationForm
+        :project-item-id="formProjectItemId || null"
+        :project-name="formProjectName"
+        :saving="formSaving"
+        :server-error="formServerError"
+        :reset-on-project-change="false"
+        @submit="saveOperation"
+        @cancel="formOpen = false"
+      />
+    </section>
+
+    <p v-if="formNotice" class="ms-note ms-note-success">{{ formNotice }}</p>
+
     <div v-if="otherError" class="ms-note ms-note-danger">
       <p class="font-medium">{{ otherError.title }}</p>
       <p v-if="otherError.hint" class="mt-1 text-sm">{{ otherError.hint }}</p>
@@ -400,8 +522,8 @@ onMounted(async () => {
           @open-settings="openFieldSettings"
         />
 
-        <p v-if="!notConfigured" class="text-xs text-slate-400">
-          Завести операцию можно на карточке проекта: реестр открывается по «Проект» → «Бюджет проекта».
+        <p v-if="!notConfigured && !canCreateOperation" class="text-xs text-slate-500">
+          {{ noRightsText }}
         </p>
       </section>
     </template>

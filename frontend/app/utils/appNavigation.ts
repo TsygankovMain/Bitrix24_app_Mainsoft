@@ -19,6 +19,7 @@
 
 import { buildReportRouteLocation, type ReportRouteName } from './reportNavigation'
 import { resolveFinanceFeatureStates, type PaidFeatureId } from './paidFeatures'
+import { ROLES_SETTINGS_PATH } from './appRoles'
 
 export type NavLink = {
   id: string
@@ -51,6 +52,16 @@ export type NavSection = {
   /** Счётчик проблем. null — счётчик недоступен, 0 — проблем нет. */
   badge?: number | null
 }
+
+/**
+ * Адрес раздела «Начисления и списания».
+ *
+ * Экран живёт под БДДС (/finance/bdds/operations), потому что это операции
+ * смарт-процесса «Доходы-расходы» и закрыт он той же подпиской. Пункт меню
+ * при этом свой: до 12.09.2026 на экран можно было попасть только ссылкой из
+ * реестра БДДС, и пользователь раздела не нашёл.
+ */
+export const FINANCE_OPERATIONS_PATH = '/finance/bdds/operations'
 
 export type AppNavigationOptions = {
   /**
@@ -208,9 +219,37 @@ export function buildAppNavigation(options: AppNavigationOptions): NavSection[] 
             }
           }),
         },
+        {
+          /**
+           * Отдельной группой, а не третьим пунктом «Платных функций»: это не
+           * функция, а раздел внутри БДДС, и в группе платных функций он читался
+           * бы как ещё одна подписка. Замок и бейдж — те же, что у БДДС.
+           */
+          id: 'finance-money',
+          label: 'Деньги по проектам',
+          links: [financeOperationsLink(finance, options.financeBddsBadge)],
+        },
       ],
     },
   ]
+}
+
+function financeOperationsLink(
+  finance: ReturnType<typeof resolveFinanceFeatureStates>,
+  bddsBadge: string | null | undefined
+): NavLink {
+  const bdds = finance.find(state => state.feature.id === 'bdds')
+  const badge = bddsBadge === undefined ? bdds?.badge : bddsBadge
+
+  return {
+    id: 'finance-operations',
+    label: 'Начисления и списания',
+    to: FINANCE_OPERATIONS_PATH,
+    description: 'Поступления и списания по проектам: реестр, итоги, добавление',
+    locked: bdds?.locked ?? true,
+    badge: badge ?? undefined,
+    paidFeature: 'bdds',
+  }
 }
 
 /**
@@ -258,6 +297,15 @@ export const SETTINGS_NAV_GROUPS: NavGroup[] = [
         label: 'Все настройки',
         to: '/settings',
         description: 'Отчёты, счёт и акт, БДДС',
+      },
+      {
+        // До 12.09.2026 права задавались списком «Бухгалтерия» внутри блока
+        // «Счёт и акт» на длинной странице настроек — пользователь «настройки
+        // так и не нашёл». Теперь это отдельный пункт под шестерёнкой.
+        id: 'settings-roles',
+        label: 'Роли и права',
+        to: ROLES_SETTINGS_PATH,
+        description: 'Кто видит суммы, выставляет счета и закрывает месяц',
       },
     ],
   },

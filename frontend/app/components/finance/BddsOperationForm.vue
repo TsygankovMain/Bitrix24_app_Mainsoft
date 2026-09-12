@@ -37,10 +37,18 @@ const props = withDefaults(defineProps<{
   saving?: boolean
   /** Отказ сервера последней попытки — показываем над кнопками. */
   serverError?: string
+  /**
+   * Сбрасывать ли введённое при смене проекта. На карточке проекта смена
+   * проекта — переход на другую карточку, и суммы прежнего там ни при чём. В
+   * реестре «Начисления и списания» проект выбирают в той же форме, часто
+   * ПОСЛЕ суммы, — сброс стёр бы уже набранное.
+   */
+  resetOnProjectChange?: boolean
 }>(), {
   projectName: '',
   saving: false,
   serverError: '',
+  resetOnProjectChange: true,
 })
 
 const emit = defineEmits<{
@@ -93,7 +101,9 @@ defineExpose({ reset })
 
 /** Смена проекта — новая операция: суммы прежнего проекта тут ни при чём. */
 watch(() => props.projectItemId, () => {
-  reset()
+  if (props.resetOnProjectChange) {
+    reset()
+  }
 })
 </script>
 

@@ -32,7 +32,6 @@ from typing import Any, Dict, List, Optional
 
 from django.http import JsonResponse
 
-from .billing_settings import can_manage_billing
 from .configuration_service import ConfigurationService
 
 logger = logging.getLogger(__name__)
@@ -201,34 +200,23 @@ def load_bdds_settings(account, client: Optional[Any] = None) -> Dict[str, Any]:
 
 
 def bdds_operations_manager_required(view_func):
-    """Серверный гейт «заводить операции БДДС». Применять ПОСЛЕ @auth_required.
+    """Серверный гейт «добавлять начисления и списания». Применять ПОСЛЕ @auth_required.
 
-    Права те же и из того же списка, что у счёта: администратор портала или
-    сотрудник из «Бухгалтерии» (``billing_accountants``). Причина —
-    ``can_manage_billing``, а не свой список: операция БДДС попадает в
-    финансовый результат проекта и в отчётность клиента ровно так же, как
-    выставленный счёт, а второй список тех же людей гарантированно разойдётся
-    с первым. Когда клиенту понадобится развести эти роли, здесь появится
-    свой ключ настроек — но заводить его раньше спроса значит требовать
-    заполнить две настройки вместо одной.
-
-    ЧТЕНИЕ операций этим гейтом не закрыто: реестр операций не показывает
-    ничего, чего человек не увидел бы в самом смарт-процессе на портале.
+    Право ``operations_create`` ролевой модели (main/roles.py). Пока ограничения
+    ролей не действуют (тарифа Pro нет), ответ прежний: администратор портала или «Бухгалтерия» —
+    те же люди, что выставляют счета.
     """
 
     @wraps(view_func)
     def wrapped(request, *args, **kwargs):
+        from .roles import PERM_OPERATIONS_CREATE, denial_response, has_permission
+
         account = getattr(request, "bitrix24_account", None)
-        if not can_manage_billing(account):
-            return JsonResponse(
-                {
-                    "error": (
-                        "Заводить операции по проектам может администратор портала "
-                        "или сотрудник из списка «Бухгалтерия» в настройках приложения."
-                    ),
-                    "code": "bdds_operations_forbidden",
-                },
-                status=403,
+        if account is None or not has_permission(account, PERM_OPERATIONS_CREATE):
+            return denial_response(
+                account, PERM_OPERATIONS_CREATE,
+                code="bdds_operations_forbidden",
+                action="Добавлять начисления и списания",
             )
         return view_func(request, *args, **kwargs)
 

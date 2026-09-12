@@ -605,6 +605,85 @@ class PortalSubscriptionEvent(models.Model):
         return f"{self.action}@{self.created_at:%Y-%m-%d}"
 
 
+class PortalRole(models.Model):
+    """Роль сотрудника портала в приложении (ролевая модель, функция ``roles``).
+
+    Почему в НАШЕЙ БД, а не в app.option портала. app.option пишется токеном
+    приложения, а этот токен есть у фронта в каждой вкладке: из консоли
+    браузера любой сотрудник мог бы дописать себя в «Бухгалтерию» — ровно так
+    сегодня и устроен прежний список billing_accountants. Серверная проверка
+    прав, опирающаяся на значение, которое клиент сам же и пишет, ничего не
+    проверяет. Здесь роль пишет только сервер, и только по запросу того, у кого
+    уже есть право назначать роли (см. main/roles.py).
+
+    Ключ — member_id портала, а не Bitrix24Account: учётка в приложении — запись
+    НА СОТРУДНИКА (тот же довод, что у тарифа портала), а роль назначает один
+    человек другому. Строка «на учётку» появлялась бы только после того, как
+    сотрудник сам открыл приложение, и назначить роль заранее было бы нельзя.
+    Тот же ключ у тарифа портала (PortalSubscription через Portal.member_id).
+
+    Одна роль на человека. Отсутствие строки = «Сотрудник». Администратор
+    портала — всегда «Администратор», строка ему не нужна и не пишется.
+    """
+
+    ROLE_ADMIN = "admin"
+    ROLE_ACCOUNTANT = "accountant"
+    ROLE_PROJECT_MANAGER = "project_manager"
+    ROLE_EMPLOYEE = "employee"
+    ROLES = (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_PROJECT_MANAGER, ROLE_EMPLOYEE)
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member_id = models.CharField(max_length=255, db_index=True)
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="portal_roles", db_index=True,
+    )
+    b24_user_id = models.CharField(max_length=50)
+    role = models.CharField(max_length=32)
+    assigned_by_id = models.CharField(max_length=50, blank=True, default="")
+    assigned_by_name = models.CharField(max_length=255, blank=True, default="")
+    #: Откуда взялась строка: manual — назначена на экране ролей,
+    #: billing_accountants — перенесена из прежнего списка «Бухгалтерия».
+    source = models.CharField(max_length=32, blank=True, default="manual")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_role"
+        unique_together = ("member_id", "b24_user_id")
+
+    def __str__(self) -> str:
+        return f"{self.member_id}:{self.b24_user_id}={self.role}"
+
+
+class PortalRoleState(models.Model):
+    """Состояние ролевой модели портала: перенос прежнего списка «Бухгалтерия».
+
+    Список billing_accountants живёт в app.option КАЖДОГО портала, а не в нашей
+    БД, поэтому миграция Django прочитать его не может — перенос ленивый: при
+    первой проверке прав на портале (roles.ensure_accountants_imported).
+    Отметка ``accountants_imported_at`` ставится только после УСПЕШНОГО чтения
+    конфигурации: недоступный портал не должен превратиться в «бухгалтеров не
+    было» и молча лишить людей прав.
+
+    Действует ли ролевая модель, здесь НЕ хранится: это решает тариф портала
+    (billing_features.feature_restrictions_active) — ограничения действуют при
+    Pro и после его окончания, закрывается только изменение ролей.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member_id = models.CharField(max_length=255, unique=True)
+    accountants_imported_at = models.DateTimeField(null=True, blank=True)
+    imported_user_ids = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_role_state"
+
+
 class BillingDocument(models.Model):
     """Выставленный документ: счёт в CRM + его снимок у нас.
 

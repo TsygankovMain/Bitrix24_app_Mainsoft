@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 from .billing_crm_service import BillingCrmService
 from .billing_service import BillingError
-from .models import BillingDocument, Bitrix24Account, PortalSubscription
+from .models import BillingDocument, Bitrix24Account, PortalRole, PortalSubscription
 from .pro_plan_service import set_account_plan
 
 
@@ -242,11 +242,9 @@ class TemplatesEndpointTest(TemplateFixture):
             is_master_account=False, domain_url="tpl.bitrix24.ru",
             status="active", application_version=1,
         )
-        with patch(
-            "main.billing_settings.load_billing_settings",
-            side_effect=lambda account, client=None: {"accountants": ["99"]},
-        ):
-            response = self.get("/api/billing/templates", token=other.create_jwt_token())
+        # «Бухгалтерия» — роль в нашей БД (main/roles.py), а не список в app.option.
+        PortalRole.objects.create(member_id="m-tpl", b24_user_id="99", role=PortalRole.ROLE_ACCOUNTANT)
+        response = self.get("/api/billing/templates", token=other.create_jwt_token())
 
         self.assertEqual(response.status_code, 200)
 

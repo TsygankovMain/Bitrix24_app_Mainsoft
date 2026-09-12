@@ -62,6 +62,7 @@ import {
 } from '~/utils/projectBoard'
 import { buildBoardUtilization, formatBoardActivity } from '~/utils/projectBoardView'
 import BddsOperationForm from '~/components/finance/BddsOperationForm.vue'
+import { describeOperationsNoRights } from '~/utils/appRoles'
 import BddsOperationsTable from '~/components/finance/BddsOperationsTable.vue'
 import {
   BDDS_OPERATIONS_PAGE_SIZE,
@@ -97,7 +98,9 @@ const { access } = useBddsFeature()
  * (bdds_operations_manager_required); здесь забота о человеке: не показывать
  * форму, которую сервер всё равно отклонит.
  */
-const { isManager, loadBillingSettings } = useBillingFeature()
+const { loadBillingSettings } = useBillingFeature()
+/** Право «добавлять начисления и списания» — ролевая модель (appRoles.ts). */
+const { permissions: appPermissions, restrictionsActive } = useAppPermissions()
 
 const { initApp, processErrorGlobal } = useAppInit('BddsProjectPage')
 const { $initializeB24Frame } = useNuxtApp()
@@ -361,8 +364,9 @@ const operationsEmptyText = computed(() => describeBddsOperationsEmpty({
   scope: 'project',
 }))
 
-// Операция — запись: после окончания Pro экран открыт только на чтение.
-const canCreateOperation = computed(() => Boolean(isManager.value) && access.value.canWrite)
+// Операция — запись: после окончания Pro экран открыт только на чтение. Право —
+// operations_create ролевой модели (сервер: @bdds_operations_manager_required).
+const canCreateOperation = computed(() => Boolean(appPermissions.value.operations_create) && access.value.canWrite)
 
 // Pro закончился: причина — тариф, а не права, и об этом уже говорит плашка
 // над экраном (BddsGate -> ProPlanNotice). Текст «нет прав» здесь был бы неправдой.
@@ -371,6 +375,7 @@ const formBlockReason = computed(() => (access.value.readOnly
   : describeBddsOperationFormBlock({
     projectItemId: projectItemId.value,
     canCreate: canCreateOperation.value,
+    noRightsText: describeOperationsNoRights(restrictionsActive.value),
   })))
 
 function openAllOperations() {
