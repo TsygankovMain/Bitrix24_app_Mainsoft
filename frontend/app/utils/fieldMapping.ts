@@ -39,8 +39,16 @@ import type {
   SmartProcessFieldOption,
 } from '~/types/config'
 
-/** Какой из двух блоков экрана. */
-export type MappingBlockId = 'timesheet' | 'project'
+/**
+ * Какой из блоков экрана.
+ *
+ * `finance` — смарт-процесс «Доходы-расходы». Он третий и единственный
+ * НЕОБЯЗАТЕЛЬНЫЙ: нужен только операциям «БДДС по проектам», а часы, отчёты
+ * и счета работают без него. Отсюда особые правила ниже — шаг никогда не
+ * становится «сейчас здесь», не входит в счёт шагов и не поднимает
+ * общеприкладной баннер (см. buildMappingSteps, resolveMappingHealth).
+ */
+export type MappingBlockId = 'timesheet' | 'project' | 'finance'
 
 /**
  * Насколько поле обязательно.
@@ -70,6 +78,25 @@ export type MappingRow = {
   synonyms: string[]
   /** Куски кода поля (UF_CRM_...), по которым автоподбор узнаёт это поле. */
   codeHints: string[]
+  /**
+   * Суффикс кода, с которым это поле заводит установка приложения
+   * (`suffix` в *_FIELD_DEFINITIONS, backends/python/api/main/installation_service.py).
+   *
+   * Установка создаёт поле `UF_CRM_<N>_<суффикс>`, а портал отдаёт его как
+   * `ufCrm<N><Суффикс>`, где N — внутренний номер смарт-процесса. Когда
+   * суффикс известен, автоподбор узнаёт поле ТОЧНО, по коду целиком, а не
+   * угадывает по названию (см. matchesInstallCode).
+   */
+  installCode?: string
+  /**
+   * Автоподбор по названию и по куску кода берёт только поля подходящего типа.
+   *
+   * Нужен там, где названия полей совпадают с системными полями элемента:
+   * у смарт-процесса есть свои «Сумма», «Валюта», «Источник»,
+   * «Ответственный», и без этой проверки «Источник» операции получил бы
+   * системную стадию-справочник sourceId.
+   */
+  matchCompatibleTypesOnly?: boolean
 }
 
 export const PROJECT_STAGE_FIELD_KEY = 'stage'
@@ -454,9 +481,225 @@ export const PROJECT_ROW_KEY_BY_SERVER_KEY: Record<string, string> = {
   effective_stage: PROJECT_STAGE_FIELD_KEY,
 }
 
+/**
+ * Поля операции «доход/расход» (смарт-процесс «Доходы-расходы»).
+ *
+ * Состав и суффиксы кодов — FINANCE_FIELD_DEFINITIONS из
+ * backends/python/api/main/installation_service.py: те девять полей, которые
+ * заводит установка приложения. Ключи — ровно те, что читает
+ * FinanceOperationService (backends/python/api/main/finance_operation_service.py);
+ * переименовать ключ здесь, не поправив сервис, значит тихо выключить
+ * операции.
+ *
+ * `critical` — ровно FINANCE_SERVER_REQUIRED_KEYS: без любого из них сервис
+ * операций отвечает 409 finance_spa_not_configured, и экран «Операции по
+ * проектам» показывает «не настроен».
+ */
+export const FINANCE_MAPPING_ROWS: MappingRow[] = [
+  {
+    key: 'project_item_id',
+    label: 'ID карточки проекта',
+    type: 'число',
+    desc: 'ID элемента в смарт-процессе проектов, к которому относится операция.',
+    breaks: 'Операцию не к чему привязать: поступления и списания не попадут в бюджет проекта, а экран операций останется «не настроен».',
+    importance: 'critical',
+    acceptedTypes: ['integer', 'string'],
+    creatable: true,
+    synonyms: ['ID карточки проекта', 'ID элемента проекта', 'Карточка проекта'],
+    codeHints: ['PROJECT_ITEM_ID'],
+    installCode: 'PROJECT_ITEM_ID',
+    matchCompatibleTypesOnly: true,
+  },
+  {
+    key: 'operation_type',
+    label: 'Тип операции',
+    type: 'строка',
+    desc: 'Поступление или списание.',
+    breaks: 'Поступление не отличить от списания: все суммы посчитаются поступлениями, а экран операций останется «не настроен».',
+    importance: 'critical',
+    acceptedTypes: ['string', 'text'],
+    creatable: true,
+    synonyms: ['Тип операции', 'Вид операции'],
+    codeHints: ['OPERATION_TYPE'],
+    installCode: 'OPERATION_TYPE',
+    matchCompatibleTypesOnly: true,
+  },
+  {
+    key: 'amount',
+    label: 'Сумма',
+    type: 'число с дробной частью',
+    desc: 'Сумма операции.',
+    breaks: 'Сумм не будет: финрезультат проекта и итоги реестра операций останутся нулевыми.',
+    importance: 'critical',
+    acceptedTypes: ['double', 'integer'],
+    creatable: true,
+    synonyms: ['Сумма', 'Сумма операции'],
+    codeHints: ['AMOUNT'],
+    installCode: 'AMOUNT',
+    matchCompatibleTypesOnly: true,
+  },
+  {
+    key: 'operation_date',
+    label: 'Дата операции',
+    type: 'дата',
+    desc: 'Дата поступления или списания.',
+    breaks: 'Операции не отберутся по периоду, а новая операция не сохранит дату.',
+    importance: 'critical',
+    acceptedTypes: ['date', 'datetime'],
+    creatable: true,
+    synonyms: ['Дата операции', 'Дата платежа'],
+    codeHints: ['OPERATION_DATE'],
+    installCode: 'OPERATION_DATE',
+    matchCompatibleTypesOnly: true,
+  },
+  {
+    key: 'source',
+    label: 'Источник',
+    type: 'строка',
+    desc: 'Откуда операция: заведена вручную или пришла из сделки.',
+    breaks: 'Сервер операций без этого поля их не читает: экран останется «не настроен».',
+    importance: 'critical',
+    acceptedTypes: ['string', 'text'],
+    creatable: true,
+    synonyms: ['Источник операции', 'Источник'],
+    codeHints: [],
+    installCode: 'SOURCE',
+    matchCompatibleTypesOnly: true,
+  },
+  {
+    key: 'comment',
+    label: 'Комментарий',
+    type: 'строка',
+    desc: 'Комментарий к операции.',
+    breaks: 'Комментарий не сохранится, и защита от повторного сохранения перестанет узнавать операции с комментарием — деньги могут задвоиться.',
+    importance: 'reports',
+    acceptedTypes: ['string', 'text'],
+    creatable: true,
+    synonyms: ['Комментарий', 'Комментарий к операции'],
+    codeHints: [],
+    installCode: 'COMMENT',
+    matchCompatibleTypesOnly: true,
+  },
+  {
+    key: 'deal_id',
+    label: 'ID сделки',
+    type: 'число',
+    desc: 'Сделка, из которой пришла операция.',
+    breaks: 'Операцию не связать со сделкой: отбор операций по сделке ничего не найдёт.',
+    importance: 'optional',
+    acceptedTypes: ['integer', 'string'],
+    creatable: true,
+    synonyms: ['ID сделки', 'Сделка (ID)'],
+    codeHints: ['DEAL_ID'],
+    installCode: 'DEAL_ID',
+    matchCompatibleTypesOnly: true,
+  },
+  {
+    key: 'currency',
+    label: 'Валюта',
+    type: 'строка',
+    desc: 'Код валюты операции.',
+    breaks: 'Валюта не запишется в операцию: все суммы будут показаны в рублях.',
+    importance: 'optional',
+    acceptedTypes: ['string', 'text'],
+    creatable: true,
+    synonyms: ['Валюта операции', 'Валюта'],
+    codeHints: [],
+    installCode: 'CURRENCY',
+    matchCompatibleTypesOnly: true,
+  },
+  {
+    key: 'responsible_user_id',
+    label: 'Ответственный',
+    type: 'пользователь',
+    desc: 'Сотрудник, к которому относится операция.',
+    breaks: 'В колонке «Автор» реестра операций будет ответственный за элемент CRM, а не сотрудник из операции.',
+    importance: 'optional',
+    acceptedTypes: ['employee', 'user'],
+    creatable: true,
+    synonyms: ['Ответственный за операцию', 'Ответственный'],
+    codeHints: ['RESPONSIBLE_USER_ID'],
+    installCode: 'RESPONSIBLE_USER_ID',
+    matchCompatibleTypesOnly: true,
+  },
+]
+
+/**
+ * Копия required_keys из FinanceOperationService._ensure_configured
+ * (backends/python/api/main/finance_operation_service.py).
+ *
+ * Сервер операций проверяет эти ключи при каждом чтении и записи и без
+ * любого из них отвечает 409 finance_spa_not_configured. Сохранение
+ * конфигурации их НЕ проверяет — поэтому неполное сопоставление сохранить
+ * можно (черновик), а предупредить о последствиях обязан экран.
+ */
+export const FINANCE_SERVER_REQUIRED_KEYS = [
+  'project_item_id',
+  'operation_type',
+  'amount',
+  'operation_date',
+  'source',
+] as const
+
+/** Название готового смарт-процесса, который заводит установка приложения. */
+export const FINANCE_APP_SMART_PROCESS_TITLE = 'Доходы-расходы (App)'
+
+/** Код готового смарт-процесса (SMART_PROCESS_DEFINITIONS['finance']['code']). */
+export const FINANCE_APP_SMART_PROCESS_CODE = 'finance_app'
+
 export function getMappingRows(block: MappingBlockId): MappingRow[] {
-  return block === 'timesheet' ? TIMESHEET_MAPPING_ROWS : PROJECT_MAPPING_ROWS
+  switch (block) {
+    case 'timesheet':
+      return TIMESHEET_MAPPING_ROWS
+    case 'finance':
+      return FINANCE_MAPPING_ROWS
+    default:
+      return PROJECT_MAPPING_ROWS
+  }
 }
+
+// region Ссылки на шаги экрана
+
+/** Адрес экрана сопоставления. Одна строка на приложение, чтобы не разъехалась. */
+export const MAPPING_SETTINGS_PATH = '/settings/mapping'
+
+/** Параметр адреса, которым другие экраны открывают нужный шаг. */
+export const MAPPING_STEP_QUERY_KEY = 'step'
+
+/** id карточки шага и id выпадающего списка процесса в ней. */
+const MAPPING_STEP_TARGETS: Record<MappingBlockId, { anchor: string, focusId: string }> = {
+  timesheet: { anchor: 'block-timesheet-process', focusId: 'timesheet-process' },
+  project: { anchor: 'block-project-process', focusId: 'project-process' },
+  finance: { anchor: 'block-finance-process', focusId: 'finance-process' },
+}
+
+/**
+ * Ссылка сразу на шаг экрана сопоставления.
+ *
+ * Параметр, а не `#якорь`: экран дочитывает конфигурацию и поля портала уже
+ * после перехода, и к моменту, когда роутер ищет якорь, карточки шага на
+ * странице ещё нет — прокрутка по хэшу молча не срабатывала бы. Параметр
+ * экран читает сам, после загрузки (resolveMappingStepTarget).
+ */
+export function buildMappingStepLink(block: MappingBlockId): string {
+  return `${MAPPING_SETTINGS_PATH}?${MAPPING_STEP_QUERY_KEY}=${block}`
+}
+
+/** Куда прокрутить экран по параметру адреса. Чужое значение — никуда. */
+export function resolveMappingStepTarget(
+  value: unknown
+): { block: MappingBlockId, anchor: string, focusId: string } | null {
+  const raw = Array.isArray(value) ? value[0] : value
+  const block = String(raw || '').trim().toLowerCase() as MappingBlockId
+
+  if (!Object.prototype.hasOwnProperty.call(MAPPING_STEP_TARGETS, block)) {
+    return null
+  }
+
+  return { block, ...MAPPING_STEP_TARGETS[block] }
+}
+
+// endregion
 
 /** Подпись серверного ключа по-человечески. Неизвестный ключ отдаём как есть. */
 export function describeMappingKey(block: MappingBlockId, key: string): string {
@@ -778,7 +1021,9 @@ export function resolveMappingBlockStatus(input: {
   const requiredMissing = [...missingCritical, ...missingReports]
   const requiredMapped = requiredRows.length - requiredMissing.length
 
-  const blockName = input.block === 'timesheet' ? 'списаний' : 'проектов'
+  const blockName = input.block === 'timesheet'
+    ? 'списаний'
+    : input.block === 'finance' ? '«Доходы-расходы»' : 'проектов'
   let state: MappingBlockState = 'ready'
 
   if (!entityTypeId) {
@@ -811,13 +1056,19 @@ export function resolveMappingBlockStatus(input: {
   const nextStep = ((): string => {
     switch (state) {
       case 'no-process':
-        return input.block === 'timesheet'
-          ? 'Выберите смарт-процесс, в который приложение пишет списания, или создайте новый кнопкой ниже.'
-          : 'Выберите смарт-процесс с карточками проектов. Без него не работают доска проектов, БДДС и счета.'
+        if (input.block === 'timesheet') {
+          return 'Выберите смарт-процесс, в который приложение пишет списания, или создайте новый кнопкой ниже.'
+        }
+        if (input.block === 'finance') {
+          return `Выберите смарт-процесс «${FINANCE_APP_SMART_PROCESS_TITLE}» — в нём ведутся поступления и списания по проектам. Шаг нужен только для операций БДДС.`
+        }
+        return 'Выберите смарт-процесс с карточками проектов. Без него не работают доска проектов, БДДС и счета.'
       case 'no-fields':
         return 'Нажмите «Обновить список полей»: без полей портала сопоставлять нечего.'
       case 'empty':
-        return 'Нажмите «Подобрать автоматически» — приложение найдёт поля по названиям, а вы проверите результат до сохранения.'
+        return input.block === 'finance'
+          ? 'Нажмите «Подобрать автоматически» — поля, заведённые установкой приложения, найдутся точно по коду, остальные по названиям. Результат вы проверите до сохранения.'
+          : 'Нажмите «Подобрать автоматически» — приложение найдёт поля по названиям, а вы проверите результат до сохранения.'
       case 'partial':
         return requiredMissing.length === 1 && requiredMissing[0]
           ? `Осталось сопоставить «${requiredMissing[0].label}».`
@@ -846,7 +1097,7 @@ export function resolveMappingBlockStatus(input: {
   }
 }
 
-export type MappingStepState = 'done' | 'current' | 'todo' | 'attention'
+export type MappingStepState = 'done' | 'current' | 'todo' | 'attention' | 'optional'
 
 export type MappingStep = {
   id: string
@@ -855,6 +1106,14 @@ export type MappingStep = {
   state: MappingStepState
   /** id блока на странице, к которому ведёт шаг. */
   anchor: string
+  /**
+   * Шаг по желанию («Доходы-расходы»).
+   *
+   * Такой шаг не бывает «сейчас здесь» и не входит в «N из M шагов»: иначе
+   * тот, кто пользуется только часами и отчётами, никогда не увидел бы
+   * «настройка завершена».
+   */
+  optional: boolean
 }
 
 /**
@@ -869,10 +1128,20 @@ export function buildMappingSteps(input: {
   timesheet: MappingBlockStatus
   project: MappingBlockStatus
   validation?: ProjectSpaValidationPayload | null
+  /** Статус «Доходов-расходов». Не передан — шага в полосе нет. */
+  finance?: MappingBlockStatus | null
+  /**
+   * У портала подключён «БДДС по проектам».
+   *
+   * Тогда начатая, но не законченная настройка «Доходов-расходов» — это
+   * проблема (операции не работают у тех, кто за них платит), и шаг
+   * помечается «есть проблема». Без подписки шаг просто «по желанию».
+   */
+  financeNeeded?: boolean
 }): MappingStep[] {
-  const { timesheet, project, validation } = input
+  const { timesheet, project, validation, finance, financeNeeded } = input
 
-  const steps: Array<Omit<MappingStep, 'state'> & { done: boolean, attention: boolean }> = [
+  const steps: Array<Omit<MappingStep, 'state' | 'optional'> & { done: boolean, attention: boolean, optional?: boolean }> = [
     {
       id: 'timesheet-process',
       title: 'Смарт-процесс списаний',
@@ -915,17 +1184,42 @@ export function buildMappingSteps(input: {
     },
   ]
 
-  const firstUnfinished = steps.findIndex(step => !step.done)
+  if (finance) {
+    const started = finance.state !== 'no-process'
+    steps.push({
+      id: 'finance',
+      title: 'Доходы-расходы',
+      hint: started
+        ? `${finance.requiredMapped} из ${finance.requiredTotal} обязательных · по желанию`
+        : 'Только для операций БДДС · по желанию',
+      anchor: MAPPING_STEP_TARGETS.finance.anchor,
+      done: finance.state === 'ready',
+      attention: finance.brokenRows.length > 0
+        || Boolean(financeNeeded && started && finance.state !== 'ready'),
+      optional: true,
+    })
+  }
+
+  const firstUnfinished = steps.findIndex(step => !step.done && !step.optional)
 
   return steps.map((step, index) => {
     let state: MappingStepState = step.done ? 'done' : 'todo'
     if (step.attention) {
       state = 'attention'
+    } else if (!step.done && step.optional) {
+      state = 'optional'
     } else if (!step.done && index === firstUnfinished) {
       state = 'current'
     }
 
-    return { id: step.id, title: step.title, hint: step.hint, anchor: step.anchor, state }
+    return {
+      id: step.id,
+      title: step.title,
+      hint: step.hint,
+      anchor: step.anchor,
+      state,
+      optional: Boolean(step.optional),
+    }
   })
 }
 
@@ -944,8 +1238,10 @@ export function resolveMappingOverall(steps: MappingStep[], input: {
   timesheet: MappingBlockStatus
   project: MappingBlockStatus
 }): MappingOverall {
-  const doneSteps = steps.filter(step => step.state === 'done').length
-  const totalSteps = steps.length
+  // Шаг по желанию в счёт не входит ни в числителе, ни в знаменателе.
+  const requiredSteps = steps.filter(step => !step.optional)
+  const doneSteps = requiredSteps.filter(step => step.state === 'done').length
+  const totalSteps = requiredSteps.length
   const { timesheet, project } = input
 
   if (timesheet.state === 'no-process' && project.state === 'no-process') {
@@ -1106,11 +1402,176 @@ function pluralizeFields(count: number): string {
   return 'полей'
 }
 
+/**
+ * Значение `scope` в теле POST /api/configuration/save для отдельного
+ * сохранения «Доходов-расходов».
+ *
+ * Зачем он вообще нужен. Сервер при project_sp_entity_type_id > 0 на
+ * КАЖДОМ сохранении валидирует смарт-процесс проектов и запускает
+ * синхронизацию (save_configuration в views.py). Для шага, который к
+ * проектам отношения не имеет, это означало бы: сохранение операций ждёт
+ * синхронизацию проектов, съедает её лимит 6 в минуту и упирается в 400,
+ * если на портале поломалось сопоставление проектов. С этим признаком
+ * сервер пропускает проектную ветку — но ТОЛЬКО если проектная часть
+ * присланной конфигурации совпадает с сохранённой; иначе идёт обычным
+ * путём, и обойти проверку проектов через него нельзя.
+ */
+export const FINANCE_CONFIG_SAVE_SCOPE = 'finance'
+
+export type FinanceSavePlanKind =
+  /** Не выбран и не был выбран — сохранять нечего. */
+  | 'skip'
+  /** Был выбран, теперь снят: операции перестанут читаться. */
+  | 'unlink'
+  /** Выбран, но обязательных для сервера операций полей не хватает. */
+  | 'draft'
+  /** Выбран и готов. */
+  | 'ready'
+
+export type FinanceSavePlan = {
+  kind: FinanceSavePlanKind
+  title: string
+  note: string
+  financeSpIdToSend: number
+  /** Поля, без которых сервер операций отвечает «не настроен». */
+  missing: MappingSaveBlocker[]
+}
+
+/**
+ * Что будет с «Доходами-расходами» при сохранении.
+ *
+ * В отличие от проектов, сервер конфигурацию операций при сохранении не
+ * проверяет, поэтому сохранить можно и неполное сопоставление — это
+ * черновик. Честно говорим, чем он кончится: экран операций останется
+ * «не настроен», пока не заполнены FINANCE_SERVER_REQUIRED_KEYS.
+ */
+export function planFinanceMappingSave(input: {
+  selectedFinanceSpId: number | null | undefined
+  savedFinanceSpId: number | string | null | undefined
+  financeStatus: MappingBlockStatus
+  mapping: Record<string, string>
+}): FinanceSavePlan {
+  const selected = Number(input.selectedFinanceSpId || 0)
+  const saved = Number(input.savedFinanceSpId || 0)
+  const mapping = normalizeMappingState(input.mapping)
+
+  if (!selected) {
+    return saved
+      ? {
+          kind: 'unlink',
+          title: 'Смарт-процесс «Доходы-расходы» будет отвязан',
+          note: 'Экран «Операции по проектам» и блок операций в карточке проекта перестанут показывать поступления и списания, а заводить их станет некуда. Часы, отчёты и счета это не затронет.',
+          financeSpIdToSend: 0,
+          missing: [],
+        }
+      : {
+          kind: 'skip',
+          title: '«Доходы-расходы» не настроены',
+          note: 'Шаг необязательный: часы, отчёты и счета работают без него. Операции БДДС до его настройки недоступны.',
+          financeSpIdToSend: 0,
+          missing: [],
+        }
+  }
+
+  const missing = FINANCE_MAPPING_ROWS
+    .filter(row => (FINANCE_SERVER_REQUIRED_KEYS as readonly string[]).includes(row.key))
+    .filter(row => !String(mapping[row.key] || '').trim())
+    .map<MappingSaveBlocker>(row => ({ key: row.key, label: row.label, reason: row.breaks }))
+
+  const switched = saved > 0 && saved !== selected
+    ? ` Операции из прежнего смарт-процесса (ID ${saved}) приложение показывать перестанет — они останутся на портале.`
+    : ''
+
+  if (missing.length) {
+    return {
+      kind: 'draft',
+      title: 'Сохранится черновик: операции пока работать не будут',
+      note: `Не сопоставлено ${missing.length} из ${FINANCE_SERVER_REQUIRED_KEYS.length} полей, без которых сервер операций отвечает «не настроен». Сохранить можно — дозаполните их позже.${switched}`,
+      financeSpIdToSend: selected,
+      missing,
+    }
+  }
+
+  const gaps = input.financeStatus.missingReports.length + input.financeStatus.missingOptional.length
+
+  return {
+    kind: 'ready',
+    title: 'Сохраняем «Доходы-расходы»',
+    note: gaps
+      ? `Операции заработают сразу после сохранения. Не сопоставлено необязательных полей: ${gaps} — рядом с каждым написано, чего без него не будет.${switched}`
+      : `Операции заработают сразу после сохранения.${switched}`,
+    financeSpIdToSend: selected,
+    missing: [],
+  }
+}
+
+/**
+ * Конфигурация целиком с подставленными ключами «Доходов-расходов».
+ *
+ * Сервер хранит настройки ОДНОЙ строкой JSON в app.option, поэтому
+ * сохраняется всегда вся конфигурация: прислать только два финансовых ключа
+ * значит затереть всё остальное — сопоставление списаний, проекты, счета.
+ * Остальные ключи берутся из `base` без изменений.
+ */
+export function applyFinanceMappingToConfig(
+  base: AppConfigurationPayload,
+  input: { entityTypeId: number | null | undefined, mapping: Record<string, string> }
+): AppConfigurationPayload {
+  const entityTypeId = Number(input.entityTypeId || 0)
+
+  return {
+    ...base,
+    finance_sp_entity_type_id: entityTypeId > 0 ? entityTypeId : 0,
+    finance_fields_mapping: normalizeMappingState(input.mapping),
+  }
+}
+
+/** Отличается ли черновик «Доходов-расходов» от сохранённого на сервере. */
+export function isFinanceMappingChanged(
+  saved: AppConfigurationPayload,
+  input: { entityTypeId: number | null | undefined, mapping: Record<string, string> }
+): boolean {
+  if (Number(saved.finance_sp_entity_type_id || 0) !== Number(input.entityTypeId || 0)) {
+    return true
+  }
+
+  const before = normalizeMappingState(saved.finance_fields_mapping || {})
+  const after = normalizeMappingState(input.mapping)
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)])
+
+  for (const key of keys) {
+    if ((before[key] || '') !== (after[key] || '')) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * Готовый «Доходы-расходы (App)» среди смарт-процессов портала.
+ *
+ * Сначала по коду `finance_app` (его ставит установка, и он не меняется при
+ * переименовании процесса на портале), затем по названию — для ответов
+ * сервера, где кода ещё нет.
+ */
+export function findFinanceAppSmartProcess<T extends { entityTypeId: number, title?: unknown, code?: unknown }>(
+  processes: T[]
+): T | null {
+  const byCode = processes.find(item => String(item.code || '').trim().toLowerCase() === FINANCE_APP_SMART_PROCESS_CODE)
+  if (byCode) {
+    return byCode
+  }
+
+  const title = normalizeSearchText(FINANCE_APP_SMART_PROCESS_TITLE)
+  return processes.find(item => normalizeSearchText(item.title) === title) || null
+}
+
 // endregion
 
 // region Автоподбор
 
-export type MappingSuggestionSource = 'label' | 'code' | 'type'
+export type MappingSuggestionSource = 'install' | 'label' | 'code' | 'type'
 
 export type MappingSuggestion = {
   key: string
@@ -1129,6 +1590,31 @@ function normalizeSearchText(value: unknown): string {
 
 function normalizeCode(value: unknown): string {
   return normalizeSearchText(value).replace(/[_\s-]/g, '')
+}
+
+/**
+ * Совпадает ли код поля портала с кодом, который заводит установка.
+ *
+ * Установка создаёт `UF_CRM_<N>_<суффикс>`; портал отдаёт то же поле как
+ * `ufCrm<N><Суффикс>`. После снятия регистра и подчёркиваний оба пишутся
+ * одинаково: `ufcrm<N><суффикс>`. Сравнивается код ЦЕЛИКОМ, а не вхождение:
+ * иначе суффикс AMOUNT узнал бы себя и в `ufCrm12AmountVat`. Номер N
+ * необязателен — так узнаются и старые коды без номера (`UF_CRM_AMOUNT`),
+ * которые FinanceOperationService держит запасными.
+ */
+export function matchesInstallCode(fieldId: unknown, installCode: string | undefined): boolean {
+  const suffix = normalizeCode(installCode)
+  if (!suffix) {
+    return false
+  }
+
+  const code = normalizeCode(fieldId)
+  if (!code.startsWith('ufcrm') || !code.endsWith(suffix)) {
+    return false
+  }
+
+  const middle = code.slice('ufcrm'.length, code.length - suffix.length)
+  return /^\d*$/.test(middle)
 }
 
 /**
@@ -1175,7 +1661,9 @@ function allowsTypeFallback(row: MappingRow): boolean {
  * уже занятые id исключаются, иначе два ключа получили бы одно поле и
  * приложение начало бы писать часы поверх себя.
  *
- * Порядок правил от надёжного к рискованному: точное совпадение названия ->
+ * Порядок правил от надёжного к рискованному: код поля целиком совпал с
+ * кодом, который заводит установка (только у строк с `installCode`) ->
+ * точное совпадение названия ->
  * название содержит синоним -> код поля содержит подсказку -> в
  * смарт-процессе ровно одно поле подходящего типа. Последнее правило самое
  * слабое, поэтому у него отдельный `source: 'type'` (в интерфейсе такие
@@ -1211,18 +1699,36 @@ export function suggestMappingMatches(
 
     const synonyms = row.synonyms.map(normalizeSearchText).filter(Boolean)
     const hints = row.codeHints.map(normalizeCode).filter(Boolean)
+    // Для угадывания по названию и куску кода — только поля подходящего
+    // типа, если строка этого требует (см. MappingRow.matchCompatibleTypesOnly).
+    const guessable = row.matchCompatibleTypesOnly
+      ? free.filter(field => isFieldTypeCompatible(row, field.type))
+      : free
 
     let matched: { id: string, title: string, type: string } | undefined
     let source: MappingSuggestionSource = 'label'
     let reason = ''
 
-    matched = free.find(field => synonyms.includes(normalizeSearchText(field.title)))
-    if (matched) {
-      reason = `Название поля совпадает: «${matched.title}».`
+    // Самое надёжное правило: код целиком совпал с тем, что заводит установка.
+    // Тип здесь не проверяется намеренно — это то самое поле, и если его тип
+    // на портале поменяли, человек увидит это в строке, а не потеряет поле.
+    if (row.installCode) {
+      matched = free.find(field => matchesInstallCode(field.id, row.installCode))
+      if (matched) {
+        source = 'install'
+        reason = `Поле заведено установкой приложения — код совпадает точно: ${matched.id}.`
+      }
     }
 
     if (!matched) {
-      matched = free.find((field) => {
+      matched = guessable.find(field => synonyms.includes(normalizeSearchText(field.title)))
+      if (matched) {
+        reason = `Название поля совпадает: «${matched.title}».`
+      }
+    }
+
+    if (!matched) {
+      matched = guessable.find((field) => {
         const title = normalizeSearchText(field.title)
         return Boolean(title) && synonyms.some(synonym => title.includes(synonym))
       })
@@ -1232,7 +1738,7 @@ export function suggestMappingMatches(
     }
 
     if (!matched) {
-      matched = free.find((field) => {
+      matched = guessable.find((field) => {
         const code = normalizeCode(field.id)
         return hints.some(hint => code.includes(hint))
       })
@@ -1585,7 +2091,12 @@ const HEALTHY: MappingHealth = {
  * этом молчало.
  *
  * Проверяются только вещи, видимые из конфигурации: выбран ли смарт-процесс
- * и заполнены ли обязательные ключи. Права приложения и связность карточек
+ * и заполнены ли обязательные ключи.
+ *
+ * «Доходы-расходы» здесь НЕ проверяются намеренно: они нужны только
+ * операциям БДДС, и баннер на каждом экране у тех, кто пользуется лишь
+ * часами и отчётами, был бы ложной тревогой. Там, где операции важны, их
+ * состояние показывает resolveFinanceMappingNotice. Права приложения и связность карточек
  * тут не проверяются — это отдельный живой запрос, ради баннера его делать
  * незачем.
  */
@@ -1650,6 +2161,62 @@ export function resolveMappingHealth(config: AppConfigurationPayload | null | un
   }
 
   return HEALTHY
+}
+
+export type FinanceMappingNotice = {
+  title: string
+  text: string
+  actionLabel: string
+  /** Ссылка сразу на шаг «Доходы-расходы» экрана сопоставления. */
+  to: string
+  missingLabels: string[]
+}
+
+/**
+ * Мягкое напоминание про «Доходы-расходы» — только там, где это важно.
+ *
+ * Показывается, лишь когда у портала подключён «БДДС по проектам»: без
+ * подписки операций всё равно нет, и напоминать не о чем. Не баннер на
+ * всё приложение, а строка на карточке настроек БДДС и на шаге экрана
+ * сопоставления.
+ */
+export function resolveFinanceMappingNotice(
+  config: AppConfigurationPayload | null | undefined,
+  bddsEnabled: boolean
+): FinanceMappingNotice | null {
+  if (!config || !bddsEnabled) {
+    return null
+  }
+
+  const to = buildMappingStepLink('finance')
+  const entityTypeId = Number(config.finance_sp_entity_type_id || 0)
+
+  if (!entityTypeId) {
+    return {
+      title: 'Операции БДДС не подключены',
+      text: 'Смарт-процесс «Доходы-расходы» не выбран: план и факт по часам считаются, а поступления и внешние платежи не видны и заводить их некуда.',
+      actionLabel: 'Настроить «Доходы-расходы»',
+      to,
+      missingLabels: [],
+    }
+  }
+
+  const mapping = normalizeMappingState(config.finance_fields_mapping || {})
+  const missing = FINANCE_MAPPING_ROWS
+    .filter(row => (FINANCE_SERVER_REQUIRED_KEYS as readonly string[]).includes(row.key))
+    .filter(row => !String(mapping[row.key] || '').trim())
+
+  if (missing.length) {
+    return {
+      title: 'Сопоставление «Доходов-расходов» неполное',
+      text: 'Пока эти поля не сопоставлены, экран операций пишет «не настроен», а добавить операцию нельзя.',
+      actionLabel: 'Досопоставить поля',
+      to,
+      missingLabels: missing.map(row => row.label),
+    }
+  }
+
+  return null
 }
 
 // endregion

@@ -472,6 +472,22 @@
         </div>
 
         <div v-else class="space-y-6">
+          <div v-if="financeMappingNotice" class="ms-note ms-note-info">
+            <p class="text-sm font-semibold">{{ financeMappingNotice.title }}</p>
+            <p class="mt-1 text-sm">{{ financeMappingNotice.text }}</p>
+            <p v-if="financeMappingNotice.missingLabels.length" class="mt-1 text-sm">
+              Не сопоставлено: {{ financeMappingNotice.missingLabels.join(', ') }}.
+            </p>
+            <div class="mt-2">
+              <B24Button
+                :label="financeMappingNotice.actionLabel"
+                color="default"
+                size="sm"
+                @click="openFinanceMappingStep"
+              />
+            </div>
+          </div>
+
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-sm font-medium text-slate-700">Уведомления о бюджете</p>
@@ -684,7 +700,7 @@ import {
   readBillingSettings,
   type BillingSettings,
 } from '~/utils/billingSettings'
-import { resolveMappingHealth } from '~/utils/fieldMapping'
+import { resolveFinanceMappingNotice, resolveMappingHealth } from '~/utils/fieldMapping'
 import type { AppConfigurationPayload } from '~/types/config'
 import type { FilterOption } from '~/types/report'
 
@@ -738,6 +754,24 @@ const configuration = ref<AppConfigurationPayload>({})
 const mappingHealth = computed(() => resolveMappingHealth(
   billingSettingsReady.value ? configuration.value : null
 ))
+
+/**
+ * «Доходы-расходы» не настроены при подключённом БДДС.
+ *
+ * Здесь, в карточке БДДС, а не в карточке сопоставления наверху: смарт-процесс
+ * нужен только операциям БДДС, и тем, кто им не пользуется, напоминание про
+ * него — шум. Ссылка ведёт прямо на шаг экрана сопоставления.
+ */
+const financeMappingNotice = computed(() => resolveFinanceMappingNotice(
+  billingSettingsReady.value ? configuration.value : null,
+  bddsAccess.value.enabled
+))
+
+function openFinanceMappingStep() {
+  if (financeMappingNotice.value) {
+    void router.push(financeMappingNotice.value.to)
+  }
+}
 
 const mappingStatusPillText = computed(() => {
   if (!billingSettingsReady.value) {

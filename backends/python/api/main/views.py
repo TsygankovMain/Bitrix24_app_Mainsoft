@@ -43,6 +43,7 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
+from .project_board_shared import invalidate_account_cache
 from .app_version import get_app_version, is_version_acceptable
 from .utils.decorators.admin_required import admin_required
 from .task_sync_service import TaskSyncService
@@ -2628,6 +2629,48 @@ def get_configuration(request: AuthorizedRequest):
     return JsonResponse(service.get_configuration_sync())
 
 
+#: Значение ``scope`` в теле save_configuration для сохранения одних
+#: «Доходов-расходов» (FINANCE_CONFIG_SAVE_SCOPE во frontend/app/utils/fieldMapping.ts).
+CONFIG_SAVE_SCOPE_FINANCE = "finance"
+
+#: Кэш сумм операций по проектам (FinanceOperationService.get_sums_by_project_item_id).
+FINANCE_SUMS_CACHE_SUFFIX = "finance-sums-by-project-item"
+
+
+def _project_spa_mapping_signature(config: dict) -> tuple:
+    """Проектная часть конфигурации в сравнимом виде.
+
+    Обе стороны уже прошли normalize_configuration_sync, поэтому стадия
+    разложена по всем пяти ключам одинаково. Пустые значения выкидываются,
+    значения приводятся к строкам: app.option возвращает числа строками, и
+    «1032» с 1032 не должны считаться изменением.
+    """
+    try:
+        entity_type_id = int(config.get("project_sp_entity_type_id") or 0)
+    except (TypeError, ValueError):
+        entity_type_id = 0
+    mapping = config.get("project_fields_mapping") or {}
+    if not isinstance(mapping, dict):
+        mapping = {}
+    normalized_mapping = tuple(sorted(
+        (str(key), str(value).strip())
+        for key, value in mapping.items()
+        if value is not None and str(value).strip()
+    ))
+    return entity_type_id, normalized_mapping
+
+
+def _project_spa_part_unchanged(stored: dict, incoming: dict) -> bool:
+    """Совпадает ли проектная часть присланной конфигурации с сохранённой.
+
+    Если чтение сохранённой не удалось, ConfigurationService отдаёт значения
+    по умолчанию (project_sp_entity_type_id = 0) — сравнение с присланным
+    процессом тогда не сходится, и сохранение идёт обычным путём с
+    проверкой. То есть сбой чтения делает ветку строже, а не мягче.
+    """
+    return _project_spa_mapping_signature(stored or {}) == _project_spa_mapping_signature(incoming or {})
+
+
 @rate_limit("config_save_sync", 6, 60, key="account")
 def _save_configuration_with_project_sync(
     request: AuthorizedRequest, service: ConfigurationService, config: dict
@@ -2701,6 +2744,7 @@ def _save_configuration_with_project_sync(
 
     service.save_configuration_sync(config)
     invalidate_project_runtime_caches(request.bitrix24_account)
+    invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
 
     response_payload = {"status": "success"}
     project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
@@ -2784,6 +2828,22 @@ def save_configuration(request: AuthorizedRequest):
         except (TypeError, ValueError):
             should_validate_project_spa = False
 
+        # Отдельное сохранение «Доходов-расходов» с экрана сопоставления.
+        # Проверка и синхронизация проектов ему не нужны, а без этой ветки он
+        # ждал бы полную синхронизацию, тратил её лимит 6/60 и упирался в 400,
+        # когда на портале поломано сопоставление ПРОЕКТОВ. Ветка срабатывает,
+        # только если проектная часть конфигурации совпадает с сохранённой:
+        # иначе — обычный путь с проверкой, и обойти её этим признаком нельзя.
+        if (
+            should_validate_project_spa
+            and str(body.get("scope") or "").strip().lower() == CONFIG_SAVE_SCOPE_FINANCE
+            and _project_spa_part_unchanged(service.get_configuration_sync(), config)
+        ):
+            service.save_configuration_sync(config)
+            invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
+            invalidate_project_runtime_caches(request.bitrix24_account)
+            return JsonResponse({"status": "success", "scope": CONFIG_SAVE_SCOPE_FINANCE})
+
         if should_validate_project_spa:
             # project_sp_entity_type_id > 0 -> эта ветка попытается запустить
             # ProjectSyncService.sync() (полную синхронизацию с Битрикс) и
@@ -2794,6 +2854,9 @@ def save_configuration(request: AuthorizedRequest):
 
         service.save_configuration_sync(config)
         invalidate_project_runtime_caches(request.bitrix24_account)
+        # Суммы операций кэшируются по сопоставлению «Доходов-расходов»: без
+        # сброса бюджет проекта до конца TTL считал бы по прежним полям.
+        invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
         return JsonResponse({"status": "success"})
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)

@@ -73,7 +73,7 @@ export function describeBddsError(error: unknown): BddsErrorView {
   if (code === 'finance_spa_not_configured' || status === 409) {
     return {
       title: serverText || 'Смарт-процесс «Доходы-расходы» не настроен.',
-      hint: 'План и факт по часам считаются и без него, а поступления и внешние платежи не видны. Настроить — «Настройки → Настройка полей».',
+      hint: 'План и факт по часам считаются и без него, а поступления и внешние платежи не видны. Настроить — «Сопоставление полей», шаг «Доходы-расходы».',
       isFeatureDisabled: false,
       isProjectMissing: false,
       isSmartProcessMissing: true,
