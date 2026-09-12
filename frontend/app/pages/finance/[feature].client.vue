@@ -23,7 +23,7 @@
  */
 import { computed } from 'vue'
 import PaidFeatureCard from '~/components/finance/PaidFeatureCard.vue'
-import { isPaidFeatureId, PAID_FEATURES } from '~/utils/paidFeatures'
+import { isFinanceFeatureId, PAID_FEATURES } from '~/utils/paidFeatures'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,7 +34,7 @@ const { access: bddsAccess } = useBddsFeature()
 const featureId = computed(() => {
   const raw = Array.isArray(route.params.feature) ? route.params.feature[0] : route.params.feature
 
-  return isPaidFeatureId(raw) ? raw : null
+  return isFinanceFeatureId(raw) ? raw : null
 })
 
 const access = computed(() => featureId.value === 'billing' ? billingAccess.value : bddsAccess.value)

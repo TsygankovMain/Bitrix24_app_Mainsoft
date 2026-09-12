@@ -9,26 +9,33 @@
  *  2. функция выключена или сервер о ней не ответил — та же заглушка с
  *     замком, что стояла на /finance/bdds до появления экранов
  *     (PaidFeatureCard);
- *  3. функция включена — содержимое экрана.
+ *  3. функция открыта — содержимое экрана. Если тариф Pro закончился
+ *     («только чтение»), идёт грейс или кончается пробный период, над
+ *     содержимым плашка ProPlanNotice; кнопки создания и изменения экраны
+ *     прячут сами по access.canWrite.
  *
  * Второе состояние — главное требование задачи: при state = off пункт меню
  * остаётся с замком и ведёт на заглушку. Прямой переход по адресу
  * /finance/bdds тоже обязан упереться в неё. Настоящая защита при этом на
- * сервере: у БДДС подпиской закрыто и ЧТЕНИЕ (@feature_required('bdds')),
+ * сервере: у БДДС без тарифа закрыто и ЧТЕНИЕ (@feature_required('bdds')),
  * так что заглушка здесь — забота о человеке, а не охрана.
  *
  * Отдельный компонент, а не проп у BillingGate: тот знает про права
  * «Бухгалтерии» и состояние счёта, к БДДС это не относится, а свести два
  * набора состояний в один компонент значит сделать оба хуже читаемыми.
  */
+import { computed } from 'vue'
 import PaidFeatureCard from '~/components/finance/PaidFeatureCard.vue'
+import ProPlanNotice from '~/components/finance/ProPlanNotice.vue'
 
 defineProps<{
   title: string
   description?: string
 }>()
 
-const { access, featuresFailed } = useBddsFeature()
+const { access, features, featuresFailed } = useBddsFeature()
+
+const priceMonthRub = computed(() => features.value?.bdds?.priceMonthRub ?? null)
 </script>
 
 <template>
@@ -41,7 +48,8 @@ const { access, featuresFailed } = useBddsFeature()
               <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ title }}</h1>
               <span
                 v-if="access.badge"
-                class="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                class="rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+                :class="access.locked || access.readOnly ? 'bg-[#0075ff] text-white' : 'bg-slate-100 text-slate-500'"
               >
                 {{ access.badge }}
               </span>
@@ -66,19 +74,20 @@ const { access, featuresFailed } = useBddsFeature()
         feature-id="bdds"
         :enabled="false"
         :badge="access.badge"
+        :price-month-rub="priceMonthRub"
       >
         <template #footer>
-          <p class="text-sm text-slate-500">
-            {{ access.hint }}
-          </p>
-          <p v-if="featuresFailed" class="mt-2 text-sm text-amber-700">
+          <p v-if="featuresFailed" class="mt-3 text-sm text-amber-700">
             Состояние подписки узнать не удалось — сервер не ответил на запрос о платных функциях.
             Экран останется закрытым, пока ответ не придёт: обновите страницу позже.
           </p>
         </template>
       </PaidFeatureCard>
 
-      <slot v-else />
+      <template v-else>
+        <ProPlanNotice :notice="access.notice" feature-id="bdds" />
+        <slot />
+      </template>
     </div>
   </div>
 </template>

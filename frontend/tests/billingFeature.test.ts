@@ -5,14 +5,16 @@ import {
   BILLING_FEATURE_CODE,
   isBillingManager,
   normalizeAccountantIds,
+  resolveBillingAccess,
+  resolveBillingUiPermissions,
+} from '../app/utils/billingFeature'
+import {
   normalizeFeatureState,
   parsePortalFeatures,
   readPortalFeature,
-  resolveBillingAccess,
-  resolveBillingUiPermissions,
   trialBadgeText,
   trialDaysLeft,
-} from '../app/utils/billingFeature'
+} from '../app/utils/featureAccess'
 import { PAID_FEATURE_BADGE } from '../app/utils/paidFeatures'
 
 test('normalizeFeatureState: понятны только три состояния, остальное — выключено', () => {
@@ -49,8 +51,13 @@ test('parsePortalFeatures: дата с временем обрезается д�
 })
 
 test('readPortalFeature: незнакомая функция считается выключенной', () => {
-  assert.deepEqual(readPortalFeature({}, BILLING_FEATURE_CODE), { state: 'off', trialUntil: null })
-  assert.deepEqual(readPortalFeature(null, BILLING_FEATURE_CODE), { state: 'off', trialUntil: null })
+  for (const features of [{}, null]) {
+    const feature = readPortalFeature(features, BILLING_FEATURE_CODE)
+    assert.equal(feature.state, 'off')
+    assert.equal(feature.trialUntil, null)
+    assert.equal(feature.access, 'none')
+    assert.equal(feature.status, 'off')
+  }
 })
 
 test('trialDaysLeft: считаем календарные дни, время суток на результат не влияет', () => {
@@ -100,7 +107,7 @@ test('resolveBillingAccess: state = trial открывает экран и по�
   assert.equal(access.badge, 'пробный, осталось 5 дней')
 })
 
-test('resolveBillingAccess: state = off оставляет замок и подсказку «к администратору»', () => {
+test('resolveBillingAccess: state = off оставляет замок, бейдж Pro и цену', () => {
   const access = resolveBillingAccess({
     features: parsePortalFeatures({ billing: { state: 'off' } }),
     flagEnabled: true,
@@ -109,7 +116,8 @@ test('resolveBillingAccess: state = off оставляет замок и под�
   assert.equal(access.enabled, false)
   assert.equal(access.locked, true)
   assert.equal(access.badge, PAID_FEATURE_BADGE)
-  assert.match(access.hint || '', /администратору/)
+  assert.equal(access.badge, 'Pro')
+  assert.match(access.hint || '', /3000\u00A0₽ в месяц за портал/)
 })
 
 test('resolveBillingAccess: фронтовый флаг — аварийный выключатель, открыть функцию он не может', () => {

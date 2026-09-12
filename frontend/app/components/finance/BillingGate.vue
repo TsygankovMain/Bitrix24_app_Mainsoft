@@ -8,7 +8,10 @@
  *  1. подписку ещё не спросили (/api/features в полёте) — «проверяем»;
  *  2. функция выключена или сервер о ней не ответил — та же заглушка с
  *     замком, что и до появления экрана (PaidFeatureCard);
- *  3. функция включена — содержимое экрана.
+ *  3. функция открыта — содержимое экрана. Если тариф Pro закончился
+ *     («только чтение»), идёт грейс или кончается пробный период, над
+ *     содержимым плашка ProPlanNotice; кнопки создания и изменения экраны
+ *     прячут сами по access.canWrite.
  *
  * Второе состояние — главное требование задачи: при state = off пункт меню
  * остаётся с замком и ведёт на заглушку. Прямой переход по адресу
@@ -20,14 +23,18 @@
  * отчёта (сотрудники и проекты), свежесть данных, «Excel» и «Сформировать» —
  * ни одно из этих полей «Счёту и акту» не подходит.
  */
+import { computed } from 'vue'
 import PaidFeatureCard from '~/components/finance/PaidFeatureCard.vue'
+import ProPlanNotice from '~/components/finance/ProPlanNotice.vue'
 
 defineProps<{
   title: string
   description?: string
 }>()
 
-const { access, featuresFailed } = useBillingFeature()
+const { access, features, featuresFailed } = useBillingFeature()
+
+const priceMonthRub = computed(() => features.value?.billing?.priceMonthRub ?? null)
 </script>
 
 <template>
@@ -40,7 +47,8 @@ const { access, featuresFailed } = useBillingFeature()
               <h1 class="text-xl font-semibold tracking-tight text-slate-900">{{ title }}</h1>
               <span
                 v-if="access.badge"
-                class="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                class="rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+                :class="access.locked || access.readOnly ? 'bg-[#0075ff] text-white' : 'bg-slate-100 text-slate-500'"
               >
                 {{ access.badge }}
               </span>
@@ -65,19 +73,20 @@ const { access, featuresFailed } = useBillingFeature()
         feature-id="billing"
         :enabled="false"
         :badge="access.badge"
+        :price-month-rub="priceMonthRub"
       >
         <template #footer>
-          <p class="text-sm text-slate-500">
-            {{ access.hint }}
-          </p>
-          <p v-if="featuresFailed" class="mt-2 text-sm text-amber-700">
+          <p v-if="featuresFailed" class="mt-3 text-sm text-amber-700">
             Состояние подписки узнать не удалось — сервер не ответил на запрос о платных функциях.
             Экран останется закрытым, пока ответ не придёт: обновите страницу позже.
           </p>
         </template>
       </PaidFeatureCard>
 
-      <slot v-else />
+      <template v-else>
+        <ProPlanNotice :notice="access.notice" feature-id="billing" />
+        <slot />
+      </template>
     </div>
   </div>
 </template>

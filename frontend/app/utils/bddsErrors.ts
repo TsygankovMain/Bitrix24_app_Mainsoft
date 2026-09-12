@@ -14,6 +14,7 @@
 
 import { readErrorCode, readErrorPayload, readErrorStatus } from './billingErrors'
 import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from './apiErrors'
+import { proPriceText } from './proPlan'
 
 export type BddsErrorView = {
   title: string
@@ -51,10 +52,18 @@ export function describeBddsError(error: unknown): BddsErrorView {
   }
 
   if (code === 'feature_disabled' || status === 403) {
+    // reason = expired: Pro закончился, сервер закрыл только запись. Это не
+    // «функция выключена» — экран остаётся открытым на чтение.
+    const expired = String(payload.reason || '') === 'expired'
+
     return {
-      title: serverText || 'Функция «БДДС по проектам» не подключена на этом портале.',
-      hint: 'Подписку включает администратор приложения.',
-      isFeatureDisabled: true,
+      title: serverText || (expired
+        ? 'Тариф Pro закончился: создание и изменение в «БДДС по проектам» закрыты.'
+        : 'Функция «БДДС по проектам» не подключена на этом портале.'),
+      hint: expired
+        ? `Просмотр и выгрузки работают. Продлить Pro — ${proPriceText()}.`
+        : `Входит в тариф Pro — ${proPriceText()}. Подключить — кнопкой «Подключить Pro».`,
+      isFeatureDisabled: !expired,
       isProjectMissing: false,
       isSmartProcessMissing: false,
     }

@@ -19,6 +19,7 @@
  */
 
 import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from './apiErrors'
+import { proPriceText } from './proPlan'
 
 /** Статус HTTP из ошибки ofetch в любой из трёх её форм. null — статуса нет. */
 export function readErrorStatus(error: unknown): number | null {
@@ -262,10 +263,17 @@ export function describeBillingError(error: unknown): BillingErrorView {
   }
 
   if (code === 'feature_disabled' || /подписк/i.test(message)) {
+    // reason = expired: тариф Pro был, но закончился (после грейса) —
+    // сервер закрыл запись и оставил чтение (billing_features.feature_required).
+    const expired = String(readErrorPayload(error).reason || '') === 'expired'
+
     return {
-      title: 'Функция не подключена',
-      text: '«Счёт и акт» входит в платную подписку, и на этом портале она выключена. Выставление и печать '
-        + 'закрыты; реестр и отмена уже выставленных документов работают. Подключение — через администратора приложения.',
+      title: expired ? 'Тариф Pro закончился' : 'Функция не подключена',
+      text: (expired
+        ? 'Выставление и печать закрыты, пока Pro не продлён. '
+        : '«Счёт и акт» входит в тариф Pro, и на этом портале он не подключён. Выставление и печать закрыты; ')
+        + (expired ? 'Реестр, выгрузки и отмена уже выставленных документов работают. ' : 'реестр и отмена уже выставленных документов работают. ')
+        + `Подключить Pro — ${proPriceText()}.`,
       code: code || 'feature_disabled',
       documentId: '',
       permanent: true,

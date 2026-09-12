@@ -510,73 +510,99 @@ class SyncRun(models.Model):
         ]
 
 
-class PortalFeature(models.Model):
-    """Выключатель платной функции на портале (счёт и акт, БДДС).
+class PortalSubscription(models.Model):
+    """Тариф портала: единственный источник правды о платных функциях.
 
-    Живёт на НАШЕМ сервере, а не в app.option портала: у фронта есть токен
-    приложения, и app.option.set из консоли браузера включил бы платную
-    функцию мимо нас. Писать состояние по REST нельзя ни при каких условиях —
-    только management-командой (main/management/commands/billing_feature.py).
+    Ключ — ПОРТАЛ (Portal, уникален по member_id), а не учётка. Прежняя
+    модель PortalFeature висела на Bitrix24Account — записи на сотрудника, —
+    и команда включения писала строку каждой учётке: сотрудник, впервые
+    открывший приложение после включения, оставался без функции. Домен ключом
+    тоже не годится: у порталов он меняется, member_id — нет.
 
-    Ключ — пара (bitrix24_account, code), как записано в контракте. При этом
-    подписка по смыслу портальная, а Bitrix24Account в этом приложении —
-    запись НА СОТРУДНИКА (уникальность по паре «пользователь + домен»).
-    Поэтому чтение состояния идёт не по своей учётке, а по всем учёткам того
-    же member_id (см. billing_features.get_feature_state): иначе функция,
-    включённая администратору, была бы выключена у бухгалтера того же
-    портала. Команда включения по этой же причине пишет строки сразу всем
-    учёткам портала.
+    Хранится ТОЛЬКО на нашем сервере. Писать по REST нельзя ни при каких
+    условиях (app.option пишется токеном приложения из консоли браузера) —
+    только командой pro_plan (main/management/commands/pro_plan.py).
+
+    Поле state — решение оператора, а не итог. Итог (действует, грейс,
+    истёк) вычисляется при каждом чтении по датам — billing_features.
+    resolve_subscription — поэтому неоплаченный портал закрывается сам, без
+    ночной задачи и без ручного действия:
+
+    - active: оплачено по paid_until включительно (None — бессрочно, так
+      перенесены прежние state=on без срока), затем GRACE_DAYS дней грейса,
+      затем «только чтение»;
+    - trial: пробный до trial_until включительно (None — бессрочный тест),
+      затем «только чтение» сразу, без грейса;
+    - expired: «только чтение» сразу, без ожидания дат (оператор закрыл
+      запись сам);
+    - off: функций нет совсем.
+
+    Какие функции входят в тариф — billing_features.PLAN_FEATURES.
     """
 
-    STATE_ON = "on"
-    STATE_TRIAL = "trial"
-    STATE_OFF = "off"
-    STATES = (STATE_ON, STATE_TRIAL, STATE_OFF)
+    PLAN_PRO = "pro"
+    PLANS = (PLAN_PRO,)
 
-    CODE_BILLING = "billing"
-    CODE_BDDS = "bdds"
-    CODES = (CODE_BILLING, CODE_BDDS)
+    STATE_ACTIVE = "active"
+    STATE_TRIAL = "trial"
+    STATE_EXPIRED = "expired"
+    STATE_OFF = "off"
+    STATES = (STATE_ACTIVE, STATE_TRIAL, STATE_EXPIRED, STATE_OFF)
+
+    DEFAULT_PRICE_MONTH_RUB = 3000
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    bitrix24_account = models.ForeignKey(
-        Bitrix24Account, on_delete=models.CASCADE, related_name="portal_features",
+    portal = models.OneToOneField(
+        Portal, on_delete=models.CASCADE, related_name="subscription",
     )
-    portal = models.ForeignKey(
-        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
-        related_name="portal_features", db_index=True,
-    )
-    code = models.CharField(max_length=32)
+    plan = models.CharField(max_length=32, default=PLAN_PRO)
     state = models.CharField(max_length=16, default=STATE_OFF)
-    trial_until = models.DateTimeField(null=True, blank=True)
+    # Даты, а не моменты: «оплачено по 31.10» — это весь день 31.10 по
+    # Москве (billing_features.subscription_today), а не полночь UTC.
+    paid_until = models.DateField(null=True, blank=True)
+    trial_until = models.DateField(null=True, blank=True)
+    price_month_rub = models.PositiveIntegerField(default=DEFAULT_PRICE_MONTH_RUB)
     comment = models.TextField(blank=True, default="")
+    updated_by = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         managed = True
-        db_table = "portal_feature"
-        unique_together = ("bitrix24_account", "code")
+        db_table = "portal_subscription"
         indexes = [
-            models.Index(fields=["code", "state"], name="portal_feature_code_idx"),
+            models.Index(fields=["state", "paid_until"], name="portal_subscription_state_idx"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.code}={self.state}"
+        return f"{self.plan}={self.state}"
 
-    def is_enabled(self, now=None) -> bool:
-        """trial считается включённым, пока не вышел срок.
 
-        trial_until=None у trial трактуется как бессрочный тест: это ручная
-        выдача командой, и «молча выключить» её было бы хуже, чем оставить
-        включённой до явного выключения.
-        """
-        if self.state == self.STATE_ON:
-            return True
-        if self.state != self.STATE_TRIAL:
-            return False
-        if self.trial_until is None:
-            return True
-        return (now or timezone.now()) <= self.trial_until
+class PortalSubscriptionEvent(models.Model):
+    """Журнал изменений тарифа: кто, когда и что поменял.
+
+    Нужен не для красоты: спор «мы платили до ноября» решается только
+    историей, а поле updated_by помнит лишь последнего.
+    changes — {поле: [было, стало]} строками.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subscription = models.ForeignKey(
+        PortalSubscription, on_delete=models.CASCADE, related_name="events",
+    )
+    action = models.CharField(max_length=32)
+    changes = models.JSONField(default=dict, blank=True)
+    actor = models.CharField(max_length=255, blank=True, default="")
+    comment = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_subscription_event"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.action}@{self.created_at:%Y-%m-%d}"
 
 
 class BillingDocument(models.Model):

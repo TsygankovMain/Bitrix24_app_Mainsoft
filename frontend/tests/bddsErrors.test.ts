@@ -16,7 +16,7 @@ test('отказ по подписке помечается отдельно: э
 
   assert.equal(view.isFeatureDisabled, true)
   assert.match(view.title, /БДДС по проектам/)
-  assert.match(view.hint, /администратор/)
+  assert.match(view.hint, /Pro/)
 })
 
 test('проект не найден — подсказка ведёт к синхронизации, а не в поддержку', () => {

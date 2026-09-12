@@ -25,13 +25,14 @@ from .models import (
     BillingDocument,
     BillingEntry,
     Bitrix24Account,
-    PortalFeature,
+    PortalSubscription,
     PortalTask,
     PortalUser,
     ProjectCard,
     TimesheetItem,
 )
 from .period_service import PeriodService
+from .pro_plan_service import set_account_plan
 
 
 class FakeToken:
@@ -145,10 +146,7 @@ class BillingEndpointFixture(TestCase):
             company_id="15", company_name="ООО Клиент",
             our_legal_entity_id="7", our_legal_entity_name="ООО Майнсофт",
         )
-        self.feature = PortalFeature.objects.create(
-            bitrix24_account=self.account, code=PortalFeature.CODE_BILLING,
-            state=PortalFeature.STATE_ON,
-        )
+        self.feature = set_account_plan(self.account)
         self._client_patch = patch.object(
             Bitrix24Account, "client", property(lambda _self: FakeClient(self.portal)),
         )
@@ -520,7 +518,7 @@ class FeatureFlagTest(BillingEndpointFixture):
     def test_disabled_feature_blocks_issue(self):
         self.entry(1)
         self.close_august()
-        self.feature.state = PortalFeature.STATE_OFF
+        self.feature.state = PortalSubscription.STATE_OFF
         self.feature.save(update_fields=["state"])
 
         response = self.post("/api/billing/documents", self.default_filter())
@@ -533,7 +531,7 @@ class FeatureFlagTest(BillingEndpointFixture):
         self.entry(1)
         self.close_august()
         document = self.post("/api/billing/documents", self.default_filter()).json()["document"]
-        self.feature.state = PortalFeature.STATE_OFF
+        self.feature.state = PortalSubscription.STATE_OFF
         self.feature.save(update_fields=["state"])
 
         listed = self.get("/api/billing/documents")
@@ -546,16 +544,40 @@ class FeatureFlagTest(BillingEndpointFixture):
         self.assertEqual(card.status_code, 200)
         self.assertEqual(cancelled.status_code, 200)
 
+    def test_unpaid_pro_after_grace_blocks_issue_and_act_but_keeps_registry(self):
+        """Правило неоплаты: создание и печать закрыты, реестр, карточка, выгрузка и отмена — нет."""
+        self.entry(1)
+        self.close_august()
+        document = self.post("/api/billing/documents", self.default_filter()).json()["document"]
+        self.feature.paid_until = timezone.localdate() - timezone.timedelta(days=9)
+        self.feature.save(update_fields=["paid_until"])
+
+        issue = self.post("/api/billing/documents", self.default_filter())
+        act = self.post(f"/api/billing/documents/{document['id']}/act", {})
+        for response in (issue, act):
+            with self.subTest(path=response.wsgi_request.path):
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.json()["code"], "feature_disabled")
+                self.assertEqual(response.json()["reason"], "expired")
+
+        self.assertEqual(self.get("/api/billing/documents").status_code, 200)
+        self.assertEqual(self.get(f"/api/billing/documents/{document['id']}").status_code, 200)
+        self.assertEqual(self.get(f"/api/billing/documents/{document['id']}/detail.xlsx").status_code, 200)
+        self.assertEqual(
+            self.post(f"/api/billing/documents/{document['id']}/cancel", {"reason": "не оплатили"}).status_code,
+            200,
+        )
+
     def test_expired_trial_is_off(self):
-        self.feature.state = PortalFeature.STATE_TRIAL
-        self.feature.trial_until = timezone.now() - timezone.timedelta(days=1)
+        self.feature.state = PortalSubscription.STATE_TRIAL
+        self.feature.trial_until = timezone.localdate() - timezone.timedelta(days=2)
         self.feature.save(update_fields=["state", "trial_until"])
 
         self.assertFalse(self.get("/api/features").json()["billing"]["enabled"])
 
     def test_live_trial_is_on(self):
-        self.feature.state = PortalFeature.STATE_TRIAL
-        self.feature.trial_until = timezone.now() + timezone.timedelta(days=3)
+        self.feature.state = PortalSubscription.STATE_TRIAL
+        self.feature.trial_until = timezone.localdate() + timezone.timedelta(days=3)
         self.feature.save(update_fields=["state", "trial_until"])
 
         self.assertTrue(self.get("/api/features").json()["billing"]["enabled"])
@@ -712,7 +734,7 @@ class ActTest(BillingEndpointFixture):
 
     def test_act_needs_the_feature(self):
         document = self._issued()
-        self.feature.state = PortalFeature.STATE_OFF
+        self.feature.state = PortalSubscription.STATE_OFF
         self.feature.save(update_fields=["state"])
 
         response = self.post(f"/api/billing/documents/{document['id']}/act", {})

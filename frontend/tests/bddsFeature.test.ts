@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { BDDS_FEATURE_CODE, resolveBddsAccess } from '../app/utils/bddsFeature'
-import { parsePortalFeatures } from '../app/utils/billingFeature'
+import { parsePortalFeatures } from '../app/utils/featureAccess'
 import { PAID_FEATURE_BADGE, PAID_FEATURE_HINT } from '../app/utils/paidFeatures'
 
 test('код функции совпадает с контрактом /api/features и моделью PortalFeature', () => {

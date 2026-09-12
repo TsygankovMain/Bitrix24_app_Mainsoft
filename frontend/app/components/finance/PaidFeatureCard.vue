@@ -1,37 +1,48 @@
 <script setup lang="ts">
 /**
- * Карточка платной функции: что она делает и что делать человеку.
+ * Карточка закрытой платной функции: замок, бейдж «Pro», польза, цена и
+ * кнопка «Подключить Pro».
  *
- * Была разметкой внутри pages/finance/[feature].client.vue. Вынесена, когда у
- * «Счёта и акта» появился настоящий экран: при выключенной подписке он обязан
- * показывать РОВНО ту же заглушку, что и раньше. Копия этой разметки на двух
- * страницах разошлась бы на первой же правке формулировки — а формулировка
- * здесь и есть весь смысл заглушки.
+ * Вид ОДИН на все платные функции (БДДС, счёт и акт, ролевая модель) и на
+ * все места, где функция закрыта: заглушка /finance/<id>, экраны за
+ * BillingGate / BddsGate и экран ролевой модели. Копия разметки разошлась
+ * бы на первой же правке формулировки.
  *
- * Компонент только рисует. Состояние (замок, бейдж, подсказка) считает
- * resolvePaidFeatureState в app/utils/paidFeatures.ts, тексты лежат там же.
+ * Кнопка ведёт на /pro (app/pages/pro.client.vue) — пока это заглушка, позже
+ * там будет форма запроса счёта. Адрес и тексты — app/utils/proPlan.ts.
+ *
+ * Компонент только рисует. Состояние (замок, бейдж, подсказку) считает
+ * resolvePaidFeatureState / resolveFeatureAccess.
  */
 import { computed } from 'vue'
 import LockIcon from '@bitrix24/b24icons-vue/main/LockIcon'
 import { resolvePaidFeatureState, type PaidFeatureId } from '~/utils/paidFeatures'
+import { PRO_CTA_LABEL, proPriceText, proRoute } from '~/utils/proPlan'
 
 const props = withDefaults(defineProps<{
   featureId: PaidFeatureId
-  /** Функция доступна: замка и бейджа «по подписке» нет. */
+  /** Функция доступна: замка, бейджа «Pro», цены и кнопки нет. */
   enabled: boolean
-  /**
-   * Бейдж вместо стандартного. Нужен пробному периоду («пробный, осталось N
-   * дней»): функция включена, но срок конечен. undefined — как решит
-   * resolvePaidFeatureState.
-   */
+  /** Бейдж вместо стандартного (например, «пробный, осталось N дней»). */
   badge?: string | null
+  /** Цена в месяц с сервера (price_month_rub); по умолчанию 3000. */
+  priceMonthRub?: number | null
 }>(), {
   badge: undefined,
+  priceMonthRub: null,
 })
+
+const router = useRouter()
 
 const state = computed(() => resolvePaidFeatureState(props.featureId, props.enabled))
 
 const shownBadge = computed(() => props.badge === undefined ? state.value.badge : props.badge)
+
+const priceText = computed(() => proPriceText(props.priceMonthRub ?? undefined))
+
+function openPro() {
+  void router.push(proRoute(props.featureId))
+}
 </script>
 
 <template>
@@ -42,7 +53,7 @@ const shownBadge = computed(() => props.badge === undefined ? state.value.badge 
         <span class="text-base font-semibold text-slate-900">{{ state.feature.label }}</span>
         <span
           v-if="shownBadge"
-          class="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+          class="rounded-full bg-[#0075ff] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white"
         >
           {{ shownBadge }}
         </span>
@@ -63,9 +74,17 @@ const shownBadge = computed(() => props.badge === undefined ? state.value.badge 
     </ul>
 
     <template #footer>
+      <div v-if="state.locked" class="flex flex-wrap items-center justify-between gap-3">
+        <div class="min-w-0">
+          <p class="text-sm font-semibold text-slate-900">{{ priceText }}</p>
+          <p class="text-xs text-slate-500">
+            Тариф Pro открывает все платные функции: БДДС, счёт и акт, ролевую модель.
+          </p>
+        </div>
+        <B24Button :label="PRO_CTA_LABEL" color="primary" @click="openPro" />
+      </div>
       <slot name="footer">
-        <p v-if="state.hint" class="text-sm text-slate-500">{{ state.hint }}</p>
-        <p v-else class="text-sm text-slate-500">
+        <p v-if="!state.locked" class="text-sm text-slate-500">
           Функция подключена. Экран появится в этом разделе.
         </p>
       </slot>

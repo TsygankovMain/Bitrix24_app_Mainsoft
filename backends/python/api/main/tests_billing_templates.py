@@ -24,7 +24,8 @@ from unittest.mock import patch
 
 from .billing_crm_service import BillingCrmService
 from .billing_service import BillingError
-from .models import BillingDocument, Bitrix24Account, PortalFeature
+from .models import BillingDocument, Bitrix24Account, PortalSubscription
+from .pro_plan_service import set_account_plan
 
 
 # Живой ответ crm.documentgenerator.template.list (nfr-mainsoft, 12.09.2026),
@@ -426,10 +427,7 @@ class InvoicePrintTest(TemplateFixture):
 class InvoicePrintEndpointTest(TemplateFixture):
     def setUp(self):
         super().setUp()
-        PortalFeature.objects.create(
-            bitrix24_account=self.account, code=PortalFeature.CODE_BILLING,
-            state=PortalFeature.STATE_ON,
-        )
+        set_account_plan(self.account)
         self.document = BillingDocument.objects.create(
             bitrix24_account=self.account, status=BillingDocument.STATUS_ISSUED,
             crm_entity_id="4", crm_account_number="1", total_hours=4.0, total_amount=8000.0,
@@ -468,9 +466,7 @@ class InvoicePrintEndpointTest(TemplateFixture):
         self.assertEqual(response.status_code, 403)
 
     def test_vyklyuchennaya_podpiska_ne_pechataet(self):
-        PortalFeature.objects.filter(bitrix24_account=self.account).update(
-            state=PortalFeature.STATE_OFF
-        )
+        PortalSubscription.objects.update(state=PortalSubscription.STATE_OFF)
 
         response = self.post(self.path)
 
