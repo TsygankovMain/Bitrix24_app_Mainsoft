@@ -200,6 +200,21 @@
     @apply grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3;
   }
 
+  /*
+   * ВНИМАНИЕ про ширину модалок и панелей.
+   *
+   * Именованные утилиты `max-w-sm/md/lg/xl` в этом проекте НЕ дают 24/28/32rem.
+   * Tailwind 4 разрешает `max-w-*` по цепочке тем `--max-width` -> `--spacing`
+   * -> `--container`, а Bitrix24 UI Kit (@bitrix24/b24ui-nuxt,
+   * dist/runtime/air-design-tokens/tw-style/spacing.css) объявляет свою шкалу
+   * `--spacing-*`: `--spacing-md: 16px`, `--spacing-lg: 20px`. Значит
+   * `max-w-lg` -> `max-width: 20px`, и панель сжимается до ширины самого
+   * длинного слова. Именно так `.ms-modal-panel w-full max-w-lg` на карточке
+   * счёта превратился в «кривой слишком узкий попап».
+   *
+   * Поэтому ширины задаём только в явных единицах: `max-w-[520px]`,
+   * `max-w-full`, `w-3/4`. Именованные `max-w-<размер>` не использовать.
+   */
   .ms-modal-overlay {
     @apply fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm;
   }
