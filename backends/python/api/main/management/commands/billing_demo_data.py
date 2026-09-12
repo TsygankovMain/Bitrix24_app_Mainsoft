@@ -5,7 +5,7 @@
 под ним. Команда достраивает именно это — списания за нужные месяцы и
 закрытый период, — не трогая ни реальные записи, ни портал.
 
-Четыре решения, без которых команду нельзя читать.
+Пять решений, без которых команду нельзя читать.
 
 1. НОВЫХ КАРТОЧЕК И КОМПАНИЙ НЕ СОЗДАЁМ. Счёт — штатный смарт-счёт CRM:
    выдуманный company_id упрётся в портал на шаге создания счёта, и демо
@@ -30,6 +30,17 @@
    PeriodCheckService.run + PeriodService.close с настоящим снимком stats —
    тем же, что кладёт эндпоинт period_close. Иначе демо показывало бы
    закрытие, которого в приложении нет.
+
+5. НА ПРОДЕ КОМАНДА ОТКАЗЫВАЕТСЯ ЗАПУСКАТЬСЯ. Демо-списания, закрытие
+   месяца и заморозка синка — это авария, если случайно выполнить их на
+   боевом портале. Команда работает только при BUILD_TARGET=dev (main.config.
+   config.debug); на проде (BUILD_TARGET=production) handle() сразу бросает
+   CommandError, до любого обращения к базе. Проверяется НЕ settings.DEBUG:
+   Django test runner принудительно ставит settings.DEBUG=False на время
+   ЛЮБОГО прогона тестов (django.test.utils.setup_test_environment),
+   независимо от BUILD_TARGET, — тесты этой команды падали бы с этой же
+   ошибкой на дев-стенде. config.debug читает BUILD_TARGET один раз при
+   старте процесса и тестраннером не подменяется.
 
 Учётка или портал. Bitrix24Account в этом приложении — запись НА
 СОТРУДНИКА, а данные скоуплены через tenant_scoping: при
@@ -62,6 +73,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
+
+from config import config
 
 from main.models import (
     Bitrix24Account,
@@ -235,6 +248,15 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------
 
     def handle(self, *args, **options):
+        if not config.debug:
+            raise CommandError(
+                "billing_demo_data отключена вне дев-окружения (BUILD_TARGET != 'dev'). "
+                "Команда пишет фиктивные списания на реальные "
+                "карточки проектов, штатно закрывает месяц (--close-month) и может "
+                f"заморозить синхронизацию порталу на {FREEZE_DAYS} дней (--freeze-sync) — "
+                "на проде это авария, а не демонстрация."
+            )
+
         self.dry_run = bool(options["dry_run"])
         self.id_base = int(options["id_base"])
         if self.id_base <= 0:

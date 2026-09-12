@@ -18,6 +18,7 @@
 
 from datetime import datetime, timedelta
 from io import StringIO
+from unittest import mock
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -209,6 +210,14 @@ class GenerationTest(DemoCommandFixture):
     def test_domain_is_required(self):
         with self.assertRaises(CommandError):
             self.run_command()
+
+    def test_refuses_to_run_outside_dev_environment(self):
+        """BUILD_TARGET=production -> config.debug=False -> отказ до записи."""
+        from config import config
+
+        with mock.patch.object(config, "debug", False), self.assertRaises(CommandError):
+            self.run_command("--domain", "demo.bitrix24.ru")
+        self.assertEqual(self.demo_items().count(), 0)
 
 
 class SelectionTest(DemoCommandFixture):

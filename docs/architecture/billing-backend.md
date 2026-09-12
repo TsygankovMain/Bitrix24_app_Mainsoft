@@ -8,15 +8,15 @@
 
 | Файл | За что отвечает |
 |---|---|
-| `main/models.py` | `PortalFeature`, `BillingDocument`, `BillingLine`, `BillingEntry` |
+| `main/models.py` | `BillingDocument`, `BillingLine`, `BillingEntry`; тариф — `PortalSubscription` |
 | `main/migrations/0022_billing.py` | таблицы и частичный уникальный индекс |
 | `main/billing_service.py` | отбор списаний, суммы, группировки, транзакция записи, отмена, drift |
 | `main/billing_crm_service.py` | смарт-счёт (`entityTypeId 31`), товарные строки, сверка, печать акта |
-| `main/billing_features.py` | состояния платных функций и декоратор `feature_required` |
+| `main/billing_features.py` | состояние тарифа Pro (льготные 7 дней, режим чтения) и декоратор `feature_required` |
 | `main/billing_settings.py` | настройки счёта из конфигурации и гейт прав `billing_manager_required` |
 | `main/billing_detail_report.py` | детализация к счёту и акту: иерархия задача → сотрудник → списание, резолв названий задач, имя файла |
 | `main/report_excel.py` | `render_billing_detail_workbook` — вёрстка детализации (та же, что у выгрузок отчётов) |
-| `main/management/commands/billing_feature.py` | включение и выключение функции порталу |
+| `main/management/commands/pro_plan.py` | включение, продление и выключение тарифа Pro порталу |
 
 ## Эндпоинты
 
@@ -70,24 +70,28 @@ CRM-шаг падает — `discard_failed`: документ без `crm_entit
 
 ## Подписка и права
 
-Состояние функции — `PortalFeature`, только на нашем сервере: `app.option`
-портала пишется токеном приложения, то есть из консоли браузера. REST на
-запись нет. Меняется командой:
+Состояние тарифа — `PortalSubscription`, одна строка на портал (`member_id`),
+только на нашем сервере: `app.option` портала пишется токеном приложения, то
+есть из консоли браузера, доверять ему нельзя. Pro открывает все платные
+функции (`bdds`, `billing`, `roles`). После `paid_until` портал ещё 7 дней
+работает полностью, затем переходит в режим чтения: запись закрыта, чтение и
+выгрузки открыты. Меняется командой:
 
 ```
-python manage.py billing_feature --domain client.bitrix24.ru --state on
-python manage.py billing_feature --member-id abc --state trial --trial-days 14
-python manage.py billing_feature --list
+python manage.py pro_plan list
+python manage.py pro_plan enable --domain client.bitrix24.ru --months 1
+python manage.py pro_plan extend --member-id abc --months 3
+python manage.py pro_plan trial|expire|off --domain client.bitrix24.ru
 ```
 
-Команда пишет строку каждой учётке портала, и чтение состояния тоже идёт по
-всем учёткам одного `member_id`: учётка в этом приложении — запись на
-сотрудника, и «включено администратору» не должно означать «выключено
-бухгалтеру».
+Прежняя команда `billing_feature` и таблица `PortalFeature` сняты: миграция
+0024 переносит их строки в тариф (`main/pro_plan_migration.py`).
 
-Выставлять и отменять может администратор портала или сотрудник из списка
-`billing_accountants` в настройках приложения. Администратор проходит без
-обращения к порталу — флаг уже в нашей БД.
+Выставлять и отменять могут роли, которым это разрешено в матрице прав
+(`main/roles.py`, экран «Настройки → Роли»). По умолчанию — администратор и
+бухгалтерия. Прежний список `billing_accountants` при первой проверке прав
+переносится в роль «Бухгалтерия». Без тарифа права прежние, как до ролей;
+окончание Pro роли не снимает, только закрывает их редактирование.
 
 ## Настройки
 
