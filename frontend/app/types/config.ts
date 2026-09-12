@@ -19,6 +19,14 @@ export interface AppConfigurationPayload {
   /** Наше юрлицо для выставления счетов; пусто — из карточки проекта. */
   billing_our_company_id?: string | number | null
   billing_our_company_name?: string | null
+  /**
+   * Шаблоны генератора документов портала: акт и печатная форма счёта.
+   * 0 или пусто — шаблон не выбран. Хранятся числами: сервер приводит их к
+   * int при нормализации конфигурации, и строка из <select> стала бы второй
+   * формой того же значения.
+   */
+  billing_act_template_id?: number | string | null
+  billing_invoice_template_id?: number | string | null
   [key: string]: unknown
 }
 

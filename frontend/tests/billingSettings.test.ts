@@ -8,9 +8,12 @@ import {
   BILLING_LINE_TEMPLATE_KEY,
   BILLING_OUR_COMPANY_ID_KEY,
   BILLING_OUR_COMPANY_NAME_KEY,
+  BILLING_ACT_TEMPLATE_ID_KEY,
+  BILLING_INVOICE_TEMPLATE_ID_KEY,
   applyBillingSettings,
   billingSettingsChanged,
   readBillingSettings,
+  readTemplateId,
   type BillingSettings,
 } from '../app/utils/billingSettings'
 import { DEFAULT_BILLING_LINE_TEMPLATE } from '../app/utils/billingLineTemplate'
@@ -24,6 +27,8 @@ function settings(patch: Partial<BillingSettings> = {}): BillingSettings {
     ourCompanyName: '',
     lineTemplate: DEFAULT_BILLING_LINE_TEMPLATE,
     taskLevel: 'task',
+    actTemplateId: '',
+    invoiceTemplateId: '',
     ...patch,
   }
 }
@@ -190,4 +195,97 @@ test('billingSettingsChanged: новое название при том же id 
   const renamed = settings({ ourCompanyId: '68', ourCompanyName: 'ООО «Мейнсофт»' })
 
   assert.equal(billingSettingsChanged(base, renamed), false)
+})
+
+// ---------------------------------------------------------------------------
+// Шаблоны генератора документов
+// ---------------------------------------------------------------------------
+
+test('readTemplateId: ноль, мусор и отрицательные — это «шаблон не выбран»', () => {
+  // Сохранённый id 0 иначе выглядел бы как выбранный шаблон, а строка 'None'
+  // (str(None) на сервере) — как настоящий идентификатор.
+  assert.equal(readTemplateId(0), '')
+  assert.equal(readTemplateId('0'), '')
+  assert.equal(readTemplateId(''), '')
+  assert.equal(readTemplateId(null), '')
+  assert.equal(readTemplateId('None'), '')
+  assert.equal(readTemplateId('-4'), '')
+  assert.equal(readTemplateId('abc'), '')
+  assert.equal(readTemplateId(4.5), '')
+})
+
+test('readTemplateId: строка из select и число с сервера — одно значение', () => {
+  assert.equal(readTemplateId('4'), '4')
+  assert.equal(readTemplateId(4), '4')
+  assert.equal(readTemplateId(' 4 '), '4')
+})
+
+test('readBillingSettings: шаблоны читаются из конфигурации', () => {
+  const parsed = readBillingSettings({
+    [BILLING_ACT_TEMPLATE_ID_KEY]: 2,
+    [BILLING_INVOICE_TEMPLATE_ID_KEY]: '4',
+  })
+
+  assert.equal(parsed.actTemplateId, '2')
+  assert.equal(parsed.invoiceTemplateId, '4')
+})
+
+test('readBillingSettings: без шаблонов — пусто, а не ноль строкой', () => {
+  const parsed = readBillingSettings({})
+
+  assert.equal(parsed.actTemplateId, '')
+  assert.equal(parsed.invoiceTemplateId, '')
+})
+
+test('applyBillingSettings: шаблоны сохраняются числами', () => {
+  // Сервер хранит их int; строка из <select> дала бы вторую форму того же
+  // значения, и живая проверка шаблона на портале срабатывала бы на каждом
+  // сохранении любых настроек.
+  const config = applyBillingSettings({}, settings({
+    actTemplateId: '2',
+    invoiceTemplateId: '4',
+  }))
+
+  assert.equal(config[BILLING_ACT_TEMPLATE_ID_KEY], 2)
+  assert.equal(config[BILLING_INVOICE_TEMPLATE_ID_KEY], 4)
+})
+
+test('applyBillingSettings: снятый шаблон уходит нулём', () => {
+  const config = applyBillingSettings({}, settings())
+
+  assert.equal(config[BILLING_ACT_TEMPLATE_ID_KEY], 0)
+  assert.equal(config[BILLING_INVOICE_TEMPLATE_ID_KEY], 0)
+})
+
+test('billingSettingsChanged: смена шаблона зажигает «Сохранить»', () => {
+  assert.equal(
+    billingSettingsChanged(settings({ actTemplateId: '2' }), settings()),
+    true
+  )
+  assert.equal(
+    billingSettingsChanged(
+      settings({ invoiceTemplateId: '4' }),
+      settings({ invoiceTemplateId: '2' })
+    ),
+    true
+  )
+})
+
+test('billingSettingsChanged: одинаковые шаблоны в разных формах не зажигают кнопку', () => {
+  // Конфигурация приходит с сервера числом, а <select> кладёт строку —
+  // кнопка «Сохранить» не должна гореть сразу после загрузки страницы.
+  assert.equal(
+    billingSettingsChanged(
+      settings({ actTemplateId: '2' }),
+      settings({ actTemplateId: 2 as unknown as string })
+    ),
+    false
+  )
+  assert.equal(
+    billingSettingsChanged(
+      settings({ invoiceTemplateId: '' }),
+      settings({ invoiceTemplateId: '0' })
+    ),
+    false
+  )
 })

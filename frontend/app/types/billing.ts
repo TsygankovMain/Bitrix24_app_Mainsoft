@@ -177,6 +177,17 @@ export interface BillingDocumentPayload {
   act_public_url?: string | null
   act_pdf_url?: string | null
   act_error?: string | null
+  /**
+   * Печатная форма самого счёта — отдельный документ генератора со своим
+   * шаблоном (на портале это «Счет (Россия)», код BILL_RU). Не путать с
+   * crm_entity_id: тот — сам смарт-счёт в CRM.
+   */
+  invoice_document_id?: number | string | null
+  invoice_document_number?: string | null
+  invoice_download_url?: string | null
+  invoice_public_url?: string | null
+  invoice_pdf_url?: string | null
+  invoice_print_error?: string | null
   created_by_id?: number | string | null
   created_at?: string | null
   cancelled_at?: string | null
@@ -233,4 +244,34 @@ export interface BillingRegistryFilter {
   dateFrom: string
   dateTo: string
   status: BillingDocumentStatus | ''
+}
+
+/**
+ * Шаблон генератора документов портала (GET /api/billing/templates).
+ *
+ * Поля — ровно то, что портал отдаёт на crm.documentgenerator.template.list
+ * (проверено на nfr-mainsoft 12.09.2026), приведённое сервером к нормальным
+ * типам: флаги булевыми, а не строками "Y"/"N". Привязки к сущности в списке
+ * НЕТ — портал её в этом методе не отдаёт вовсе.
+ */
+export interface BillingTemplatePayload {
+  id?: number | string | null
+  name?: string | null
+  /** Код штатного шаблона портала: ACT_RU, BILL_RU, UPD_RU… Может быть пуст. */
+  code?: string | null
+  region?: string | null
+  active?: boolean | string | null
+  /**
+   * Признак штатного шаблона своего вида, а НЕ «шаблон по умолчанию для
+   * счёта»: на стенде он стоит у 17 шаблонов из 21. Поэтому только подпись.
+   */
+  is_default?: boolean | string | null
+  numerator_id?: number | string | null
+  products_table_variant?: string | null
+}
+
+/** Ответ GET /api/billing/templates. */
+export interface BillingTemplatesResponse {
+  templates?: BillingTemplatePayload[] | null
+  total?: number | null
 }

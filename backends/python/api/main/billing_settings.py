@@ -5,7 +5,8 @@ ConfigurationService) — параллельный механизм не зав�
 
 - ``billing_allow_open_period`` — разрешить выставление за незакрытый месяц;
 - ``billing_accountants`` — список id пользователей «Бухгалтерия»;
-- ``billing_act_template_id`` — заранее выбранный шаблон акта генератора;
+- ``billing_act_template_id`` — выбранный шаблон АКТА генератора документов;
+- ``billing_invoice_template_id`` — выбранный шаблон печатной формы СЧЁТА;
 - ``billing_our_company_id`` / ``billing_our_company_name`` — наше юрлицо, от
   которого выставляются все счета;
 - ``billing_line_template`` — формулировка строки счёта («{задача}, {месяц}»);
@@ -74,6 +75,7 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
         "allow_open_period": False,
         "accountants": [],
         "act_template_id": 0,
+        "invoice_template_id": 0,
         "our_company_id": "",
         "our_company_name": "",
         # Формулировка и уровень задачи — сторона НЕ строгая: при недоступной
@@ -106,6 +108,11 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
     except (TypeError, ValueError):
         template_id = 0
 
+    try:
+        invoice_template_id = int(config.get("billing_invoice_template_id") or 0)
+    except (TypeError, ValueError):
+        invoice_template_id = 0
+
     our_company_id = _text(config.get("billing_our_company_id"))
 
     task_level = _text(config.get("billing_line_task_level")).lower()
@@ -116,6 +123,11 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
         "allow_open_period": bool(config.get("billing_allow_open_period")),
         "accountants": accountants,
         "act_template_id": template_id,
+        # Ноль — «шаблон не выбран», и это рабочее состояние: печатную форму
+        # счёта приложение НЕ угадывает по названию (под «счёт» подходят и
+        # счёт-фактура, и УПД), поэтому без настройки кнопка печати честно
+        # отказывает, а не печатает случайный документ.
+        "invoice_template_id": invoice_template_id,
         "our_company_id": our_company_id,
         # Название без идентификатора бессмысленно: выставлять счёт по одному
         # названию нельзя, а показывать «настройка задана» при пустом id —
@@ -157,3 +169,102 @@ def billing_manager_required(view_func):
         return view_func(request, *args, **kwargs)
 
     return wrapped
+
+
+# Ключи настроек с шаблонами генератора документов: значение — как называть
+# шаблон в тексте ошибки. Порядок важен только для предсказуемости сообщения.
+TEMPLATE_SETTING_KEYS = (
+    ("billing_act_template_id", "акта"),
+    ("billing_invoice_template_id", "счёта"),
+)
+
+
+def has_selected_templates(config: Any) -> bool:
+    """Есть ли в конфигурации хоть один выбранный шаблон.
+
+    Нужна ровно для одного: не читать прежнюю конфигурацию с портала
+    (app.option.get — живой REST-вызов), когда сохраняют что-то, не имеющее
+    к шаблонам отношения. Сохранение сопоставления полей смарт-процесса не
+    должно платить за проверку настройки, которой в нём нет.
+    """
+    if not isinstance(config, dict):
+        return False
+    for key, _title in TEMPLATE_SETTING_KEYS:
+        try:
+            if int(config.get(key) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def changed_template_ids(new_config: Any, old_config: Any) -> Dict[str, int]:
+    """Шаблоны, которые в сохраняемой конфигурации ИЗМЕНИЛИСЬ (и не нулевые).
+
+    Проверять живьём надо только их. Иначе каждое сохранение любой настройки
+    приложения — сопоставления полей смарт-процесса, например — платило бы
+    двумя REST-вызовами к порталу за проверку того, что и так не менялось.
+    Снятый шаблон (0) тоже не проверяется: «не выбран» проверять не в чем.
+    """
+    def read(source: Any, key: str) -> int:
+        if not isinstance(source, dict):
+            return 0
+        try:
+            return int(source.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    changed: Dict[str, int] = {}
+    for key, _title in TEMPLATE_SETTING_KEYS:
+        value = read(new_config, key)
+        if value and value != read(old_config, key):
+            changed[key] = value
+    return changed
+
+
+def validate_template_settings(account, new_config: Any, old_config: Any, client: Optional[Any] = None):
+    """Живая проверка выбранных шаблонов. Возвращает BillingError или None.
+
+    Зачем вообще проверять. Список шаблонов приезжает с портала в момент
+    открытия настроек, а сохраняют их позже — шаблон могли за это время
+    удалить. Сохранённый мёртвый id ведёт себя хуже пустого: печать
+    отказывает уже в момент, когда счёт клиенту нужен, и по коду
+    act_generation_failed непонятно, что дело в настройке.
+
+    Ошибку НЕ поднимаем исключением: вызывающая вьюха сама решает, вернуть
+    400 или проглотить. Недоступный портал (documentgenerator_unavailable)
+    сохранению не мешает — это ответ про портал, а не про настройку, и
+    запирать настройки приложения из-за отключённого генератора документов
+    нельзя.
+    """
+    from .billing_crm_service import BillingCrmService
+
+    changed = changed_template_ids(new_config, old_config)
+    if not changed:
+        return None
+
+    service = BillingCrmService(account, client=client)
+    for key, title in TEMPLATE_SETTING_KEYS:
+        template_id = changed.get(key)
+        if not template_id:
+            continue
+        try:
+            service.get_template(template_id)
+        except Exception as exc:  # noqa: BLE001
+            code = getattr(exc, "code", "")
+            if code == "billing_template_not_found":
+                from .billing_service import BillingError
+
+                return BillingError(
+                    f"Шаблон {title} (id {template_id}) на портале не найден — его удалили "
+                    "или он принадлежал другому порталу. Выберите другой шаблон и сохраните "
+                    "настройки снова.",
+                    "billing_template_not_found",
+                    extra={"setting": key, "template_id": template_id},
+                )
+            # Портал недоступен — настройки всё равно сохраняем. Логируем, чтобы
+            # причина не потерялась: «сохранили непроверенным» должно быть видно.
+            logger.warning(
+                "validate_template_settings: шаблон %s=%s не проверен: %s", key, template_id, exc
+            )
+    return None

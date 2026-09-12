@@ -79,7 +79,11 @@ from .project_creation_service import ProjectCreationService
 from .billing_crm_service import BillingCrmService
 from .billing_features import FEATURE_BILLING, feature_required, feature_states
 from .billing_service import BillingError, BillingFilter, BillingService
-from .billing_settings import billing_manager_required
+from .billing_settings import (
+    billing_manager_required,
+    has_selected_templates,
+    validate_template_settings,
+)
 
 __all__ = [
     "root",
@@ -146,11 +150,13 @@ __all__ = [
     "export_raw_data",
     # Счёт и акт
     "get_features",
+    "billing_templates",
     "billing_preview",
     "billing_documents",
     "billing_document_detail",
     "billing_document_cancel",
     "billing_document_act",
+    "billing_document_invoice_print",
     "billing_document_detail_export",
 ]
 
@@ -2741,6 +2747,18 @@ def save_configuration(request: AuthorizedRequest):
 
         config = service.normalize_configuration_sync(config)
 
+        # Живая проверка выбранного шаблона генератора документов — только
+        # когда шаблон в сохраняемой конфигурации есть И отличается от
+        # прежнего. Иначе сохранение сопоставления полей смарт-процесса
+        # платило бы двумя REST-вызовами (app.option.get + template.get) за
+        # проверку настройки, которой в нём нет.
+        if has_selected_templates(config):
+            template_error = validate_template_settings(
+                request.bitrix24_account, config, service.get_configuration_sync()
+            )
+            if template_error is not None:
+                return JsonResponse(template_error.as_payload(), status=400)
+
         try:
             should_validate_project_spa = int(config.get("project_sp_entity_type_id") or 0) > 0
         except (TypeError, ValueError):
@@ -3549,6 +3567,46 @@ def get_features(request: AuthorizedRequest):
 
 
 @xframe_options_exempt
+@require_GET
+@log_errors("billing_templates")
+@auth_required
+@billing_manager_required
+@rate_limit("billing_templates", 30, 60, key="account")
+def billing_templates(request: AuthorizedRequest):
+    """Шаблоны генератора документов портала — для выбора в настройках.
+
+    Права те же, что у выставления (@billing_manager_required): список
+    шаблонов сам по себе не секрет, но выбирать их некому, кроме админа
+    портала и «Бухгалтерии», а лишняя ручка без гейта — лишняя поверхность.
+
+    Подписки (@feature_required) здесь НЕТ намеренно: выключенная подписка
+    запрещает выставлять и печатать, а не настраивать. Настроить шаблоны до
+    включения подписки — нормальный порядок действий.
+
+    Отказ портала отдаётся кодом, а не пустым списком: интерфейс обязан
+    отличать «шаблонов нет — создайте в CRM» от «генератор документов
+    недоступен», иначе настройщик будет искать шаблоны там, где дело в
+    модуле (код documentgenerator_unavailable).
+    """
+    crm_service = BillingCrmService(request.bitrix24_account, service=_billing_service(request))
+    try:
+        templates = crm_service.list_templates()
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("billing_templates: сбой чтения шаблонов")
+        return JsonResponse(
+            {
+                "error": f"Не удалось получить список шаблонов генератора документов: {exc}",
+                "code": "documentgenerator_unavailable",
+            },
+            status=502,
+        )
+
+    return JsonResponse({"templates": templates, "total": len(templates)})
+
+
+@xframe_options_exempt
 @csrf_exempt
 @require_POST
 @log_errors("billing_preview")
@@ -3805,6 +3863,58 @@ def billing_document_act(request: AuthorizedRequest, document_id: str):
         document.save(update_fields=["act_error", "updated_at"])
         return JsonResponse(
             {"error": document.act_error, "code": "act_generation_failed"}, status=502
+        )
+
+    result["document"] = service.serialize_document(document, with_details=False)
+    return JsonResponse(result)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("billing_document_invoice_print")
+@auth_required
+@billing_manager_required
+@feature_required(FEATURE_BILLING)
+@rate_limit("billing_invoice_print", 10, 60, key="account")
+def billing_document_invoice_print(request: AuthorizedRequest, document_id: str):
+    """Печатная форма самого счёта по шаблону из настроек.
+
+    Отдельно от акта, а не «печатать всё одной кнопкой»: шаблоны разные,
+    отказы разные, и отказ одного не должен отменять уже напечатанное
+    другое. Коды: invoice_template_missing (шаблон не выбран в настройках),
+    billing_template_not_found (выбранный удалён на портале),
+    documentgenerator_unavailable, invoice_generation_failed.
+    """
+    service = _billing_service(request)
+    payload = _load_request_json(request)
+    try:
+        document = service.get_document(document_id)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+
+    crm_service = BillingCrmService(request.bitrix24_account, service=service)
+    try:
+        result = crm_service.print_invoice_document(
+            document, template_id=int(payload.get("template_id") or 0)
+        )
+    except BillingError as exc:
+        document.invoice_print_error = exc.message[:4000]
+        document.save(update_fields=["invoice_print_error", "updated_at"])
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    except (TypeError, ValueError) as exc:
+        document.invoice_print_error = f"Негодные параметры печати счёта: {exc}"[:4000]
+        document.save(update_fields=["invoice_print_error", "updated_at"])
+        return JsonResponse(
+            {"error": document.invoice_print_error, "code": "invoice_bad_request"}, status=400
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("billing_document_invoice_print: сбой печати счёта")
+        document.invoice_print_error = f"Сбой печати счёта: {exc}"[:4000]
+        document.save(update_fields=["invoice_print_error", "updated_at"])
+        return JsonResponse(
+            {"error": document.invoice_print_error, "code": "invoice_generation_failed"},
+            status=502,
         )
 
     result["document"] = service.serialize_document(document, with_details=False)

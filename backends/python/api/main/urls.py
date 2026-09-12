@@ -101,11 +101,16 @@ urlpatterns = [
     # гейты прав и подписки висят внутри, на POST-ветке, чтобы реестр читался
     # и без права выставлять, и при выключенной подписке.
     path('api/features', views.get_features, name='get_features'),
+    # Шаблоны генератора документов портала — для выбора в настройках.
+    # Стоит ДО маршрута documents/<document_id>, но пересечься они всё равно
+    # не могут: разные префиксы после api/billing.
+    path('api/billing/templates', views.billing_templates, name='billing_templates'),
     path('api/billing/preview', views.billing_preview, name='billing_preview'),
     path('api/billing/documents', views.billing_documents, name='billing_documents'),
     path('api/billing/documents/<str:document_id>', views.billing_document_detail, name='billing_document_detail'),
     path('api/billing/documents/<str:document_id>/cancel', views.billing_document_cancel, name='billing_document_cancel'),
     path('api/billing/documents/<str:document_id>/act', views.billing_document_act, name='billing_document_act'),
+    path('api/billing/documents/<str:document_id>/invoice-print', views.billing_document_invoice_print, name='billing_document_invoice_print'),
     path('api/billing/documents/<str:document_id>/detail.xlsx', views.billing_document_detail_export, name='billing_document_detail_export'),
 
     # Logs

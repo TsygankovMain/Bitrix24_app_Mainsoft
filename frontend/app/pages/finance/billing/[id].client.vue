@@ -79,6 +79,14 @@ const notice = ref('')
 const justCreated = ref(false)
 
 const isPrinting = ref(false)
+/**
+ * Печать счёта — свой флаг, а не общий с актом.
+ *
+ * Одна «загрузка» на две кнопки блокировала бы печать акта, пока портал
+ * собирает счёт, и наоборот: это два независимых документа с независимыми
+ * отказами.
+ */
+const isPrintingInvoice = ref(false)
 const isDownloading = ref(false)
 const isCancelling = ref(false)
 
@@ -198,6 +206,35 @@ async function printAct() {
   }
 }
 
+/**
+ * Печать печатной формы самого счёта.
+ *
+ * Отдельно от акта: шаблон берётся из настроек приложения и НЕ угадывается
+ * по названию — под «счёт» на портале подходят и счёт-фактура, и УПД.
+ * Поэтому у отказа свой код (invoice_template_missing) и свой текст, который
+ * отправляет человека в настройки, а не в поддержку (utils/billingErrors.ts).
+ */
+async function printInvoiceForm() {
+  if (!documentId.value) {
+    return
+  }
+
+  isPrintingInvoice.value = true
+  actionError.value = null
+  notice.value = ''
+
+  try {
+    detail.value = await apiStore.printBillingInvoiceForm(documentId.value)
+    notice.value = detail.value?.document?.invoice_document_number
+      ? `Печатная форма счёта ${detail.value.document.invoice_document_number} готова.`
+      : 'Печатная форма счёта готова.'
+  } catch (e) {
+    actionError.value = describeBillingError(e)
+  } finally {
+    isPrintingInvoice.value = false
+  }
+}
+
 function openCancelDialog() {
   cancelError.value = null
   actionError.value = null
@@ -313,6 +350,19 @@ onMounted(async () => {
               :loading="isPrinting"
               @click="printAct"
             />
+            <!--
+              Печать самого счёта — вторая половина комплекта, который
+              бухгалтер отправляет клиенту. Право то же, что у акта
+              (canPrintAct): обе печати — один класс операции, отдельного
+              права под них в контракте нет.
+            -->
+            <B24Button
+              v-if="permissions.canPrintAct && !isCancelled"
+              label="Напечатать счёт"
+              color="link"
+              :loading="isPrintingInvoice"
+              @click="printInvoiceForm"
+            />
             <B24Button
               v-if="permissions.canCancel && !isCancelled"
               label="Отменить"
@@ -374,6 +424,35 @@ onMounted(async () => {
         </div>
         <div v-else-if="document.act_error" class="ms-panel-warning">
           Последняя попытка напечатать акт не удалась: {{ document.act_error }}
+        </div>
+
+        <div v-if="document.invoice_document_number" class="ms-note ms-note-info">
+          <p>Печатная форма счёта {{ document.invoice_document_number }} готова.</p>
+          <!--
+            Ссылки открываем как есть, новой вкладкой: файл лежит на портале и
+            отдаётся его же авторизацией. pdfUrl генератор собирает
+            асинхронно — в первом ответе он пуст, и это не ошибка, ссылка
+            появится при повторном открытии карточки.
+          -->
+          <p v-if="document.invoice_pdf_url || document.invoice_download_url" class="mt-2 flex flex-wrap gap-3">
+            <a
+              v-if="document.invoice_pdf_url"
+              :href="document.invoice_pdf_url"
+              target="_blank"
+              rel="noopener"
+              class="font-medium text-[#0075ff] underline"
+            >Открыть PDF</a>
+            <a
+              v-if="document.invoice_download_url"
+              :href="document.invoice_download_url"
+              target="_blank"
+              rel="noopener"
+              class="font-medium text-[#0075ff] underline"
+            >Скачать DOCX</a>
+          </p>
+        </div>
+        <div v-else-if="document.invoice_print_error" class="ms-panel-warning">
+          Последняя попытка напечатать счёт не удалась: {{ document.invoice_print_error }}
         </div>
 
         <div v-if="isCancelled" class="ms-note ms-note-danger">

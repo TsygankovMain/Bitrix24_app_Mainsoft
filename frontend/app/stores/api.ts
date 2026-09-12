@@ -31,6 +31,7 @@ import type {
   BillingFilterBody,
   BillingLinePayload,
   BillingPreviewResponse,
+  BillingTemplatesResponse,
   PortalFeaturesPayload,
 } from '~/types/billing'
 
@@ -1520,6 +1521,35 @@ export const useApiStore = defineStore(
       })
     }
 
+    /**
+     * Напечатать печатную форму САМОГО счёта (не акт).
+     *
+     * Отдельная ручка, а не параметр у печати акта: шаблоны разные, отказы
+     * разные, и отказ одного не должен отменять уже напечатанное другое.
+     * Шаблон берётся из настроек приложения; не выбран — сервер отвечает
+     * кодом invoice_template_missing, и это разбирает describeBillingError.
+     */
+    const printBillingInvoiceForm = async (id: string | number): Promise<BillingDocumentDetail> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}/invoice-print`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+      })
+    }
+
+    /**
+     * Шаблоны генератора документов портала — для выбора в настройках.
+     *
+     * НЕ кэшируется в браузере, в отличие от /api/features: список открывают
+     * ровно тогда, когда собираются менять настройку, и показать при этом
+     * шаблон, удалённый на портале десять минут назад, — значит дать
+     * сохранить мёртвый идентификатор.
+     */
+    const getBillingTemplates = async (): Promise<BillingTemplatesResponse> => {
+      return await $api('/api/billing/templates', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
     /** XLSX-детализация к акту. */
     const exportBillingDetail = async (id: string | number): Promise<Blob> => {
       return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}/detail.xlsx`, {
@@ -1610,6 +1640,8 @@ export const useApiStore = defineStore(
       getBillingDocument,
       cancelBillingDocument,
       printBillingAct,
+      printBillingInvoiceForm,
+      getBillingTemplates,
       exportBillingDetail
     }
   }
