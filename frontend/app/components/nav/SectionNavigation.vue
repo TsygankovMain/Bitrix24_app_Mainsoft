@@ -34,7 +34,6 @@ import {
   type NavLink,
   type NavSection,
 } from '~/utils/appNavigation'
-import { FINANCE_BDDS_ENABLED } from '~/utils/featureFlags'
 
 const route = useRoute()
 
@@ -73,7 +72,7 @@ onBeforeUnmount(() => {
 })
 
 /**
- * Состояние подписки на «Счёт и акт» решает СЕРВЕР (GET /api/features).
+ * Состояние подписки на платные функции решает СЕРВЕР (GET /api/features).
  *
  * Меню только читает готовое значение из общего состояния: своего запроса
  * отсюда сделать нельзя — компонент живёт в лейауте и рисуется раньше, чем
@@ -85,10 +84,18 @@ onBeforeUnmount(() => {
  * и это осознанно лучше обратного: пункт без замка, ведущий на отказ.
  */
 const { access: billingAccess } = useBillingFeature()
+/**
+ * У БДДС теперь тот же источник, что у счёта, — ответ /api/features.
+ * До появления экранов здесь стояла фронтовая константа
+ * FINANCE_BDDS_ENABLED; она осталась аварийным выключателем ВНУТРИ
+ * resolveBddsAccess, а меню читает готовое решение, а не флаг.
+ */
+const { access: bddsAccess } = useBddsFeature()
 
 const sections = computed<NavSection[]>(() => buildAppNavigation({
   controlIssuesCount: controlIssues.value,
-  financeBddsEnabled: FINANCE_BDDS_ENABLED,
+  financeBddsEnabled: bddsAccess.value.enabled,
+  financeBddsBadge: bddsAccess.value.badge,
   financeBillingEnabled: billingAccess.value.enabled,
   financeBillingBadge: billingAccess.value.badge,
 }))

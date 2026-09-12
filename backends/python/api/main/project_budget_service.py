@@ -1,19 +1,58 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Dict, Iterable, Optional, Tuple
 
+from .bdds_settings import (
+    DEFAULT_OVERRUN_THRESHOLD_PERCENT,
+    DEFAULT_RISK_THRESHOLD_PERCENT,
+    DEFAULT_SUPPORT_BOUNDARY_AMOUNT,
+    normalize_bdds_settings,
+)
 from .finance_operation_service import FinanceOperationService
 from .models import Bitrix24Account, ProjectCard, TimesheetItem
 from .tenant_scoping import scope_to_tenant
 
 
 class ProjectBudgetService:
-    RISK_THRESHOLD_RATIO = 0.8
-    OVERRUN_THRESHOLD_RATIO = 1.0
-    SUPPORT_BOUNDARY_THRESHOLD = 100000.0
+    """Метрики бюджета проекта: план, факт, остаток, освоение, статус, прогноз.
 
-    def __init__(self, account: Bitrix24Account):
+    Факт собирается из ДВУХ источников и это принципиально:
+      - затраты по часам — сумма списаний, каждое по своей ставке на момент
+        списания (``TimesheetItem.hourly_rate_snapshot``), а не по текущей
+        ставке карточки: внутри периода ставка могла меняться, и пересчёт от
+        общих часов разошёлся бы с детализацией счёта
+        (``BillingLine`` считает так же);
+      - поступления и внешние платежи — суммы операций смарт-процесса
+        «Доходы-расходы (App)» (``FinanceOperationService``).
+
+    Пороги статуса приходят настройкой портала (``bdds_settings``), а
+    константы класса остались значениями по умолчанию — на случай вызова без
+    настроек (так зовёт, например, код, которому нужны только часы).
+    """
+
+    RISK_THRESHOLD_RATIO = DEFAULT_RISK_THRESHOLD_PERCENT / 100.0
+    OVERRUN_THRESHOLD_RATIO = DEFAULT_OVERRUN_THRESHOLD_PERCENT / 100.0
+    SUPPORT_BOUNDARY_THRESHOLD = DEFAULT_SUPPORT_BOUNDARY_AMOUNT
+
+    def __init__(
+        self,
+        account: Bitrix24Account,
+        *,
+        settings: Optional[Dict[str, Any]] = None,
+        today: Optional[date] = None,
+    ):
         self.account = account
+        normalized = normalize_bdds_settings(settings) if isinstance(settings, dict) else None
+        if normalized is None:
+            self.risk_threshold_ratio = self.RISK_THRESHOLD_RATIO
+            self.overrun_threshold_ratio = self.OVERRUN_THRESHOLD_RATIO
+            self.support_boundary_threshold = self.SUPPORT_BOUNDARY_THRESHOLD
+        else:
+            self.risk_threshold_ratio = normalized["risk_threshold_percent"] / 100.0
+            self.overrun_threshold_ratio = normalized["overrun_threshold_percent"] / 100.0
+            self.support_boundary_threshold = normalized["support_boundary_amount"]
+        self.today = today or date.today()
 
     def build_metrics_map(self, cards: Iterable[ProjectCard]) -> Dict[str, Dict[str, Any]]:
         cards_list = list(cards or [])
@@ -119,6 +158,12 @@ class ProjectBudgetService:
             aggregates_by_title,
             default_hourly_rate=hourly_rate,
         )
+        hours_without_rate_snapshot = self._resolve_hours_without_snapshot(
+            card,
+            aggregates_by_item,
+            aggregates_by_group,
+            aggregates_by_title,
+        )
 
         project_item_id = self._clean_str(card.project_item_id)
         finance_bucket = finance_sums.get(project_item_id or "", {}) if project_item_id else {}
@@ -126,9 +171,15 @@ class ProjectBudgetService:
         actual_expense_amount = self._round_amount(finance_bucket.get("expense", 0.0))
         actual_financial_result = self._round_amount(actual_income_amount - actual_expense_amount - actual_cost_amount)
 
+        is_support = self._is_support_project(card)
         support_health_status: Optional[str] = None
         support_health_reason: Optional[str] = None
-        if self._is_support_project(card):
+        forecast: Dict[str, Any] = self._empty_forecast(
+            "Прогноз у проектов поддержки не считается: у них нет плана, контролируется финансовый результат."
+            if is_support
+            else "Прогноз не посчитан."
+        )
+        if is_support:
             hours_remaining = None
             budget_remaining = None
             utilization_mode = "support"
@@ -154,6 +205,11 @@ class ProjectBudgetService:
 
             budget_health_status = self._resolve_status(utilization_ratio)
             budget_health_reason = self._build_status_reason(utilization_mode, utilization_ratio)
+            forecast = self._resolve_forecast(
+                card,
+                actual_cost_amount=actual_cost_amount,
+                planned_amount=planned_amount,
+            )
 
         return {
             "planned_hours": planned_hours,
@@ -172,8 +228,21 @@ class ProjectBudgetService:
             "budget_health_reason": budget_health_reason,
             "support_health_status": support_health_status,
             "support_health_reason": support_health_reason,
-            "risk_threshold_ratio": self.RISK_THRESHOLD_RATIO,
-            "overrun_threshold_ratio": self.OVERRUN_THRESHOLD_RATIO,
+            "risk_threshold_ratio": self.risk_threshold_ratio,
+            "overrun_threshold_ratio": self.overrun_threshold_ratio,
+            # Проект «без бюджета» — это НЕ ошибка данных: поддержка живёт
+            # финансовым результатом, а не освоением, и полосу освоения ей
+            # рисовать нельзя (так же сделано на доске проектов). Флаг отдаём
+            # явно, чтобы интерфейс не выводил его из нулей и пустот.
+            "has_budget": (not is_support) and (planned_hours is not None or planned_amount is not None),
+            "is_support": is_support,
+            # Часы, у которых на списании нет снимка ставки: их стоимость
+            # посчитана по ТЕКУЩЕЙ ставке карточки. На стенде такие записи
+            # есть, и сумма факта по ним — оценка, а не факт; интерфейс
+            # обязан это подписать, а не молчать.
+            "actual_hours_without_rate_snapshot": hours_without_rate_snapshot,
+            "fallback_hourly_rate": hourly_rate,
+            **forecast,
         }
 
     def _resolve_actual_hours(
@@ -196,6 +265,27 @@ class ProjectBudgetService:
             actual_hours += self._to_float(aggregates_by_title.get(project_name, {}).get("hours"))
 
         return self._round_hours(actual_hours)
+
+    def _resolve_hours_without_snapshot(
+        self,
+        card: ProjectCard,
+        aggregates_by_item: Dict[str, Dict[str, float]],
+        aggregates_by_group: Dict[str, Dict[str, float]],
+        aggregates_by_title: Dict[str, Dict[str, float]],
+    ) -> float:
+        total = 0.0
+        project_item_id = self._clean_str(card.project_item_id)
+        project_id = self._clean_str(card.project_id)
+        project_name = self._clean_str(card.project_name)
+
+        if project_item_id:
+            total += self._to_float(aggregates_by_item.get(project_item_id, {}).get("hours_without_snapshot"))
+        if project_id:
+            total += self._to_float(aggregates_by_group.get(project_id, {}).get("hours_without_snapshot"))
+        if project_name:
+            total += self._to_float(aggregates_by_title.get(project_name, {}).get("hours_without_snapshot"))
+
+        return self._round_hours(total)
 
     def _resolve_actual_cost(
         self,
@@ -264,31 +354,134 @@ class ProjectBudgetService:
         selected_mode = max(ratios, key=ratios.get)
         return selected_mode, ratios[selected_mode]
 
+    # --- Прогноз ---------------------------------------------------------
+    #
+    # Формула — вариант A из записки к макету (вопрос 3), то есть ЛИНЕЙНАЯ
+    # ЭКСТРАПОЛЯЦИЯ ПО ТЕКУЩЕМУ ТЕМПУ:
+    #
+    #     темп        = факт затрат / число начавшихся месяцев проекта
+    #     прогноз     = факт затрат + темп × число полных месяцев до конца
+    #
+    # Почему именно она на первом этапе. Варианты B (темп за последние три
+    # месяца) и C (остаток плана по месяцам) требуют разреза по месяцам,
+    # которого на первом этапе нет вовсе: план — одно число на проект.
+    # Вариант A считается из того, что уже есть, и объясним одной фразой —
+    # а объяснимость здесь важнее точности: цифра «прогноз» нужна, чтобы
+    # ЗАРАНЕЕ увидеть проект, который «в норме» сегодня и выйдет за план
+    # через два месяца, и человек обязан понимать, откуда она.
+    #
+    # Слабое место названо честно и в интерфейсе, и здесь: на проектах с
+    # неровной загрузкой (разработка в начале, приёмка в конце) средний темп
+    # врёт. Поэтому прогноз никогда не меняет СТАТУС проекта — статус
+    # считается только по факту, — и подписан как оценка.
+
+    def _resolve_forecast(
+        self,
+        card: ProjectCard,
+        *,
+        actual_cost_amount: float,
+        planned_amount: Optional[float],
+    ) -> Dict[str, Any]:
+        start_date = card.project_start_date
+        end_date = card.project_end_date
+
+        if start_date is None:
+            return self._empty_forecast("Прогноз не посчитан: в карточке проекта не задана дата начала.")
+        if end_date is None:
+            return self._empty_forecast("Прогноз не посчитан: в карточке проекта не задана дата окончания.")
+        if end_date < start_date:
+            return self._empty_forecast("Прогноз не посчитан: дата окончания проекта раньше даты начала.")
+
+        months_elapsed = self.months_elapsed(start_date, self.today)
+        months_left = self.months_left(self.today, end_date)
+        # Округляем ТОЛЬКО для показа, а считаем от неокруглённого темпа:
+        # 700 000 / 6 × 3 при округлении темпа до копеек даёт 350 000,01 —
+        # лишняя копейка в прогнозе выглядит как ошибка расчёта.
+        raw_monthly_rate = actual_cost_amount / months_elapsed
+        monthly_rate = self._round_amount(raw_monthly_rate)
+        forecast_amount = self._round_amount(actual_cost_amount + (raw_monthly_rate * months_left))
+
+        overrun = None
+        if planned_amount is not None:
+            overrun = self._round_amount(forecast_amount - planned_amount)
+
+        return {
+            "forecast_cost_amount": forecast_amount,
+            "forecast_overrun_amount": overrun,
+            "forecast_monthly_rate": monthly_rate,
+            "forecast_months_elapsed": months_elapsed,
+            "forecast_months_left": months_left,
+            "forecast_method": "linear_pace",
+            "forecast_reason": (
+                f"Факт {actual_cost_amount:.2f} ₽ за {months_elapsed} мес. "
+                f"плюс текущий темп {monthly_rate:.2f} ₽/мес. × {months_left} мес. до конца проекта."
+            ),
+        }
+
+    @staticmethod
+    def _empty_forecast(reason: str) -> Dict[str, Any]:
+        return {
+            "forecast_cost_amount": None,
+            "forecast_overrun_amount": None,
+            "forecast_monthly_rate": None,
+            "forecast_months_elapsed": None,
+            "forecast_months_left": None,
+            "forecast_method": "linear_pace",
+            "forecast_reason": reason,
+        }
+
+    @staticmethod
+    def months_elapsed(start_date: date, today: date) -> int:
+        """Сколько месяцев проекта УЖЕ НАЧАЛОСЬ, включая текущий. Минимум 1.
+
+        Считаем начавшиеся, а не завершённые: в первый месяц проекта
+        завершённых нет ни одного, и делить факт было бы не на что, а темп
+        «весь факт за нулевой срок» — бесконечность. Минимум 1 закрывает и
+        проект, который по датам ещё не начался (так бывает: даты в карточке
+        заводят заранее, а часы уже списывают).
+        """
+        months = (today.year - start_date.year) * 12 + (today.month - start_date.month) + 1
+        return max(1, months)
+
+    @staticmethod
+    def months_left(today: date, end_date: date) -> int:
+        """Сколько ПОЛНЫХ месяцев осталось до конца проекта. Не меньше нуля.
+
+        Текущий месяц не считается: его часть уже в факте, и добавить к
+        факту ещё целый месячный темп значило бы посчитать её дважды.
+        Просроченный проект даёт 0 — прогноз для него равен факту, и это
+        честно: планового будущего у него больше нет.
+        """
+        months = (end_date.year - today.year) * 12 + (end_date.month - today.month)
+        return max(0, months)
+
     def _resolve_status(self, utilization_ratio: Optional[float]) -> str:
         if utilization_ratio is None:
             return "Без лимита"
-        if utilization_ratio > self.OVERRUN_THRESHOLD_RATIO:
+        if utilization_ratio > self.overrun_threshold_ratio:
             return "Перерасход"
-        if utilization_ratio >= self.RISK_THRESHOLD_RATIO:
+        if utilization_ratio >= self.risk_threshold_ratio:
             return "Риск"
         return "Норма"
 
-    @staticmethod
-    def _build_status_reason(mode: str, utilization_ratio: Optional[float]) -> Optional[str]:
+    def _build_status_reason(self, mode: str, utilization_ratio: Optional[float]) -> Optional[str]:
         if utilization_ratio is None:
             return "Не задан плановый лимит."
         ratio_percent = round(utilization_ratio * 100.0, 1)
+        risk_percent = round(self.risk_threshold_ratio * 100.0, 1)
+        overrun_percent = round(self.overrun_threshold_ratio * 100.0, 1)
+        thresholds = f" Порог риска {risk_percent}%, перерасхода {overrun_percent}%."
         if mode == "hours":
-            return f"Освоение часов: {ratio_percent}%."
+            return f"Освоение часов: {ratio_percent}%.{thresholds}"
         if mode == "amount":
-            return f"Освоение бюджета: {ratio_percent}%."
-        return f"Освоение лимита: {ratio_percent}%."
+            return f"Освоение бюджета: {ratio_percent}%.{thresholds}"
+        return f"Освоение лимита: {ratio_percent}%.{thresholds}"
 
     def _resolve_support_status(self, actual_financial_result: float) -> Tuple[str, str]:
         if actual_financial_result >= 0:
             return "Плюс", "Поддержка в положительной или нулевой маржинальности."
 
-        if abs(actual_financial_result) < self.SUPPORT_BOUNDARY_THRESHOLD:
+        if abs(actual_financial_result) < self.support_boundary_threshold:
             return "Граница", (
                 "Поддержка в пограничной зоне: финансовый результат отрицательный, "
                 "но в допустимом пороге."

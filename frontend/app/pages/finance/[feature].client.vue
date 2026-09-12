@@ -7,13 +7,15 @@
  * означала бы копию одного и того же текста в двух местах, а расходятся такие
  * копии на первой же правке формулировки.
  *
- * ВАЖНО про «Счёт и акт». У него появился собственный экран
- * (app/pages/finance/billing/index.client.vue), и статический маршрут в Nuxt
- * приоритетнее динамического — то есть /finance/billing сюда больше не
- * попадает. Ветка для 'billing' здесь всё равно оставлена: она отрабатывает,
- * если экран когда-нибудь уберут, и она читает ТО ЖЕ состояние подписки с
- * сервера, что и сам экран, — двух разных ответов на вопрос «функция
- * включена?» в приложении быть не должно.
+ * ВАЖНО: у обеих функций теперь есть собственные экраны
+ * (app/pages/finance/billing/index.client.vue и
+ * app/pages/finance/bdds/index.client.vue), а статический маршрут в Nuxt
+ * приоритетнее динамического — то есть ни /finance/billing, ни /finance/bdds
+ * сюда больше не попадают. Ветки здесь всё равно оставлены: они отрабатывают,
+ * если экран когда-нибудь уберут, и читают ТО ЖЕ состояние подписки с
+ * сервера, что и сами экраны, — двух разных ответов на вопрос «функция
+ * включена?» в приложении быть не должно. Сюда же попадает опечатка в адресе
+ * (/finance/чтоугодно) — для неё ниже отдельное пустое состояние.
  *
  * Тексты — app/utils/paidFeatures.ts, разметка карточки —
  * app/components/finance/PaidFeatureCard.vue, аварийный выключатель —
@@ -22,12 +24,12 @@
 import { computed } from 'vue'
 import PaidFeatureCard from '~/components/finance/PaidFeatureCard.vue'
 import { isPaidFeatureId, PAID_FEATURES } from '~/utils/paidFeatures'
-import { FINANCE_BDDS_ENABLED } from '~/utils/featureFlags'
 
 const route = useRoute()
 const router = useRouter()
 
 const { access: billingAccess } = useBillingFeature()
+const { access: bddsAccess } = useBddsFeature()
 
 const featureId = computed(() => {
   const raw = Array.isArray(route.params.feature) ? route.params.feature[0] : route.params.feature
@@ -35,13 +37,11 @@ const featureId = computed(() => {
   return isPaidFeatureId(raw) ? raw : null
 })
 
-const isEnabled = computed(() => featureId.value === 'billing'
-  ? billingAccess.value.enabled
-  : FINANCE_BDDS_ENABLED)
+const access = computed(() => featureId.value === 'billing' ? billingAccess.value : bddsAccess.value)
 
-const badge = computed(() => featureId.value === 'billing'
-  ? billingAccess.value.badge
-  : undefined)
+const isEnabled = computed(() => access.value.enabled)
+
+const badge = computed(() => access.value.badge)
 
 useHead({
   title: computed(() => featureId.value

@@ -72,6 +72,13 @@ export type AppNavigationOptions = {
    * null — «убрать бейдж».
    */
   financeBillingBadge?: string | null
+  /**
+   * Бейдж пункта «БДДС по проектам», если он должен отличаться от
+   * стандартного. Нужен ровно за тем же, что и у «Счёта и акта»: на пробном
+   * периоде функция ВКЛЮЧЕНА (замка нет), но рядом обязано стоять
+   * «пробный, осталось N дней».
+   */
+  financeBddsBadge?: string | null
 }
 
 function reportPath(report: ReportRouteName): string {
@@ -163,7 +170,9 @@ export function buildAppNavigation(options: AppNavigationOptions): NavSection[] 
           id: 'finance-paid',
           label: 'Платные функции',
           links: finance.map((state) => {
-            const override = state.feature.id === 'billing' ? options.financeBillingBadge : undefined
+            const override = state.feature.id === 'billing'
+              ? options.financeBillingBadge
+              : options.financeBddsBadge
             const badge = override === undefined ? state.badge : override
 
             return {
