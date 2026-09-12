@@ -3781,10 +3781,15 @@ def get_finance_operations(request: AuthorizedRequest):
 def create_finance_operation(request: AuthorizedRequest):
     """Создание операции в смарт-процессе портала.
 
-    Идемпотентность — внутри сервиса: ключ SHA-256 от полей операции, и
-    повтор возвращает status=duplicate с уже существующим элементом, а не
-    второй элемент с той же суммой. Двойной клик по «Сохранить» на слабой
-    связи — самый обычный сценарий, и он не должен раздваивать деньги.
+    Идемпотентность проверкой дубля (_find_duplicate) сама по себе не
+    защищает от гонки: два параллельных запроса (двойной клик «Сохранить»
+    или две вкладки) оба читают crm.item.list ДО того, как кто-то из них
+    успел записать crm.item.add, оба не находят дубль и оба создают
+    операцию. Поэтому проверка дубля и создание обёрнуты в тот же приём,
+    что и выставление счёта (_billing_documents_create) — advisory-замок
+    account_sync_lock(scope="finance_operation") с субъектом-ПОРТАЛОМ:
+    сериализует и два клика одного бухгалтера, и двух разных бухгалтеров
+    одного портала.
 
     Права — @bdds_operations_manager_required: администратор портала или
     «Бухгалтерия» из настроек, тот же список, что у выставления счёта (см.
@@ -3794,7 +3799,16 @@ def create_finance_operation(request: AuthorizedRequest):
     """
     service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
     try:
-        payload = service.create_operation(_load_request_json(request))
+        with account_sync_lock(request.bitrix24_account, scope="finance_operation"):
+            payload = service.create_operation(_load_request_json(request))
+    except SyncLockBusy:
+        return JsonResponse(
+            {
+                "error": "Кто-то уже сохраняет операцию по этому смарт-процессу. Повторите через несколько секунд.",
+                "code": "finance_operation_busy",
+            },
+            status=409,
+        )
     except ValueError as exc:
         return JsonResponse({"error": str(exc), "code": "invalid_operation"}, status=400)
     except Exception as exc:  # noqa: BLE001

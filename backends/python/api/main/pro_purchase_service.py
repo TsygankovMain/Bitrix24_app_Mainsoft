@@ -503,6 +503,19 @@ class CreateResult:
     updated_in_place: bool = False
 
 
+def _locked_open_request(portal: Portal) -> Optional[ProRequest]:
+    """Открытая заявка портала под row-level локом (или None, если её нет).
+
+    Вынесена отдельно от create_request ради переиспользования: тем же
+    запросом ищем существующую заявку и с первого захода, и повторно —
+    после проигранной гонки на INSERT (см. докстринг create_request).
+    """
+    return (
+        ProRequest.objects.select_for_update()
+        .filter(portal=portal, status__in=ProRequest.OPEN_STATUSES).first()
+    )
+
+
 def create_request(account: Bitrix24Account, data: Dict[str, Any], *,
                    settings: Optional[PurchaseSettings] = None,
                    today: Optional[date] = None) -> CreateResult:
@@ -513,6 +526,20 @@ def create_request(account: Bitrix24Account, data: Dict[str, Any], *,
       счёта остаётся (правка реквизитов не должна плодить счетов);
     - другой срок — прежняя заявка отменяется («заменена»), выдаётся новый
       номер: оплатить оба счёта не должны.
+
+    Гонка двух быстрых POST без открытой заявки: select_for_update().first()
+    ничего не блокирует, когда блокировать ещё нечего (строки нет), поэтому
+    оба запроса видят existing=None и оба пытаются вставить новую открытую
+    заявку. Второй INSERT ловит частичный уникальный индекс
+    pro_request_one_open_per_portal и бросает IntegrityError. Вставка
+    обёрнута в собственный savepoint (вложенный transaction.atomic) именно
+    ради этого случая: на PostgreSQL исключение внутри atomic без своего
+    savepoint ломает всю внешнюю транзакцию, а нам после проигранной гонки
+    нужно продолжить работу в ней (перечитать уже вставленную соперником
+    заявку). Победившую заявку после этого разбираем так же, как разобрали
+    бы existing, найденный с первого захода: тот же тариф — сливаем в неё
+    реквизиты, другой — отвечаем понятным PurchaseError(409), а не давим
+    вторую попытку вставки (риск той же гонки третий раз того не стоит).
     """
     from .pro_purchase_pricing import validate_purchase_form
 
@@ -529,10 +556,7 @@ def create_request(account: Bitrix24Account, data: Dict[str, Any], *,
     domain = portal.domain_url or account.domain_url or ""
 
     with transaction.atomic():
-        existing = (
-            ProRequest.objects.select_for_update()
-            .filter(portal=portal, status__in=ProRequest.OPEN_STATUSES).first()
-        )
+        existing = _locked_open_request(portal)
         if existing and existing.months == quote.months and existing.total_amount == quote.total:
             if existing.payer_inn != cleaned["payer_inn"]:
                 existing.crm_company_id = ""
@@ -573,7 +597,31 @@ def create_request(account: Bitrix24Account, data: Dict[str, Any], *,
             invoice_number=number, invoice_date=today, months=quote.months, domain=domain,
             portal_code=code, vat_mode=quote.vat_mode, vat_rate=quote.vat_rate, vat_amount=quote.vat,
         )
-        request.save()
+        try:
+            with transaction.atomic():
+                request.save()
+        except IntegrityError:
+            winner = _locked_open_request(portal)
+            if winner is None:
+                # Заявка соперника пропала между проигранной вставкой и
+                # перечитыванием (например, её тут же отменили) — это уже
+                # не гонка «двойного клика», а что-то куда более странное.
+                # Сырой 500 всё равно не отдаём.
+                raise PurchaseError(
+                    "Не удалось сохранить заявку, попробуйте ещё раз.",
+                    code="request_conflict", status=409,
+                )
+            if winner.months == quote.months and winner.total_amount == quote.total:
+                if winner.payer_inn != cleaned["payer_inn"]:
+                    winner.crm_company_id = ""
+                _apply_form(winner, cleaned)
+                winner.offer_accepted_at = timezone.now()
+                winner.save()
+                return CreateResult(request=winner, updated_in_place=True)
+            raise PurchaseError(
+                "У портала уже есть открытая заявка на другой тариф — её создали параллельно. Обновите страницу.",
+                code="request_conflict", status=409,
+            )
         if replaced is not None:
             ProRequest.objects.filter(pk=replaced.pk).update(replaced_by=request)
     return CreateResult(request=request, replaced=replaced)
