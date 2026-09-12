@@ -17,13 +17,17 @@
  * Отмена требует причину и отдельное подтверждение. Отмена освобождает
  * списания (частичный уникальный индекс работает только для действующих
  * документов), то есть после неё те же часы можно выставить снова — это
- * действие с последствиями, а не «закрыть окно».
+ * действие с последствиями, а не «закрыть окно». Спрашивается это боковой
+ * панелью BillingCancelDrawer.vue: там же разобрано, почему прежнее
+ * центрированное окно рисовалось шириной в одно слово.
  */
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref } from 'vue'
 import BillingGate from '~/components/finance/BillingGate.vue'
 import BillingErrorNote from '~/components/finance/BillingErrorNote.vue'
+import BillingCancelDrawer from '~/components/finance/BillingCancelDrawer.vue'
 import { describeBillingError, type BillingErrorView } from '~/utils/billingErrors'
+import { billingCancelledNotice } from '~/utils/billingCancel'
 import {
   billingDocumentNumber,
   billingStatusClass,
@@ -78,9 +82,18 @@ const isPrinting = ref(false)
 const isDownloading = ref(false)
 const isCancelling = ref(false)
 
+/**
+ * Отмена спрашивается боковой панелью (BillingCancelDrawer.vue), а не
+ * центрированным окном — см. её докстринг: там же причина, по которой
+ * прежний попап был шириной в одно слово.
+ *
+ * Отказ сервера на отмену держим отдельным ref, а не общим actionError:
+ * общий рисуется плашкой НА КАРТОЧКЕ, под кнопками, а панель отмены обязана
+ * показать отказ у себя внутри — с набранной причиной на месте, чтобы
+ * попытку можно было повторить не собирая форму заново.
+ */
 const showCancelDialog = ref(false)
-const cancelReason = ref('')
-const cancelConfirmed = ref(false)
+const cancelError = ref<BillingErrorView | null>(null)
 
 const { initApp, processErrorGlobal } = useAppInit('BillingDocumentPage')
 const { $initializeB24Frame } = useNuxtApp()
@@ -185,31 +198,28 @@ async function printAct() {
   }
 }
 
-const canSubmitCancel = computed(() => cancelReason.value.trim().length >= 3
-  && cancelConfirmed.value
-  && !isCancelling.value)
-
 function openCancelDialog() {
-  cancelReason.value = ''
-  cancelConfirmed.value = false
+  cancelError.value = null
   actionError.value = null
   showCancelDialog.value = true
 }
 
-async function submitCancel() {
-  if (!canSubmitCancel.value || !documentId.value) {
+async function submitCancel(reason: string) {
+  if (!documentId.value || isCancelling.value) {
     return
   }
 
   isCancelling.value = true
-  actionError.value = null
+  cancelError.value = null
 
   try {
-    detail.value = await apiStore.cancelBillingDocument(documentId.value, cancelReason.value.trim())
+    detail.value = await apiStore.cancelBillingDocument(documentId.value, reason)
     showCancelDialog.value = false
-    notice.value = 'Документ отменён, списания освобождены — эти часы снова можно выставить.'
+    notice.value = billingCancelledNotice(
+      detail.value?.document ? billingDocumentNumber(detail.value.document) : ''
+    )
   } catch (e) {
-    actionError.value = describeBillingError(e)
+    cancelError.value = describeBillingError(e)
   } finally {
     isCancelling.value = false
   }
@@ -506,47 +516,12 @@ onMounted(async () => {
     </div>
 
     <!-- Отмена: причина обязательна, подтверждение отдельным действием -->
-    <div v-if="showCancelDialog" class="ms-modal-overlay" @click.self="showCancelDialog = false">
-      <div class="ms-modal-panel w-full max-w-lg">
-        <div class="ms-modal-header">
-          <span class="text-base font-semibold text-slate-900">Отменить документ</span>
-        </div>
-        <div class="ms-modal-body space-y-3">
-          <p class="text-sm text-slate-600">
-            Отмена освобождает потреблённые списания: эти часы снова можно будет выставить.
-            Счёт в CRM при этом остаётся — его судьбу решает портал.
-          </p>
-
-          <label class="block text-sm font-medium text-slate-700" for="billing-cancel-reason">
-            Причина отмены
-          </label>
-          <textarea
-            id="billing-cancel-reason"
-            v-model="cancelReason"
-            rows="3"
-            class="w-full"
-            placeholder="Например: ошиблись клиентом, счёт переоформляем"
-          />
-          <p class="text-xs text-slate-500">
-            Причина сохраняется в документе — по ней потом понимают, почему часы вернулись в работу.
-          </p>
-
-          <label class="flex items-start gap-2 text-sm text-slate-700">
-            <input v-model="cancelConfirmed" type="checkbox" class="mt-0.5">
-            <span>Понимаю, что отмена освободит списания и документ станет отменённым.</span>
-          </label>
-        </div>
-        <div class="ms-modal-footer flex justify-end gap-2">
-          <B24Button label="Не отменять" color="link" @click="showCancelDialog = false" />
-          <B24Button
-            label="Отменить документ"
-            color="danger"
-            :disabled="!canSubmitCancel"
-            :loading="isCancelling"
-            @click="submitCancel"
-          />
-        </div>
-      </div>
-    </div>
+    <BillingCancelDrawer
+      v-model:open="showCancelDialog"
+      :document-number="document ? billingDocumentNumber(document) : ''"
+      :error="cancelError"
+      :submitting="isCancelling"
+      @submit="submitCancel"
+    />
   </BillingGate>
 </template>

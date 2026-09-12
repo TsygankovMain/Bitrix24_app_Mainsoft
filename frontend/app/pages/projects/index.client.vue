@@ -847,7 +847,8 @@ onMounted(async () => {
           class="space-y-3 rounded-2xl border border-dashed border-slate-200 py-10 text-center"
         >
           <div class="text-sm font-medium text-slate-700">{{ emptyState.title }}</div>
-          <p class="mx-auto max-w-md text-xs text-slate-500">{{ emptyState.hint }}</p>
+          <!-- Ширина явным значением, не max-w-md: см. предупреждение в app/assets/css/main.css. -->
+          <p class="mx-auto max-w-[28rem] text-xs text-slate-500">{{ emptyState.hint }}</p>
           <B24Button
             v-if="emptyState.showSync"
             label="Синхронизировать сейчас"
