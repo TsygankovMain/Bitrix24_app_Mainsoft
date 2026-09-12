@@ -35,6 +35,15 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from .billing_line_template import (
+    DEFAULT_LINE_TEMPLATE,
+    DEFAULT_TASK_LEVEL,
+    TASK_LEVEL_ROOT,
+    TASK_LEVELS,
+    month_label,
+    period_label,
+    render_line_template,
+)
 from .employee_ids import build_employee_id_aliases, resolve_employee_name
 from .models import (
     BillingDocument,
@@ -45,14 +54,41 @@ from .models import (
 )
 from .period_service import PeriodService, period_of
 from .project_board_shared import get_project_card_queryset
-from .report_queries import build_project_match_q, build_task_lookup
+from .report_queries import (
+    build_project_match_q,
+    build_task_lookup,
+    resolve_task_titles_for_row,
+)
 from .tenant_scoping import scope_to_tenant
 
 logger = logging.getLogger(__name__)
 audit = logging.getLogger("main.audit")
 
 GROUPINGS = ("project", "task", "employee", "single")
-DEFAULT_GROUPING = "project"
+# По умолчанию — ПО ЗАДАЧАМ. Раньше было «по проектам», и в счёт уходило
+# название карточки проекта: у клиента НУОЛАБ карточка названа по самому
+# клиенту, и наименованием работ в документе оказалось «НУОЛАБ». Названия
+# задач — единственное описание работ, которое в приложении есть; проектная
+# группировка осталась вариантом, но перестала быть значением по умолчанию.
+DEFAULT_GROUPING = "task"
+
+# Уровень задачи в строке (настройка billing_line_task_level) объявлен в
+# billing_line_template — его читает и разбор настроек. По умолчанию «task»:
+# название листовой задачи и есть описание работ, за которые выставляется
+# счёт, а укрупнение до родителя возвращает в счёт общее слово вроде
+# «Доработки» — то самое, из-за чего понадобилась эта правка. Где подзадач
+# много и счёт из-за них становится нечитаемым, портал переключает уровень
+# настройкой.
+# Наименования строк, у которых нет своего предмета.
+#
+# Часы без задачи не «теряются» и не подмешиваются к чужой задаче: они идут
+# ОТДЕЛЬНОЙ строкой с честным текстом. Иначе выбор стоял бы между потерей
+# часов (молча выкинуть) и ложью в документе (приписать чужой задаче), а
+# отдельную строку человек в предпросмотре видит и может исключить,
+# переименовать или вернуться в отбор и разобраться с привязкой.
+LINE_TITLE_NO_TASK = "Работы без привязки к задаче"
+LINE_TITLE_NO_PROJECT = "Без проекта"
+LINE_TITLE_SINGLE = "Услуги по договору"
 
 WARNING_PERIOD_OPEN = "period_open"
 WARNING_ALREADY_INVOICED = "already_invoiced"
@@ -164,6 +200,46 @@ def _opt_num(value: Any, what: str) -> Optional[float]:
 
 def _hours_text(value: Optional[float]) -> str:
     return f"{round(_num(value), 2):g}"
+
+
+def _resolve_task_names(
+    row: Dict[str, Any],
+    task_lookup: Dict[str, Dict[str, str]],
+    task_meta: Dict[str, str],
+) -> Tuple[str, str, str]:
+    """Название задачи списания, её корневой родитель и его название.
+
+    Название ищется в двух местах, и порядок важен:
+
+    1. СПРАВОЧНИК задач портала (PortalTask) — там актуальное имя, задачу
+       могли переименовать после списания;
+    2. СНИМОК иерархии в самой записи (``task_hierarchy_titles``) — там имя
+       на момент списания.
+
+    Справочник наполняет фоновый TaskSyncService раз в час, и задачи, которой
+    он ещё не видел, в нём нет. Без снимка такая строка счёта называлась бы
+    «Задача 9483» — номером вместо описания работ, то есть ровно той бедой,
+    из-за которой всё это и делается.
+
+    Корневой родитель — нулевой элемент иерархии: цепочка идёт от верхнего
+    уровня к самой задаче (последний элемент — она сама, см.
+    report_queries.resolve_task_titles_for_row). Иерархии нет — корнем
+    считается сама задача.
+    """
+    titles = resolve_task_titles_for_row(row, task_lookup)
+    ids = [_clean(value) for value in (row.get("task_hierarchy_ids") or [])]
+    task_id = _clean(row.get("task_id"))
+
+    task_title = _clean(task_meta.get("title"))
+    if not task_title and titles:
+        task_title = _clean(titles[-1])
+
+    root_id, root_title = task_id, task_title
+    if ids and ids[0]:
+        root_id = ids[0]
+        if titles and _clean(titles[0]):
+            root_title = _clean(titles[0])
+    return task_title, root_id, root_title
 
 
 @dataclass
@@ -350,6 +426,11 @@ class Selection:
     already_invoiced_ids: List[int] = field(default_factory=list)
     conflicting_documents: List[str] = field(default_factory=list)
     open_periods: List[str] = field(default_factory=list)
+    # По какому признаку собраны строки. Отдаётся предпросмотру, чтобы экран
+    # подписывал таблицу («одна строка на задачу»), а не заставлял человека
+    # догадываться о признаке по самим строкам.
+    grouping: str = DEFAULT_GROUPING
+    task_level: str = DEFAULT_TASK_LEVEL
 
     @property
     def total_hours(self) -> float:
@@ -385,6 +466,8 @@ class Selection:
             )
         payload = {
             "lines": self.lines,
+            "grouping": self.grouping,
+            "task_level": self.task_level,
             "entries_count": len(self.entries),
             "total_hours": self.total_hours,
             "total_amount": self.total_amount,
@@ -423,6 +506,22 @@ class BillingService:
 
             self._settings = load_billing_settings(self.account, self._client)
         return self._settings
+
+    @property
+    def task_level(self) -> str:
+        """Уровень задачи в строке: сама задача или её корневой родитель.
+
+        Негодное значение настройки не роняет выставление и не укрупняет
+        строки молча — оно читается как значение по умолчанию, то есть «по
+        задаче».
+        """
+        value = _clean(self.settings.get("task_level"))
+        return value if value in TASK_LEVELS else DEFAULT_TASK_LEVEL
+
+    @property
+    def line_template(self) -> str:
+        """Шаблон формулировки строки. Пусто — значение по умолчанию."""
+        return _clean(self.settings.get("line_template")) or DEFAULT_LINE_TEMPLATE
 
     @property
     def period_service(self) -> PeriodService:
@@ -522,6 +621,7 @@ class BillingService:
             self._queryset(filters).values(
                 "bitrix_id", "employee_id", "hours", "description", "date_reflection",
                 "project_id", "project_item_id", "project_title", "task_id",
+                "task_hierarchy_ids", "task_hierarchy_titles",
                 "hourly_rate_snapshot",
             )
         )
@@ -573,6 +673,9 @@ class BillingService:
             employee_id = _clean(row.get("employee_id"))
             task_id = _clean(row.get("task_id"))
             task_meta = task_lookup.get(task_id) or {}
+            task_title, root_task_id, root_task_title = _resolve_task_names(
+                row, task_lookup, task_meta,
+            )
 
             if not is_closed and period_key:
                 open_periods[period_key] = f"{period_key[0]}-{period_key[1]:02d}"
@@ -594,7 +697,13 @@ class BillingService:
                 "project_id": card.get("project_id", "") or _clean(row.get("project_id")),
                 "project_name": card.get("project_name", "") or _clean(row.get("project_title")),
                 "task_id": task_id,
-                "task_title": task_meta.get("title") or "",
+                "task_title": task_title,
+                # Родитель верхнего уровня — для группировки «по родительской
+                # задаче». Считается здесь, а не в _build_lines: иерархия
+                # лежит в самой записи списания, и второй раз её читать
+                # незачем.
+                "root_task_id": root_task_id,
+                "root_task_title": root_task_title,
                 "description": _clean(row.get("description")),
                 "company_id": company_id,
             })
@@ -603,7 +712,14 @@ class BillingService:
         selection.our_companies = [{"id": key, "name": value} for key, value in sorted(our_companies.items())]
         selection.conflicting_documents = sorted(conflicting)
         selection.open_periods = sorted(open_periods.values())
-        selection.lines = self._build_lines(selection.entries, filters)
+        selection.grouping = filters.grouping
+        selection.task_level = self.task_level
+        selection.lines = self._build_lines(
+            selection.entries, filters,
+            company_name=(
+                selection.companies[0]["name"] if len(selection.companies) == 1 else ""
+            ),
+        )
 
         if selection.already_invoiced_ids:
             count = len(set(selection.already_invoiced_ids))
@@ -657,8 +773,58 @@ class BillingService:
 
         return selection
 
-    def _build_lines(self, entries: Sequence[Dict[str, Any]], filters: BillingFilter) -> List[Dict[str, Any]]:
-        """Группировка строк документа.
+    def _line_subject(self, row: Dict[str, Any], filters: BillingFilter) -> Tuple[str, str]:
+        """Ключ группировки и ПРЕДМЕТ строки — то, о чём эта строка.
+
+        Предмет — это ещё не наименование работ: поверх него накладывается
+        шаблон формулировки (см. _build_lines). Здесь только решается, что
+        является предметом при каждой группировке.
+
+        Ключ и предмет считаются вместе, потому что они обязаны совпадать по
+        смыслу: ключ по id задачи с предметом-названием проекта дал бы строки
+        с одинаковым текстом и разными часами.
+        """
+        if filters.grouping == "task":
+            if self.task_level == TASK_LEVEL_ROOT:
+                task_id = _clean(row.get("root_task_id")) or _clean(row.get("task_id"))
+                title = _clean(row.get("root_task_title")) or _clean(row.get("task_title"))
+            else:
+                task_id = _clean(row.get("task_id"))
+                title = _clean(row.get("task_title"))
+            if not task_id:
+                # Списание без задачи. Ключ пустой намеренно: все такие часы
+                # собираются в ОДНУ отдельную строку, а не растворяются в
+                # чужих задачах и не выпадают из счёта.
+                return "", LINE_TITLE_NO_TASK
+            # Названия нет ни в справочнике, ни в снимке — остаётся номер.
+            # Он хотя бы указывает на задачу в портале, тогда как пустое
+            # наименование работ не указывает ни на что.
+            return task_id, title or f"Задача {task_id}"
+
+        if filters.grouping == "employee":
+            return _clean(row.get("employee_id")) or "—", row["employee_name"]
+
+        key = _clean(row.get("project_id")) or _clean(row.get("project_name")) or "—"
+        return key, _clean(row.get("project_name")) or LINE_TITLE_NO_PROJECT
+
+    def _build_lines(
+        self,
+        entries: Sequence[Dict[str, Any]],
+        filters: BillingFilter,
+        *,
+        company_name: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Группировка строк документа и их формулировка.
+
+        Два слоя, и их важно не путать.
+
+        ПРЕДМЕТ строки даёт группировка: задача, проект, сотрудник или весь
+        период целиком. ФОРМУЛИРОВКА — шаблон портала
+        (``billing_line_template``, по умолчанию «{задача}, {месяц}»), который
+        добавляет к предмету период и, если так настроено, проект и клиента.
+        Разделение нужно потому, что предмет проверяется кодом (по нему
+        сходятся часы), а формулировка — вопрос вкуса бухгалтерии, и менять
+        её через настройку должно быть можно без правки сервиса.
 
         Ставка строки — не «ставка проекта», а взвешенная: сумма строки
         делится на её часы. Внутри одной строки ставки могут быть разными
@@ -669,36 +835,54 @@ class BillingService:
             return []
 
         if filters.grouping == "single":
-            keyed = [("", "Услуги по договору", "", entries)]
+            keyed = [("", LINE_TITLE_SINGLE, "", list(entries))]
         else:
             buckets: Dict[str, Dict[str, Any]] = {}
             for row in entries:
-                if filters.grouping == "task":
-                    key = row["task_id"] or "—"
-                    title = row["task_title"] or (f"Задача {row['task_id']}" if row["task_id"] else "Без задачи")
-                elif filters.grouping == "employee":
-                    key = row["employee_id"] or "—"
-                    title = row["employee_name"]
-                else:
-                    key = row["project_id"] or row["project_name"] or "—"
-                    title = row["project_name"] or "Без проекта"
-                bucket = buckets.setdefault(key, {"title": title, "project_id": row["project_id"], "rows": []})
+                key, subject = self._line_subject(row, filters)
+                bucket = buckets.setdefault(
+                    key, {"subject": subject, "project_id": row["project_id"], "rows": []},
+                )
                 bucket["rows"].append(row)
             keyed = [
-                (key, bucket["title"], bucket["project_id"], bucket["rows"])
+                (key, bucket["subject"], bucket["project_id"], bucket["rows"])
                 for key, bucket in buckets.items()
             ]
-            keyed.sort(key=lambda item: item[1])
+            # По алфавиту, но «Работы без привязки к задаче» — в конец: это
+            # остаток, а не работа, и в начале счёта он читался бы как
+            # главное, за что выставлен документ.
+            keyed.sort(key=lambda item: (item[1] == LINE_TITLE_NO_TASK, item[1]))
+
+        period_from, period_to = self._line_period(entries, filters)
+        template = self.line_template
+        month = month_label(period_from, period_to)
+        period = period_label(period_from, period_to)
 
         lines: List[Dict[str, Any]] = []
-        for sort, (_key, title, project_id, bucket_rows) in enumerate(keyed):
+        for sort, (_key, subject, project_id, bucket_rows) in enumerate(keyed):
             hours = round(sum(_num(row["hours"]) for row in bucket_rows), 2)
             amount = _money(sum(_num(row["amount"]) for row in bucket_rows))
             project_name = bucket_rows[0]["project_name"] if bucket_rows else ""
+            title = render_line_template(
+                template,
+                {
+                    "задача": subject,
+                    "проект": project_name,
+                    "клиент": company_name,
+                    "месяц": month,
+                    "период": period,
+                },
+                fallback=subject,
+            )
             lines.append({
                 "project_id": project_id or "",
                 "project_name": project_name,
                 "title": title,
+                # Предмет строки отдаётся отдельно от наименования: мастер
+                # показывает, по какому признаку строка собрана, а после
+                # правки текста человеком это единственный способ понять,
+                # чем строка была.
+                "subject": subject,
                 "hours": hours,
                 "rate": _money(amount / hours) if hours else 0.0,
                 "amount": amount,
@@ -706,6 +890,32 @@ class BillingService:
                 "entry_ids": [row["timesheet_bitrix_id"] for row in bucket_rows],
             })
         return lines
+
+    @staticmethod
+    def _line_period(
+        entries: Sequence[Dict[str, Any]], filters: BillingFilter
+    ) -> Tuple[Optional[date], Optional[date]]:
+        """Период для подстановок {месяц} и {период}.
+
+        Даты фильтра, а при их отсутствии — крайние даты самих списаний. Тем
+        же правилом считает период документа create_document, и разойтись им
+        нельзя: иначе в наименовании работ стоял бы один месяц, а в шапке
+        счёта другой.
+        """
+        period_from = filters.date_from
+        period_to = filters.date_to
+        if period_from and period_to:
+            return period_from, period_to
+
+        dates = [
+            _parse_date(row.get("date_reflection"))
+            for row in entries
+            if row.get("date_reflection")
+        ]
+        dates = [value for value in dates if value]
+        if not dates:
+            return period_from, period_to
+        return period_from or min(dates), period_to or max(dates)
 
     # ------------------------------------------------------------------
     # Утверждённые строки (lines[] в теле выставления)
@@ -1059,7 +1269,11 @@ class BillingService:
             total_hours=selection.total_hours,
             total_amount=selection.total_amount,
             grouping=filters.grouping,
-            filter_snapshot=filters.as_snapshot(),
+            # Уровень задачи кладётся в снимок фильтра, а не в отдельное поле:
+            # это настройка портала на момент выставления, и её значение
+            # объясняет, почему строки документа выглядят именно так, если
+            # настройку потом переключили.
+            filter_snapshot={**filters.as_snapshot(), "task_level": self.task_level},
             created_by_id=_clean(created_by_id),
             created_by_name=_clean(created_by_name),
         )

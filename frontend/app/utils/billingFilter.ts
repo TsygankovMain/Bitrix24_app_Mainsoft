@@ -16,20 +16,37 @@
 import { getMonthRange } from './reportDateRange'
 import type { BillingFilterBody, BillingFilterForm, BillingGrouping, BillingRegistryFilter } from '~/types/billing'
 
-/** Варианты группировки строк документа — подписи для селекта. */
+/**
+ * Варианты группировки строк документа — подписи для селекта.
+ *
+ * Первой идёт группировка ПО ЗАДАЧАМ, и она же значение по умолчанию: строка
+ * счёта обязана описывать работы, а название задачи — единственное описание,
+ * которое в приложении есть. Группировка по проектам брала имя карточки
+ * проекта, и у клиента НУОЛАБ карточка названа по клиенту — наименованием
+ * работ в счёте оказалось «НУОЛАБ».
+ *
+ * Подробное объяснение каждого варианта (что попадёт в наименование работ)
+ * живёт в describeBillingGrouping — оно нужно и селекту, и предпросмотру.
+ */
 export const BILLING_GROUPING_OPTIONS: Array<{ id: BillingGrouping, label: string, hint: string }> = [
-  { id: 'project', label: 'По проектам', hint: 'Одна строка на проект — так счёт читают чаще всего' },
-  { id: 'task', label: 'По задачам', hint: 'Одна строка на задачу: подробнее, но длиннее' },
+  { id: 'task', label: 'По задачам', hint: 'Одна строка на задачу — в наименовании работ название задачи' },
+  { id: 'project', label: 'По проектам', hint: 'Одна строка на проект — в наименовании работ название карточки проекта' },
   { id: 'employee', label: 'По сотрудникам', hint: 'Одна строка на человека' },
-  { id: 'single', label: 'Одной строкой', hint: 'Весь период одной строкой «Услуги за период»' },
+  { id: 'single', label: 'Одной строкой', hint: 'Весь период одной строкой «Услуги по договору»' },
 ]
 
 const GROUPING_IDS = BILLING_GROUPING_OPTIONS.map(option => option.id)
 
+/**
+ * Группировка из формы или из ответа сервера.
+ *
+ * Чужое значение читается как «по задачам» — то же значение по умолчанию, что
+ * и на сервере (billing_service.DEFAULT_GROUPING).
+ */
 export function normalizeBillingGrouping(raw: unknown): BillingGrouping {
   const value = String(raw ?? '').trim() as BillingGrouping
 
-  return GROUPING_IDS.includes(value) ? value : 'project'
+  return GROUPING_IDS.includes(value) ? value : 'task'
 }
 
 /**
@@ -46,6 +63,9 @@ export function normalizeBillingGrouping(raw: unknown): BillingGrouping {
  *
  * «Только оплачиваемые» и «исключить уже выставленное» включены по контракту
  * (billable_only и exclude_invoiced по умолчанию true).
+ *
+ * Группировка по умолчанию — ПО ЗАДАЧАМ, как и на сервере: в наименовании
+ * работ должно стоять название задачи, а не имя карточки проекта.
  */
 export function createBillingFilterForm(now: Date = new Date()): BillingFilterForm {
   const range = getMonthRange(-1, now)
@@ -61,7 +81,7 @@ export function createBillingFilterForm(now: Date = new Date()): BillingFilterFo
     billableOnly: true,
     onlyClosedPeriods: true,
     excludeInvoiced: true,
-    grouping: 'project',
+    grouping: 'task',
   }
 }
 

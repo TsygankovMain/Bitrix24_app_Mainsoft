@@ -66,12 +66,21 @@ export interface BillingFilterBody {
   grouping: BillingGrouping
 }
 
+/** Уровень задачи в строке счёта (настройка billing_line_task_level). */
+export type BillingTaskLevelId = 'task' | 'root'
+
 /** Строка документа в ответе preview и в карточке. */
 export interface BillingLinePayload {
   id?: number | string | null
   project_id?: string | number | null
   project_name?: string | null
   title?: string | null
+  /**
+   * Предмет строки: название задачи, проекта или сотрудника БЕЗ шаблона
+   * формулировки. Приходит только из preview и нужен, чтобы показать, по
+   * какому признаку строка собрана, даже после правки текста человеком.
+   */
+  subject?: string | null
   hours?: number | string | null
   rate?: number | string | null
   amount?: number | string | null
@@ -109,6 +118,13 @@ export interface BillingWarningPayload {
 /** Ответ POST /api/billing/preview. */
 export interface BillingPreviewResponse {
   lines?: BillingLinePayload[] | null
+  /**
+   * По какому признаку сервер собрал строки и на каком уровне задачи. Экран
+   * берёт признак из ОТВЕТА, а не из своей формы: между запросом и ответом
+   * форму могли поправить, и подпись таблицы разошлась бы со строками.
+   */
+  grouping?: string | null
+  task_level?: string | null
   entries_count?: number | null
   total_hours?: number | string | null
   total_amount?: number | string | null

@@ -136,6 +136,65 @@
             </label>
           </div>
 
+          <!--
+            Формулировка строки счёта. Стоит сразу после юрлица: это второе,
+            что клиент читает в документе. До настройки строка называлась
+            ровно так, как названа карточка проекта, и у клиента НУОЛАБ
+            карточка названа по клиенту — наименованием работ в счёте
+            оказалось «НУОЛАБ».
+          -->
+          <div>
+            <label class="block text-sm font-medium text-slate-700" for="billing-line-template">
+              Наименование работ в строке счёта
+            </label>
+            <p class="mb-2 mt-1 text-sm text-slate-500">
+              По этому шаблону собирается текст каждой строки счёта и акта. Доступные подстановки —
+              под полем; текст можно поправить и вручную в предпросмотре перед выставлением.
+            </p>
+            <input
+              id="billing-line-template"
+              v-model="billingSettings.lineTemplate"
+              type="text"
+              class="w-full"
+              :disabled="!userStore.isAdmin"
+              :placeholder="DEFAULT_BILLING_LINE_TEMPLATE"
+            >
+            <p class="mt-1 text-xs text-slate-500">
+              Получится так: <span class="font-medium text-slate-900">{{ lineTemplateExample }}</span>
+            </p>
+            <p v-if="unknownPlaceholders.length" class="mt-1 text-xs font-medium text-amber-700">
+              Подстановки {{ unknownPlaceholders.join(', ') }} приложение не знает — они уйдут в счёт
+              как есть, фигурными скобками. Проверьте написание.
+            </p>
+            <ul class="mt-2 space-y-0.5 text-xs text-slate-500">
+              <li v-for="item in BILLING_LINE_PLACEHOLDERS" :key="item.token">
+                <span class="font-mono text-slate-700">{{ item.token }}</span> — {{ item.hint }}
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-slate-700" for="billing-task-level">
+              Уровень задачи в строке
+            </label>
+            <p class="mb-2 mt-1 text-sm text-slate-500">
+              Работает при группировке строк по задачам. Часы, не привязанные ни к одной задаче,
+              в любом случае уходят отдельной строкой «Работы без привязки к задаче» — они не
+              теряются.
+            </p>
+            <select
+              id="billing-task-level"
+              v-model="billingSettings.taskLevel"
+              class="w-full"
+              :disabled="!userStore.isAdmin"
+            >
+              <option v-for="option in BILLING_TASK_LEVEL_OPTIONS" :key="option.id" :value="option.id">
+                {{ option.label }}
+              </option>
+            </select>
+            <p class="mt-1 text-xs text-slate-500">{{ taskLevelHint }}</p>
+          </div>
+
           <div>
             <p class="text-sm font-medium text-slate-700">Бухгалтерия</p>
             <p class="mb-2 mt-1 text-sm text-slate-500">
@@ -266,6 +325,13 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import MultiSelectFilter from '~/components/common/MultiSelectFilter.vue'
+import {
+  BILLING_LINE_PLACEHOLDERS,
+  BILLING_TASK_LEVEL_OPTIONS,
+  DEFAULT_BILLING_LINE_TEMPLATE,
+  previewBillingLineTemplate,
+  unknownBillingPlaceholders,
+} from '~/utils/billingLineTemplate'
 import { describeOurCompanySetting } from '~/utils/billingOurCompany'
 import {
   applyBillingSettings,
@@ -278,7 +344,17 @@ import type { FilterOption } from '~/types/report'
 
 /** Пустые настройки «Счёта и акта» — самое строгое из состояний. */
 function emptyBillingSettings(): BillingSettings {
-  return { allowOpenPeriod: false, accountantIds: [], ourCompanyId: '', ourCompanyName: '' }
+  return {
+    allowOpenPeriod: false,
+    accountantIds: [],
+    ourCompanyId: '',
+    ourCompanyName: '',
+    // Формулировка и уровень — не «строгая» часть настроек: пустая строка
+    // оставила бы строки счёта без наименования работ, поэтому исходное
+    // состояние равно значению по умолчанию.
+    lineTemplate: DEFAULT_BILLING_LINE_TEMPLATE,
+    taskLevel: 'task',
+  }
 }
 
 const router = useRouter()
@@ -304,6 +380,26 @@ const employeeOptions = ref<FilterOption[]>([])
 const myCompanies = ref<Array<{ id: string, name: string }>>([])
 /** Портал не подтвердил полноту списка — это НЕ «юрлиц нет». */
 const myCompaniesFailed = ref(false)
+
+/**
+ * Живой пример строки. Считается ЗДЕСЬ, а не на сервере: пример нужен на
+ * каждое нажатие клавиши, а запрос на каждое нажатие — нет. Правила
+ * подстановки в utils/billingLineTemplate.ts повторяют серверные.
+ */
+const lineTemplateExample = computed(
+  () => previewBillingLineTemplate(billingSettings.value.lineTemplate)
+)
+
+/** Опечатки в подстановках — вслух, а не «ждём, пока заметит скобки». */
+const unknownPlaceholders = computed(
+  () => unknownBillingPlaceholders(billingSettings.value.lineTemplate)
+)
+
+const taskLevelHint = computed(
+  () => BILLING_TASK_LEVEL_OPTIONS.find(
+    option => option.id === billingSettings.value.taskLevel
+  )?.hint || ''
+)
 
 const ourCompanySetting = computed(() => describeOurCompanySetting({
   ourCompanyId: billingSettings.value.ourCompanyId,

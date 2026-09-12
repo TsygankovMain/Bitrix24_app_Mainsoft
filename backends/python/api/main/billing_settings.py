@@ -7,7 +7,10 @@ ConfigurationService) — параллельный механизм не зав�
 - ``billing_accountants`` — список id пользователей «Бухгалтерия»;
 - ``billing_act_template_id`` — заранее выбранный шаблон акта генератора;
 - ``billing_our_company_id`` / ``billing_our_company_name`` — наше юрлицо, от
-  которого выставляются все счета.
+  которого выставляются все счета;
+- ``billing_line_template`` — формулировка строки счёта («{задача}, {месяц}»);
+- ``billing_line_task_level`` — уровень задачи в строке: сама задача или её
+  родитель верхнего уровня.
 
 Про «наше юрлицо». До настройки оно бралось из карточки проекта
 (``ProjectCard.our_legal_entity_id``), а карточки приходят с портала
@@ -37,6 +40,12 @@ from typing import Any, Dict, List, Optional
 
 from django.http import JsonResponse
 
+from .billing_line_template import (
+    DEFAULT_LINE_TEMPLATE,
+    TASK_LEVEL_TASK,
+    TASK_LEVELS,
+    normalize_line_template,
+)
 from .configuration_service import ConfigurationService
 
 logger = logging.getLogger(__name__)
@@ -67,6 +76,12 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
         "act_template_id": 0,
         "our_company_id": "",
         "our_company_name": "",
+        # Формулировка и уровень задачи — сторона НЕ строгая: при недоступной
+        # конфигурации счёт всё равно должен собираться, просто по значениям
+        # по умолчанию. Пустой шаблон оставил бы строки счёта без названия,
+        # а это хуже, чем «как по умолчанию».
+        "line_template": DEFAULT_LINE_TEMPLATE,
+        "task_level": TASK_LEVEL_TASK,
     }
     try:
         service = ConfigurationService(client or account.client, account)
@@ -93,6 +108,10 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
 
     our_company_id = _text(config.get("billing_our_company_id"))
 
+    task_level = _text(config.get("billing_line_task_level")).lower()
+    if task_level not in TASK_LEVELS:
+        task_level = TASK_LEVEL_TASK
+
     return {
         "allow_open_period": bool(config.get("billing_allow_open_period")),
         "accountants": accountants,
@@ -102,6 +121,8 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
         # названию нельзя, а показывать «настройка задана» при пустом id —
         # врать. Поэтому имя читается только вместе с id.
         "our_company_name": _text(config.get("billing_our_company_name")) if our_company_id else "",
+        "line_template": normalize_line_template(config.get("billing_line_template")),
+        "task_level": task_level,
     }
 
 

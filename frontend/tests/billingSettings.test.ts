@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import {
   BILLING_ACCOUNTANT_IDS_KEY,
   BILLING_ALLOW_OPEN_PERIOD_KEY,
+  BILLING_LINE_TASK_LEVEL_KEY,
+  BILLING_LINE_TEMPLATE_KEY,
   BILLING_OUR_COMPANY_ID_KEY,
   BILLING_OUR_COMPANY_NAME_KEY,
   applyBillingSettings,
@@ -11,6 +13,7 @@ import {
   readBillingSettings,
   type BillingSettings,
 } from '../app/utils/billingSettings'
+import { DEFAULT_BILLING_LINE_TEMPLATE } from '../app/utils/billingLineTemplate'
 
 /** Заготовка настроек: тесты задают только то, что проверяют. */
 function settings(patch: Partial<BillingSettings> = {}): BillingSettings {
@@ -19,6 +22,8 @@ function settings(patch: Partial<BillingSettings> = {}): BillingSettings {
     accountantIds: [],
     ourCompanyId: '',
     ourCompanyName: '',
+    lineTemplate: DEFAULT_BILLING_LINE_TEMPLATE,
+    taskLevel: 'task',
     ...patch,
   }
 }
@@ -29,6 +34,45 @@ test('readBillingSettings: пустая конфигурация — самое 
   assert.equal(settings.allowOpenPeriod, false)
   assert.deepEqual(settings.accountantIds, [])
   assert.deepEqual(readBillingSettings(null).accountantIds, [])
+})
+
+test('readBillingSettings: формулировка строки и уровень задачи имеют значения по умолчанию', () => {
+  // Пустой шаблон оставил бы каждую строку счёта без наименования работ,
+  // поэтому «не задано» читается как «как по умолчанию».
+  const empty = readBillingSettings({})
+
+  assert.equal(empty.lineTemplate, DEFAULT_BILLING_LINE_TEMPLATE)
+  assert.equal(empty.taskLevel, 'task')
+
+  const configured = readBillingSettings({
+    [BILLING_LINE_TEMPLATE_KEY]: '{задача} за {период}',
+    [BILLING_LINE_TASK_LEVEL_KEY]: 'root',
+  })
+
+  assert.equal(configured.lineTemplate, '{задача} за {период}')
+  assert.equal(configured.taskLevel, 'root')
+
+  // Чужой уровень не имеет права укрупнить строки счёта.
+  assert.equal(readBillingSettings({ [BILLING_LINE_TASK_LEVEL_KEY]: 'что-то' }).taskLevel, 'task')
+})
+
+test('applyBillingSettings: формулировка и уровень уходят на сервер нормализованными', () => {
+  const next = applyBillingSettings({}, settings({ lineTemplate: '   ', taskLevel: 'root' }))
+
+  assert.equal(next[BILLING_LINE_TEMPLATE_KEY], DEFAULT_BILLING_LINE_TEMPLATE)
+  assert.equal(next[BILLING_LINE_TASK_LEVEL_KEY], 'root')
+})
+
+test('billingSettingsChanged: видит правку шаблона и уровня, но не лишний пробел', () => {
+  const base = settings()
+
+  assert.equal(billingSettingsChanged(base, settings({ lineTemplate: '{задача}' })), true)
+  assert.equal(billingSettingsChanged(base, settings({ taskLevel: 'root' })), true)
+  assert.equal(billingSettingsChanged(base, settings({ lineTemplate: '' })), false)
+  assert.equal(
+    billingSettingsChanged(base, settings({ lineTemplate: `  ${DEFAULT_BILLING_LINE_TEMPLATE}  ` })),
+    false
+  )
 })
 
 test('readBillingSettings: булево значение приходит и строкой', () => {
