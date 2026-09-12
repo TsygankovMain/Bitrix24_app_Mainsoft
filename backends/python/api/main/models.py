@@ -684,6 +684,66 @@ class PortalRoleState(models.Model):
         db_table = "portal_role_state"
 
 
+class PortalPermissionMatrix(models.Model):
+    """Права ролей портала, изменённые на экране «Роли и права».
+
+    Хранятся ОТЛИЧИЯ от матрицы по умолчанию (roles.ROLE_PERMISSIONS), а не
+    матрица целиком: ``overrides = {"accountant": {"period_close": false}}``.
+    Нет строки или пустой словарь = матрица по умолчанию, поэтому после
+    миграции у действующих порталов не меняется ничего. Право, которого
+    портал не трогал, следует значению по умолчанию из кода.
+
+    Почему в нашей БД, а не в app.option, — тот же довод, что у PortalRole:
+    app.option пишется токеном из браузера. Матрицу пишет только сервер
+    (roles.save_permission_matrix) по запросу человека с правом roles_manage и
+    при живом Pro; неизменяемые ограничения и зависимости прав проверяются
+    там же. ``revision`` растёт на каждое сохранение — два администратора,
+    правящих матрицу одновременно, не затрут друг друга молча.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member_id = models.CharField(max_length=255, unique=True)
+    overrides = models.JSONField(default=dict, blank=True)
+    revision = models.PositiveIntegerField(default=0)
+    updated_by_id = models.CharField(max_length=50, blank=True, default="")
+    updated_by_name = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_permission_matrix"
+
+    def __str__(self) -> str:
+        return f"{self.member_id}@{self.revision}"
+
+
+class PortalPermissionChange(models.Model):
+    """Журнал изменений прав ролей: кто, когда и что поменял.
+
+    ``changes`` — список ячеек ``{"role", "permission", "granted"}``,
+    ``matrix`` — действующая матрица после сохранения (для разбора «что было
+    на момент»). Пишется только при реальном изменении.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member_id = models.CharField(max_length=255, db_index=True)
+    revision = models.PositiveIntegerField(default=0)
+    changes = models.JSONField(default=list, blank=True)
+    matrix = models.JSONField(default=dict, blank=True)
+    changed_by_id = models.CharField(max_length=50, blank=True, default="")
+    changed_by_name = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_permission_change"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.member_id}@{self.revision}"
+
+
 class BillingDocument(models.Model):
     """Выставленный документ: счёт в CRM + его снимок у нас.
 

@@ -112,10 +112,11 @@ urlpatterns = [
     # и без права выставлять, и при выключенной подписке.
     path('api/features', views.get_features, name='get_features'),
     # Роли и права (функция «roles» тарифа Pro, main/roles.py): свои права,
-    # каталог с назначениями и назначение роли.
+    # каталог с назначениями, назначение роли и сохранение прав ролей.
     path('api/roles/me', views.roles_me, name='roles_me'),
     path('api/roles', views.roles_list, name='roles_list'),
     path('api/roles/assign', views.roles_assign, name='roles_assign'),
+    path('api/roles/matrix', views.roles_matrix_save, name='roles_matrix_save'),
     # Покупка Pro: заявка на счёт (main/pro_purchase_service.py). Портал — из
     # авторизации, не из тела запроса.
     path('api/pro/offer', views.pro_offer, name='pro_offer'),

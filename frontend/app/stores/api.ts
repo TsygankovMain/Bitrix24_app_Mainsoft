@@ -1576,6 +1576,18 @@ export const useApiStore = defineStore(
       })
     }
 
+    /**
+     * Сохранить права ролей портала. revision — версия таблицы, которую видел
+     * человек: сервер отвечает 409 matrix_conflict, если её уже поменяли.
+     */
+    const saveRolesMatrix = async (matrix: Record<string, string[]>, revision: number): Promise<Record<string, unknown>> => {
+      return await $api('/api/roles/matrix', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { matrix, revision },
+      })
+    }
+
     /** Собрать строки и предупреждения по фильтру. Ничего не пишет. */
     const previewBillingDocument = async (filter: BillingFilterBody): Promise<BillingPreviewResponse> => {
       return await $api('/api/billing/preview', {
@@ -1785,6 +1797,7 @@ export const useApiStore = defineStore(
       getUsers,
       getRolesMe,
       getRoles,
+      saveRolesMatrix,
       assignRole,
       getProjectBoard,
       getProjectBoardMeta,
