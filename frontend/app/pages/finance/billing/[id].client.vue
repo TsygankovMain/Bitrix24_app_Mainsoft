@@ -63,6 +63,17 @@ const error = ref<BillingErrorView | null>(null)
 const actionError = ref<BillingErrorView | null>(null)
 const notice = ref('')
 
+/**
+ * Пришли сюда сразу после выставления (мастер добавляет ?created=1).
+ *
+ * Плашка нужна не для поздравления: карточка выглядит одинаково и через
+ * минуту, и через месяц, и человек, которого сюда переадресовали, не понимает,
+ * случилось ли то, чего он ждал, и что делать дальше. Отдельным состоянием, а
+ * не общим notice: тот занят результатами действий на самой карточке
+ * (отмена, печать), и затирать его нельзя.
+ */
+const justCreated = ref(false)
+
 const isPrinting = ref(false)
 const isDownloading = ref(false)
 const isCancelling = ref(false)
@@ -222,6 +233,8 @@ onMounted(async () => {
     return
   }
 
+  justCreated.value = String(route.query.created || '') === '1'
+
   await Promise.allSettled([loadBillingSettings(), loadDocument()])
 })
 </script>
@@ -238,6 +251,15 @@ onMounted(async () => {
 
     <BillingErrorNote :error="error" />
     <BillingErrorNote :error="actionError" />
+
+    <div v-if="justCreated && !isCancelled" class="ms-note ms-note-success">
+      <p class="font-semibold">Счёт выставлен</p>
+      <p class="mt-1">
+        Он создан в CRM портала, а часы из него помечены выставленными — второй раз они в счёт не
+        уйдут. Дальше: откройте счёт в CRM и отправьте клиенту, напечатайте акт или скачайте
+        детализацию. Если счёт собран неверно, отмените документ — списания снова станут свободными.
+      </p>
+    </div>
 
     <div v-if="notice" class="ms-note ms-note-success">{{ notice }}</div>
 

@@ -8,11 +8,26 @@
  * выставить заново» — это уже отдельный документ в истории клиента. Человек
  * обязан увидеть строки и суммы до того, как они станут счётом.
  *
- * Предупреждения показываются РАЗДЕЛЬНО: блокеры (mixed_companies — несколько
- * клиентов в отборе, правило 4 контракта) гасят кнопку, мягкие
- * (period_open, already_invoiced, no_rate) — нет. Свалить их в один список
- * значит научить людей нажимать «Выставить» не читая — тот же довод, что на
- * экране закрытия месяца.
+ * Главное правило экрана: НИ ОДИН его тупик не заканчивается погасшей кнопкой
+ * без объяснения. Три тупика, найденные на стенде, закрыты здесь:
+ *
+ *  1. Отбор без клиента собирал часы всех заказчиков сразу, предпросмотр
+ *     честно рисовал строки, а «Выставить» гасло блокером mixed_companies.
+ *     Теперь клиент — обязательное поле отбора: документ всё равно
+ *     выставляется одному (контракт, правило 4), и выбрать его придётся.
+ *     Если блокер всё же пришёл (часы клиента разложены по нескольким
+ *     компаниям), он показывается списком КНОПОК, а не текстом.
+ *  2. Текущий месяц с включённой по умолчанию галочкой «только закрытые
+ *     месяцы» давал ноль строк молча: сервер выбрасывает записи открытого
+ *     месяца раньше, чем накапливает предупреждения, поэтому period_open в
+ *     ответе нет. Причину пустоты экран определяет сам, сверяя период со
+ *     списком закрытых месяцев (resolveBillingEmptyReason).
+ *  3. no_rate выглядело мягкой пометкой, хотя означает деньги мимо счёта.
+ *     Теперь показывает часы и оценку потери и предлагает действие.
+ *
+ * Предупреждения показываются РАЗДЕЛЬНО: блокеры гасят кнопку, мягкие — нет.
+ * Свалить их в один список значит научить людей нажимать «Выставить» не читая
+ * — тот же довод, что на экране закрытия месяца.
  *
  * Пересчёт итогов после исключения строки идёт БЕЗ повторного preview
  * (recalcBillingTotals в app/utils/billingPreview.ts): второй круг к серверу
@@ -43,6 +58,13 @@ import {
   type BillingLineDraft,
 } from '~/utils/billingPreview'
 import { splitBillingWarnings } from '~/utils/billingWarnings'
+import { extractMixedCompanies, type BillingCompanyChoice } from '~/utils/billingCompanies'
+import { summarizeBillingNoRate } from '~/utils/billingNoRate'
+import {
+  resolveBillingEmptyReason,
+  type BillingEmptyAction,
+  type BillingPeriodState,
+} from '~/utils/billingEmptyReason'
 import { describeBillingError, type BillingErrorView } from '~/utils/billingErrors'
 import {
   formatBillingHours,
@@ -55,7 +77,7 @@ import type { BillingPreviewResponse } from '~/types/billing'
 
 const router = useRouter()
 const apiStore = useApiStore()
-const { access, isManager, permissions, loadBillingSettings } = useBillingFeature()
+const { access, isManager, permissions, allowOpenPeriod, loadBillingSettings } = useBillingFeature()
 
 useHead({ title: 'Выставить счёт' })
 
@@ -80,6 +102,8 @@ const projectOptions = ref<FilterOption[]>([])
 const employeeOptions = ref<FilterOption[]>([])
 const myCompanies = ref<Array<{ id: string, name: string }>>([])
 const companyOptions = ref<Array<{ id: string, name: string }>>([])
+/** Состояния месяцев (/api/periods). null — список не загрузился. */
+const periods = ref<BillingPeriodState[] | null>(null)
 
 async function searchCompanyOptions(query: string) {
   const result = await apiStore.searchCompanies(query)
@@ -96,12 +120,17 @@ function rememberCompany(option: { id: string | number, name: string | number } 
 /**
  * Справочники. Каждый — независимо: отсутствие списка юрлиц не должно лишать
  * человека фильтра по проектам, а отказ любого из них — всего экрана.
+ *
+ * Список периодов здесь же и по той же причине. Он нужен ровно для одного:
+ * объяснить пустой предпросмотр незакрытым месяцем. Не ответил — экран не
+ * станет выдумывать причину и скажет общее «часов нет».
  */
 async function loadReferences() {
-  const [projects, employees, companies] = await Promise.allSettled([
+  const [projects, employees, companies, periodRows] = await Promise.allSettled([
     apiStore.getFilterProjects(),
     apiStore.getFilterEmployees(),
     apiStore.getMyCompanies(),
+    apiStore.getPeriods(),
   ])
 
   projectOptions.value = projects.status === 'fulfilled' ? projects.value : []
@@ -109,11 +138,92 @@ async function loadReferences() {
   myCompanies.value = companies.status === 'fulfilled'
     ? (companies.value.companies || []).map(item => ({ id: String(item.id), name: String(item.name) }))
     : []
+  periods.value = periodRows.status === 'fulfilled'
+    ? (periodRows.value.periods || [])
+    : null
 }
 
 const warnings = computed(() => splitBillingWarnings(preview.value?.warnings))
 const totals = computed(() => recalcBillingTotals(drafts.value))
 const edited = computed(() => hasDraftEdits(drafts.value))
+
+/** Блокер «несколько клиентов» — он один такой, и показывается отдельно. */
+const mixedWarning = computed(
+  () => warnings.value.blockers.find(warning => warning.code === 'mixed_companies') || null
+)
+const otherBlockers = computed(
+  () => warnings.value.blockers.filter(warning => warning.code !== 'mixed_companies')
+)
+
+const rawMixedWarning = computed(
+  () => (preview.value?.warnings || []).find(item => String(item?.code || '') === 'mixed_companies') || null
+)
+
+/**
+ * Клиенты блокера — кнопками.
+ *
+ * Названия берём из ответа сервера, а если он подставил идентификатор вместо
+ * названия (в карточке проекта клиент не назван) — из того, что уже есть на
+ * экране. Не нашли — показываем идентификатор как есть.
+ */
+const mixedCompanies = computed<BillingCompanyChoice[]>(() => extractMixedCompanies({
+  warning: rawMixedWarning.value,
+  companies: preview.value?.companies || null,
+  directory: companyOptions.value,
+}))
+
+const hasUnnamedCompany = computed(() => mixedCompanies.value.some(item => !item.named))
+
+/** Предупреждение no_rate показывается своей плашкой, а не в общем списке. */
+const rawNoRateWarning = computed(
+  () => (preview.value?.warnings || []).find(item => String(item?.code || '') === 'no_rate') || null
+)
+const noticeWarnings = computed(
+  () => warnings.value.notices.filter(warning => warning.code !== 'no_rate')
+)
+
+const noRate = computed(() => summarizeBillingNoRate(drafts.value, rawNoRateWarning.value))
+
+/**
+ * Текст плашки no_rate.
+ *
+ * Часы — факт, оценка потери — оценка, и названы они по-разному намеренно:
+ * настоящей ставки у этих часов нет нигде, взять её неоткуда, и выдавать
+ * среднюю по отбору за точную сумму нельзя.
+ */
+const noRateText = computed(() => {
+  const summary = noRate.value
+  const parts: string[] = []
+
+  // Все строки без цены исключены руками — потери больше нет, и пугать
+  // человека суммой по строкам, которых в счёте не будет, нельзя.
+  if (!summary.lines.length) {
+    return 'Строки с нулевой ценой исключены из документа — эти часы в счёт не уйдут '
+      + 'и останутся свободными для следующего счёта.'
+  }
+
+  const subject = summary.entriesCount
+    ? `${formatRecordsRu(summary.entriesCount)} без ставки`
+    : `Строк без цены: ${summary.lines.length}`
+
+  parts.push(`${subject} — ${formatBillingHoursWithUnit(summary.zeroHours)} уйдут в счёт с нулевой ценой.`)
+
+  if (summary.estimatedLoss > 0) {
+    parts.push(
+      `По средней цене отбора ${formatBillingMoney(summary.averageRate, preview.value?.currency)} за час `
+      + `это примерно ${formatBillingMoney(summary.estimatedLoss, preview.value?.currency)}, `
+      + 'которые в счёт не попадут.'
+    )
+  } else {
+    parts.push('Оценить потерю не по чему: цены нет ни у одной строки отбора.')
+  }
+
+  if (summary.projectTitles.length) {
+    parts.push(`Ставка берётся из карточки проекта — заполните её у: ${summary.projectTitles.join(', ')}.`)
+  }
+
+  return parts.join(' ')
+})
 
 const entriesCount = computed(() => {
   const raw = preview.value?.entries_count
@@ -121,6 +231,35 @@ const entriesCount = computed(() => {
 
   return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
 })
+
+/** Имя выбранного клиента — для текстов, которые иначе звучат безлико. */
+const selectedCompanyName = computed(() => {
+  const fromPreview = String(preview.value?.company_name || '').trim()
+  if (fromPreview) {
+    return fromPreview
+  }
+
+  const selected = companyOptions.value.find(item => item.id === String(form.value.companyId || '').trim())
+
+  return selected?.name || ''
+})
+
+/** Почему предпросмотр пуст и что с этим делать. */
+const emptyReason = computed(() => resolveBillingEmptyReason({
+  dateFrom: form.value.dateFrom,
+  dateTo: form.value.dateTo,
+  onlyClosedPeriods: form.value.onlyClosedPeriods,
+  allowOpenPeriod: allowOpenPeriod.value,
+  warnings: preview.value?.warnings || null,
+  periods: periods.value,
+  companyName: selectedCompanyName.value,
+  filters: {
+    billableOnly: form.value.billableOnly,
+    projectIds: form.value.projectIds,
+    employeeIds: form.value.employeeIds,
+    taskIds: parseTaskIdsInput(taskIdsInput.value),
+  },
+}))
 
 /**
  * Кнопка «Выставить» гаснет на блокере, отсутствии строк и нехватке прав.
@@ -133,15 +272,31 @@ const canIssue = computed(() => permissions.value.canIssue
   && totals.value.issuable
   && !isIssuing.value)
 
+const hasCompany = computed(() => Boolean(String(form.value.companyId || '').trim()))
+
 /**
- * Предпросмотр тоже требует прав, но НЕ требует подписки.
+ * Предпросмотр требует прав и выбранного клиента, но НЕ требует подписки.
  *
- * Так решает сервер: на /api/billing/preview стоит проверка «админ или
- * Бухгалтерия», но нет проверки подписки — предпросмотр это чтение, и
- * показать подписчику-новичку, что он получит, полезно. Повторяем ту же
- * границу в интерфейсе, чтобы кнопка не вела в заведомый отказ.
+ * Подписку так решает сервер: на /api/billing/preview стоит проверка «админ
+ * или Бухгалтерия», но нет проверки подписки — предпросмотр это чтение.
+ * Клиента требует уже интерфейс: собрать предпросмотр по всем заказчикам
+ * сразу можно, но выставить его нельзя, и показывать такие строки значит
+ * обещать документ, которого не будет.
  */
-const canPreview = computed(() => isManager.value && !isPreviewLoading.value)
+const canPreview = computed(() => isManager.value && hasCompany.value && !isPreviewLoading.value)
+
+/** Почему кнопка предпросмотра неактивна. Пусто — она активна. */
+const previewBlockedReason = computed(() => {
+  if (!isManager.value) {
+    return 'Предпросмотр доступен админу портала и сотрудникам из списка «Бухгалтерия».'
+  }
+
+  if (!hasCompany.value) {
+    return 'Выберите клиента — счёт выставляется одному клиенту.'
+  }
+
+  return ''
+})
 
 /** Вернуть отбор к значениям по умолчанию: прошлый месяц, галочки контракта. */
 function resetForm() {
@@ -168,6 +323,7 @@ async function runPreview() {
   error.value = null
 
   if (validationErrors.value.length) {
+    step.value = 'filter'
     return
   }
 
@@ -188,6 +344,58 @@ async function runPreview() {
 function backToFilter() {
   step.value = 'filter'
   error.value = null
+}
+
+/**
+ * Клиент из блокера — в фильтр, и сразу пересобрать предпросмотр.
+ *
+ * Имя запоминаем в companyOptions, иначе SearchableSelect покажет пустое
+ * поле при выбранном идентификаторе: список опций у него свой.
+ */
+async function chooseCompany(choice: BillingCompanyChoice) {
+  form.value.companyId = choice.id
+  companyOptions.value = [{ id: choice.id, name: choice.label }]
+  await runPreview()
+}
+
+/** Действие из плашки «почему пусто». */
+async function runEmptyAction(action: BillingEmptyAction) {
+  if (action.id === 'drop-closed-filter') {
+    form.value.onlyClosedPeriods = false
+    await runPreview()
+    return
+  }
+
+  if (action.to) {
+    await router.push(action.to)
+  }
+}
+
+/** Исключить все строки с нулевой ценой — чтобы бесплатные часы не ушли в счёт. */
+function excludeNoRateLines() {
+  const keys = new Set(noRate.value.lines.map(line => line.key))
+
+  drafts.value = drafts.value.map(
+    draft => (keys.has(draft.key) ? toggleDraftExcluded(draft, true) : draft)
+  )
+}
+
+/**
+ * Туда, где проставляют ставку.
+ *
+ * Доска проектов умеет открываться с поиском (?search=), и когда проект без
+ * ставки ровно один, отправляем сразу к нему: искать его руками среди всех
+ * проектов портала — лишний шаг.
+ */
+async function openProjectsBoard() {
+  const titles = noRate.value.projectTitles
+
+  if (titles.length === 1 && titles[0]) {
+    await router.push({ path: '/projects', query: { search: titles[0] } })
+    return
+  }
+
+  await router.push('/projects')
 }
 
 function onToggleLine(index: number, excluded: boolean) {
@@ -224,6 +432,10 @@ function onEditRate(index: number, rate: string) {
  * упёрся в частичный уникальный индекс и вернул ссылку на уже существующий
  * документ. Показываем её кнопкой «Открыть документ», а не текстом «ошибка
  * сервера»: человеку нужен готовый счёт, а не повтор попытки.
+ *
+ * После удачи уходим в карточку с пометкой created — там она превращается в
+ * плашку «счёт выставлен, дальше акт и отправка клиенту». Без пометки человек
+ * попадает на обычную карточку и не понимает, случилось ли то, чего он ждал.
  */
 async function issueDocument() {
   if (!canIssue.value) {
@@ -241,7 +453,7 @@ async function issueDocument() {
     const id = String(response?.document?.id ?? '').trim()
 
     if (id) {
-      await router.push(`/finance/billing/${id}`)
+      await router.push({ path: `/finance/billing/${id}`, query: { created: '1' } })
       return
     }
 
@@ -306,18 +518,27 @@ onMounted(async () => {
         />
 
         <div>
-          <label class="mb-2 block text-sm font-medium text-slate-700">Клиент</label>
+          <label class="mb-2 block text-sm font-medium text-slate-700">
+            Клиент
+            <span class="text-red-600" aria-hidden="true">*</span>
+          </label>
           <SearchableSelect
             :model-value="form.companyId"
             :options="companyOptions"
-            empty-label="Определить по проектам"
+            empty-label="Выберите клиента"
             :search-fn="searchCompanyOptions"
             @update:model-value="form.companyId = $event"
             @update:selected="rememberCompany"
           />
-          <p class="mt-1 text-xs text-slate-500">
-            Если клиента не выбрать, он определится по отобранным проектам. Когда клиентов окажется
-            несколько, предпросмотр скажет об этом и выставить не даст: документ всегда на одного.
+          <p
+            v-if="!hasCompany"
+            class="mt-1 text-xs font-medium text-amber-700"
+          >
+            Счёт выставляется одному клиенту — выберите его, иначе предпросмотр соберёт часы разных
+            заказчиков и документ из них не получится.
+          </p>
+          <p v-else class="mt-1 text-xs text-slate-500">
+            В счёт попадут только часы по проектам этого клиента.
           </p>
         </div>
 
@@ -409,7 +630,7 @@ onMounted(async () => {
         </label>
       </div>
 
-      <div class="flex flex-wrap gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <B24Button
           label="Показать предпросмотр"
           :disabled="!canPreview"
@@ -417,17 +638,68 @@ onMounted(async () => {
           @click="runPreview"
         />
         <B24Button label="Сбросить отбор" color="link" @click="resetForm" />
+        <p v-if="previewBlockedReason" class="text-sm text-amber-700">
+          {{ previewBlockedReason }}
+        </p>
       </div>
     </section>
 
     <!-- Шаг 2: предпросмотр -->
     <template v-else>
-      <div v-for="warning in warnings.blockers" :key="warning.code" class="ms-note ms-note-danger">
+      <!-- Блокер «несколько клиентов»: список клиентов кнопками, а не текстом -->
+      <div v-if="mixedWarning" class="ms-note ms-note-danger">
+        <p class="font-semibold">{{ mixedWarning.title }}</p>
+        <p class="mt-1">{{ mixedWarning.text }}</p>
+        <div v-if="mixedCompanies.length" class="mt-3 flex flex-wrap gap-2">
+          <B24Button
+            v-for="company in mixedCompanies"
+            :key="company.id"
+            :label="company.label"
+            color="default"
+            size="sm"
+            @click="chooseCompany(company)"
+          />
+        </div>
+        <p v-if="mixedCompanies.length" class="mt-2 text-xs">
+          Нажмите клиента — он подставится в отбор, и предпросмотр пересоберётся по нему одному.
+        </p>
+        <p v-if="hasUnnamedCompany" class="mt-1 text-xs">
+          У части клиентов в карточках проектов не заполнено название — показан идентификатор
+          компании в CRM.
+        </p>
+      </div>
+
+      <div v-for="warning in otherBlockers" :key="warning.code" class="ms-note ms-note-danger">
         <p class="font-semibold">{{ warning.title }}</p>
         <p class="mt-1">{{ warning.text }}</p>
       </div>
 
-      <div v-for="warning in warnings.notices" :key="warning.code" class="ms-panel-warning">
+      <!-- no_rate: не пометка, а деньги мимо счёта -->
+      <div v-if="noRate.present" class="ms-note ms-note-danger">
+        <p class="font-semibold">Часть часов уйдёт в счёт бесплатно</p>
+        <p class="mt-1">{{ noRateText }}</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <B24Button
+            v-if="noRate.lines.length"
+            label="Исключить строки без цены"
+            color="default"
+            size="sm"
+            @click="excludeNoRateLines"
+          />
+          <B24Button
+            v-if="noRate.projectTitles.length"
+            label="Проставить ставку в проекте"
+            color="link"
+            size="sm"
+            @click="openProjectsBoard"
+          />
+        </div>
+        <p v-if="noRate.lines.length" class="mt-2 text-xs">
+          Выставить можно и так — счёт просто не досчитает эти часы.
+        </p>
+      </div>
+
+      <div v-for="warning in noticeWarnings" :key="warning.code" class="ms-panel-warning">
         <p class="font-semibold">{{ warning.title }}</p>
         <p class="mt-1">{{ warning.text }}</p>
       </div>
@@ -453,9 +725,20 @@ onMounted(async () => {
           </div>
         </div>
 
-        <div v-if="!drafts.length" class="ms-empty-state">
-          По этому отбору часов не нашлось. Проверьте период, проекты и галочку «только закрытые
-          месяцы».
+        <!-- Пусто — всегда с причиной и с действием -->
+        <div v-if="!drafts.length" class="ms-note ms-note-info">
+          <p class="font-semibold">{{ emptyReason.title }}</p>
+          <p class="mt-1">{{ emptyReason.text }}</p>
+          <div v-if="emptyReason.actions.length" class="mt-3 flex flex-wrap gap-2">
+            <B24Button
+              v-for="action in emptyReason.actions"
+              :key="action.id"
+              :label="action.label"
+              color="default"
+              size="sm"
+              @click="runEmptyAction(action)"
+            />
+          </div>
         </div>
 
         <div v-else class="ms-table-shell">
@@ -508,6 +791,9 @@ onMounted(async () => {
                   >
                   <p v-if="draft.rateEdited" class="mt-1 text-xs text-slate-500">
                     было: {{ formatBillingMoney(draft.originalRate) }}
+                  </p>
+                  <p v-else-if="!draft.excluded && draft.rate <= 0" class="mt-1 text-xs font-medium text-red-700">
+                    цены нет — строка уйдёт с нулевой суммой
                   </p>
                 </td>
                 <td class="text-right font-medium text-slate-900">
