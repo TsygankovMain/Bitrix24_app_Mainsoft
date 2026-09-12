@@ -16,7 +16,8 @@
  * случиться раньше, чем экран начнёт что-либо грузить.
  */
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import { computed, onMounted, ref, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { buildReportRouteLocation, type ReportRouteName, type ReportRoutePayload } from '~/utils/reportNavigation'
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
 import type { PeriodCheckResult, PeriodRow } from '~/types/period'
@@ -24,6 +25,7 @@ import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import CreateProjectDrawer from '~/components/projects/CreateProjectDrawer.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
+import HomeProjectDetailsDrawer from '~/components/home/ProjectDetailsDrawer.vue'
 import { CREATE_PROJECT_BUTTON_ENABLED, FINANCE_BILLING_ENABLED, TASK_TAB_ROUTE } from '~/utils/featureFlags'
 import { NAV_CONTROL_ISSUES_STATE_KEY } from '~/utils/appNavigation'
 import {
@@ -36,9 +38,11 @@ import {
   countProjectQuickFilters,
   filterProjectRows,
   findPeriodRow,
+  findProjectRowById,
   formatLastWriteoff,
   formatMonthTitle,
   formatMonthValue,
+  getProjectStageClass,
   initialsOf,
   parseMonthValue,
   PROJECT_QUICK_FILTERS,
@@ -129,6 +133,28 @@ const periodError = ref('')
  * главная — она проверку месяца и так спрашивает.
  */
 const controlIssues = useState<number | null>(NAV_CONTROL_ISSUES_STATE_KEY, () => null)
+
+/**
+ * Боковая панель выбранного проекта.
+ *
+ * Панель лежит поверх содержимого (components/home/ProjectDetailsDrawer.vue) и
+ * открывается только по клику: раньше она была колонкой сетки и на узком
+ * фрейме уезжала под таблицу — отсюда жалоба «нажимаешь на проект, а он
+ * открывается внизу».
+ *
+ * `selectedProjectId` живёт дольше самой панели: строка остаётся подсвеченной
+ * и после закрытия, чтобы было видно, с чего сотрудник вернулся.
+ */
+const isProjectPanelOpen = ref(false)
+
+/**
+ * Кнопки-строки таблицы, чтобы вернуть фокус туда, откуда панель открыли.
+ * Обычный объект, а не ref: на отрисовку эта карта не влияет.
+ */
+const projectRowTriggers = new Map<string, HTMLButtonElement>()
+
+/** Не возвращать фокус в таблицу, когда панель закрылась ради дровера поверх неё. */
+let skipProjectFocusRestore = false
 
 // --- Drawer state ---
 const isDrawerOpen = ref(false)
@@ -246,21 +272,14 @@ const decoratedProjectRows = computed(() => projectRows.value.map(row => ({
 })))
 
 /**
- * Строка, о которой рассказывает правая панель.
+ * Строка, о которой рассказывает боковая панель.
  *
- * Если выбранный проект выпал из текущего отбора, панель показывает первую
- * строку списка, а не пустоту: панель в макете — постоянная часть экрана, и
- * пустая колонка справа читается как поломка.
+ * Подстановки первой строки списка больше нет — см. findProjectRowById: панель
+ * открывается по клику и показывает ровно тот проект, который открыли.
  */
-const selectedProjectRow = computed<ProjectRow | null>(() => {
-  const rows = projectRows.value
-
-  if (!rows.length) {
-    return null
-  }
-
-  return rows.find(row => row.id === selectedProjectId.value) || rows[0]
-})
+const selectedProjectRow = computed<ProjectRow | null>(
+  () => findProjectRowById(projectRows.value, selectedProjectId.value)
+)
 
 const projectPanel = computed(() => buildProjectPanel(selectedProjectRow.value))
 
@@ -292,23 +311,6 @@ function openReport(target: ReportRouteName | ReportRoutePayload) {
 
 function openGuide() {
   router.push('/guide')
-}
-
-function getStageClass(stage?: string | null) {
-  const normalized = String(stage || '')
-  if (normalized.includes('Нет списаний 3 месяца')) {
-    return 'bg-rose-100 text-rose-700'
-  }
-  if (normalized.includes('Нет списаний 1 месяц')) {
-    return 'bg-amber-100 text-amber-700'
-  }
-  if (normalized.includes('В просчете')) {
-    return 'bg-indigo-100 text-indigo-700'
-  }
-  if (normalized.includes('В работе')) {
-    return 'bg-emerald-100 text-emerald-700'
-  }
-  return 'bg-slate-100 text-slate-700'
 }
 
 function getWriteoffClass(days: number) {
@@ -380,15 +382,54 @@ async function loadPeriods() {
   }
 }
 
+/**
+ * Запомнить кнопку строки, чтобы вернуть на неё фокус после закрытия панели.
+ * Vue зовёт функциональный ref с null, когда строка уходит из отбора.
+ */
+function setProjectRowTrigger(rowId: string, element: Element | ComponentPublicInstance | null) {
+  if (element instanceof HTMLButtonElement) {
+    projectRowTriggers.set(rowId, element)
+    return
+  }
+
+  projectRowTriggers.delete(rowId)
+}
+
 function selectProject(row: ProjectRow) {
   selectedProjectId.value = row.id
+  isProjectPanelOpen.value = true
 }
+
+/**
+ * Возврат фокуса.
+ *
+ * Панель закрывают четырьмя способами (крестик, кнопка «Закрыть», клик по
+ * затемнению, Escape) плюс мы сами закрываем её перед дровером карточки, и все
+ * они сходятся в одном месте — переключении `isProjectPanelOpen`. Поэтому
+ * фокус возвращает watcher, а не каждый обработчик по отдельности.
+ */
+watch(isProjectPanelOpen, async (isOpen) => {
+  if (isOpen) {
+    return
+  }
+
+  if (skipProjectFocusRestore) {
+    skipProjectFocusRestore = false
+    return
+  }
+
+  await nextTick()
+  projectRowTriggers.get(selectedProjectId.value)?.focus()
+})
 
 function setQuickFilter(id: ProjectQuickFilterId) {
   quickFilter.value = id
 }
 
 function openBillingFeature() {
+  // Тоже уход со страницы (или на экран «по подписке») — панель закрываем.
+  skipProjectFocusRestore = isProjectPanelOpen.value
+  isProjectPanelOpen.value = false
   router.push(billingFeatureRoute)
 }
 
@@ -398,12 +439,16 @@ watch(selectedMonth, () => {
   }
 })
 
-// Смена быстрого фильтра или поиска может выкинуть выбранный проект из списка —
-// панель тогда сама перейдёт на первую строку (см. selectedProjectRow).
+// Смена быстрого фильтра или поиска может выкинуть выбранный проект из списка.
+// Панель тогда закрывается: подставлять в неё соседний проект — значит подменить
+// сотруднику карточку, которую он открыл.
 watch([quickFilter, projectSearch], () => {
-  if (!projectRows.value.some(row => row.id === selectedProjectId.value)) {
-    selectedProjectId.value = projectRows.value[0]?.id || ''
+  if (projectRows.value.some(row => row.id === selectedProjectId.value)) {
+    return
   }
+
+  selectedProjectId.value = ''
+  isProjectPanelOpen.value = false
 })
 
 async function onProjectCreated() {
@@ -434,6 +479,11 @@ async function openProjectCard(project: ProjectBoardCardRecord | null | undefine
   if (!project) {
     return
   }
+  // Карточка — второй дровер поверх первого: двойное затемнение и два
+  // обработчика Escape сразу. Панель проекта уступает ей место, фокус в
+  // таблицу при этом не возвращаем — он должен уйти в карточку.
+  skipProjectFocusRestore = isProjectPanelOpen.value
+  isProjectPanelOpen.value = false
   drawerCard.value = project
   isDrawerOpen.value = true
   try {
@@ -488,12 +538,32 @@ function openSpa(card?: ProjectBoardCardRecord | null) {
 }
 
 function openProjectReport(row: ProjectRow, report: ReportRouteName = 'project') {
+  // Уходим со страницы — панель не должна мелькнуть поверх нового экрана.
+  skipProjectFocusRestore = isProjectPanelOpen.value
+  isProjectPanelOpen.value = false
   openReport({
     report,
     projectId: row.id,
     projectName: row.name,
     autogenerate: true,
   })
+}
+
+// Действия боковой панели: она знает только «открыть», а какой именно проект
+// открыт — знает страница.
+function openSelectedProjectGroup() {
+  openProject(selectedProjectRow.value?.card)
+}
+
+function openSelectedProjectReport() {
+  if (!selectedProjectRow.value) {
+    return
+  }
+  openProjectReport(selectedProjectRow.value)
+}
+
+function openSelectedProjectCard() {
+  openProjectCard(selectedProjectRow.value?.card)
 }
 
 onMounted(async () => {
@@ -602,147 +672,140 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- Проекты: таблица с быстрыми фильтрами и панель выбранного проекта -->
-        <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-          <section class="ms-surface flex min-w-0 flex-col gap-3 p-4">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <h2 class="text-base font-semibold text-slate-900">Проекты</h2>
-              <B24Button label="Все проекты" color="link" size="xs" @click="router.push('/projects')" />
-            </div>
+        <!--
+          Проекты: таблица во всю ширину. Панель выбранного проекта — боковой
+          дровер поверх содержимого (HomeProjectDetailsDrawer в конце шаблона),
+          поэтому таблица больше не делит строку с колонкой справа и не прыгает
+          при выборе.
+        -->
+        <section class="ms-surface flex min-w-0 flex-col gap-3 p-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-base font-semibold text-slate-900">Проекты</h2>
+            <B24Button label="Все проекты" color="link" size="xs" @click="router.push('/projects')" />
+          </div>
 
-            <div class="flex flex-wrap items-center gap-2">
-              <button
-                v-for="filter in PROJECT_QUICK_FILTERS"
-                :key="filter.id"
-                type="button"
-                class="rounded-full border px-3 py-1.5 text-xs font-semibold transition"
-                :class="quickFilter === filter.id
-                  ? 'border-[#0075ff] bg-[#0075ff] text-white'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'"
-                :aria-pressed="quickFilter === filter.id"
-                @click="setQuickFilter(filter.id)"
-              >
-                {{ filter.label }} · {{ quickFilterCounts[filter.id] }}
-              </button>
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              v-for="filter in PROJECT_QUICK_FILTERS"
+              :key="filter.id"
+              type="button"
+              class="rounded-full border px-3 py-1.5 text-xs font-semibold transition"
+              :class="quickFilter === filter.id
+                ? 'border-[#0075ff] bg-[#0075ff] text-white'
+                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'"
+              :aria-pressed="quickFilter === filter.id"
+              @click="setQuickFilter(filter.id)"
+            >
+              {{ filter.label }} · {{ quickFilterCounts[filter.id] }}
+            </button>
 
-              <input
-                v-model="projectSearch"
-                type="search"
-                placeholder="Проект, компания, куратор, ID"
-                aria-label="Поиск по проектам"
-                class="h-[34px] min-w-[200px] grow rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-[#0075ff]"
-              >
-            </div>
+            <input
+              v-model="projectSearch"
+              type="search"
+              placeholder="Проект, компания, куратор, ID"
+              aria-label="Поиск по проектам"
+              class="h-[34px] min-w-[200px] grow rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-[#0075ff]"
+            >
+          </div>
 
-            <B24Empty v-if="isPortfolioLoading" title="Загружаем портфель проектов…" size="sm" />
-            <B24Empty v-else-if="allProjectRows.length === 0" title="Активных проектов нет." size="sm" />
-            <B24Empty v-else-if="projectRows.length === 0" title="По этому отбору проектов не нашлось." size="sm" />
+          <B24Empty v-if="isPortfolioLoading" title="Загружаем портфель проектов…" size="sm" />
+          <B24Empty v-else-if="allProjectRows.length === 0" title="Активных проектов нет." size="sm" />
+          <B24Empty v-else-if="projectRows.length === 0" title="По этому отбору проектов не нашлось." size="sm" />
 
-            <div v-else class="ms-table-shell max-h-[560px] overflow-y-auto">
-              <table class="ms-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Проект</th>
-                    <th scope="col">Куратор</th>
-                    <th scope="col">Стадия</th>
-                    <th scope="col">Освоение</th>
-                    <th scope="col" class="text-right">Списание</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="item in decoratedProjectRows"
-                    :key="item.row.id"
-                    class="cursor-pointer"
-                    :class="selectedProjectRow?.id === item.row.id ? 'bg-blue-50/70' : ''"
-                    @click="selectProject(item.row)"
-                  >
-                    <td>
-                      <div class="text-sm font-semibold text-slate-900">{{ item.row.name }}</div>
-                      <div class="text-xs text-slate-500">{{ item.row.companyName }}</div>
-                    </td>
-                    <td>
-                      <span class="inline-flex items-center gap-2 whitespace-nowrap">
+          <div v-else class="ms-table-shell max-h-[560px] overflow-y-auto">
+            <table class="ms-table">
+              <thead>
+                <tr>
+                  <th scope="col">Проект</th>
+                  <th scope="col">Куратор</th>
+                  <th scope="col">Стадия</th>
+                  <th scope="col">Освоение</th>
+                  <th scope="col" class="text-right">Списание</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="item in decoratedProjectRows"
+                  :key="item.row.id"
+                  class="cursor-pointer"
+                  :class="selectedProjectId === item.row.id ? 'bg-blue-50/70' : ''"
+                  @click="selectProject(item.row)"
+                >
+                  <td>
+                    <!--
+                      Название проекта — настоящая кнопка, а не просто ячейка:
+                      панель должна открываться и с клавиатуры, и именно сюда
+                      возвращается фокус после её закрытия. Клик по остальной
+                      строке работает как раньше, поэтому у кнопки .stop —
+                      иначе selectProject позвался бы дважды.
+                    -->
+                    <button
+                      :ref="element => setProjectRowTrigger(item.row.id, element)"
+                      type="button"
+                      class="block w-full rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0075ff]"
+                      aria-haspopup="dialog"
+                      :aria-expanded="isProjectPanelOpen && selectedProjectId === item.row.id"
+                      @click.stop="selectProject(item.row)"
+                    >
+                      <span class="block text-sm font-semibold text-slate-900">{{ item.row.name }}</span>
+                      <span class="block text-xs text-slate-500">{{ item.row.companyName }}</span>
+                    </button>
+                  </td>
+                  <td>
+                    <span class="inline-flex items-center gap-2 whitespace-nowrap">
+                      <span
+                        class="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600"
+                        aria-hidden="true"
+                      >{{ initialsOf(item.row.curatorName) }}</span>
+                      <span class="text-sm text-slate-700">{{ item.row.curatorName }}</span>
+                    </span>
+                  </td>
+                  <td>
+                    <span class="ms-pill" :class="getProjectStageClass(item.row.stage)">{{ item.row.stage }}</span>
+                  </td>
+                  <td>
+                    <span v-if="item.utilization.isEmpty" class="text-xs text-slate-500">
+                      {{ item.utilization.label }}
+                    </span>
+                    <span v-else class="inline-flex items-center gap-2">
+                      <span class="h-1.5 w-10 overflow-hidden rounded-full bg-slate-200">
                         <span
-                          class="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600"
-                          aria-hidden="true"
-                        >{{ initialsOf(item.row.curatorName) }}</span>
-                        <span class="text-sm text-slate-700">{{ item.row.curatorName }}</span>
+                          class="block h-full rounded-full"
+                          :class="UTILIZATION_BAR_CLASS[item.utilization.tone]"
+                          :style="{ width: item.utilization.barPercent + '%' }"
+                        />
                       </span>
-                    </td>
-                    <td>
-                      <span class="ms-pill" :class="getStageClass(item.row.stage)">{{ item.row.stage }}</span>
-                    </td>
-                    <td>
-                      <span v-if="item.utilization.isEmpty" class="text-xs text-slate-500">
+                      <span class="text-xs font-semibold tabular-nums" :class="METRIC_TONE_CLASS[item.utilization.tone]">
                         {{ item.utilization.label }}
                       </span>
-                      <span v-else class="inline-flex items-center gap-2">
-                        <span class="h-1.5 w-10 overflow-hidden rounded-full bg-slate-200">
-                          <span
-                            class="block h-full rounded-full"
-                            :class="UTILIZATION_BAR_CLASS[item.utilization.tone]"
-                            :style="{ width: item.utilization.barPercent + '%' }"
-                          />
-                        </span>
-                        <span class="text-xs font-semibold tabular-nums" :class="METRIC_TONE_CLASS[item.utilization.tone]">
-                          {{ item.utilization.label }}
-                        </span>
-                      </span>
-                    </td>
-                    <td class="text-right tabular-nums" :class="getWriteoffClass(item.row.lastWriteoffDays)">
-                      {{ formatLastWriteoff(item.row.lastWriteoffDays) }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <!-- Панель выбранного проекта -->
-          <aside v-if="projectPanel && selectedProjectRow" class="ms-surface flex h-fit flex-col gap-4 p-4">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="ms-pill" :class="getStageClass(projectPanel.stage)">{{ projectPanel.stage }}</span>
-              <span class="ms-pill bg-slate-100 text-slate-600">ID {{ projectPanel.id }}</span>
-            </div>
-
-            <div>
-              <h2 class="text-base font-semibold text-slate-900">{{ projectPanel.name }}</h2>
-              <p class="mt-1 text-xs text-slate-500">{{ projectPanel.subtitle }}</p>
-            </div>
-
-            <dl class="grid grid-cols-2 gap-3">
-              <div v-for="stat in projectPanel.stats" :key="stat.id" class="rounded-xl bg-slate-50 px-3 py-2">
-                <dt class="text-[11px] font-medium uppercase tracking-[0.06em] text-slate-500">{{ stat.label }}</dt>
-                <dd class="mt-0.5 text-sm font-semibold text-slate-900">{{ stat.value }}</dd>
-              </div>
-            </dl>
-
-            <div class="flex flex-col gap-1.5">
-              <button type="button" class="ms-action-card" @click="openProject(selectedProjectRow.card)">
-                Группа проекта в Битрикс24
-              </button>
-              <button type="button" class="ms-action-card" @click="openProjectReport(selectedProjectRow)">
-                Отчёт по проекту за {{ monthTitle }}
-              </button>
-              <button type="button" class="ms-action-card" @click="openProjectCard(selectedProjectRow.card)">
-                Карточка проекта: ставка, юрлицо, сроки
-              </button>
-              <button
-                type="button"
-                class="ms-action-card flex items-center justify-between gap-2"
-                :class="FINANCE_BILLING_ENABLED ? '' : 'cursor-not-allowed opacity-70'"
-                @click="openBillingFeature"
-              >
-                <span>Счёт и акт по часам проекта</span>
-                <span v-if="!FINANCE_BILLING_ENABLED" class="ms-pill bg-amber-100 text-amber-800">
-                  {{ PAID_FEATURE_BADGE }}
-                </span>
-              </button>
-            </div>
-          </aside>
-        </div>
+                    </span>
+                  </td>
+                  <td class="text-right tabular-nums" :class="getWriteoffClass(item.row.lastWriteoffDays)">
+                    {{ formatLastWriteoff(item.row.lastWriteoffDays) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
+
+      <!--
+        Панель выбранного проекта. Лежит поверх содержимого и ниже по стопке,
+        чем дровер карточки проекта (z-9990 против z-9999), но одновременно они
+        не показываются: openProjectCard закрывает панель.
+      -->
+      <HomeProjectDetailsDrawer
+        v-model:open="isProjectPanelOpen"
+        :panel="projectPanel"
+        :month-title="monthTitle"
+        :billing-enabled="FINANCE_BILLING_ENABLED"
+        :billing-badge="PAID_FEATURE_BADGE"
+        @open-group="openSelectedProjectGroup"
+        @open-report="openSelectedProjectReport"
+        @open-card="openSelectedProjectCard"
+        @open-billing="openBillingFeature"
+      />
 
       <ProjectBoardDrawer
         v-model="isDrawerOpen"
