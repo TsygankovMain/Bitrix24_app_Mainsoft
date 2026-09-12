@@ -116,6 +116,15 @@ urlpatterns = [
     path('api/roles/me', views.roles_me, name='roles_me'),
     path('api/roles', views.roles_list, name='roles_list'),
     path('api/roles/assign', views.roles_assign, name='roles_assign'),
+    # Покупка Pro: заявка на счёт (main/pro_purchase_service.py). Портал — из
+    # авторизации, не из тела запроса.
+    path('api/pro/offer', views.pro_offer, name='pro_offer'),
+    path('api/pro/quote', views.pro_quote, name='pro_quote'),
+    path('api/pro/requisites', views.pro_requisites, name='pro_requisites'),
+    path('api/pro/requests', views.pro_requests_create, name='pro_requests_create'),
+    path('api/pro/requests/current', views.pro_requests_current, name='pro_requests_current'),
+    path('api/pro/requests/<str:request_id>/cancel', views.pro_requests_cancel, name='pro_requests_cancel'),
+    path('api/pro/requests/<str:request_id>/invoice.pdf', views.pro_requests_invoice_pdf, name='pro_requests_invoice_pdf'),
     # Шаблоны генератора документов портала — для выбора в настройках.
     # Стоит ДО маршрута documents/<document_id>, но пересечься они всё равно
     # не могут: разные префиксы после api/billing.

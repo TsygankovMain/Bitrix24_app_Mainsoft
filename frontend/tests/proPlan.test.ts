@@ -7,14 +7,13 @@ import {
   PRO_CTA_LABEL,
   PRO_PLAN_LABEL,
   PRO_ROUTE,
-  PRO_STUB_TEXT,
   proPriceText,
   proRoute,
 } from '../app/utils/proPlan'
 
-test('тариф называется Pro, кнопка — «Подключить Pro», цена по умолчанию 3000 ₽ за портал', () => {
+test('тариф называется Pro, кнопка — «Купить Pro», цена по умолчанию 3000 ₽ за портал', () => {
   assert.equal(PRO_PLAN_LABEL, 'Pro')
-  assert.equal(PRO_CTA_LABEL, 'Подключить Pro')
+  assert.equal(PRO_CTA_LABEL, 'Купить Pro')
   assert.equal(proPriceText(), '3000\u00A0₽ в месяц за портал')
 })
 
@@ -25,9 +24,8 @@ test('proPriceText: цена с сервера побеждает, мусор �
   assert.equal(proPriceText('нет'), '3000\u00A0₽ в месяц за портал')
 })
 
-test('заглушка /pro: адрес и текст до появления формы запроса счёта', () => {
+test('форма запроса счёта живёт по адресу /pro', () => {
   assert.equal(PRO_ROUTE, '/pro')
-  assert.equal(PRO_STUB_TEXT, 'Скоро здесь можно будет запросить счёт; пока напишите на timesheet@mainsoft.su')
 })
 
 test('proRoute: код функции уходит параметром, чужое значение отбрасывается', () => {

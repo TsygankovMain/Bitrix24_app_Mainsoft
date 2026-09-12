@@ -884,3 +884,177 @@ class BillingEntry(models.Model):
                 name="billing_entry_one_active_per_timesheet",
             ),
         ]
+
+
+class PortalBillingCode(models.Model):
+    """Код портала для платежа: 6 цифр, выдаётся один раз и не меняется.
+
+    Второй ключ сопоставления платежа с порталом после номера счёта
+    (записка к макету покупки Pro): бухгалтер клиента может переписать
+    назначение платежа или заплатить по старому счёту, а код в платёжке
+    всё равно укажет на портал. Висит на Portal (ключ member_id), поэтому
+    смена домена его не трогает. Только цифры: в выписке их не перепутать
+    с похожими кириллицей и латиницей.
+
+    Отдельная модель, а не поле Portal: код нужен только покупке, и выдаётся
+    лениво — при первом открытии формы (pro_purchase_service.portal_code).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    portal = models.OneToOneField(Portal, on_delete=models.CASCADE, related_name="billing_code")
+    code = models.CharField(max_length=6, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_billing_code"
+
+    def __str__(self) -> str:
+        return f"PortalBillingCode<{self.code}>"
+
+
+class ProInvoiceSequence(models.Model):
+    """Сквозной нумератор счетов на Pro: УТ-0001, УТ-0002…
+
+    Номер выдаёт наш сервер, а не CRM: это первый ключ сопоставления
+    платежа, и он должен быть известен в момент заявки, даже если портал
+    Mainsoft недоступен. Одна строка на префикс; значение увеличивается
+    UPDATE … SET value = value + 1 внутри транзакции заявки — строка
+    блокируется, и два одновременных запроса одного номера не получат.
+    """
+
+    prefix = models.CharField(max_length=16, primary_key=True)
+    value = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        managed = True
+        db_table = "pro_invoice_sequence"
+
+
+class ProRequest(models.Model):
+    """Заявка на Pro: счёт на оплату подписки от портала клиента.
+
+    Портал берётся ТОЛЬКО из авторизации (JWT -> учётка -> member_id), в
+    теле запроса его нет: запросить счёт на чужой портал нельзя. Домен и
+    member_id хранятся снимком — по ним менеджер сверяет платёж, даже если
+    портал потом сменит домен.
+
+    Суммы — Decimal с копейками: это деньги в счёте, а не аналитика.
+
+    Статусы:
+    - draft     — сохранена, отправка в CRM Mainsoft ещё не пробовалась;
+    - pending   — ожидает отправки: вебхук не настроен или портал Mainsoft
+                  не ответил; повтор — `pro_requests sync`;
+    - sent      — сделка и смарт-счёт созданы в CRM Mainsoft;
+    - paid      — оплата подтверждена менеджером, Pro включён (`pro_requests paid`);
+    - cancelled — отменена клиентом, менеджером или заменена новой заявкой.
+
+    Открытая заявка (draft/pending/sent) у портала одна — частичный
+    уникальный индекс. Pro до оплаты не включается.
+    """
+
+    STATUS_DRAFT = "draft"
+    STATUS_PENDING = "pending"
+    STATUS_SENT = "sent"
+    STATUS_PAID = "paid"
+    STATUS_CANCELLED = "cancelled"
+    STATUSES = (STATUS_DRAFT, STATUS_PENDING, STATUS_SENT, STATUS_PAID, STATUS_CANCELLED)
+    OPEN_STATUSES = (STATUS_DRAFT, STATUS_PENDING, STATUS_SENT)
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    portal = models.ForeignKey(Portal, on_delete=models.PROTECT, related_name="pro_requests")
+    requested_by_account = models.ForeignKey(
+        Bitrix24Account, null=True, blank=True, on_delete=models.SET_NULL, related_name="pro_requests",
+    )
+    requested_by_id = models.CharField(max_length=50, blank=True, default="")
+    requested_by_name = models.CharField(max_length=255, blank=True, default="")
+    requested_by_admin = models.BooleanField(default=False)
+
+    domain_snapshot = models.CharField(max_length=255, blank=True, default="")
+    member_id_snapshot = models.CharField(max_length=255, blank=True, default="")
+    portal_code = models.CharField(max_length=6)
+
+    contact_name = models.CharField(max_length=255, blank=True, default="")
+    contact_email = models.CharField(max_length=254, blank=True, default="")
+    contact_cc = models.CharField(max_length=254, blank=True, default="")
+    contact_phone = models.CharField(max_length=32, blank=True, default="")
+
+    payer_type = models.CharField(max_length=8, default="org")
+    payer_inn = models.CharField(max_length=12)
+    payer_kpp = models.CharField(max_length=9, blank=True, default="")
+    payer_name = models.CharField(max_length=500)
+    payer_address = models.CharField(max_length=500, blank=True, default="")
+    #: id компании в CRM портала клиента, если реквизиты подставлены оттуда.
+    payer_company_id = models.CharField(max_length=50, blank=True, default="")
+
+    months = models.PositiveSmallIntegerField()
+    price_month = models.DecimalField(max_digits=12, decimal_places=2)
+    base_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    subtotal_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    vat_mode = models.CharField(max_length=16)
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    vat_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    sequence_number = models.PositiveIntegerField()
+    invoice_number = models.CharField(max_length=32, unique=True)
+    invoice_date = models.DateField()
+    due_date = models.DateField()
+    payment_purpose = models.CharField(max_length=210)
+    offer_accepted_at = models.DateTimeField()
+
+    status = models.CharField(max_length=16, default=STATUS_DRAFT, db_index=True)
+
+    crm_company_id = models.CharField(max_length=50, blank=True, default="")
+    crm_deal_id = models.CharField(max_length=50, blank=True, default="")
+    crm_invoice_id = models.CharField(max_length=50, blank=True, default="")
+    crm_document_id = models.CharField(max_length=50, blank=True, default="")
+    #: Ссылка генератора документов. Может содержать токен — наружу не отдаётся,
+    #: PDF клиент получает через наш сервер.
+    crm_pdf_url = models.TextField(blank=True, default="")
+    crm_error = models.TextField(blank=True, default="")
+    crm_attempts = models.PositiveIntegerField(default=0)
+    crm_last_attempt_at = models.DateTimeField(null=True, blank=True)
+    crm_sent_at = models.DateTimeField(null=True, blank=True)
+    #: Отмена дошла до CRM (сделка переведена в «Не оплачен»).
+    crm_cancel_synced_at = models.DateTimeField(null=True, blank=True)
+
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_on = models.DateField(null=True, blank=True)
+    paid_by = models.CharField(max_length=255, blank=True, default="")
+    pro_paid_until = models.DateField(null=True, blank=True)
+
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.CharField(max_length=255, blank=True, default="")
+    cancel_reason = models.TextField(blank=True, default="")
+    replaced_by = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="replaces",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "pro_request"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["portal", "status"], name="pro_request_portal_status_idx"),
+            models.Index(fields=["portal_code"], name="pro_request_code_idx"),
+            models.Index(fields=["payer_inn"], name="pro_request_inn_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["portal"],
+                condition=models.Q(status__in=["draft", "pending", "sent"]),
+                name="pro_request_one_open_per_portal",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"ProRequest<{self.invoice_number}>"
+
+    @property
+    def is_open(self) -> bool:
+        return self.status in self.OPEN_STATUSES
