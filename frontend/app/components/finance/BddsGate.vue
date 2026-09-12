@@ -25,6 +25,7 @@
  * набора состояний в один компонент значит сделать оба хуже читаемыми.
  */
 import { computed } from 'vue'
+import MoneyAccessNote from '~/components/finance/MoneyAccessNote.vue'
 import PaidFeatureCard from '~/components/finance/PaidFeatureCard.vue'
 import ProPlanNotice from '~/components/finance/ProPlanNotice.vue'
 
@@ -36,6 +37,12 @@ defineProps<{
 const { access, features, featuresFailed } = useBddsFeature()
 
 const priceMonthRub = computed(() => features.value?.bdds?.priceMonthRub ?? null)
+/**
+ * Роль без права видеть суммы: ограничения ролей действуют (в том числе после
+ * окончания Pro) и сервер сказал, что права money_view нет. Догадка экран не
+ * закрывает — см. useAppPermissions.
+ */
+const { moneyDenied } = useAppPermissions()
 </script>
 
 <template>
@@ -57,12 +64,12 @@ const priceMonthRub = computed(() => features.value?.bdds?.priceMonthRub ?? null
             <p v-if="description" class="mt-1 text-sm text-slate-500">{{ description }}</p>
           </div>
 
-          <div v-if="access.enabled" class="flex flex-wrap items-center justify-end gap-2">
+          <div v-if="access.enabled && !moneyDenied" class="flex flex-wrap items-center justify-end gap-2">
             <slot name="actions" />
           </div>
         </div>
 
-        <slot v-if="access.enabled" name="filters" />
+        <slot v-if="access.enabled && !moneyDenied" name="filters" />
       </section>
 
       <div v-if="access.unknown && !featuresFailed" class="ms-surface ms-empty-state">
@@ -83,6 +90,8 @@ const priceMonthRub = computed(() => features.value?.bdds?.priceMonthRub ?? null
           </p>
         </template>
       </PaidFeatureCard>
+
+      <MoneyAccessNote v-else-if="moneyDenied" />
 
       <template v-else>
         <ProPlanNotice :notice="access.notice" feature-id="bdds" />

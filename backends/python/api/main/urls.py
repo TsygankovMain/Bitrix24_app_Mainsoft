@@ -111,6 +111,11 @@ urlpatterns = [
     # гейты прав и подписки висят внутри, на POST-ветке, чтобы реестр читался
     # и без права выставлять, и при выключенной подписке.
     path('api/features', views.get_features, name='get_features'),
+    # Роли и права (функция «roles» тарифа Pro, main/roles.py): свои права,
+    # каталог с назначениями и назначение роли.
+    path('api/roles/me', views.roles_me, name='roles_me'),
+    path('api/roles', views.roles_list, name='roles_list'),
+    path('api/roles/assign', views.roles_assign, name='roles_assign'),
     # Шаблоны генератора документов портала — для выбора в настройках.
     # Стоит ДО маршрута documents/<document_id>, но пересечься они всё равно
     # не могут: разные префиксы после api/billing.

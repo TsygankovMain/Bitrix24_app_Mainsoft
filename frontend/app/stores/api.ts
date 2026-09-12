@@ -919,12 +919,15 @@ export const useApiStore = defineStore(
     const getUsers = async (
       page: number = 1,
       limit: number = 50,
-      activeOnly: boolean = false
+      activeOnly: boolean = false,
+      search: string = ''
     ): Promise<{ items: Array<{ id: string, name: string, last_name: string, active: boolean, updated_at: string }>, total: number, page: number, pages: number, has_next: boolean, has_previous: boolean }> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
       params.append('limit', limit.toString())
       if (activeOnly) params.append('active_only', '1')
+      // Поиск по имени и фамилии — экран ролей (backend: get_users, ?search=).
+      if (search.trim()) params.append('search', search.trim())
 
       return await $api(`/api/users?${params.toString()}`, {
         headers: {
@@ -1548,6 +1551,31 @@ export const useApiStore = defineStore(
       }, forceRefresh)
     }
 
+    /**
+     * Роли и права (main/roles.py). Кэша нет ни у одной ручки: права
+     * меняются назначением на соседнем экране, и вчерашняя роль из
+     * localStorage показала бы кнопку, которую сервер уже не пропустит.
+     */
+    const getRolesMe = async (): Promise<unknown> => {
+      return await $api('/api/roles/me', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const getRoles = async (): Promise<Record<string, unknown>> => {
+      return await $api('/api/roles', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const assignRole = async (userId: string, role: string): Promise<Record<string, unknown>> => {
+      return await $api('/api/roles/assign', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { user_id: userId, role },
+      })
+    }
+
     /** Собрать строки и предупреждения по фильтру. Ничего не пишет. */
     const previewBillingDocument = async (filter: BillingFilterBody): Promise<BillingPreviewResponse> => {
       return await $api('/api/billing/preview', {
@@ -1702,6 +1730,9 @@ export const useApiStore = defineStore(
       getTimesheetSyncStatus,
       getTimesheetsList,
       getUsers,
+      getRolesMe,
+      getRoles,
+      assignRole,
       getProjectBoard,
       getProjectBoardMeta,
       getProjectBoardCard,

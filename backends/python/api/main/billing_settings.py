@@ -31,15 +31,11 @@ ConfigurationService) — параллельный механизм не зав�
 (PortalSubscription), потому что app.option портала пишется токеном приложения,
 то есть из консоли браузера.
 
-Права. Общего серверного гейта по ролям в приложении нет (решение владельца
-продукта от 11.06.2026), точечные исключения — закрытие месяца
-(@admin_required) и теперь выставление: это операции того же класса, они
-превращаются в деньги клиента. Проверка: администратор портала ИЛИ
-пользователь из списка «Бухгалтерия».
-
-Администратор проходит БЕЗ обращения к порталу — флаг is_b24_user_admin уже
-в нашей БД. Живой app.option.get нужен только для не-администратора, иначе
-самая частая проверка платила бы за REST-вызов на каждый запрос.
+Права решает ролевая модель (main/roles.py). Ключ ``billing_accountants``
+остаётся в конфигурации только как ИСТОЧНИК ПЕРЕНОСА: при первой проверке
+прав на портале список переносится в роль «Бухгалтерия» в нашей БД и дальше
+не читается — app.option пишется токеном приложения, и права по нему можно
+было выдать себе из консоли браузера.
 """
 
 import logging
@@ -169,36 +165,60 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
 
 
 def can_manage_billing(account, client: Optional[Any] = None) -> bool:
+    """Может ли человек выставлять счета. Решает ролевая модель (main/roles.py).
+
+    Пока ограничения ролей не действуют (тарифа Pro нет), ответ прежний: администратор портала или
+    «Бухгалтерия». Сама «Бухгалтерия» теперь роль в нашей БД, а не список в
+    app.option: список переносится в роль при первой проверке прав.
+    """
     if account is None:
         return False
-    if getattr(account, "is_b24_user_admin", False):
-        return True
-    user_id = str(getattr(account, "b24_user_id", "") or "").strip()
-    if not user_id:
-        return False
-    return user_id in load_billing_settings(account, client).get("accountants", [])
+    from .roles import PERM_BILLING_ISSUE, has_permission
+
+    return has_permission(account, PERM_BILLING_ISSUE, client)
+
+
+def _billing_gate(permission: str, action: str):
+    def decorator(view_func):
+        @wraps(view_func)
+        def wrapped(request, *args, **kwargs):
+            from .roles import denial_response, has_permission
+
+            account = getattr(request, "bitrix24_account", None)
+            if account is None or not has_permission(account, permission):
+                return denial_response(
+                    account, permission, code="billing_forbidden", action=action,
+                )
+            return view_func(request, *args, **kwargs)
+
+        return wrapped
+
+    return decorator
 
 
 def billing_manager_required(view_func):
-    """Серверный гейт «выставлять и отменять». Применять ПОСЛЕ @auth_required."""
+    """Серверный гейт «выставлять и печатать». Применять ПОСЛЕ @auth_required."""
+    from .roles import PERM_BILLING_ISSUE
 
-    @wraps(view_func)
-    def wrapped(request, *args, **kwargs):
-        account = getattr(request, "bitrix24_account", None)
-        if not can_manage_billing(account):
-            return JsonResponse(
-                {
-                    "error": (
-                        "Выставлять и отменять счета может администратор портала "
-                        "или сотрудник из списка «Бухгалтерия» в настройках приложения."
-                    ),
-                    "code": "billing_forbidden",
-                },
-                status=403,
-            )
-        return view_func(request, *args, **kwargs)
+    return _billing_gate(PERM_BILLING_ISSUE, "Выставлять счета и печатать документы")(view_func)
 
-    return wrapped
+
+def billing_cancel_required(view_func):
+    """Серверный гейт «отменять счёт». Применять ПОСЛЕ @auth_required."""
+    from .roles import PERM_BILLING_CANCEL
+
+    return _billing_gate(PERM_BILLING_CANCEL, "Отменять счета")(view_func)
+
+
+def billing_money_view_required(view_func):
+    """Серверный гейт «видеть реестр счетов». Закрывает только при включённых ролях.
+
+    Пока ограничения ролей не действуют (тарифа Pro нет), право «видеть суммы» есть у всех — ровно
+    как было: реестр документов читал любой сотрудник.
+    """
+    from .roles import PERM_MONEY_VIEW
+
+    return _billing_gate(PERM_MONEY_VIEW, "Смотреть счета и акты")(view_func)
 
 
 # Ключи настроек с шаблонами генератора документов: значение — как называть

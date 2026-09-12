@@ -53,6 +53,46 @@
         </template>
       </B24Card>
 
+      <!--
+        Роли и права — второй картой, сразу после сопоставления полей.
+
+        До 12.09.2026 права задавались списком «Бухгалтерия» внутри блока
+        «Счёт и акт» ниже, и пользователь их не нашёл. Сам экран — отдельный
+        (/settings/roles), здесь только состояние и вход.
+      -->
+      <B24Card>
+        <template #header>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-base font-semibold text-slate-900">Роли и права</span>
+            <span
+              class="rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+              :class="restrictionsActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'"
+            >
+              {{ rolesModeBadge(rolesAccess.unknown ? null : rolesAccess) }}
+            </span>
+          </div>
+        </template>
+
+        <p class="text-sm text-slate-600">
+          Роли «Администратор», «Бухгалтерия», «Руководитель проекта» и «Сотрудник» решают, кто видит суммы,
+          выставляет и отменяет счета, добавляет начисления и списания, закрывает месяц и меняет настройки.
+          Таблица прав — на экране ролей.
+        </p>
+        <p v-if="rolesMe" class="mt-2 text-sm text-slate-500">
+          Ваша роль: {{ rolesMe.roleTitle }}.
+          <template v-if="!restrictionsActive">
+            Роли входят в тариф Pro; без него действуют прежние права.
+          </template>
+          <template v-else-if="!rolesAccess.canWrite">
+            Pro закончился: роли действуют, но менять их нельзя до продления.
+          </template>
+        </p>
+
+        <template #footer>
+          <B24Button label="Открыть роли и права" color="success" @click="router.push(ROLES_SETTINGS_PATH)" />
+        </template>
+      </B24Card>
+
       <!-- Тумблер «Кликабельные метки» -->
       <B24Card>
         <template #header>
@@ -104,8 +144,10 @@
         </div>
 
         <div v-else class="space-y-5">
-          <p v-if="!userStore.isAdmin" class="text-sm text-slate-500">
-            Менять эти настройки может админ портала. Ниже — текущие значения.
+          <p v-if="!canEditSettings" class="text-sm text-slate-500">
+            {{ restrictionsActive
+              ? 'Менять эти настройки может роль «Администратор». Ниже — текущие значения.'
+              : 'Менять эти настройки может админ портала. Ниже — текущие значения.' }}
           </p>
 
           <!--
@@ -126,7 +168,7 @@
               id="billing-our-company"
               v-model="billingSettings.ourCompanyId"
               class="w-full"
-              :disabled="!userStore.isAdmin"
+              :disabled="!canEditSettings"
               @change="onOurCompanyChange"
             >
               <option value="">Как в карточке проекта</option>
@@ -173,7 +215,7 @@
                 v-model="billingSettings.allowOpenPeriod"
                 type="checkbox"
                 class="peer sr-only"
-                :disabled="!userStore.isAdmin"
+                :disabled="!canEditSettings"
               >
               <div class="h-6 w-11 rounded-full bg-slate-300 transition peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-200 peer-checked:bg-[#0075ff] peer-checked:after:translate-x-full peer-checked:after:border-white after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-white after:transition-all after:content-['']" />
             </label>
@@ -202,7 +244,7 @@
               id="billing-line-variant"
               v-model="billingSettings.lineVariant"
               class="w-full"
-              :disabled="!userStore.isAdmin"
+              :disabled="!canEditSettings"
             >
               <option v-for="variant in BILLING_LINE_VARIANTS" :key="variant.id" :value="variant.id">
                 {{ variant.label }}
@@ -239,7 +281,7 @@
                   :value="row.template"
                   type="text"
                   class="w-full"
-                  :disabled="!userStore.isAdmin"
+                  :disabled="!canEditSettings"
                   :placeholder="row.defaultTemplate"
                   @input="setLineTemplate(row.id, ($event.target as HTMLInputElement).value)"
                 >
@@ -280,7 +322,7 @@
               v-model="billingSettings.serviceName"
               type="text"
               class="w-full"
-              :disabled="!userStore.isAdmin"
+              :disabled="!canEditSettings"
               :placeholder="DEFAULT_BILLING_SERVICE_NAME"
             >
           </div>
@@ -298,7 +340,7 @@
               id="billing-task-level"
               v-model="billingSettings.taskLevel"
               class="w-full"
-              :disabled="!userStore.isAdmin"
+              :disabled="!canEditSettings"
             >
               <option v-for="option in BILLING_TASK_LEVEL_OPTIONS" :key="option.id" :value="option.id">
                 {{ option.label }}
@@ -345,7 +387,7 @@
                 id="billing-act-template"
                 v-model="billingSettings.actTemplateId"
                 class="mt-2 w-full"
-                :disabled="!userStore.isAdmin"
+                :disabled="!canEditSettings"
               >
                 <!--
                   Пустое значение у акта — это не «не печатать», а прежнее
@@ -384,7 +426,7 @@
                 id="billing-invoice-template"
                 v-model="billingSettings.invoiceTemplateId"
                 class="mt-2 w-full"
-                :disabled="!userStore.isAdmin"
+                :disabled="!canEditSettings"
               >
                 <option value="">Не печатать счёт из приложения</option>
                 <option v-for="template in templates" :key="template.id" :value="template.id">
@@ -406,18 +448,19 @@
             </div>
           </div>
 
+          <!--
+            «Бухгалтерия» переехала в роли. Список здесь больше не редактируется:
+            сервер переносит его в роль «Бухгалтерия» при первой проверке прав и
+            дальше не читает — app.option пишется токеном приложения, то есть
+            из консоли браузера, и права по нему можно было выдать себе самому.
+          -->
           <div>
             <p class="text-sm font-medium text-slate-700">Бухгалтерия</p>
             <p class="mb-2 mt-1 text-sm text-slate-500">
-              Кто может выставлять счета, печатать акты и отменять документы, кроме админов портала.
-              Реестр документов при этом видят все — список ограничивает только запись.
+              Кто выставляет счета, печатает акты и отменяет документы, теперь задаётся ролью «Бухгалтерия»
+              на экране «Роли и права». Прежний список перенесён туда автоматически.
             </p>
-            <MultiSelectFilter
-              label="Сотрудники"
-              :options="employeeOptions"
-              :model-value="billingSettings.accountantIds"
-              @update:model-value="billingSettings.accountantIds = ($event as string[]).map(String)"
-            />
+            <B24Button label="Назначить «Бухгалтерию»" color="link" @click="router.push(ROLES_SETTINGS_PATH)" />
           </div>
 
           <div v-if="billingSaveNotice" class="ms-note ms-note-success">{{ billingSaveNotice }}</div>
@@ -701,6 +744,7 @@ import {
   type BillingSettings,
 } from '~/utils/billingSettings'
 import { resolveFinanceMappingNotice, resolveMappingHealth } from '~/utils/fieldMapping'
+import { ROLES_SETTINGS_PATH, rolesModeBadge } from '~/utils/appRoles'
 import type { AppConfigurationPayload } from '~/types/config'
 import type { FilterOption } from '~/types/report'
 
@@ -727,10 +771,14 @@ function emptyBillingSettings(): BillingSettings {
 
 const router = useRouter()
 const userSettings = useUserSettingsStore()
-const userStore = useUserStore()
 const apiStore = useApiStore()
 const { access: billingAccess } = useBillingFeature()
 const { access: bddsAccess } = useBddsFeature()
+/**
+ * Кто может менять настройки. Без ролевой модели — как было, админ портала;
+ * с ней — роль «Администратор» (право settings_manage, appRoles.ts).
+ */
+const { me: rolesMe, rolesAccess, restrictionsActive, canEditSettings, loadPermissions } = useAppPermissions()
 
 const { initApp } = useAppInit('SettingsPage')
 const { $initializeB24Frame } = useNuxtApp()
@@ -945,7 +993,7 @@ const billingSettingsDirty = computed(() => billingSettingsChanged(
   savedBillingSettings.value
 ))
 
-const canSaveBillingSettings = computed(() => userStore.isAdmin
+const canSaveBillingSettings = computed(() => canEditSettings.value
   && billingSettingsReady.value
   && billingSettingsDirty.value
   && !isSavingBilling.value)
@@ -991,12 +1039,12 @@ const bddsSettingsDirty = computed(() => bddsSettingsChanged(
   savedBddsSettings.value
 ))
 
-const canSaveBddsSettings = computed(() => userStore.isAdmin
+const canSaveBddsSettings = computed(() => canEditSettings.value
   && billingSettingsReady.value
   && bddsSettingsDirty.value
   && !isSavingBdds.value)
 
-const canRunBddsNotifier = computed(() => userStore.isAdmin
+const canRunBddsNotifier = computed(() => canEditSettings.value
   && bddsAccess.value.canWrite
   && !isRunningBddsNotifier.value)
 
@@ -1071,6 +1119,9 @@ onMounted(async () => {
   try {
     const $b24 = await $initializeB24Frame()
     await initApp($b24, localesI18n, setLocale)
+    // Права — до загрузки настроек: от них зависит, запрашивать ли шаблоны
+    // генератора документов и можно ли что-то сохранять.
+    await loadPermissions()
   } catch {
     billingSettingsError.value = 'Приложение не смогло связаться с порталом — настройки «Счёта и акта» недоступны.'
     return
@@ -1087,7 +1138,7 @@ onMounted(async () => {
     // Не-админу список не нужен: сохранить настройку он всё равно не может,
     // а ручка закрыта тем же гейтом, что выставление, и ответила бы ему 403
     // — жалобой на права, которых он не запрашивал.
-    userStore.isAdmin ? apiStore.getBillingTemplates() : Promise.resolve(null),
+    canEditSettings.value ? apiStore.getBillingTemplates() : Promise.resolve(null),
   ])
 
   if (configResult.status !== 'fulfilled') {
@@ -1114,7 +1165,7 @@ onMounted(async () => {
     myCompaniesFailed.value = true
   }
 
-  if (!userStore.isAdmin) {
+  if (!canEditSettings.value) {
     templatesSkipped.value = true
   } else if (templatesResult.status === 'fulfilled') {
     templates.value = parseBillingTemplates(templatesResult.value)

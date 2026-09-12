@@ -50,6 +50,7 @@ import type { BddsProjectRecord, BddsThresholds, BddsTotals } from '~/types/bdds
 const router = useRouter()
 const apiStore = useApiStore()
 const { access } = useBddsFeature()
+const { moneyDenied, loadPermissions } = useAppPermissions()
 
 useHead({ title: 'БДДС по проектам' })
 
@@ -201,6 +202,12 @@ onMounted(async () => {
     return
   }
 
+  // Права — до реестра: роли без права видеть суммы запрос не нужен, экран
+  // покажет объяснение (BddsGate, MoneyAccessNote), а не отказ сервера.
+  await loadPermissions()
+  if (moneyDenied.value) {
+    return
+  }
   await loadProjects()
 })
 </script>

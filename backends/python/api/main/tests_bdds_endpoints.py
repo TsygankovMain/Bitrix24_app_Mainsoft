@@ -18,7 +18,7 @@ from django.core.cache import cache
 from django.test import Client, TestCase
 from django.utils import timezone
 
-from .models import Bitrix24Account, PortalSubscription, ProjectCard, SystemLog, TimesheetItem
+from .models import Bitrix24Account, PortalRole, PortalSubscription, ProjectCard, SystemLog, TimesheetItem
 from .pro_plan_service import set_account_plan
 
 
@@ -242,6 +242,10 @@ class BddsSubscriptionGateTest(BddsEndpointFixture):
             is_master_account=False, domain_url="ep-bdds.bitrix24.ru",
             status="active", application_version=1,
         )
+        # Pro включает и ролевую модель: суммы видят роли с правом money_view
+        # (main/roles.py). Коллеге даём «Руководителя проекта» — проверяется
+        # по-прежнему подписка на портал, а не права конкретного человека.
+        PortalRole.objects.create(member_id="m-ep-bdds", b24_user_id="12", role=PortalRole.ROLE_PROJECT_MANAGER)
 
         response = self.get("/api/bdds/projects", token=colleague.create_jwt_token())
 
@@ -565,10 +569,17 @@ class FinanceOperationWriteRightsTest(BddsEndpointFixture):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(self.portal.added), 1)
 
-    def test_plain_employee_still_reads_operations(self):
-        """Чтение правами не закрыто: в CRM эти элементы человек и так видит."""
-        self.demote()
+    def test_project_manager_reads_but_employee_without_role_does_not(self):
+        """Чтение операций — право money_view ролевой модели, которая входит в Pro.
 
+        Прежде чтение правами закрыто не было. Теперь Pro включает роли, и
+        сотрудник без роли сумм не видит, а «Руководитель проекта» — видит.
+        Добавлять операции он при этом не может (tests_roles).
+        """
+        self.demote()
+        self.assertEqual(self.get("/api/finance-operations").status_code, 403)
+
+        PortalRole.objects.create(member_id="m-ep-bdds", b24_user_id="11", role=PortalRole.ROLE_PROJECT_MANAGER)
         self.assertEqual(self.get("/api/finance-operations").status_code, 200)
 
     def test_purpose_becomes_the_item_title(self):

@@ -50,6 +50,10 @@ let settingsRequest: Promise<void> | null = null
 export const useBillingFeature = () => {
   const apiStore = useApiStore()
   const userStore = useUserStore()
+  // Права «выставлять» решает ролевая модель на сервере (/api/roles/me).
+  // Список «Бухгалтерия» из конфигурации остаётся запасной догадкой, пока
+  // ответа нет: сервер после переноса списка в роли его уже не читает.
+  const { permissions: appPermissions, loadPermissions } = useAppPermissions()
 
   const { features, featuresFailed, loadPortalFeatures } = usePortalFeatures()
   /** null — список «Бухгалтерия» ещё не читали (конфигурация не загружена). */
@@ -71,12 +75,17 @@ export const useBillingFeature = () => {
    * сможет только админ портала, то есть ошибаемся в строгую сторону.
    */
   const loadBillingSettings = async (force = false): Promise<void> => {
+    // Права грузятся рядом с настройками: оба ответа нужны одним и тем же
+    // экранам, а отказ ручки прав не мешает настройкам (и наоборот).
+    const permissionsRequest = loadPermissions(force)
+
     if (accountantIds.value && !force) {
+      await permissionsRequest
       return
     }
 
     if (settingsRequest) {
-      await settingsRequest
+      await Promise.all([settingsRequest, permissionsRequest])
       return
     }
 
@@ -99,7 +108,7 @@ export const useBillingFeature = () => {
       settingsRequest = null
     })
 
-    await settingsRequest
+    await Promise.all([settingsRequest, permissionsRequest])
   }
 
   /** Открыт ли экран. Флаг из featureFlags остаётся аварийным выключателем. */
@@ -108,11 +117,13 @@ export const useBillingFeature = () => {
     flagEnabled: FINANCE_BILLING_ENABLED,
   }))
 
-  const isManager = computed(() => isBillingManager({
-    isAdmin: Boolean(userStore.isAdmin),
-    userId: userStore.id,
-    accountantIds: accountantIds.value || [],
-  }))
+  const isManager = computed(() => appPermissions.value.known
+    ? appPermissions.value.billing_issue
+    : isBillingManager({
+      isAdmin: Boolean(userStore.isAdmin),
+      userId: userStore.id,
+      accountantIds: accountantIds.value || [],
+    }))
 
   const permissions = computed(() => resolveBillingUiPermissions(access.value, isManager.value))
 

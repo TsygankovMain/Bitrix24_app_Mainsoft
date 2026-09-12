@@ -25,6 +25,7 @@ from .models import (
     BillingDocument,
     BillingEntry,
     Bitrix24Account,
+    PortalRole,
     PortalSubscription,
     PortalTask,
     PortalUser,
@@ -460,7 +461,10 @@ class PermissionTest(BillingEndpointFixture):
         приложении лежат по учёткам (уникальность «учётка + bitrix_id»), и
         чужих он бы просто не увидел — тест проверял бы не право, а пустоту."""
         account, token = self._plain_user(user_id=99)
-        self.billing_settings["accountants"] = ["99"]
+        # «Бухгалтерия» — роль в нашей БД (main/roles.py), а не список в
+        # настройках: список app.option переносится в роль один раз и дальше
+        # не читается. Перенос проверяют tests_roles.
+        PortalRole.objects.create(member_id="m-ep-billing", b24_user_id="99", role=PortalRole.ROLE_ACCOUNTANT)
         ProjectCard.objects.create(
             bitrix24_account=account, project_id="73", project_name="Мейнсофт",
             stage="in_work", hourly_rate=2000.0,
@@ -480,13 +484,18 @@ class PermissionTest(BillingEndpointFixture):
 
         self.assertEqual(response.status_code, 201)
 
-    def test_plain_user_can_read_the_registry(self):
-        """Чтение реестра гейта не имеет: гейт только на пишущих операциях."""
+    def test_registry_reading_follows_the_role_model(self):
+        """Реестр читают роли с правом money_view (main/roles.py).
+
+        Pro включает ролевую модель, поэтому сотрудник без роли реестр не видит;
+        «Руководитель проекта» — видит, но не выставляет. Без тарифа реестр,
+        как и прежде, открыт всем (tests_roles.RolesDisabledBehaviourTest).
+        """
         _account, token = self._plain_user()
+        self.assertEqual(self.get("/api/billing/documents", token=token).status_code, 403)
 
-        response = self.get("/api/billing/documents", token=token)
-
-        self.assertEqual(response.status_code, 200)
+        PortalRole.objects.create(member_id="m-ep-billing", b24_user_id="99", role=PortalRole.ROLE_PROJECT_MANAGER)
+        self.assertEqual(self.get("/api/billing/documents", token=token).status_code, 200)
 
     def test_endpoints_require_jwt(self):
         """Без токена ни один адрес счёта не отдаёт данных.
