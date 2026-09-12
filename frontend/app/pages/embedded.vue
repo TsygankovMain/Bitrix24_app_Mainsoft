@@ -1,80 +1,64 @@
 <script setup lang="ts">
+/**
+ * Вкладка задачи (placement TASK_VIEW_TAB) — рабочий экран учёта часов.
+ *
+ * Редизайн «вариант A — родной портал», сентябрь 2026. Что изменилось и почему:
+ *
+ *  1. ОДНА КОЛОНКА. Было: сетка `1fr 380px` без брейкпоинтов. Вкладка живёт в
+ *     iframe карточки задачи, ширину которого задаёт портал: на 640 px дереву
+ *     оставалось ~230 px, на 400 px вёрстка ломалась. Стало: одна колонка на
+ *     любой ширине, плотность перестраивается на 660 и 480 px
+ *     (`utils/taskTabLayout.ts`).
+ *
+ *  2. ФОРМА СПИСАНИЯ РАСКРЫВАЕТСЯ В СПИСКЕ. Модальное окно во фрейме с
+ *     автовысотой (`BX24.fitWindow`) центрируется по всему фрейму: при длинном
+ *     дереве оно оказывается вне видимой части страницы. Инлайн-форма
+ *     появляется там, куда нажали, и этой проблемы не имеет вовсе.
+ *
+ *  3. ДЕЙСТВИЯ У ЗАПИСИ ВИДНЫ ВСЕГДА — раньше проявлялись по наведению, то есть
+ *     на тачскрине не существовали.
+ *
+ *  4. СУММ НЕТ. Поле «Стоимость часа» и «Сумма для клиента» убраны: их видят
+ *     руководители в отчётах. На сохранение это не влияет — снимок ставки
+ *     пишется из карточки проекта (`applyProjectContextFields`), а поле на
+ *     экране было к тому же нерабочим: `clientHourRate` — computed без сеттера,
+ *     и ввод в него Vue молча отбрасывал.
+ *
+ *  5. Лаймовые остатки бренда заменены на токены Air, контраст акцентной
+ *     кнопки доведён до AA (см. `utils/colorContrast.ts` и его тест).
+ *
+ *  6. «В отчёт Битрикс24» и «Excel» переехали сюда из `pages/task.vue` —
+ *     экрана, на который в проде ничего не вело.
+ *
+ * Сборка полей списания идёт через `useTimesheetEntry` — тот же путь, что
+ * раньше был скопирован в этот файл построчно. Копия удалена: решения о том,
+ * что писать в запись и что блокирует сохранение, живут в
+ * `utils/timesheetEntry.ts` и покрыты тестами.
+ */
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import { onMounted, ref, computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import HelpSidePanel from '@/components/HelpSidePanel.vue'
+import TaskTabCard from '@/components/task/TaskTabCard.vue'
 import { canOpenNativeApplication, resolveTaskPlacementId, useIframeResizeOnToggle } from '@/composables/useTaskPlacement'
 import { useTaskTreeLoader } from '@/composables/useTaskTreeLoader'
-import { filterTaskTree, findTaskIdForItem, findTaskNodeById, flattenTaskItems } from '@/utils/taskTree'
-
-
-import { requestIframeFullHeight } from '@/utils/iframe-resizer'
+import { useTimesheetEntry } from '@/composables/useTimesheetEntry'
+import { filterTaskTree, findTaskIdForItem } from '@/utils/taskTree'
+import { requestIframeAutoHeight, requestIframeFullHeight } from '@/utils/iframe-resizer'
+import { resolveTaskTabLayout, taskTabLayoutClass } from '@/utils/taskTabLayout'
+import { formatTreeSummaryLine, summarizeTaskTree } from '@/utils/taskTabFormat'
+import { CSV_BOM, buildCsvFileName, buildElapsedItemBatch, buildTaskTreeCsv } from '@/utils/taskTabExport'
+import { draftFromItem, makeTaskEntryDraft, type TaskEntryDraft, type TaskFormAnchor } from '@/utils/taskTabEntry'
+import type { TaskWorkspaceItem } from '~/types/task-workspace'
 
 const { initApp, processErrorGlobal } = useAppInit('EmbeddedPage')
 const { $initializeB24Frame } = useNuxtApp()
 const { locales: localesI18n, setLocale } = useI18n()
 const toast = useToast()
 
-// --- STATE ---
-const isHelpOpen = ref(false)
-
-// --- Diagnostics & Navigation ---
-const isNativeSidePanelAvailable = ref(false)
-
-function _openHelp() {
-    if (isNativeSidePanelAvailable.value) {
-        // Try native slider first
-        try {
-             /* 
-                Using BX24.openApplication to open the guide route in a native slider. 
-                This puts the guide OUTSIDE the iframe constraints.
-             */
-             // @ts-expect-error BX24 is injected globally by the Bitrix24 frame and is not typed
-             window.BX24.openApplication(
-                { 
-                    url: '/guide?from=slider' 
-                },
-                {
-                    title: 'Справочник',
-                    width: 900
-                }
-             );
-             return;
-        } catch (e) {
-            console.error('Native slider failed, using fallback', e)
-        }
-    }
-    
-    // Fallback to local teleported component
-    // Request full height to prevent clipping
-    requestIframeFullHeight()
-    isHelpOpen.value = true
-}
-
-useIframeResizeOnToggle(isHelpOpen)
-
-
 let $b24: null | B24Frame = null
 const apiStore = useApiStore()
-
-interface EditingItem {
-    id: string | number | null
-    taskId: string | null
-    description: string
-    employeeId: string | number
-    date: string
-    hours: number
-    isConsidered: boolean
-    splitHours: number
-    splitInvert?: boolean
-    keepOriginalConsidered?: boolean
-    [key: string]: unknown
-}
-
-const rootTaskId = ref<string | null>(null)
-const expandedTasks = ref<Set<string>>(new Set())
-const currentEditingId = ref<string | null>(null)
-const editingItem = ref<EditingItem | null>(null)
+const { prepareEntryFields } = useTimesheetEntry()
 
 const {
     isLoading,
@@ -83,46 +67,58 @@ const {
     currentUserId,
     taskTree,
     config,
-    clientHourRate,
     loadConfigAndUsers,
     loadTaskTree
 } = useTaskTreeLoader()
 
-// --- FILTER STATE ---
+// --- СОСТОЯНИЕ ЭКРАНА ---
+const rootTaskId = ref<string | null>(null)
+const expandedTasks = ref<Set<string>>(new Set())
+const anchor = ref<TaskFormAnchor | null>(null)
+const draft = ref<TaskEntryDraft | null>(null)
+const isSaving = ref(false)
+const notice = ref<string | null>(null)
+
+const isHelpOpen = ref(false)
+const isNativeSidePanelAvailable = ref(false)
+const isFilterOpen = ref(false)
+const isReportConfirmOpen = ref(false)
+const isReporting = ref(false)
+
 const filterEmployeeId = ref<string>('')
 const filterDateFrom = ref<string>('')
 const filterDateTo = ref<string>('')
 
-const projectCardCache = new Map<string, Record<string, unknown>>()
+// --- РАСКЛАДКА ПО ШИРИНЕ ФРЕЙМА ---
+const frameWidth = ref(0)
+const layout = computed(() => resolveTaskTabLayout(frameWidth.value))
+const layoutClass = computed(() => taskTabLayoutClass(layout.value.mode))
 
-async function reloadWorkspace() {
-    if (!$b24 || !rootTaskId.value) {
-        return
-    }
-
-    await loadTaskTree($b24, rootTaskId.value)
-    expandedTasks.value = new Set([rootTaskId.value])
-    
-    // Синк убран с открытия: данные читаются из БД, свежесть держит фоновый
-    // планировщик + кнопка «Обновить». (Фаза 1 sync-offload.)
-    projectCardCache.clear()
+function measureFrameWidth() {
+    frameWidth.value = window.innerWidth
 }
 
-// --- INITIALIZATION ---
-onMounted(async () => {
+// --- ВЫЧИСЛЯЕМОЕ ---
+const isFilterActive = computed(() =>
+    !!filterEmployeeId.value || !!filterDateFrom.value || !!filterDateTo.value
+)
 
-    // Diagnostics
-    const isInIframe = window.self !== window.top
-    const hasBX24 = typeof (window as unknown as Record<string, unknown>).BX24 !== 'undefined'
-    
-    console.info('[Diagnostics] Env:', { isInIframe, hasBX24 })
-    
-    // Check if we can open native slider
-    if (hasBX24 && canOpenNativeApplication()) {
-        console.info('[Diagnostics] Native SidePanel (openApplication) is AVAILABLE')
+const filteredTaskTree = computed(() => filterTaskTree(taskTree.value, {
+    employeeId: filterEmployeeId.value,
+    dateFrom: filterDateFrom.value,
+    dateTo: filterDateTo.value
+}))
+
+const summaryLine = computed(() => formatTreeSummaryLine(summarizeTaskTree(filteredTaskTree.value)))
+const hasTree = computed(() => filteredTaskTree.value.length > 0)
+
+// --- ИНИЦИАЛИЗАЦИЯ ---
+onMounted(async () => {
+    measureFrameWidth()
+    window.addEventListener('resize', measureFrameWidth)
+
+    if (typeof (window as unknown as Record<string, unknown>).BX24 !== 'undefined' && canOpenNativeApplication()) {
         isNativeSidePanelAvailable.value = true
-    } else {
-        console.warn('[Diagnostics] Native SidePanel is NOT available')
     }
 
     try {
@@ -131,7 +127,7 @@ onMounted(async () => {
 
         const tid = resolveTaskPlacementId($b24)
         if (!tid) {
-            error.value = "Не передан ID задачи. Откройте приложение во вкладке задачи."
+            error.value = 'Не передан ID задачи. Откройте приложение во вкладке задачи.'
             isLoading.value = false
             return
         }
@@ -141,10 +137,9 @@ onMounted(async () => {
         if (config.value?.DEFAULT_SMART_PROCESS_ID) {
             await reloadWorkspace()
         }
-
     } catch (e: unknown) {
         processErrorGlobal(e)
-        error.value = (e as { message?: string }).message
+        error.value = (e as { message?: string }).message || String(e)
     } finally {
         // Единственный владелец завершения загрузки: какой бы веткой ни закончился
         // init (нет ID задачи, конфигурация не загрузилась, отказ REST), спиннер гаснет.
@@ -152,417 +147,74 @@ onMounted(async () => {
     }
 })
 
-// --- COMPUTED ---
+onBeforeUnmount(() => {
+    window.removeEventListener('resize', measureFrameWidth)
+})
 
-const isFilterActive = computed(() =>
-    !!filterEmployeeId.value || !!filterDateFrom.value || !!filterDateTo.value
+/**
+ * Перечитывает дерево задачи.
+ *
+ * Раскрытые задачи сохраняются: после сохранения записи человек должен видеть
+ * то же место дерева, где работал, а не свёрнутый корень. Синк с Битриксом на
+ * открытии не делается — данные читаются из БД, свежесть держит фоновый
+ * планировщик и кнопка «Обновить» (фаза 1 sync-offload).
+ */
+async function reloadWorkspace() {
+    if (!$b24 || !rootTaskId.value) {
+        return
+    }
+
+    const previouslyExpanded = new Set(expandedTasks.value)
+    await loadTaskTree($b24, rootTaskId.value)
+    previouslyExpanded.add(rootTaskId.value)
+    expandedTasks.value = previouslyExpanded
+}
+
+// --- АВТОВЫСОТА ФРЕЙМА ---
+/*
+ * Высоту фрейма пересчитываем после каждой перерисовки, меняющей высоту
+ * содержимого: раскрытие задачи, открытие формы, смена набора записей,
+ * раскрытие фильтра. Без этого форма раскрывается внутри фрейма прежней
+ * высоты и нижняя её часть оказывается за обрезкой.
+ */
+watch(
+    () => [
+        isLoading.value,
+        filteredTaskTree.value,
+        expandedTasks.value.size,
+        anchor.value,
+        isFilterOpen.value,
+        isReportConfirmOpen.value,
+        notice.value,
+        layout.value.mode
+    ],
+    async () => {
+        await nextTick()
+        requestIframeAutoHeight()
+    },
+    { deep: false }
 )
 
-const filteredTaskTree = computed(() => {
-    return filterTaskTree(taskTree.value, {
-        employeeId: filterEmployeeId.value,
-        dateFrom: filterDateFrom.value,
-        dateTo: filterDateTo.value
-    })
-})
+useIframeResizeOnToggle(isHelpOpen)
 
-const totalClientAmount = computed(() => {
-    const allItems = flattenTaskItems(filteredTaskTree.value)
-    const total = allItems.filter(item => item.isConsidered).reduce((sum, item) => sum + item.hours, 0)
-    return (total * clientHourRate.value).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-})
-
-function resetFilter() {
-    filterEmployeeId.value = ''
-    filterDateFrom.value = ''
-    filterDateTo.value = ''
-}
-
-function assignMappedField(target: Record<string, unknown>, fieldCode: string | undefined, value: unknown) {
-    if (!fieldCode || value === undefined) {
-        return
-    }
-
-    target[fieldCode] = value
-}
-
-function resolveInnFieldCode(kind: 'OUR_INN' | 'CLIENT_INN'): string {
-    if (!config.value) {
-        return ''
-    }
-
-    return String(
-        config.value.SPA_FIELDS?.[kind]
-        || config.value.FIELDS?.[kind]
-        || ''
-    ).trim()
-}
-
-
-function resolveTaskTitle(taskId: string | null | undefined, hierarchy?: { titlePath?: string[] | null } | null) {
-    const node = findTaskNodeById(taskId, taskTree.value)
-    if (node?.taskTitle) {
-        return String(node.taskTitle)
-    }
-
-    const hierarchyTitles = hierarchy?.titlePath || []
-    if (hierarchyTitles.length > 0) {
-        return String(hierarchyTitles[hierarchyTitles.length - 1] || '')
-    }
-
-    return ''
-}
-
-async function resolveTaskTitleSafe(taskId: string | null | undefined, hierarchy?: { titlePath?: string[] | null } | null) {
-    const fromTreeOrHierarchy = resolveTaskTitle(taskId, hierarchy)
-    if (fromTreeOrHierarchy.trim().length > 0) {
-        return fromTreeOrHierarchy.trim()
-    }
-
-    const normalizedTaskId = String(taskId || '').trim()
-    if (!normalizedTaskId || !$b24) {
-        return ''
-    }
-
-    try {
-        const taskRes = await ($b24 as B24Frame).callMethod('tasks.task.get', {
-            taskId: normalizedTaskId,
-            select: ['ID', 'TITLE'],
-        })
-        const taskData = taskRes?.getData?.()
-        const taskObj = taskData?.result?.task || taskData?.task || null
-        const fetchedTitle = String(
-            taskObj?.title || taskObj?.TITLE || taskObj?.Title || ''
-        ).trim()
-        if (fetchedTitle) {
-            console.info('[Embedded][TASK_NAME] Fallback title loaded from tasks.task.get', {
-                taskId: normalizedTaskId,
-                fetchedTitle,
-            })
-            return fetchedTitle
-        }
-    } catch (error) {
-        console.warn('[Embedded][TASK_NAME] Failed to load title fallback', {
-            taskId: normalizedTaskId,
-            error,
-        })
-    }
-
-    return ''
-}
-
-function hasMeaningfulValue(value: unknown): boolean {
-    if (value === null || value === undefined) {
-        return false
-    }
-    if (typeof value === 'string') {
-        return value.trim().length > 0
-    }
-    return true
-}
-
-function toNumberOrNull(value: unknown): number | null {
-    const normalized = Number(value)
-    return Number.isFinite(normalized) ? normalized : null
-}
-
-function validateProjectBindingForSave(
-    fields: Record<string, unknown>,
-    hierarchy?: {
-        projectId?: string | null
-        projectTitle?: string
-    } | null,
-    options?: {
-        requireRateSnapshot?: boolean
-    }
-): string | null {
-    if (!config.value) {
-        return 'Не удалось загрузить конфигурацию приложения.'
-    }
-
-    if (!hierarchy?.projectId) {
-        return 'Задача не привязана к проектной группе. Списание без проекта запрещено.'
-    }
-
-    const projectItemField = config.value.FIELDS.PROJECT_ITEM_ID
-    if (!projectItemField) {
-        return 'В настройках не задано поле «ID элемента проекта SPA». Обратитесь к администратору.'
-    }
-
-    if (!hasMeaningfulValue(fields[projectItemField])) {
-        // НЕ блокируем сохранение: штатное списание часов должно работать даже если
-        // связка group_id → project_item_id ещё не прописана в карточке проекта.
-        // Запись без project_item_id не попадёт в бюджет-аналитику, но нативный
-        // поток учёта времени в Битрикс24 не должен страдать из-за этого.
-        const projectLabel = hierarchy.projectTitle ? `«${hierarchy.projectTitle}»` : `group_id ${hierarchy.projectId}`
-        console.warn(
-            `[Embedded] project_item_id не найден для ${projectLabel}. ` +
-            'Запись будет сохранена без привязки к Project SPA.'
-        )
-    }
-
-    const shouldRequireRateSnapshot = options?.requireRateSnapshot === true
-    if (shouldRequireRateSnapshot) {
-        const hourlyRateSnapshotField = String(config.value.FIELDS.HOURLY_RATE_SNAPSHOT || '').trim()
-        if (!hourlyRateSnapshotField) {
-            return 'В настройках не задано поле «Ставка часа (снимок)». Обратитесь к администратору.'
-        }
-
-        const hourlyRateSnapshot = toNumberOrNull(fields[hourlyRateSnapshotField])
-        if (hourlyRateSnapshot === null || hourlyRateSnapshot <= 0) {
-            return 'Не удалось определить ставку часа проекта для сохранения снимка. Проверьте ставку в карточке проекта.'
+function openHelp() {
+    if (isNativeSidePanelAvailable.value) {
+        try {
+            // Нативный слайдер выносит справочник за пределы фрейма — там ему
+            // не мешает ни ширина вкладки, ни её автовысота.
+            // @ts-expect-error BX24 инжектится порталом и не типизирован
+            window.BX24.openApplication({ url: '/guide?from=slider' }, { title: 'Справочник', width: 900 })
+            return
+        } catch (e) {
+            console.error('Native slider failed, using fallback', e)
         }
     }
 
-    return null
+    requestIframeFullHeight()
+    isHelpOpen.value = true
 }
 
-async function getProjectCardByProjectId(projectId?: string | null) {
-    const normalizedProjectId = String(projectId || '').trim()
-    if (!normalizedProjectId) {
-        return null
-    }
-
-    if (projectCardCache.has(normalizedProjectId)) {
-        return projectCardCache.get(normalizedProjectId)
-    }
-
-    try {
-        const card = await apiStore.getProjectBoardCard(normalizedProjectId)
-        if (card) {
-            projectCardCache.set(normalizedProjectId, card)
-            console.info('[Embedded][INN] Project card loaded', {
-                projectId: normalizedProjectId,
-                projectItemId: card.project_item_id,
-                companyId: card.company_id,
-                companyInn: card.company_inn,
-                legalEntityId: card.our_legal_entity_id,
-                legalEntityInn: card.our_legal_entity_inn,
-            })
-        } else {
-            console.warn('[Embedded][INN] Project card is empty', { projectId: normalizedProjectId })
-        }
-        return card
-    } catch (error) {
-        console.warn('[Embedded] Failed to load project card for timestamp binding:', normalizedProjectId, error)
-        return null
-    }
-}
-
-async function enrichFieldsWithProjectContext(
-    fields: Record<string, unknown>,
-    taskId: string | null | undefined,
-    hierarchy?: {
-        idPath?: string[]
-        titlePath?: string[]
-        projectId?: string | null
-        projectTitle?: string
-        ourInn?: string
-        clientInn?: string
-    } | null
-) {
-    if (!config.value) {
-        return
-    }
-
-    const taskNameFieldCode = String(config.value.FIELDS?.TASK_NAME || '').trim()
-    if (!taskNameFieldCode) {
-        console.warn('[Embedded][TASK_NAME] Missing TASK_NAME field mapping', {
-            fields: config.value.FIELDS,
-        })
-    }
-
-    if (hierarchy) {
-        const projectCard = hierarchy.projectId ? await getProjectCardByProjectId(hierarchy.projectId) : null
-        const projectOurInn = String(projectCard?.our_legal_entity_inn || '').trim()
-        const projectClientInn = String(projectCard?.company_inn || '').trim()
-        const projectHourlyRate = toNumberOrNull(projectCard?.hourly_rate)
-        const resolvedOurInn = projectOurInn || String(hierarchy.ourInn || '').trim()
-        const resolvedClientInn = projectClientInn || String(hierarchy.clientInn || '').trim()
-        const ourInnFieldCode = resolveInnFieldCode('OUR_INN')
-        const clientInnFieldCode = resolveInnFieldCode('CLIENT_INN')
-        const hourlyRateSnapshotFieldCode = String(config.value.FIELDS?.HOURLY_RATE_SNAPSHOT || '').trim()
-
-        if (!ourInnFieldCode || !clientInnFieldCode) {
-            console.warn('[Embedded][INN] Missing INN field mapping', {
-                ourInnFieldCode,
-                clientInnFieldCode,
-                spaFields: config.value.SPA_FIELDS,
-                fields: config.value.FIELDS,
-            })
-        }
-
-        assignMappedField(fields, config.value.FIELDS.TASK_HIERARCHY, hierarchy.idPath)
-        assignMappedField(fields, config.value.FIELDS.TITLE_HIERARCHY, hierarchy.titlePath)
-
-        if (hierarchy.projectId) {
-            assignMappedField(fields, config.value.FIELDS.PROJECT_ID, hierarchy.projectId)
-            assignMappedField(fields, config.value.FIELDS.PROJECT_TITLE, hierarchy.projectTitle)
-        }
-
-        const resolvedTaskName = await resolveTaskTitleSafe(taskId, hierarchy)
-        assignMappedField(fields, taskNameFieldCode || undefined, resolvedTaskName)
-        assignMappedField(fields, ourInnFieldCode || undefined, resolvedOurInn)
-        assignMappedField(fields, clientInnFieldCode || undefined, resolvedClientInn)
-
-        if (hierarchy.projectId) {
-            const projectItemId = String(projectCard?.project_item_id || '').trim()
-            if (projectItemId) {
-                assignMappedField(fields, config.value.FIELDS.PROJECT_ITEM_ID, projectItemId)
-            }
-            if (hourlyRateSnapshotFieldCode && projectHourlyRate !== null && projectHourlyRate > 0) {
-                assignMappedField(fields, hourlyRateSnapshotFieldCode, projectHourlyRate)
-            }
-            const myCompanyId = String(projectCard?.our_legal_entity_id || '').trim()
-            if (myCompanyId) {
-                fields.mycompanyId = /^\d+$/.test(myCompanyId) ? Number(myCompanyId) : myCompanyId
-            }
-        }
-
-        console.info('[Embedded][INN] Prepared fields from project context', {
-            taskId,
-            projectId: hierarchy.projectId || null,
-            projectItemId: String(projectCard?.project_item_id || '').trim(),
-            taskNameFieldCode,
-            resolvedTaskName,
-            payloadTaskName: taskNameFieldCode ? fields[taskNameFieldCode] : undefined,
-            ourInnFieldCode,
-            clientInnFieldCode,
-            resolvedOurInn,
-            resolvedClientInn,
-            payloadOurInn: ourInnFieldCode ? fields[ourInnFieldCode] : undefined,
-            payloadClientInn: clientInnFieldCode ? fields[clientInnFieldCode] : undefined,
-            hourlyRateSnapshotFieldCode,
-            payloadHourlyRateSnapshot: hourlyRateSnapshotFieldCode ? fields[hourlyRateSnapshotFieldCode] : undefined,
-            mycompanyId: fields.mycompanyId,
-        })
-        return
-    }
-
-    const resolvedTaskName = await resolveTaskTitleSafe(taskId, hierarchy)
-    assignMappedField(fields, taskNameFieldCode || undefined, resolvedTaskName)
-    console.info('[Embedded][TASK_NAME] Prepared fields without hierarchy', {
-        taskId: String(taskId || '').trim(),
-        taskNameFieldCode,
-        resolvedTaskName,
-        payloadTaskName: taskNameFieldCode ? fields[taskNameFieldCode] : undefined,
-    })
-}
-
-// --- ACTIONS ---
-
-async function getTaskHierarchy(taskId: string) {
-    if (!config.value) return null
-    
-    const idPath: string[] = []
-    const titlePath: string[] = []
-    let projectId: string | null = null
-    let projectTitle = ''
-    let ourInn = ''
-    let clientInn = ''
-    
-    try {
-        // Collect hierarchy and try to resolve GROUP_ID from the full chain.
-        let currentTaskId: string | null = taskId
-        let loopCount = 0
-
-        while (currentTaskId && loopCount < 20) { // Safety break
-            try {
-                const result = await ($b24 as B24Frame).callMethod('tasks.task.get', {
-                    taskId: currentTaskId,
-                    select: [
-                        'ID',
-                        'TITLE',
-                        'GROUP_ID',
-                        'PARENT_ID',
-                        config.value.TASK_FIELDS.OUR_INN,
-                        config.value.TASK_FIELDS.CLIENT_INN,
-                    ]
-                })
-                const data = result.getData()
-                const task = data.task || data.result?.task
-
-                if (!task) {
-                    console.warn(`⚠️ [Embedded] Hierarchy: Task ${currentTaskId} not found or no data`)
-                    break
-                }
-
-                if (loopCount === 0) {
-                    console.log(`🔍 [Embedded] Hierarchy: Initial task ${taskId} raw data:`, JSON.stringify(task))
-                }
-
-                const gid = task.groupId || task.group_id || task.GROUP_ID || task.GroupId
-                if (!projectId && gid && gid !== '0') {
-                    projectId = String(gid)
-                }
-
-                if (!ourInn) {
-                    ourInn = task[config.value.TASK_FIELDS.OUR_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.OUR_INN]) || ''
-                }
-                if (!clientInn) {
-                    clientInn = task[config.value.TASK_FIELDS.CLIENT_INN] || (task.uf && task.uf[config.value.TASK_FIELDS.CLIENT_INN]) || ''
-                }
-
-                const tid = task.id || task.ID || task.Id
-                const ttitle = task.title || task.TITLE || task.Title
-                const tparent: unknown = task.parentId || task.parent_id || task.PARENT_ID || task.ParentId
-
-                if (tid) idPath.unshift(String(tid))
-                if (ttitle) titlePath.unshift(String(ttitle))
-
-                if (tparent && tparent !== '0') {
-                    currentTaskId = String(tparent)
-                } else {
-                    currentTaskId = null
-                }
-            } catch (e) {
-                console.error(`[Embedded] Error getting task ${currentTaskId}:`, e)
-                currentTaskId = null
-            }
-            console.log(`🔍 [Embedded] Hierarchy step: path length ${idPath.length}, next parent: ${currentTaskId}`)
-            loopCount++
-        }
-
-        if (projectId) {
-            try {
-                const groupRes = await ($b24 as B24Frame).callMethod('sonet_group.get', {
-                    FILTER: { ID: projectId }
-                })
-                const groupData = groupRes.getData()
-                if (groupData && groupData[0]) {
-                    projectTitle = groupData[0].NAME
-                } else if (groupData && groupData.result && groupData.result[0]) {
-                    projectTitle = groupData.result[0].NAME
-                }
-            } catch (e) {
-                console.error('[Embedded] Error getting group:', e)
-            }
-        }
-
-        console.log('✅ [Embedded] Hierarchy collected FINAL:', {
-            idPath,
-            titlePath,
-            projectId,
-            projectTitle,
-            ourInn: !!ourInn,
-            clientInn: !!clientInn
-        })
-
-        return {
-            idPath,
-            titlePath,
-            projectId,
-            projectTitle,
-            ourInn,
-            clientInn
-        }
-
-    } catch (e) {
-        console.error('[Embedded] Error in getTaskHierarchy:', e)
-        return null
-    }
-}
-
+// --- ДЕРЕВО ---
 function toggleTask(taskId: string) {
     if (expandedTasks.value.has(taskId)) {
         expandedTasks.value.delete(taskId)
@@ -571,456 +223,412 @@ function toggleTask(taskId: string) {
     }
 }
 
-function selectItem(item: Record<string, unknown>) {
-    currentEditingId.value = item.id as string | null
-    const taskId = findTaskIdForItem(item.id, taskTree.value)
-    editingItem.value = { ...item, taskId, splitHours: 0, splitInvert: false } as EditingItem
+function resetFilter() {
+    filterEmployeeId.value = ''
+    filterDateFrom.value = ''
+    filterDateTo.value = ''
 }
 
-function closeEditor() {
-    currentEditingId.value = null
-    editingItem.value = null
-}
-
-function createNewEntry() {
-    if (!rootTaskId.value) return
-    
-    // Create new entry template
-    const newEntry = {
-        id: null, // null means it's a new entry
-        taskId: rootTaskId.value,
-        description: '',
-        employeeId: currentUserId.value || usersList.value[0]?.ID || '',
-        date: new Date().toISOString().split('T')[0],
-        hours: 1,
-        isConsidered: true,
-        splitHours: 0.5,
-        keepOriginalConsidered: false
-    }
-    
-    editingItem.value = newEntry
-    currentEditingId.value = 'new'
-}
-
-
-
-function createEntryForTask(taskId: string) {
-    console.log(`🔘 [Embedded] createEntryForTask clicked for taskId: ${taskId}`)
-    const newEntry = {
-        id: null,
-        taskId: taskId,
-        description: '',
-        employeeId: currentUserId.value || usersList.value[0]?.ID || '',
-        date: new Date().toISOString().split('T')[0],
-        hours: 1,
-        isConsidered: true,
-        splitHours: 0.5,
-        keepOriginalConsidered: false
-    }
-    
-    editingItem.value = newEntry
-    currentEditingId.value = 'new'
-}
-
-async function saveCurrentItem() {
-    if (!editingItem.value || !config.value) return
-    isLoading.value = true
-    
-    try {
-        const taskIdToSave = editingItem.value.taskId ||  rootTaskId.value
-        
-        // Base fields
-        const fields: Record<string, unknown> = {
-            [config.value.FIELDS.HOURS]: editingItem.value.hours,
-            [config.value.FIELDS.IS_CONSIDERED]: editingItem.value.isConsidered ? 'Y' : 'N',
-            [config.value.FIELDS.DESCRIPTION]: editingItem.value.description,
-            [config.value.FIELDS.EMPLOYEE]: editingItem.value.employeeId,
-            [config.value.FIELDS.DATE]: editingItem.value.date,
-            [config.value.FIELDS.TASK_ID]: taskIdToSave,
-            TITLE: editingItem.value.description.substring(0, 255)
-        }
-        
-        // Always collect hierarchy (for both new and existing entries)
-        let hierarchy: Awaited<ReturnType<typeof getTaskHierarchy>> | null = null
-        if (taskIdToSave) {
-            hierarchy = await getTaskHierarchy(taskIdToSave)
-            await enrichFieldsWithProjectContext(fields, taskIdToSave, hierarchy)
-        }
-        const bindingError = validateProjectBindingForSave(fields, hierarchy)
-        if (bindingError) {
-            toast.add({ title: `⚠️ ${bindingError}`, color: 'air-primary-alert' })
-            isLoading.value = false
-            return
-        }
-        
-        if (editingItem.value.id) {
-            // Update existing
-            console.log('💾 [Embedded] Updating item fields:', fields)
-            console.info('[Embedded][INN] Save payload summary', {
-                mode: 'update',
-                itemId: editingItem.value.id,
-                taskId: taskIdToSave,
-                taskNameFieldCode: String(config.value.FIELDS?.TASK_NAME || '').trim(),
-                payloadTaskName: fields[String(config.value.FIELDS?.TASK_NAME || '').trim()],
-                ourInnFieldCode: resolveInnFieldCode('OUR_INN'),
-                clientInnFieldCode: resolveInnFieldCode('CLIENT_INN'),
-                payloadOurInn: fields[resolveInnFieldCode('OUR_INN')],
-                payloadClientInn: fields[resolveInnFieldCode('CLIENT_INN')],
-                payloadMycompanyId: fields.mycompanyId,
-                projectItemFieldCode: config.value.FIELDS.PROJECT_ITEM_ID,
-                payloadProjectItemId: fields[config.value.FIELDS.PROJECT_ITEM_ID],
-                hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
-                payloadHourlyRateSnapshot: fields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
-            })
-            // Через бэкенд: единственное место, где на списание можно
-            // наложить серверное правило (закрытие месяца).
-            await apiStore.updateTimesheetEntry(editingItem.value.id, fields)
-        } else {
-            // Create new
-            console.log('💾 [Embedded] Creating new item fields:', fields)
-            console.info('[Embedded][INN] Save payload summary', {
-                mode: 'create',
-                taskId: taskIdToSave,
-                taskNameFieldCode: String(config.value.FIELDS?.TASK_NAME || '').trim(),
-                payloadTaskName: fields[String(config.value.FIELDS?.TASK_NAME || '').trim()],
-                ourInnFieldCode: resolveInnFieldCode('OUR_INN'),
-                clientInnFieldCode: resolveInnFieldCode('CLIENT_INN'),
-                payloadOurInn: fields[resolveInnFieldCode('OUR_INN')],
-                payloadClientInn: fields[resolveInnFieldCode('CLIENT_INN')],
-                payloadMycompanyId: fields.mycompanyId,
-                projectItemFieldCode: config.value.FIELDS.PROJECT_ITEM_ID,
-                payloadProjectItemId: fields[config.value.FIELDS.PROJECT_ITEM_ID],
-                hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
-                payloadHourlyRateSnapshot: fields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
-            })
-            const createRes = await apiStore.createTimesheetEntry(fields)
-            const createdItemId = createRes?.id ?? null
-            console.info('[Embedded][INN] Create result', { createdItemId })
-
-            const ourInnFieldCode = resolveInnFieldCode('OUR_INN')
-            const clientInnFieldCode = resolveInnFieldCode('CLIENT_INN')
-            if (createdItemId && (ourInnFieldCode || clientInnFieldCode)) {
-                try {
-                    const verifyRes = await ($b24 as B24Frame).callMethod('crm.item.get', {
-                        entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-                        id: createdItemId,
-                    })
-                    const verifyItem = verifyRes?.getData?.()?.result?.item || verifyRes?.getData?.()?.item || {}
-                    console.info('[Embedded][INN] Verify saved item', {
-                        createdItemId,
-                        taskNameFieldCode: String(config.value.FIELDS?.TASK_NAME || '').trim(),
-                        savedTaskName: verifyItem?.[String(config.value.FIELDS?.TASK_NAME || '').trim()],
-                        ourInnFieldCode,
-                        clientInnFieldCode,
-                        savedOurInn: ourInnFieldCode ? verifyItem?.[ourInnFieldCode] : undefined,
-                        savedClientInn: clientInnFieldCode ? verifyItem?.[clientInnFieldCode] : undefined,
-                        savedMycompanyId: verifyItem?.mycompanyId,
-                    })
-                } catch (verifyError) {
-                    console.warn('[Embedded][INN] Failed to verify created item', {
-                        createdItemId,
-                        error: verifyError,
-                    })
-                }
-            }
-        }
-        
-        await reloadWorkspace()
-        closeEditor()
-    } catch (e: unknown) {
-        toast.add({ title: "Ошибка сохранения: " + (e as { message?: string }).message, color: 'air-primary-alert' })
-        isLoading.value = false
-    }
-}
-
-async function splitItem() {
-    if (!editingItem.value || !config.value) return
-    
-    const splitHours = parseFloat(editingItem.value.splitHours) || 0
-    if (splitHours <= 0 || splitHours >= editingItem.value.hours) {
-        toast.add({ title: '⚠️ Некорректное значение для разделения', color: 'air-primary-alert' })
+// --- ФОРМА ---
+function openCreateForm(taskId: string) {
+    const targetTaskId = String(taskId || rootTaskId.value || '')
+    if (!targetTaskId) {
+        notice.value = 'Не удалось определить задачу для списания.'
         return
     }
 
-    isLoading.value = true
-    try {
-        // Update original — тоже через бэкенд: «разделение» это две записи
-        // (уменьшить исходную + создать новую), и обе обязаны проходить одну
-        // и ту же серверную проверку, иначе половина операции обошла бы её.
-        const remainingHours = editingItem.value.hours - splitHours
-        await apiStore.updateTimesheetEntry(editingItem.value.id, {
-            [config.value.FIELDS.HOURS]: remainingHours
-        })
+    notice.value = null
+    // Форма создания раскрывается под шапкой задачи, поэтому задача обязана
+    // быть раскрыта — иначе человек нажал «+» и ничего не увидел.
+    expandedTasks.value.add(targetTaskId)
+    draft.value = makeTaskEntryDraft({
+        taskId: targetTaskId,
+        employeeId: currentUserId.value || usersList.value[0]?.ID || '',
+        today: new Date()
+    })
+    anchor.value = { kind: 'create', taskId: targetTaskId }
+}
 
-        // Create new split entry with full hierarchy
-        const newConsidered = editingItem.value.splitInvert ? !editingItem.value.isConsidered : editingItem.value.isConsidered
-        const splitTaskId = findTaskIdForItem(editingItem.value.id, taskTree.value)
+function openEditForm(item: TaskWorkspaceItem, taskId: string) {
+    notice.value = null
+    const ownerTaskId = findTaskIdForItem(item.id, taskTree.value) || taskId || rootTaskId.value || ''
+    draft.value = draftFromItem(item, String(ownerTaskId))
+    anchor.value = { kind: 'edit', taskId: String(ownerTaskId), itemId: String(item.id) }
+}
+
+function closeForm() {
+    anchor.value = null
+    draft.value = null
+}
+
+/** Создание и правка идут одним путём: отличие только в наличии id. */
+async function saveDraft(payload: TaskEntryDraft) {
+    if (!config.value || !$b24) {
+        return
+    }
+
+    isSaving.value = true
+    notice.value = null
+
+    try {
+        const taskId = String(payload.taskId || rootTaskId.value || '')
+        const { fields, validation } = await prepareEntryFields($b24, config.value, { ...payload, taskId }, taskTree.value)
+
+        if (validation.warning) {
+            console.warn('[Embedded]', validation.warning)
+        }
+
+        if (validation.error) {
+            notice.value = validation.error
+            toast.add({ title: validation.error, color: 'air-primary-alert' })
+            return
+        }
+
+        // Через бэкенд, а не напрямую в Битрикс: только так на списание можно
+        // наложить серверное правило (закрытие месяца).
+        if (payload.id) {
+            await apiStore.updateTimesheetEntry(payload.id, fields)
+        } else {
+            await apiStore.createTimesheetEntry(fields)
+        }
+
+        closeForm()
+        await reloadWorkspace()
+        toast.add({ title: payload.id ? 'Запись сохранена' : 'Часы списаны', color: 'air-primary-success' })
+    } catch (e: unknown) {
+        const message = 'Ошибка сохранения: ' + ((e as { message?: string }).message || String(e))
+        notice.value = message
+        toast.add({ title: message, color: 'air-primary-alert' })
+    } finally {
+        isSaving.value = false
+    }
+}
+
+/**
+ * Разделение записи — две операции: у исходной уменьшаются часы, отделённая
+ * часть создаётся отдельной записью. Обе идут через бэкенд: иначе половина
+ * операции обошла бы серверную проверку закрытого периода.
+ */
+async function splitDraft(payload: TaskEntryDraft) {
+    if (!config.value || !$b24 || !payload.id) {
+        return
+    }
+
+    isSaving.value = true
+    notice.value = null
+
+    try {
+        const splitHours = Number(payload.splitHours)
+        const splitTaskId = findTaskIdForItem(payload.id, taskTree.value)
         if (!splitTaskId) {
-            toast.add({ title: '⚠️ Не удалось определить задачу для разделяемой записи.', color: 'air-primary-alert' })
-            isLoading.value = false
-            return
-        }
-        
-        const splitFields: Record<string, unknown> = {
-            TITLE: editingItem.value.description + ' (разделено)',
-            [config.value.FIELDS.HOURS]: splitHours,
-            [config.value.FIELDS.IS_CONSIDERED]: newConsidered ? 'Y' : 'N',
-            [config.value.FIELDS.DESCRIPTION]: editingItem.value.description + ' (разделено)',
-            [config.value.FIELDS.EMPLOYEE]: editingItem.value.employeeId,
-            [config.value.FIELDS.DATE]: editingItem.value.date,
-            [config.value.FIELDS.TASK_ID]: splitTaskId
-        }
-        
-        // Collect hierarchy for the split entry
-        const hierarchy = await getTaskHierarchy(splitTaskId)
-        await enrichFieldsWithProjectContext(splitFields, splitTaskId, hierarchy)
-        const bindingError = validateProjectBindingForSave(splitFields, hierarchy)
-        if (bindingError) {
-            toast.add({ title: `⚠️ ${bindingError}`, color: 'air-primary-alert' })
-            isLoading.value = false
+            notice.value = 'Не удалось определить задачу для разделяемой записи.'
             return
         }
 
-        await apiStore.createTimesheetEntry(splitFields)
-        console.info('[Embedded][INN] Split create payload summary', {
-            splitTaskId,
-            ourInnFieldCode: resolveInnFieldCode('OUR_INN'),
-            clientInnFieldCode: resolveInnFieldCode('CLIENT_INN'),
-            payloadOurInn: splitFields[resolveInnFieldCode('OUR_INN')],
-            payloadClientInn: splitFields[resolveInnFieldCode('CLIENT_INN')],
-            payloadMycompanyId: splitFields.mycompanyId,
-            projectItemFieldCode: config.value.FIELDS.PROJECT_ITEM_ID,
-            payloadProjectItemId: splitFields[config.value.FIELDS.PROJECT_ITEM_ID],
-            hourlyRateSnapshotFieldCode: config.value.FIELDS.HOURLY_RATE_SNAPSHOT,
-            payloadHourlyRateSnapshot: splitFields[config.value.FIELDS.HOURLY_RATE_SNAPSHOT],
-        })
+        const splitDescription = `${payload.description} (разделено)`.trim()
+        const { fields, validation } = await prepareEntryFields(
+            $b24,
+            config.value,
+            {
+                ...payload,
+                id: null,
+                taskId: splitTaskId,
+                description: splitDescription,
+                hours: splitHours,
+                isConsidered: payload.splitInvert ? !payload.isConsidered : payload.isConsidered
+            },
+            taskTree.value
+        )
 
+        if (validation.warning) {
+            console.warn('[Embedded]', validation.warning)
+        }
+
+        if (validation.error) {
+            notice.value = validation.error
+            toast.add({ title: validation.error, color: 'air-primary-alert' })
+            return
+        }
+
+        await apiStore.updateTimesheetEntry(payload.id, {
+            [String(config.value.FIELDS.HOURS)]: Number(payload.hours) - splitHours
+        })
+        await apiStore.createTimesheetEntry(fields)
+
+        closeForm()
         await reloadWorkspace()
-        closeEditor()
+        toast.add({ title: 'Запись разделена', color: 'air-primary-success' })
     } catch (e: unknown) {
-        toast.add({ title: "Ошибка разделения: " + (e as { message?: string }).message, color: 'air-primary-alert' })
-        isLoading.value = false
+        const message = 'Ошибка разделения: ' + ((e as { message?: string }).message || String(e))
+        notice.value = message
+        toast.add({ title: message, color: 'air-primary-alert' })
+    } finally {
+        isSaving.value = false
     }
 }
 
-async function deleteItem() {
-    if (!editingItem.value || !config.value) return
-    if (!confirm('❌ Удалить запись?')) return
-
-    isLoading.value = true
-    try {
-        await ($b24 as B24Frame).callMethod('crm.item.delete', {
-            entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
-            id: editingItem.value.id
-        })
-        await reloadWorkspace()
-        closeEditor()
-    } catch (e: unknown) {
-        toast.add({ title: "Ошибка удаления: " + (e as { message?: string }).message, color: 'air-primary-alert' })
-        isLoading.value = false
+/**
+ * Удаление записи.
+ *
+ * Идёт напрямую в Битрикс: эндпоинта удаления на бэкенде нет, и заводить его
+ * ради редизайна вкладки — отдельная задача с серверной проверкой периода.
+ */
+async function deleteItem(item: TaskWorkspaceItem) {
+    if (!config.value || !$b24 || !item?.id) {
+        return
     }
-}
 
-async function deleteItemDirect(item: Record<string, unknown>) {
-    if (!config.value || !item?.id) return
-    const label = item.description ? `«${item.description.substring(0, 60)}»` : `#${item.id}`
-    if (!confirm(`Удалить запись ${label}?`)) return
+    const label = item.description ? `«${String(item.description).substring(0, 60)}»` : `#${item.id}`
+    if (!confirm(`Удалить запись ${label}?`)) {
+        return
+    }
 
-    isLoading.value = true
+    isSaving.value = true
+    notice.value = null
+
     try {
         await ($b24 as B24Frame).callMethod('crm.item.delete', {
             entityTypeId: config.value.DEFAULT_SMART_PROCESS_ID,
             id: item.id
         })
-        // If this item was open in the editor — close it
-        if (currentEditingId.value === item.id) closeEditor()
+
+        if (anchor.value?.kind === 'edit' && String(anchor.value.itemId) === String(item.id)) {
+            closeForm()
+        }
         await reloadWorkspace()
+        toast.add({ title: 'Запись удалена', color: 'air-primary-success' })
     } catch (e: unknown) {
-        toast.add({ title: "Ошибка удаления: " + (e as { message?: string }).message, color: 'air-primary-alert' })
-        isLoading.value = false
+        const message = 'Ошибка удаления: ' + ((e as { message?: string }).message || String(e))
+        notice.value = message
+        toast.add({ title: message, color: 'air-primary-alert' })
+    } finally {
+        isSaving.value = false
     }
 }
 
+/** Удаление из открытой формы правки. */
+function deleteDraft(payload: TaskEntryDraft) {
+    deleteItem({
+        id: String(payload.id),
+        hours: payload.hours,
+        isConsidered: payload.isConsidered,
+        description: payload.description,
+        employeeId: payload.employeeId,
+        employeeName: '',
+        date: payload.date
+    })
+}
+
+// --- ВЫГРУЗКИ ---
+/**
+ * CSV по дереву. Файл собирается в памяти: `data:`-ссылка на длинном дереве
+ * упирается в ограничение длины URL, а Blob — нет.
+ */
+function exportCsv() {
+    const csv = CSV_BOM + buildTaskTreeCsv(filteredTaskTree.value)
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+
+    link.href = url
+    link.download = buildCsvFileName(rootTaskId.value)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+}
+
+/** Перенос учтённых часов в штатный отчёт задачи Битрикс24. */
+async function transferToReport() {
+    const { batch, count } = buildElapsedItemBatch(filteredTaskTree.value)
+
+    if (count === 0) {
+        isReportConfirmOpen.value = false
+        notice.value = 'Нет учтённых часов для переноса.'
+        return
+    }
+
+    isReporting.value = true
+    try {
+        await ($b24 as B24Frame).callBatch(batch)
+        toast.add({ title: `Перенесено записей: ${count}`, color: 'air-primary-success' })
+    } catch (e: unknown) {
+        const message = 'Ошибка переноса: ' + ((e as { message?: string }).message || String(e))
+        notice.value = message
+        toast.add({ title: message, color: 'air-primary-alert' })
+    } finally {
+        isReporting.value = false
+        isReportConfirmOpen.value = false
+    }
+}
 </script>
 
 <template>
-<div class="ms-page-shell embedded-shell">
-    <section class="ms-surface embedded-topbar">
-        <div class="embedded-topbar__title">
-            <div class="embedded-icon">
-                <span class="material-symbols-outlined text-[26px]">schedule</span>
-            </div>
-            <div class="min-w-0">
-                <div class="ms-eyebrow">Task Workspace</div>
-                <h1 class="mt-2 text-2xl font-semibold text-slate-900">Учет часов</h1>
-                <p class="mt-1 text-sm text-slate-500">Учет трудозатрат по иерархии задач.</p>
-            </div>
+<div class="ms-page-shell task-tab" :class="layoutClass">
+    <section class="task-tab__bar">
+        <div class="task-tab__heading">
+            <h1 class="task-tab__title">Учёт часов</h1>
+            <p class="task-tab__summary">{{ summaryLine }}</p>
         </div>
 
-        <div class="embedded-topbar__actions">
-            <button class="embedded-primary-btn" @click="createNewEntry">
-                <span class="material-symbols-outlined">add</span>
-                <span>Отразить</span>
+        <div class="task-tab__bar-actions">
+            <B24Button
+                label="Списать часы"
+                color="air-primary"
+                size="sm"
+                :disabled="isLoading || !rootTaskId"
+                @click="openCreateForm(rootTaskId || '')"
+            />
+            <button
+                type="button"
+                class="task-tab__icon-btn"
+                :class="{ 'task-tab__icon-btn--on': isFilterOpen || isFilterActive }"
+                :aria-pressed="isFilterOpen"
+                :title="isFilterActive ? 'Фильтр активен' : 'Фильтр'"
+                aria-label="Фильтр"
+                @click="isFilterOpen = !isFilterOpen"
+            >
+                <span class="material-symbols-outlined text-[20px] leading-none">filter_alt</span>
             </button>
-
-            <div class="embedded-summary">
-                <label class="embedded-summary__card">
-                    <span class="embedded-summary__label">Стоимость часа</span>
-                    <input v-model="clientHourRate" type="number" class="embedded-rate-input">
-                </label>
-                <div class="embedded-summary__card embedded-summary__card--accent">
-                    <span class="embedded-summary__label">Сумма для клиента</span>
-                    <span class="embedded-summary__value">{{ totalClientAmount }} руб.</span>
-                </div>
-            </div>
+            <button
+                type="button"
+                class="task-tab__icon-btn"
+                title="Справочник"
+                aria-label="Справочник"
+                @click="openHelp"
+            >
+                <span class="material-symbols-outlined text-[20px] leading-none">help</span>
+            </button>
         </div>
     </section>
+
+    <section v-if="isFilterOpen" class="task-tab__filter" :class="{ 'task-tab__filter--stacked': layout.stackedFilters }">
+        <label class="task-tab__filter-field">
+            <span class="task-tab__filter-label">Сотрудник</span>
+            <select v-model="filterEmployeeId">
+                <option value="">Все сотрудники</option>
+                <option v-for="u in usersList" :key="String(u.ID)" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
+            </select>
+        </label>
+        <label class="task-tab__filter-field">
+            <span class="task-tab__filter-label">Дата от</span>
+            <input v-model="filterDateFrom" type="date">
+        </label>
+        <label class="task-tab__filter-field">
+            <span class="task-tab__filter-label">Дата до</span>
+            <input v-model="filterDateTo" type="date">
+        </label>
+        <B24Button
+            v-if="isFilterActive"
+            label="Сбросить"
+            color="air-secondary-no-accent"
+            size="sm"
+            @click="resetFilter"
+        />
+    </section>
+
+    <p v-if="notice" class="task-tab__notice" role="alert">{{ notice }}</p>
 
     <!-- Ошибка идёт ПЕРЕД загрузкой: иначе залипший isLoading прячет причину отказа. -->
-    <section v-if="error" class="ms-surface embedded-state">
-        <div class="embedded-state__content">
-            <div class="rounded-2xl bg-rose-100 p-3 text-rose-600">
-                <span class="material-symbols-outlined text-4xl">error</span>
-            </div>
-            <div class="text-base font-semibold text-slate-900">Ошибка загрузки</div>
-            <p class="max-w-lg text-sm leading-6 text-slate-600">{{ error }}</p>
+    <section v-if="error" class="task-tab__state task-tab__state--error">
+        <span class="material-symbols-outlined text-[28px]">error</span>
+        <div>
+            <div class="task-tab__state-title">Ошибка загрузки</div>
+            <p class="task-tab__state-text">{{ error }}</p>
         </div>
     </section>
 
-    <section v-else-if="isLoading" class="ms-surface embedded-state">
-        <div class="embedded-state__content">
-            <span class="material-symbols-outlined text-5xl animate-spin text-[#0075ff]">progress_activity</span>
-            <div class="text-base font-semibold text-slate-900">Загрузка данных</div>
-            <p class="text-sm text-slate-500">Получаем задачи и записи времени.</p>
+    <section v-else-if="isLoading" class="task-tab__state">
+        <span class="material-symbols-outlined animate-spin text-[28px]">progress_activity</span>
+        <div>
+            <div class="task-tab__state-title">Загрузка данных</div>
+            <p class="task-tab__state-text">Получаем задачи и записи времени.</p>
         </div>
     </section>
 
-    <div v-else class="embedded-grid">
-        <section class="ms-surface embedded-left-pane">
-            <div class="ms-filter-wrap embedded-filter-bar">
-                <div class="flex min-w-[180px] flex-1 flex-col gap-1">
-                    <label class="embedded-filter-label">Сотрудник</label>
-                    <select v-model="filterEmployeeId">
-                        <option value="">Все сотрудники</option>
-                        <option v-for="u in usersList" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
-                    </select>
-                </div>
-                <div class="flex flex-col gap-1">
-                    <label class="embedded-filter-label">Дата от</label>
-                    <input v-model="filterDateFrom" type="date">
-                </div>
-                <div class="flex flex-col gap-1">
-                    <label class="embedded-filter-label">Дата до</label>
-                    <input v-model="filterDateTo" type="date">
-                </div>
-                <button
-                    v-if="isFilterActive"
-                    class="embedded-secondary-btn"
-                    @click="resetFilter"
-                >
-                    <span class="material-symbols-outlined text-base">filter_alt_off</span>
-                    Сбросить
-                </button>
-                <div v-if="isFilterActive" class="embedded-filter-state">
-                    <span class="material-symbols-outlined text-sm">filter_alt</span>
-                    Фильтр активен
-                </div>
-            </div>
+    <template v-else>
+        <div v-if="hasTree" class="task-tab__tree">
+            <TaskTabCard
+                v-for="task in filteredTaskTree"
+                :key="task.taskId"
+                :node="task"
+                :level="0"
+                :layout="layout"
+                :expanded-tasks="expandedTasks"
+                :anchor="anchor"
+                :draft="draft"
+                :users="usersList"
+                :busy="isSaving"
+                @toggle="toggleTask"
+                @create="openCreateForm"
+                @edit="openEditForm"
+                @remove="deleteItem"
+                @save="saveDraft"
+                @split="splitDraft"
+                @remove-draft="deleteDraft"
+                @cancel="closeForm"
+            />
+        </div>
 
-            <div class="embedded-tree-scroll">
-                <TaskGroupComponent 
-                    v-for="task in filteredTaskTree" 
-                    :key="task.taskId"
-                    :task="task"
-                    :level="0"
-                    :client-hour-rate="clientHourRate"
-                    :expanded-tasks="expandedTasks"
-                    :current-editing-id="currentEditingId"
-                    @toggle="toggleTask"
-                    @select="selectItem"
-                    @create-for-task="createEntryForTask"
-                    @delete="deleteItemDirect"
-                />
+        <section v-else class="task-tab__state">
+            <span class="material-symbols-outlined text-[28px]">filter_alt_off</span>
+            <div>
+                <div class="task-tab__state-title">Записей нет</div>
+                <p class="task-tab__state-text">
+                    {{ isFilterActive ? 'Под фильтр ничего не попало — сбросьте его.' : 'Нажмите «Списать часы», чтобы добавить первую запись.' }}
+                </p>
             </div>
         </section>
 
-        <aside class="ms-surface embedded-editor-pane">
-            <div class="embedded-editor-header">
-                <div>
-                    <h2 class="text-lg font-semibold text-slate-900">Редактирование</h2>
-                    <p class="mt-1 text-xs text-slate-500">Поля записи и дополнительные действия.</p>
+        <!--
+            Панель выгрузок — обычный блок в конце содержимого, а не
+            закреплённый футер: во фрейме с автовысотой `position: sticky`
+            прилипает к низу содержимого, а не к низу видимой области, и на
+            длинном дереве закреплённая панель всё равно уезжает из вида.
+        -->
+        <section class="task-tab__footer">
+            <div v-if="isReportConfirmOpen" class="task-tab__confirm">
+                <p class="task-tab__confirm-text">
+                    Все записи с признаком «Учитывать» будут добавлены в задачи Битрикс24 как отработанное время.
+                </p>
+                <!-- Переносится то, что видно на экране: молчать про активный фильтр нельзя. -->
+                <p v-if="isFilterActive" class="task-tab__confirm-text task-tab__confirm-text--warn">
+                    Фильтр активен — перенесутся только записи, попавшие под него.
+                </p>
+                <div class="task-tab__confirm-actions">
+                    <B24Button
+                        :label="isReporting ? 'Отправка…' : 'Подтвердить'"
+                        color="air-primary"
+                        size="sm"
+                        :disabled="isReporting"
+                        @click="transferToReport"
+                    />
+                    <B24Button
+                        label="Отмена"
+                        color="air-secondary-no-accent"
+                        size="sm"
+                        :disabled="isReporting"
+                        @click="isReportConfirmOpen = false"
+                    />
                 </div>
-                <button class="embedded-icon-btn" @click="closeEditor">
-                    <span class="material-symbols-outlined">close</span>
-                </button>
             </div>
 
-            <div v-if="!editingItem" class="embedded-editor-empty">
-                <div class="space-y-2 text-center">
-                    <div class="mx-auto inline-flex rounded-2xl bg-slate-100 p-3 text-slate-400">
-                        <span class="material-symbols-outlined text-4xl">touch_app</span>
-                    </div>
-                    <div class="text-sm font-medium text-slate-700">Выберите запись для редактирования</div>
-                    <p class="text-xs leading-5 text-slate-500">Левая колонка показывает дерево задач и все связанные записи времени.</p>
-                </div>
+            <div v-else class="task-tab__footer-actions">
+                <B24Button
+                    label="В отчёт Битрикс24"
+                    color="air-secondary-no-accent"
+                    size="sm"
+                    @click="isReportConfirmOpen = true"
+                />
+                <B24Button
+                    label="Excel (CSV)"
+                    color="air-secondary-no-accent"
+                    size="sm"
+                    @click="exportCsv"
+                />
             </div>
-
-            <div v-else class="embedded-editor-body">
-                <div>
-                    <label class="embedded-filter-label">Описание</label>
-                    <textarea v-model="editingItem.description" rows="2" class="resize-none"/>
-                </div>
-                <div>
-                    <label class="embedded-filter-label">Сотрудник</label>
-                    <select v-model="editingItem.employeeId" class="bg-white">
-                        <option v-for="u in usersList" :key="u.ID" :value="u.ID">{{ u.NAME }} {{ u.LAST_NAME }}</option>
-                    </select>
-                </div>
-                <div class="grid gap-4 sm:grid-cols-2">
-                    <div>
-                        <label class="embedded-filter-label">Дата</label>
-                        <input v-model="editingItem.date" type="date">
-                    </div>
-                    <div>
-                        <label class="embedded-filter-label">Часы</label>
-                        <input v-model.number="editingItem.hours" type="number" step="0.25" min="0" class="font-semibold">
-                    </div>
-                </div>
-
-                <label class="embedded-toggle">
-                    <span class="text-sm font-medium text-slate-700">Учитывать в аналитике</span>
-                    <input v-model="editingItem.isConsidered" type="checkbox" class="h-4 w-4 accent-[#0075ff]">
-                </label>
-
-                <div class="embedded-split-card">
-                    <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                        <span class="material-symbols-outlined text-slate-500">call_split</span>
-                        Разделить запись
-                    </h3>
-                    <p class="mt-2 text-xs leading-5 text-slate-500">Отделите часть времени в новую запись, если нужно разнести ее отдельно.</p>
-                    <div class="mt-4 grid grid-cols-[120px_1fr] gap-2">
-                        <input v-model="editingItem.splitHours" type="number" step="0.5" placeholder="0">
-                        <div class="flex items-center text-xs text-slate-500">часов отделить</div>
-                    </div>
-                    <label class="mt-3 flex items-center gap-2 text-xs text-slate-600">
-                        <input v-model="editingItem.splitInvert" type="checkbox" class="h-3.5 w-3.5 accent-slate-700">
-                        <span>Инвертировать признак «Учитывать»</span>
-                    </label>
-                    <button class="embedded-secondary-btn mt-4 w-full justify-center" @click="splitItem">Выполнить разделение</button>
-                </div>
-
-                <button v-if="editingItem.id" class="embedded-danger-btn" @click="deleteItem">
-                    <span class="material-symbols-outlined text-base">delete</span>
-                    Удалить запись
-                </button>
-            </div>
-
-            <div v-if="editingItem" class="embedded-editor-footer">
-                <button class="embedded-secondary-btn" @click="closeEditor">Отмена</button>
-                <button class="embedded-primary-btn" @click="saveCurrentItem">Сохранить</button>
-            </div>
-        </aside>
-    </div>
+        </section>
+    </template>
 
     <HelpSidePanel v-model="isHelpOpen" />
 </div>
@@ -1031,308 +639,207 @@ async function deleteItemDirect(item: Record<string, unknown>) {
     font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
 
-.embedded-shell {
-    min-height: 100vh;
+/*
+ * Токены Air переопределяются в пределах вкладки — ради контраста AA.
+ *
+ * Штатная заливка акцентных компонентов UI Kit (--ui-color-accent-main-primary,
+ * #0075ff) даёт с белым текстом 4.21:1, а с тёмным — 4.24:1: и то и другое ниже
+ * нормы AA 4.5:1 для обычного текста. Берём соседний тон того же синего ряда
+ * палитры, --ui-color-blue-80 (#0069e6): белый текст на нём — 5.04:1.
+ * Вторичная кнопка по умолчанию красит подпись в --ui-color-base-3 (3.0:1),
+ * поэтому подпись переводится на --ui-color-base-2 (6.79:1).
+ * Расчёт и защита от возврата — utils/colorContrast.ts + tests/colorContrast.test.ts.
+ */
+.task-tab {
+    --ui-color-design-filled-bg: var(--ui-color-blue-80);
+    --ui-color-design-filled-stroke: var(--ui-color-blue-80);
+    --ui-color-design-outline-na-content: var(--ui-color-base-2);
+    --ui-color-design-outline-na-stroke: var(--ui-color-base-6);
+
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 12px;
-    overflow: hidden;
+    gap: 10px;
+    min-height: 0;
+    padding: 10px;
 }
 
-.embedded-topbar {
+.task-tab__bar {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    padding: 18px 20px;
+    gap: 10px;
 }
 
-.embedded-topbar__title {
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
+.task-tab__heading {
     min-width: 0;
 }
 
-.embedded-topbar__actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 12px;
-}
-
-.embedded-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 52px;
-    height: 52px;
-    border-radius: 18px;
-    background: #d9f99d;
-    color: #4d7c0f;
-}
-
-.embedded-summary {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-}
-
-.embedded-summary__card {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 156px;
-    border: 1px solid rgba(216, 226, 238, 0.95);
-    border-radius: 18px;
-    background: #fff;
-    padding: 12px 14px;
-}
-
-.embedded-summary__card--accent {
-    background: linear-gradient(180deg, rgba(248, 250, 252, 1), rgba(238, 248, 200, 0.55));
-}
-
-.embedded-summary__label {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: #64748b;
-}
-
-.embedded-summary__value {
-    font-size: 20px;
-    font-weight: 700;
-    color: #0f172a;
-}
-
-.embedded-rate-input {
-    width: 100%;
-    border: 0;
-    background: transparent;
-    padding: 0;
-    font-size: 20px;
-    font-weight: 700;
-    color: #0f172a;
-    outline: none;
-    box-shadow: none;
-}
-
-.embedded-rate-input:focus {
-    border: 0;
-    box-shadow: none;
-    ring: 0;
-}
-
-.embedded-primary-btn,
-.embedded-secondary-btn,
-.embedded-danger-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    border-radius: 14px;
-    padding: 10px 15px;
-    font-size: 14px;
+.task-tab__title {
+    font-size: 16px;
     font-weight: 600;
-    transition: 180ms ease;
+    color: var(--ui-color-base-1);
 }
 
-.embedded-primary-btn {
-    background: #0075ff;
-    color: #0f172a;
-    box-shadow: 0 10px 24px rgba(183, 234, 44, 0.28);
+/* Итоги по задаче — одной строкой, как требует вариант A. */
+.task-tab__summary {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--ui-color-base-2);
 }
 
-.embedded-primary-btn:hover {
-    background: #c7f04f;
-}
-
-.embedded-secondary-btn {
-    border: 1px solid rgba(203, 213, 225, 0.95);
-    background: #fff;
-    color: #334155;
-}
-
-.embedded-secondary-btn:hover {
-    border-color: rgba(148, 163, 184, 0.95);
-    color: #0f172a;
-}
-
-.embedded-danger-btn {
-    justify-content: center;
-    border: 1px solid rgba(254, 205, 211, 0.95);
-    background: #fff1f2;
-    color: #be123c;
-}
-
-.embedded-danger-btn:hover {
-    background: #ffe4e6;
-}
-
-.embedded-state {
+.task-tab__bar-actions {
     display: flex;
     align-items: center;
-    justify-content: center;
-    min-height: 300px;
+    gap: 6px;
 }
 
-.embedded-state__content {
-    display: flex;
-    flex-direction: column;
+.task-tab__icon-btn {
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    text-align: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--ui-color-base-6);
+    border-radius: 8px;
+    background: var(--ui-color-bg-content-primary);
+    color: var(--ui-color-base-2);
+    cursor: pointer;
 }
 
-.embedded-grid {
-    display: grid;
-    flex: 1;
-    gap: 12px;
-    grid-template-columns: minmax(0, 1fr) 380px;
-    min-height: 0;
+.task-tab__icon-btn:hover {
+    border-color: var(--ui-color-base-5);
+    color: var(--ui-color-base-1);
 }
 
-.embedded-left-pane,
-.embedded-editor-pane {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
+.task-tab__icon-btn--on {
+    border-color: var(--ui-color-accent-main-link);
+    background: var(--ui-color-accent-soft-blue-2);
+    color: var(--ui-color-accent-main-link);
 }
 
-.embedded-filter-bar {
+.task-tab__filter {
     display: flex;
     flex-wrap: wrap;
     align-items: end;
-    gap: 12px;
-    margin: 12px;
-    margin-bottom: 0;
-}
-
-.embedded-filter-label {
-    display: block;
-    margin-bottom: 6px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: #64748b;
-}
-
-.embedded-filter-state {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: auto;
-    font-size: 12px;
-    font-weight: 600;
-    color: #4d7c0f;
-}
-
-.embedded-tree-scroll {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px;
-}
-
-.embedded-editor-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 18px 18px 14px;
-    border-bottom: 1px solid rgba(226, 232, 240, 0.95);
-    background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.82));
-}
-
-.embedded-icon-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 12px;
-    color: #94a3b8;
-    transition: 180ms ease;
-}
-
-.embedded-icon-btn:hover {
-    background: #f1f5f9;
-    color: #334155;
-}
-
-.embedded-editor-empty {
-    display: flex;
-    flex: 1;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-}
-
-.embedded-editor-body {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-    flex-direction: column;
-    gap: 16px;
-    overflow-y: auto;
-    padding: 18px;
-}
-
-.embedded-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    border: 1px solid rgba(216, 226, 238, 0.95);
-    border-radius: 16px;
-    background: #f8fafc;
-    padding: 12px 14px;
-}
-
-.embedded-split-card {
-    border: 1px solid rgba(226, 232, 240, 0.95);
-    border-radius: 20px;
-    background: linear-gradient(180deg, rgba(248, 250, 252, 1), rgba(241, 245, 249, 0.88));
-    padding: 16px;
-}
-
-.embedded-editor-footer {
-    display: flex;
-    justify-content: flex-end;
     gap: 10px;
-    padding: 16px 18px;
-    border-top: 1px solid rgba(226, 232, 240, 0.95);
-    background: #f8fafc;
+    padding: 10px;
+    border: 1px solid var(--ui-color-base-6);
+    border-radius: 12px;
+    background: var(--ui-color-bg-content-secondary);
 }
 
-@media (max-width: 1100px) {
-    .embedded-shell {
-        min-height: 100vh;
-        overflow: visible;
-    }
+.task-tab__filter--stacked {
+    flex-direction: column;
+    align-items: stretch;
+}
 
-    .embedded-grid {
-        grid-template-columns: 1fr;
-        flex: initial;
-    }
+.task-tab__filter-field {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 140px;
+}
 
-    .embedded-left-pane {
-        min-height: 420px;
-    }
+.task-tab__filter-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ui-color-base-2);
+}
 
-    .embedded-editor-pane {
-        min-height: 420px;
-    }
+.task-tab__notice {
+    padding: 10px 12px;
+    border: 1px solid var(--ui-color-red-30);
+    border-radius: 10px;
+    background: var(--ui-color-red-15);
+    font-size: 13px;
+    color: var(--ui-color-red-80);
+}
 
-    .embedded-tree-scroll {
-        flex: initial;
-        min-height: 320px;
-    }
+.task-tab__state {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 24px 16px;
+    border: 1px solid var(--ui-color-base-6);
+    border-radius: 12px;
+    background: var(--ui-color-bg-content-primary);
+    color: var(--ui-color-base-2);
+}
+
+.task-tab__state--error {
+    border-color: var(--ui-color-red-30);
+    background: var(--ui-color-red-15);
+    color: var(--ui-color-red-80);
+}
+
+.task-tab__state-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ui-color-base-1);
+}
+
+.task-tab__state--error .task-tab__state-title {
+    color: var(--ui-color-red-80);
+}
+
+.task-tab__state-text {
+    margin-top: 2px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.task-tab__tree {
+    display: flex;
+    flex-direction: column;
+}
+
+.task-tab__footer {
+    padding-top: 2px;
+}
+
+.task-tab__footer-actions,
+.task-tab__confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.task-tab__confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--ui-color-base-6);
+    border-radius: 12px;
+    background: var(--ui-color-accent-soft-blue-3);
+}
+
+.task-tab__confirm-text {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ui-color-base-1);
+}
+
+.task-tab__confirm-text--warn {
+    font-weight: 600;
+    color: var(--ui-color-red-80);
+}
+
+/* На узком фрейме кнопки шапки уходят на свою строку и растягиваются. */
+.task-tab--narrow .task-tab__bar {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.task-tab--narrow .task-tab__bar-actions {
+    justify-content: space-between;
+}
+
+.task-tab--narrow .task-tab__footer-actions > * {
+    flex: 1;
 }
 </style>
