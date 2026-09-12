@@ -87,6 +87,17 @@ class ConfigurationService:
         if not isinstance(normalized.get('finance_fields_mapping'), dict):
             normalized['finance_fields_mapping'] = {}
 
+        normalized['billing_allow_open_period'] = self._normalize_bool(
+            normalized.get('billing_allow_open_period')
+        )
+        normalized['billing_accountants'] = self._normalize_id_list(
+            normalized.get('billing_accountants')
+        )
+        try:
+            normalized['billing_act_template_id'] = int(normalized.get('billing_act_template_id') or 0)
+        except (TypeError, ValueError):
+            normalized['billing_act_template_id'] = 0
+
         try:
             normalized['finance_sp_entity_type_id'] = int(normalized.get('finance_sp_entity_type_id') or 0)
         except (TypeError, ValueError):
@@ -104,6 +115,42 @@ class ConfigurationService:
         merged['legal_entity_directory'] = merged_directory
 
         return merged
+
+    @staticmethod
+    def _normalize_bool(value: Any) -> bool:
+        """app.option отдаёт всё строками: 'false'/'0'/'' — это ложь.
+
+        bool('false') в Python истинно, поэтому голого приведения типа здесь
+        мало: настройка «разрешить открытый период» включилась бы сама от
+        любого сохранения конфигурации порталом.
+        """
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        text = str(value).strip().lower()
+        return text in {'1', 'true', 'yes', 'y', 'on'}
+
+    @staticmethod
+    def _normalize_id_list(value: Any) -> List[str]:
+        """Список идентификаторов пользователей: строками, без пустых и дублей."""
+        if value is None:
+            return []
+        if isinstance(value, (str, int)):
+            value = [value]
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        result: List[str] = []
+        for item in value:
+            # None пропускаем ДО str(): иначе в списке бухгалтеров оседает
+            # строка "None" — id, которого не существует, но который выглядит
+            # как настоящий и молча ничего не даёт.
+            if item is None:
+                continue
+            text = str(item).strip()
+            if text and text not in result:
+                result.append(text)
+        return result
 
     @staticmethod
     def _normalize_project_fields_mapping(mapping: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -140,6 +187,14 @@ class ConfigurationService:
             'finance_fields_mapping': {},
             'is_configured': False,
             'hourly_rate': 0,
+            # Счёт и акт (billing). Настройки живут в том же app.option, что и
+            # остальная конфигурация приложения, — отдельного механизма не
+            # заводим. Выключатель ПОДПИСКИ сюда не кладётся принципиально:
+            # он на нашем сервере (модель PortalFeature), иначе его можно было
+            # бы включить из консоли браузера через app.option.set.
+            'billing_allow_open_period': False,
+            'billing_accountants': [],
+            'billing_act_template_id': 0,
             'legal_entity_directory': {
                 'iblock_type_id': 'lists',
                 'iblock_id': 0,

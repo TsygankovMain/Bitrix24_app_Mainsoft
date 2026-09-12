@@ -80,5 +80,21 @@ export const TASK_TAB_ROUTE = '/embedded' as const
  */
 export const FINANCE_BDDS_ENABLED = false
 
-/** Счёт и акт из отражённых часов. Условия включения — см. FINANCE_BDDS_ENABLED. */
-export const FINANCE_BILLING_ENABLED = false
+/**
+ * Счёт и акт из отражённых часов.
+ *
+ * У этого флага роль ДРУГАЯ, чем у FINANCE_BDDS_ENABLED выше. Экран функции
+ * написан (app/pages/finance/billing/**), и доступ к нему решает СЕРВЕР:
+ * GET /api/features отдаёт состояние подписки портала
+ * (on | trial | off, контракт docs/superpowers/specs/
+ * 2026-09-12-billing-mvp-contract.md). Поэтому флаг стоит в true и работает
+ * как АВАРИЙНЫЙ ВЫКЛЮЧАТЕЛЬ: закрыть точку входа на всех порталах разом он
+ * может, открыть её вопреки серверу — нет (см. resolveBillingAccess в
+ * app/utils/billingFeature.ts, там же тесты на оба направления).
+ *
+ * Ставить false стоит ровно в одном случае: экран сломан в проде, а откат
+ * выката унёс бы вместе с ним не связанные исправления. Обычное «отключить
+ * клиенту» делается на сервере — management-командой над PortalFeature, и
+ * тогда человек видит замок и заглушку, а не пропавший пункт меню.
+ */
+export const FINANCE_BILLING_ENABLED = true

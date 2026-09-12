@@ -61,6 +61,17 @@ export type AppNavigationOptions = {
   controlIssuesCount?: number | null
   financeBddsEnabled: boolean
   financeBillingEnabled: boolean
+  /**
+   * Бейдж пункта «Счёт и акт», если он должен отличаться от стандартного.
+   *
+   * Нужен пробному периоду: функция ВКЛЮЧЕНА (замка нет), но рядом обязано
+   * стоять «пробный, осталось N дней» — иначе человек узнает об окончании
+   * пробы в тот день, когда кнопка «Выставить» перестанет работать.
+   * resolvePaidFeatureState такого состояния не знает и не должен: у него
+   * два исхода, «по подписке» или ничего. undefined — «оставить как есть»,
+   * null — «убрать бейдж».
+   */
+  financeBillingBadge?: string | null
 }
 
 function reportPath(report: ReportRouteName): string {
@@ -151,15 +162,20 @@ export function buildAppNavigation(options: AppNavigationOptions): NavSection[] 
         {
           id: 'finance-paid',
           label: 'Платные функции',
-          links: finance.map(state => ({
-            id: `finance-${state.feature.id}`,
-            label: state.feature.label,
-            to: state.to,
-            description: state.feature.benefit,
-            locked: state.locked,
-            badge: state.badge ?? undefined,
-            paidFeature: state.feature.id,
-          })),
+          links: finance.map((state) => {
+            const override = state.feature.id === 'billing' ? options.financeBillingBadge : undefined
+            const badge = override === undefined ? state.badge : override
+
+            return {
+              id: `finance-${state.feature.id}`,
+              label: state.feature.label,
+              to: state.to,
+              description: state.feature.benefit,
+              locked: state.locked,
+              badge: badge ?? undefined,
+              paidFeature: state.feature.id,
+            }
+          }),
         },
       ],
     },

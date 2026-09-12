@@ -316,3 +316,54 @@ test('toNavigationMenuItems: нулевой счётчик кружка не р�
   assert.equal(withZero[3].badge, undefined)
   assert.deepEqual(withTwo[3].badge, { label: '2' })
 })
+
+// --- Бейдж пробного периода у «Счёта и акта» ---
+//
+// Состояние платной функции решает сервер (GET /api/features), а меню только
+// рисует. Проверки ниже фиксируют два требования: включённая функция теряет
+// замок, а пробный период показывает остаток дней рядом с пунктом.
+
+function billingLink(options: Parameters<typeof buildAppNavigation>[0]) {
+  const finance = buildAppNavigation(options).find(section => section.id === 'finance')
+
+  return finance?.groups?.[0].links.find(link => link.paidFeature === 'billing')
+}
+
+test('buildAppNavigation: выключенная подписка оставляет «Счёту и акту» замок', () => {
+  const link = billingLink(BASE_OPTIONS)
+
+  assert.equal(link?.locked, true)
+  assert.equal(link?.badge, 'по подписке')
+  assert.equal(link?.to, '/finance/billing')
+})
+
+test('buildAppNavigation: включённая подписка снимает замок и бейдж', () => {
+  const link = billingLink({ ...BASE_OPTIONS, financeBillingEnabled: true })
+
+  assert.equal(link?.locked, false)
+  assert.equal(link?.badge, undefined)
+})
+
+test('buildAppNavigation: пробный период показывает остаток дней рядом с пунктом', () => {
+  const link = billingLink({
+    ...BASE_OPTIONS,
+    financeBillingEnabled: true,
+    financeBillingBadge: 'пробный, осталось 5 дней',
+  })
+
+  assert.equal(link?.locked, false)
+  assert.equal(link?.badge, 'пробный, осталось 5 дней')
+})
+
+test('buildAppNavigation: бейдж «Счёта и акта» не протекает в соседнюю платную функцию', () => {
+  const finance = buildAppNavigation({
+    ...BASE_OPTIONS,
+    financeBillingEnabled: true,
+    financeBillingBadge: 'пробный, осталось 5 дней',
+  }).find(section => section.id === 'finance')
+
+  const bdds = finance?.groups?.[0].links.find(link => link.paidFeature === 'bdds')
+
+  assert.equal(bdds?.locked, true)
+  assert.equal(bdds?.badge, 'по подписке')
+})
