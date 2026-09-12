@@ -2,7 +2,8 @@
 /**
  * Блок сопоставления полей одного смарт-процесса.
  *
- * Один компонент на оба блока экрана (списания и карточки проектов): наборы
+ * Один компонент на все блоки экрана (списания, карточки проектов,
+ * «Доходы-расходы»): наборы
  * полей разные, а разметка строки одна и та же, и дублировать её дважды по
  * шестьдесят строк — гарантированный расход двух правд.
  *
@@ -81,13 +82,18 @@ const groups = computed<RowGroup[]>(() => {
   const reports = byImportance('reports')
   const optional = byImportance('optional')
 
+  const isFinance = props.block === 'finance'
+
   if (critical.length) {
+    const criticalHint: Record<MappingBlockId, string> = {
+      timesheet: 'Часы не запишутся и не прочитаются.',
+      project: 'Сервер не примет конфигурацию, пока хотя бы одно поле пустое.',
+      finance: 'Без любого из них экран «Операции по проектам» пишет «не настроен», а добавить операцию нельзя. Сохранить черновик при этом можно.',
+    }
     result.push({
       id: 'critical',
-      title: 'Без этих полей приложение не работает',
-      hint: props.block === 'timesheet'
-        ? 'Часы не запишутся и не прочитаются.'
-        : 'Сервер не примет конфигурацию, пока хотя бы одно поле пустое.',
+      title: isFinance ? 'Без этих полей операции не работают' : 'Без этих полей приложение не работает',
+      hint: criticalHint[props.block],
       rows: critical,
       collapsedByDefault: false,
     })
@@ -96,8 +102,10 @@ const groups = computed<RowGroup[]>(() => {
   if (reports.length) {
     result.push({
       id: 'reports',
-      title: 'Без этих полей отчёты и документы врут',
-      hint: 'Учёт часов работает, но цифры будут неполными.',
+      title: isFinance ? 'Без этих полей операции теряют данные' : 'Без этих полей отчёты и документы врут',
+      hint: isFinance
+        ? 'Операции читаются и заводятся, но часть сведений не сохранится.'
+        : 'Учёт часов работает, но цифры будут неполными.',
       rows: reports,
       collapsedByDefault: false,
     })
@@ -147,9 +155,9 @@ function onSelectChange(row: MappingRow, event: Event) {
 
 const groupMissingCount = (group: RowGroup) => group.rows.filter(isMissing).length
 
-/** Порядок: сначала найденное по названию и коду, риск по типу — в конце. */
+/** Порядок: сначала точное по коду установки, потом по названию и коду, риск по типу — в конце. */
 const sortedSuggestions = computed(() => {
-  const rank: Record<MappingSuggestion['source'], number> = { label: 0, code: 1, type: 2 }
+  const rank: Record<MappingSuggestion['source'], number> = { install: 0, label: 1, code: 2, type: 3 }
   return [...(props.suggestions || [])].sort((a, b) => rank[a.source] - rank[b.source])
 })
 </script>
@@ -221,6 +229,12 @@ const sortedSuggestions = computed(() => {
                 class="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800"
               >
                 проверьте
+              </span>
+              <span
+                v-else-if="item.source === 'install'"
+                class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700"
+              >
+                точно по коду
               </span>
             </div>
             <p class="mt-1 text-xs text-slate-500">{{ item.reason }}</p>

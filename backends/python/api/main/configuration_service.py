@@ -341,6 +341,10 @@ class ConfigurationService:
                 'id': type_id,
                 'entityTypeId': int(entity_type_id),
                 'title': str(title),
+                # Код типа (finance_app, project_app, ...). По нему экран
+                # сопоставления узнаёт процессы, заведённые установкой, даже
+                # если на портале их переименовали.
+                'code': str(raw_type.get('code') or raw_type.get('CODE') or ''),
             })
 
         logger.info("get_smart_processes_sync: loaded %s smart processes", len(result))

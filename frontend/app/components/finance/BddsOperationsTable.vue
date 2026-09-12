@@ -12,8 +12,11 @@
  * (utils/bddsOperations.ts), запросы делают страницы. Здесь только разметка
  * и три состояния списка:
  *
- *  1. смарт-процесс не настроен — отказ со ссылкой в настройки. Это не
- *     «операций нет»: приложение работает, не заполнена настройка;
+ *  1. смарт-процесс не настроен — отказ с кнопкой, ведущей прямо на шаг
+ *     «Доходы-расходы» экрана сопоставления (адрес — страница, событие
+ *     open-settings). Это не «операций нет»: приложение работает, не
+ *     заполнена настройка. Технического адреса в тексте нет: человеку он
+ *     ничего не говорит, а ведёт туда кнопка;
  *  2. операций нет — текст даёт страница, потому что он зависит от того,
  *     стоят ли фильтры;
  *  3. строки.
@@ -26,7 +29,7 @@ import {
   BDDS_OPERATIONS_NOT_CONFIGURED_TEXT,
   BDDS_OPERATIONS_NOT_CONFIGURED_TITLE,
   BDDS_OPERATIONS_SETTINGS_LABEL,
-  BDDS_OPERATIONS_SETTINGS_PATH,
+  BDDS_OPERATIONS_SETTINGS_WHO,
   BDDS_OPERATIONS_TRUNCATED_TEXT,
   formatBddsOperationAuthor,
   formatBddsOperationDate,
@@ -63,8 +66,8 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  (event: 'load-more'): void
-  (event: 'open-settings'): void
+  'load-more': []
+  'open-settings': []
 }>()
 
 /** Переход в элемент смарт-процесса. Без entityTypeId ссылки нет вовсе. */
@@ -90,17 +93,15 @@ function projectName(row: BddsOperationRow): string {
     <div v-if="notConfigured" class="ms-panel-warning">
       <p class="font-medium">{{ BDDS_OPERATIONS_NOT_CONFIGURED_TITLE }}</p>
       <p class="mt-1 text-sm">{{ BDDS_OPERATIONS_NOT_CONFIGURED_TEXT }}</p>
-      <div class="mt-2">
+      <div class="mt-2 flex flex-wrap items-center gap-3">
         <B24Button
-          :label="`Открыть «${BDDS_OPERATIONS_SETTINGS_LABEL}»`"
+          :label="BDDS_OPERATIONS_SETTINGS_LABEL"
           color="default"
           size="sm"
           @click="emit('open-settings')"
         />
+        <span class="text-xs text-amber-700">{{ BDDS_OPERATIONS_SETTINGS_WHO }}</span>
       </div>
-      <p class="mt-2 text-xs text-amber-700">
-        Адрес настройки: {{ BDDS_OPERATIONS_SETTINGS_PATH }}
-      </p>
     </div>
 
     <template v-else>

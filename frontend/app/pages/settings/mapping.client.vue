@@ -30,6 +30,14 @@
  * ЧТО именно сохранится — planMappingSave решает это заранее и не даёт
  * упереться в 400.
  *
+ * Шаг 6 «Доходы-расходы» — необязательный: смарт-процесс нужен только
+ * операциям «БДДС по проектам». Он не бывает «сейчас здесь», не входит в
+ * счёт шагов и не поднимает баннер в шапке приложения. Сохраняется и общей
+ * кнопкой, и своей: своя шлёт конфигурацию целиком с признаком
+ * scope=finance, и сервер не запускает для неё проверку и синхронизацию
+ * проектов (FINANCE_CONFIG_SAVE_SCOPE). Экраны БДДС ведут сюда ссылкой
+ * `?step=finance` — после загрузки экран сам прокручивается к шагу.
+ *
  * Вся логика — app/utils/fieldMapping.ts, под тестами (node:test не резолвит
  * `.vue`, поэтому оставленное в компоненте ревью проверить не может).
  */
@@ -37,10 +45,20 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import MappingFieldsCard from '~/components/settings/MappingFieldsCard.vue'
 import {
+  FINANCE_APP_SMART_PROCESS_TITLE,
+  FINANCE_CONFIG_SAVE_SCOPE,
+  FINANCE_MAPPING_ROWS,
+  MAPPING_STEP_QUERY_KEY,
   PROJECT_MAPPING_ROWS,
   TIMESHEET_MAPPING_ROWS,
+  applyFinanceMappingToConfig,
   applySuggestions,
   buildMappingSteps,
+  findFinanceAppSmartProcess,
+  isFinanceMappingChanged,
+  planFinanceMappingSave,
+  resolveFinanceMappingNotice,
+  resolveMappingStepTarget,
   describeMappingSaveError,
   describeProjectSpaValidation,
   describeSmartProcessCreated,
@@ -65,8 +83,10 @@ import type {
 
 const { locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
+const route = useRoute()
 const apiStore = useApiStore()
 const { applyConfig: applyMappingHealthConfig } = useMappingHealth()
+const { access: bddsAccess } = useBddsFeature()
 
 useHead({
   title: 'Сопоставление полей'
@@ -87,10 +107,24 @@ const isLoadingProjectFields = ref(false)
 const isValidating = ref(false)
 const isSuggestingTimesheet = ref(false)
 const isSuggestingProject = ref(false)
+const isLoadingFinanceFields = ref(false)
+const isSuggestingFinance = ref(false)
+const isSavingFinance = ref(false)
 const creatingKey = ref<string | null>(null)
 
 const smartProcesses = ref<SmartProcessOption[]>([])
 const config = ref<AppConfigurationPayload>({})
+
+/**
+ * Конфигурация в том виде, в каком она лежит на СЕРВЕРЕ.
+ *
+ * `config` выше — черновик: в него пишет поле ставки и из него собирается
+ * общее сохранение. Отдельное сохранение «Доходов-расходов» обязано
+ * отправить серверную конфигурацию, а не черновик: иначе своя кнопка шага
+ * молча сохранила бы и чужие несохранённые правки, а сервер, увидев
+ * изменённую проектную часть, пошёл бы проверять проекты (и мог ответить 400).
+ */
+const savedConfig = ref<AppConfigurationPayload>({})
 
 /**
  * Что лежит на СЕРВЕРЕ, а не в полях экрана.
@@ -107,6 +141,9 @@ const spFields = ref<SmartProcessFieldOption[]>([])
 const projectSpFields = ref<SmartProcessFieldOption[]>([])
 const mapping = ref<Record<string, string>>({})
 const projectMapping = ref<Record<string, string>>({})
+const selectedFinanceSpId = ref<number | null>(null)
+const financeSpFields = ref<SmartProcessFieldOption[]>([])
+const financeMapping = ref<Record<string, string>>({})
 
 const validation = ref<ProjectSpaValidationPayload | null>(null)
 
@@ -114,6 +151,11 @@ const timesheetSuggestions = ref<MappingSuggestion[] | null>(null)
 const projectSuggestions = ref<MappingSuggestion[] | null>(null)
 const timesheetSuggestionsNote = ref('')
 const projectSuggestionsNote = ref('')
+const financeSuggestions = ref<MappingSuggestion[] | null>(null)
+const financeSuggestionsNote = ref('')
+
+/** Шаг, на который привела ссылка с другого экрана (`?step=`): подсвечиваем. */
+const targetStep = ref<MappingBlockId | ''>('')
 
 /** Успех или отказ последнего действия. Живёт до следующего действия. */
 const statusMessage = ref<{ type: 'success' | 'error' | 'info', text: string } | null>(null)
@@ -154,10 +196,19 @@ const projectStatus = computed(() => resolveMappingBlockStatus({
   mapping: projectMapping.value,
 }))
 
+const financeStatus = computed(() => resolveMappingBlockStatus({
+  block: 'finance',
+  entityTypeId: selectedFinanceSpId.value,
+  spFields: financeSpFields.value,
+  mapping: financeMapping.value,
+}))
+
 const steps = computed(() => buildMappingSteps({
   timesheet: timesheetStatus.value,
   project: projectStatus.value,
   validation: validation.value,
+  finance: financeStatus.value,
+  financeNeeded: bddsAccess.value.enabled,
 }))
 
 const overall = computed(() => resolveMappingOverall(steps.value, {
@@ -170,6 +221,28 @@ const savePlan = computed(() => planMappingSave({
   savedProjectSpId: savedProjectSpId.value,
   projectStatus: projectStatus.value,
 }))
+
+const financePlan = computed(() => planFinanceMappingSave({
+  selectedFinanceSpId: selectedFinanceSpId.value,
+  savedFinanceSpId: savedConfig.value.finance_sp_entity_type_id,
+  financeStatus: financeStatus.value,
+  mapping: financeMapping.value,
+}))
+
+const financeChanged = computed(() => isFinanceMappingChanged(savedConfig.value, {
+  entityTypeId: selectedFinanceSpId.value,
+  mapping: financeMapping.value,
+}))
+
+/** Готовый процесс, который заводит установка приложения. */
+const financeAppProcess = computed(() => findFinanceAppSmartProcess(smartProcesses.value))
+
+/**
+ * Напоминание про БДДС — только при подключённой подписке и только по
+ * СОХРАНЁННОЙ конфигурации: пока человек заполняет шаг, текст «не
+ * подключены» над его же заполненным черновиком только путал бы.
+ */
+const financeNotice = computed(() => resolveFinanceMappingNotice(savedConfig.value, bddsAccess.value.enabled))
 
 const validationReport = computed(() => describeProjectSpaValidation(validation.value))
 
@@ -229,6 +302,19 @@ async function loadProjectSpFields(entityTypeId: number) {
   }
 }
 
+async function loadFinanceSpFields(entityTypeId: number) {
+  isLoadingFinanceFields.value = true
+  try {
+    const res = await apiStore.getSpFields(entityTypeId)
+    financeSpFields.value = res.fields || []
+  } catch (e) {
+    financeSpFields.value = []
+    showStatus('error', `Не удалось получить поля смарт-процесса «Доходы-расходы». ${describeMappingSaveError(e).text}`)
+  } finally {
+    isLoadingFinanceFields.value = false
+  }
+}
+
 async function runValidation(silent = false) {
   if (!selectedProjectSpId.value) {
     validation.value = null
@@ -268,6 +354,7 @@ async function loadData() {
 
     const cfg = cfgRes.value
     config.value = cfg
+    savedConfig.value = { ...cfg }
     applyMappingHealthConfig(cfg)
     smartProcesses.value = spRes.status === 'fulfilled' ? (spRes.value.types || []) : []
 
@@ -303,11 +390,44 @@ async function loadData() {
       await loadProjectSpFields(Number(cfg.project_sp_entity_type_id))
       await runValidation(true)
     }
+
+    financeMapping.value = normalizeMappingState(cfg.finance_fields_mapping || {})
+    if (Number(cfg.finance_sp_entity_type_id || 0) > 0) {
+      selectedFinanceSpId.value = Number(cfg.finance_sp_entity_type_id)
+      await loadFinanceSpFields(Number(cfg.finance_sp_entity_type_id))
+    }
   } catch (e) {
     processErrorGlobal(e)
   } finally {
     isLoading.value = false
     isInit.value = true
+  }
+}
+
+/**
+ * Прокрутка к шагу, на который вела ссылка (`?step=finance`).
+ *
+ * Только после загрузки: до неё на странице стоит заглушка «Читаем
+ * настройки», и карточки шага, к которой надо прокрутить, ещё нет. Фокус —
+ * на выпадающий список процесса, с которого шаг начинается.
+ */
+async function revealStepFromRoute() {
+  const target = resolveMappingStepTarget(route.query[MAPPING_STEP_QUERY_KEY])
+  if (!target) {
+    return
+  }
+
+  targetStep.value = target.block
+  await nextTick()
+
+  if (typeof document === 'undefined') {
+    return
+  }
+
+  document.getElementById(target.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const select = document.getElementById(target.focusId)
+  if (select instanceof HTMLSelectElement) {
+    select.focus({ preventScroll: true })
   }
 }
 
@@ -345,6 +465,11 @@ async function onProcessChange(block: MappingBlockId, event: Event) {
     return
   }
 
+  if (block === 'finance') {
+    await selectFinanceProcess(nextId)
+    return
+  }
+
   selectedProjectSpId.value = nextId
   projectSuggestions.value = null
   projectSpFields.value = []
@@ -355,8 +480,50 @@ async function onProcessChange(block: MappingBlockId, event: Event) {
   }
 }
 
+async function selectFinanceProcess(nextId: number | null) {
+  selectedFinanceSpId.value = nextId
+  financeSuggestions.value = null
+  financeSpFields.value = []
+  if (nextId) {
+    await loadFinanceSpFields(nextId)
+  }
+}
+
+/**
+ * «Выбрать «Доходы-расходы (App)»» — готовый процесс установки.
+ *
+ * Сразу после выбора запускаем автоподбор: поля этого процесса заведены
+ * установкой и находятся точно по коду. Найденное только ПОКАЗЫВАЕТСЯ —
+ * применяет его человек, как и в остальных шагах.
+ */
+async function useFinanceAppProcess() {
+  const app = financeAppProcess.value
+  if (!app) {
+    return
+  }
+
+  statusMessage.value = null
+  saveReport.value = null
+  await selectFinanceProcess(Number(app.entityTypeId))
+
+  if (financeSpFields.value.length) {
+    handleSuggest('finance')
+  }
+}
+
+function mappingRef(block: MappingBlockId) {
+  switch (block) {
+    case 'timesheet':
+      return mapping
+    case 'finance':
+      return financeMapping
+    default:
+      return projectMapping
+  }
+}
+
 function onMappingChange(block: MappingBlockId, key: string, value: string) {
-  const target = block === 'timesheet' ? mapping : projectMapping
+  const target = mappingRef(block)
   const next = { ...target.value }
 
   if (value) {
@@ -379,6 +546,7 @@ async function handleCreateSmartProcess() {
     const result = await apiStore.createSmartProcess()
     const newConfig = result.config
     config.value = { ...config.value, ...newConfig }
+    savedConfig.value = { ...newConfig }
     selectedSpId.value = Number(newConfig.sp_entity_type_id)
     mapping.value = normalizeMappingState(newConfig.fields_mapping || {})
 
@@ -416,7 +584,9 @@ async function handleCreateSmartProcess() {
 
 async function handleCreateField(block: MappingBlockId, fieldKey: string, fieldLabel: string) {
   const entityTypeId = Number(
-    (block === 'timesheet' ? selectedSpId.value : selectedProjectSpId.value) || 0
+    (block === 'timesheet'
+      ? selectedSpId.value
+      : block === 'finance' ? selectedFinanceSpId.value : selectedProjectSpId.value) || 0
   )
 
   if (!entityTypeId) {
@@ -429,10 +599,23 @@ async function handleCreateField(block: MappingBlockId, fieldKey: string, fieldL
   saveReport.value = null
 
   try {
-    const result = await apiStore.createMappedField(entityTypeId, fieldKey, block === 'timesheet' ? 'timesheet' : 'project')
+    const result = await apiStore.createMappedField(entityTypeId, fieldKey, block)
     config.value = { ...config.value, ...result.config }
+    // Сервер записал конфигурацию сам (create_single_field): это и есть
+    // новое серверное состояние, от него считается отдельное сохранение.
+    savedConfig.value = { ...result.config }
 
-    if (block === 'timesheet') {
+    if (block === 'finance') {
+      financeMapping.value = mergeCreatedFieldMapping(
+        financeMapping.value,
+        result.config.finance_fields_mapping,
+        fieldKey,
+        result.field_id
+      )
+      config.value.finance_fields_mapping = { ...financeMapping.value }
+      config.value.finance_sp_entity_type_id = entityTypeId
+      await loadFinanceSpFields(entityTypeId)
+    } else if (block === 'timesheet') {
       mapping.value = mergeCreatedFieldMapping(
         mapping.value,
         result.config.fields_mapping,
@@ -465,54 +648,73 @@ async function handleCreateField(block: MappingBlockId, fieldKey: string, fieldL
   }
 }
 
+/** Всё, что нужно автоподбору одного блока. */
+function suggestionContext(block: MappingBlockId) {
+  switch (block) {
+    case 'timesheet':
+      return {
+        rows: TIMESHEET_MAPPING_ROWS,
+        fields: spFields,
+        mapping,
+        status: timesheetStatus,
+        suggestions: timesheetSuggestions,
+        note: timesheetSuggestionsNote,
+        busy: isSuggestingTimesheet,
+      }
+    case 'finance':
+      return {
+        rows: FINANCE_MAPPING_ROWS,
+        fields: financeSpFields,
+        mapping: financeMapping,
+        status: financeStatus,
+        suggestions: financeSuggestions,
+        note: financeSuggestionsNote,
+        busy: isSuggestingFinance,
+      }
+    default:
+      return {
+        rows: PROJECT_MAPPING_ROWS,
+        fields: projectSpFields,
+        mapping: projectMapping,
+        status: projectStatus,
+        suggestions: projectSuggestions,
+        note: projectSuggestionsNote,
+        busy: isSuggestingProject,
+      }
+  }
+}
+
 function handleSuggest(block: MappingBlockId) {
-  const busy = block === 'timesheet' ? isSuggestingTimesheet : isSuggestingProject
-  busy.value = true
+  const ctx = suggestionContext(block)
+  ctx.busy.value = true
   statusMessage.value = null
 
   try {
-    const rows = block === 'timesheet' ? TIMESHEET_MAPPING_ROWS : PROJECT_MAPPING_ROWS
-    const fields = block === 'timesheet' ? spFields.value : projectSpFields.value
-    const current = block === 'timesheet' ? mapping.value : projectMapping.value
-    const status = block === 'timesheet' ? timesheetStatus.value : projectStatus.value
+    const found = suggestMappingMatches(ctx.rows, ctx.fields.value, ctx.mapping.value)
+    const missingCount = ctx.status.value.totalCount - ctx.status.value.mappedCount
 
-    const found = suggestMappingMatches(rows, fields, current)
-    const missingCount = status.totalCount - status.mappedCount
-    const note = describeSuggestions(found, missingCount)
-
-    if (block === 'timesheet') {
-      timesheetSuggestions.value = found
-      timesheetSuggestionsNote.value = note
-    } else {
-      projectSuggestions.value = found
-      projectSuggestionsNote.value = note
-    }
+    ctx.suggestions.value = found
+    ctx.note.value = describeSuggestions(found, missingCount)
   } finally {
-    busy.value = false
+    ctx.busy.value = false
   }
 }
 
 function handleApplySuggestions(block: MappingBlockId) {
-  if (block === 'timesheet') {
-    const found = timesheetSuggestions.value || []
-    mapping.value = applySuggestions(mapping.value, found)
-    timesheetSuggestions.value = null
-    showStatus('info', `Применено сопоставлений: ${found.length}. Изменения пока не сохранены — нажмите «Сохранить».`)
-    return
-  }
+  const ctx = suggestionContext(block)
+  const found = ctx.suggestions.value || []
 
-  const found = projectSuggestions.value || []
-  projectMapping.value = applySuggestions(projectMapping.value, found)
-  projectSuggestions.value = null
-  showStatus('info', `Применено сопоставлений: ${found.length}. Изменения пока не сохранены — нажмите «Сохранить».`)
+  ctx.mapping.value = applySuggestions(ctx.mapping.value, found)
+  ctx.suggestions.value = null
+
+  const saveHint = block === 'finance'
+    ? 'нажмите «Сохранить «Доходы-расходы»» в этом шаге или общее «Сохранить»'
+    : 'нажмите «Сохранить»'
+  showStatus('info', `Применено сопоставлений: ${found.length}. Изменения пока не сохранены — ${saveHint}.`)
 }
 
 function dismissSuggestions(block: MappingBlockId) {
-  if (block === 'timesheet') {
-    timesheetSuggestions.value = null
-  } else {
-    projectSuggestions.value = null
-  }
+  suggestionContext(block).suggestions.value = null
 }
 
 /** Переход из сводки ошибок к полю: подсветка плюс фокус на выпадающем списке. */
@@ -577,7 +779,7 @@ async function handleSave() {
 
   try {
     const serializedProjectMapping = serializeProjectMappingState(projectMapping.value)
-    const newConfig: AppConfigurationPayload = {
+    const baseConfig: AppConfigurationPayload = {
       ...config.value,
       sp_entity_type_id: selectedSpId.value,
       fields_mapping: mapping.value,
@@ -590,10 +792,18 @@ async function handleSave() {
       effective_stage: serializedProjectMapping.effective_stage || null,
       is_configured: true,
     }
+    // «Доходы-расходы» уходят той же кнопкой: общее «Сохранить» сохраняет
+    // всё, что видно на экране. Проверки на сервере у них нет, поэтому
+    // неполный черновик общее сохранение не блокирует.
+    const newConfig = applyFinanceMappingToConfig(baseConfig, {
+      entityTypeId: selectedFinanceSpId.value,
+      mapping: financeMapping.value,
+    })
 
     const saveResult = await apiStore.saveConfiguration(newConfig)
 
     config.value = newConfig
+    savedConfig.value = { ...newConfig }
     savedProjectSpId.value = Number(plan.projectSpIdToSend || 0)
     applyMappingHealthConfig(newConfig)
 
@@ -632,28 +842,91 @@ async function handleSave() {
       await runValidation(true)
     }
   } catch (e) {
-    const report = describeMappingSaveError(e)
-
-    if (report.validation) {
-      validation.value = report.validation
-      const described = describeProjectSpaValidation(report.validation)
-      saveReport.value = {
-        title: report.title,
-        text: report.text,
-        blockers: described.problems.map(problem => ({
-          key: problem.id,
-          label: problem.title,
-          reason: `${problem.detail} ${problem.fix}`,
-          block: 'project' as MappingBlockId,
-        })),
-      }
-    } else {
-      saveReport.value = { title: report.title, text: report.text, blockers: [] }
-    }
-
-    await focusSaveReport()
+    await reportSaveError(e)
   } finally {
     isSaving.value = false
+  }
+}
+
+async function reportSaveError(e: unknown) {
+  const report = describeMappingSaveError(e)
+
+  if (report.validation) {
+    validation.value = report.validation
+    const described = describeProjectSpaValidation(report.validation)
+    saveReport.value = {
+      title: report.title,
+      text: report.text,
+      blockers: described.problems.map(problem => ({
+        key: problem.id,
+        label: problem.title,
+        reason: `${problem.detail} ${problem.fix}`,
+        block: 'project' as MappingBlockId,
+      })),
+    }
+  } else {
+    saveReport.value = { title: report.title, text: report.text, blockers: [] }
+  }
+
+  await focusSaveReport()
+}
+
+/**
+ * Сохранение одного шага «Доходы-расходы».
+ *
+ * Тело — СЕРВЕРНАЯ конфигурация целиком (savedConfig) с подменёнными двумя
+ * финансовыми ключами: сервер хранит настройки одной строкой, и прислать
+ * только финансовые ключи значило бы затереть всё остальное. Черновики
+ * других шагов сюда не попадают — их сохраняет общая кнопка.
+ *
+ * scope=finance просит сервер не запускать проверку и синхронизацию
+ * проектов. Сервер соглашается, только если проектная часть совпадает с
+ * сохранённой, — а она совпадает, потому что взята из savedConfig.
+ */
+async function handleSaveFinance() {
+  const plan = financePlan.value
+  statusMessage.value = null
+  saveReport.value = null
+
+  if (!financeChanged.value) {
+    showStatus('info', 'В шаге «Доходы-расходы» нет несохранённых изменений.')
+    await revealStatus()
+    return
+  }
+
+  isSavingFinance.value = true
+
+  try {
+    const next = applyFinanceMappingToConfig(savedConfig.value, {
+      entityTypeId: selectedFinanceSpId.value,
+      mapping: financeMapping.value,
+    })
+
+    await apiStore.saveConfiguration(next, { scope: FINANCE_CONFIG_SAVE_SCOPE })
+
+    savedConfig.value = next
+    config.value = {
+      ...config.value,
+      finance_sp_entity_type_id: next.finance_sp_entity_type_id,
+      finance_fields_mapping: next.finance_fields_mapping,
+    }
+    applyMappingHealthConfig(next)
+
+    switch (plan.kind) {
+      case 'ready':
+        showStatus('success', `«Доходы-расходы» сохранены: операции БДДС читаются из смарт-процесса ID ${plan.financeSpIdToSend}. Остальные шаги не менялись.`)
+        break
+      case 'draft':
+        showStatus('info', `Черновик «Доходов-расходов» сохранён. Операции заработают, когда будут сопоставлены: ${plan.missing.map(item => `«${item.label}»`).join(', ')}.`)
+        break
+      default:
+        showStatus('success', 'Смарт-процесс «Доходы-расходы» отвязан. Остальные шаги не менялись.')
+    }
+    await revealStatus()
+  } catch (e) {
+    await reportSaveError(e)
+  } finally {
+    isSavingFinance.value = false
   }
 }
 
@@ -664,6 +937,7 @@ onMounted(async () => {
     $b24 = await $initializeB24Frame()
     await initApp($b24, localesI18n, setLocale)
     await loadData()
+    await revealStepFromRoute()
   } catch (error) {
     processErrorGlobal(error)
   }
@@ -710,7 +984,7 @@ onMounted(async () => {
           Кнопки, а не декорация: незакрытый шаг — это ещё и переход к своему
           блоку, иначе на длинной странице человек ищет нужный блок глазами.
         -->
-        <ol class="grid gap-2 md:grid-cols-5">
+        <ol class="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
           <li v-for="(step, index) in steps" :key="step.id">
             <a
               :href="`#${step.anchor}`"
@@ -724,6 +998,7 @@ onMounted(async () => {
                 <template v-if="step.state === 'done'">готово</template>
                 <template v-else-if="step.state === 'attention'">есть проблема</template>
                 <template v-else-if="step.state === 'current'">сейчас здесь</template>
+                <template v-else-if="step.state === 'optional'">по желанию</template>
                 <template v-else>позже</template>
               </span>
             </a>
@@ -1035,6 +1310,159 @@ onMounted(async () => {
         </div>
       </B24Card>
 
+      <!--
+        Шаг 6: «Доходы-расходы». Необязательный.
+
+        Одной карточкой, а не двумя, как у списаний и проектов: шаг один и
+        по желанию, и растягивать его на два блока значит делать его
+        похожим на обязательный. Сюда ведут экраны БДДС (`?step=finance`).
+      -->
+      <B24Card
+        id="block-finance-process"
+        :class="targetStep === 'finance' ? 'mapping-card--target' : ''"
+      >
+        <template #header>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-base font-semibold text-slate-900">Шаг 6. Доходы-расходы</span>
+            <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              по желанию
+            </span>
+            <span
+              v-if="financeStatus.state !== 'no-process'"
+              class="rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+              :class="financeStatus.state === 'ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'"
+            >
+              {{ `ID ${financeStatus.entityTypeId} · ${financeStatus.headline}` }}
+            </span>
+          </div>
+        </template>
+
+        <div class="space-y-4">
+          <p class="text-sm text-slate-600">
+            Смарт-процесс «Доходы-расходы» хранит поступления и списания по проектам: из него
+            работают экран «Операции по проектам» и блок операций в карточке проекта БДДС. Шаг
+            необязательный — часы, отчёты и счета работают без него, и предупреждение в шапке
+            приложения из-за него не появится.
+          </p>
+
+          <!--
+            Мягкое напоминание — только при подключённом «БДДС по проектам».
+            Без подписки операций нет вовсе, и напоминать не о чем.
+          -->
+          <div v-if="financeNotice" class="ms-note ms-note-info">
+            <p class="text-sm font-semibold">{{ financeNotice.title }}</p>
+            <p class="mt-1 text-sm">
+              У портала подключён «БДДС по проектам». {{ financeNotice.text }}
+            </p>
+            <p v-if="financeNotice.missingLabels.length" class="mt-1 text-sm">
+              Не сопоставлено: {{ financeNotice.missingLabels.join(', ') }}.
+            </p>
+          </div>
+          <p v-else-if="!bddsAccess.enabled && !bddsAccess.unknown" class="text-xs text-slate-500">
+            «БДДС по проектам» на этом портале не подключён — шаг можно пропустить.
+          </p>
+
+          <div class="max-w-[520px]">
+            <label for="finance-process" class="mb-1 block text-sm font-semibold text-slate-800">
+              Смарт-процесс «Доходы-расходы»
+            </label>
+            <select
+              id="finance-process"
+              class="block w-full"
+              :value="selectedFinanceSpId ?? ''"
+              :disabled="isLoadingFinanceFields"
+              @change="event => onProcessChange('finance', event)"
+            >
+              <option value="">— не выбрано —</option>
+              <option v-for="option in smartProcessOptions" :key="`fin-${option.value}`" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+            <p v-if="!financeAppProcess" class="mt-1 text-xs text-slate-500">
+              Готового процесса «{{ FINANCE_APP_SMART_PROCESS_TITLE }}» на портале не нашлось.
+              Выберите свой процесс и заведите недостающие поля кнопками «Создать поле на портале».
+            </p>
+          </div>
+
+          <!-- Подсказка готового процесса: его заводит установка, поля в нём уже есть -->
+          <div
+            v-if="financeAppProcess && selectedFinanceSpId !== Number(financeAppProcess.entityTypeId)"
+            class="ms-panel-muted flex flex-wrap items-center justify-between gap-3"
+          >
+            <p class="min-w-0 text-sm text-slate-700">
+              На портале есть «{{ financeAppProcess.title }}» (ID {{ financeAppProcess.entityTypeId }}) —
+              его завела установка приложения, все поля в нём уже созданы и подберутся точно по коду.
+            </p>
+            <B24Button
+              :label="`Выбрать «${FINANCE_APP_SMART_PROCESS_TITLE}»`"
+              color="primary"
+              size="sm"
+              :loading="isLoadingFinanceFields"
+              :disabled="isLoadingFinanceFields"
+              @click="useFinanceAppProcess"
+            />
+          </div>
+
+          <MappingFieldsCard
+            v-if="selectedFinanceSpId"
+            block="finance"
+            :rows="FINANCE_MAPPING_ROWS"
+            :status="financeStatus"
+            :mapping="financeMapping"
+            :sp-fields="financeSpFields"
+            :suggestions="financeSuggestions"
+            :suggestions-note="financeSuggestionsNote"
+            :is-suggesting="isSuggestingFinance"
+            :is-loading-fields="isLoadingFinanceFields"
+            :creating-key="creatingKey"
+            :highlight-key="highlightKey"
+            :can-edit="true"
+            @change="(key, value) => onMappingChange('finance', key, value)"
+            @create="(key, label) => handleCreateField('finance', key, label)"
+            @suggest="handleSuggest('finance')"
+            @apply-suggestions="handleApplySuggestions('finance')"
+            @dismiss-suggestions="dismissSuggestions('finance')"
+            @reload-fields="selectedFinanceSpId && loadFinanceSpFields(selectedFinanceSpId)"
+          />
+
+          <!-- Что будет при сохранении шага -->
+          <section aria-labelledby="finance-save-plan-title" class="ms-panel-muted">
+            <p id="finance-save-plan-title" class="text-sm font-semibold text-slate-900">
+              {{ financePlan.title }}
+            </p>
+            <p class="mt-1 text-sm text-slate-600">
+              {{ financePlan.note }}
+            </p>
+            <ul v-if="financePlan.missing.length" class="mt-3 space-y-1 text-sm text-slate-600">
+              <li v-for="item in financePlan.missing" :key="`finance-plan-${item.key}`">
+                <button
+                  type="button"
+                  class="font-semibold underline decoration-dotted"
+                  @click="goToField('finance', item.key)"
+                >
+                  {{ item.label }}
+                </button>
+              </li>
+            </ul>
+            <div class="mt-3 flex flex-wrap items-center gap-3">
+              <B24Button
+                label="Сохранить «Доходы-расходы»"
+                color="success"
+                size="sm"
+                :loading="isSavingFinance"
+                :disabled="isSavingFinance || isSaving || !isInit || !financeChanged"
+                @click="handleSaveFinance"
+              />
+              <span v-if="!financeChanged" class="text-xs text-slate-500">Несохранённых изменений в шаге нет.</span>
+            </div>
+            <p class="mt-2 text-xs text-slate-500">
+              Сохраняет только этот шаг: несохранённые правки других шагов останутся черновиком, а
+              проверка и синхронизация проектов не запускаются.
+            </p>
+          </section>
+        </div>
+      </B24Card>
+
       <!-- Ставка по умолчанию: не сопоставление, но сохраняется той же кнопкой -->
       <B24Card>
         <template #header>
@@ -1068,6 +1496,14 @@ onMounted(async () => {
         </p>
         <p class="mt-1 text-sm text-slate-600">
           {{ savePlan.note }}
+        </p>
+        <p v-if="financeChanged" class="mt-1 text-sm text-slate-600">
+          <template v-if="savePlan.kind === 'blocked'">
+            «Доходы-расходы» от этого не зависят — их можно сохранить отдельно, кнопкой в шаге 6.
+          </template>
+          <template v-else>
+            «Доходы-расходы» тоже уйдут этой кнопкой. {{ financePlan.title }}.
+          </template>
         </p>
         <ul v-if="savePlan.kind === 'blocked'" class="mt-3 space-y-1 text-sm text-slate-600">
           <li v-for="blocker in savePlan.blockers" :key="`plan-${blocker.key}`">
@@ -1183,6 +1619,16 @@ onMounted(async () => {
 
 .mapping-step--attention .mapping-step__state {
   color: #be123c;
+}
+
+/* Шаг по желанию: пунктир, чтобы не читался как недоделанный обязательный. */
+.mapping-step--optional {
+  border-style: dashed;
+}
+
+/* Карточка шага, к которому привела ссылка с другого экрана. */
+.mapping-card--target {
+  box-shadow: 0 0 0 2px #0075ff;
 }
 
 @media (max-width: 768px) {

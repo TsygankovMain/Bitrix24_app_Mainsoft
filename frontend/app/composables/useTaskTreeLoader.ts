@@ -119,7 +119,7 @@ export function useTaskTreeLoader() {
 
     await fieldConfigStore.loadFromB24($b24)
     if (!fieldConfigStore.isConfigured) {
-      error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Зайдите в Настройки → Настройка полей и настройте поля.'
+      error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Откройте «Настройки → Сопоставление полей» и сопоставьте поля.'
     }
   }
 
@@ -130,7 +130,7 @@ export function useTaskTreeLoader() {
       // оставлял вкладку задачи навсегда на «Загрузка данных задачи» без причины.
       error.value = error.value
         || fieldConfigStore.loadError
-        || 'Конфигурация не найдена. Зайдите в Настройки → Настройка полей и настройте поля.'
+        || 'Конфигурация не найдена. Откройте «Настройки → Сопоставление полей» и сопоставьте поля.'
       isLoading.value = false
       return
     }

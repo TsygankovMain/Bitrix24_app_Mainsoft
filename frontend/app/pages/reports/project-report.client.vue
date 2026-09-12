@@ -50,7 +50,7 @@ onMounted(async () => {
         // Load config
         await fieldConfigStore.loadFromB24($b24!)
         if (!fieldConfigStore.isConfigured) {
-            error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Зайдите в Настройки → Настройка полей.'
+            error.value = fieldConfigStore.loadError || 'Конфигурация не найдена. Откройте «Настройки → Сопоставление полей» и сопоставьте поля.'
             isLoading.value = false
             return
         }

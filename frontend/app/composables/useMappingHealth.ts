@@ -22,14 +22,18 @@
  */
 
 import { computed } from 'vue'
-import { resolveMappingHealth, type MappingHealth } from '~/utils/fieldMapping'
+import { MAPPING_SETTINGS_PATH, resolveMappingHealth, type MappingHealth } from '~/utils/fieldMapping'
 import type { AppConfigurationPayload } from '~/types/config'
 
 export const MAPPING_HEALTH_CONFIG_STATE_KEY = 'app-mapping-health-config'
 export const MAPPING_HEALTH_FAILED_STATE_KEY = 'app-mapping-health-failed'
 
-/** Адрес экрана сопоставления. Одна строка на приложение, чтобы не разъехалась. */
-export const MAPPING_SETTINGS_ROUTE = '/settings/mapping'
+/**
+ * Адрес экрана сопоставления. Сама строка живёт в utils/fieldMapping.ts
+ * рядом со ссылками на отдельные шаги (buildMappingStepLink), чтобы адрес
+ * экрана и адреса шагов не разъехались.
+ */
+export const MAPPING_SETTINGS_ROUTE = MAPPING_SETTINGS_PATH
 
 let configRequest: Promise<void> | null = null
 

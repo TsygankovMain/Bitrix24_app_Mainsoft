@@ -66,7 +66,7 @@ import BddsOperationsTable from '~/components/finance/BddsOperationsTable.vue'
 import {
   BDDS_OPERATIONS_PAGE_SIZE,
   BDDS_OPERATIONS_SETTINGS_PATH,
-  DEFAULT_BDDS_OPERATION_FILTERS,
+
   describeBddsBudgetImpact,
   describeBddsOperationDuplicate,
   describeBddsOperationFormBlock,

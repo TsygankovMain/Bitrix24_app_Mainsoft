@@ -42,6 +42,8 @@ import type {
 
 type SaveConfigurationResponse = {
   status?: string
+  /** Сервер сохранил по отдельной ветке (сейчас только 'finance'). */
+  scope?: string
   config?: AppConfigurationPayload
   project_sync?: Record<string, unknown>
   timesheet_backfill?: Record<string, unknown>
@@ -1383,11 +1385,24 @@ export const useApiStore = defineStore(
       }, forceRefresh)
     }
 
-    const saveConfiguration = async (config: AppConfigurationPayload): Promise<SaveConfigurationResponse> => {
+    /**
+     * Сохранение конфигурации. Тело — ВСЯ конфигурация под ключом `config`:
+     * сервер пишет её в app.option одной строкой, и частичный объект затёр
+     * бы остальные настройки.
+     *
+     * `scope: 'finance'` — отдельное сохранение «Доходов-расходов» с экрана
+     * сопоставления: сервер не запускает для него проверку и синхронизацию
+     * проектов, если проектная часть не менялась (см.
+     * FINANCE_CONFIG_SAVE_SCOPE в utils/fieldMapping.ts).
+     */
+    const saveConfiguration = async (
+      config: AppConfigurationPayload,
+      options: { scope?: 'finance' } = {}
+    ): Promise<SaveConfigurationResponse> => {
       const result = await $api<SaveConfigurationResponse>('/api/configuration/save', {
         method: 'POST',
         headers: { Authorization: `Bearer ${tokenJWT.value}` },
-        body: JSON.stringify({ config })
+        body: JSON.stringify(options.scope ? { config, scope: options.scope } : { config })
       })
       clearCache('app-configuration', 'project-board-meta', 'homepage-portfolio', 'bitrix-lists:lists', 'bitrix-lists:lists_socnet')
       return result
