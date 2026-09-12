@@ -498,6 +498,59 @@ export function countProjectQuickFilters(
 
 // --- Панель выбранного проекта ---
 
+/**
+ * Строка, о которой рассказывает боковая панель.
+ *
+ * Подстановки «первой строки списка» здесь намеренно нет. Пока панель была
+ * колонкой макета, пустое место справа читалось как поломка, и панель
+ * подставляла первый проект отбора. Теперь панель открывается поверх
+ * содержимого по клику — показать в ней не тот проект, который открыли,
+ * значит подменить сотруднику карточку у него под руками. Если выбранный
+ * проект выпал из отбора, панели просто нечего показывать и она закрывается.
+ */
+export function findProjectRowById(
+  rows: ProjectRow[] | null | undefined,
+  id: string | null | undefined
+): ProjectRow | null {
+  const needle = String(id || '').trim()
+
+  if (!needle) {
+    return null
+  }
+
+  return (rows || []).find(row => row.id === needle) || null
+}
+
+/**
+ * Цвет бейджа стадии.
+ *
+ * Живёт в утилитах, потому что стадию рисуют двое — строка таблицы на главной
+ * и боковая панель проекта, — и раскраска у них обязана совпадать.
+ * Автоматические стадии («нет списаний…») важнее ручных: именно они сообщают
+ * о проблеме, поэтому проверяются первыми.
+ */
+export function getProjectStageClass(stage: string | null | undefined): string {
+  const normalized = String(stage || '')
+
+  if (normalized.includes('Нет списаний 3 месяца')) {
+    return 'bg-rose-100 text-rose-700'
+  }
+
+  if (normalized.includes('Нет списаний 1 месяц')) {
+    return 'bg-amber-100 text-amber-700'
+  }
+
+  if (normalized.includes('В просчете')) {
+    return 'bg-indigo-100 text-indigo-700'
+  }
+
+  if (normalized.includes('В работе')) {
+    return 'bg-emerald-100 text-emerald-700'
+  }
+
+  return 'bg-slate-100 text-slate-700'
+}
+
 export type ProjectPanelStat = {
   id: string
   label: string
@@ -525,7 +578,7 @@ export function formatMoney(value: number | null | undefined): string {
 }
 
 /**
- * Правая панель выбранного проекта — по макету «вариант A».
+ * Боковая панель выбранного проекта — по макету «вариант A».
  *
  * Все четыре показателя берутся из той же карточки доски, что и строка
  * таблицы: отдельного запроса панель не делает, поэтому выбор проекта

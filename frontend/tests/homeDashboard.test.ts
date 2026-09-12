@@ -15,11 +15,13 @@ import {
   countProjectQuickFilters,
   filterProjectRows,
   findPeriodRow,
+  findProjectRowById,
   formatHours,
   formatLastWriteoff,
   formatMoney,
   formatMonthTitle,
   formatMonthValue,
+  getProjectStageClass,
   initialsOf,
   parseMonthValue,
   sortProjectRows,
@@ -456,4 +458,40 @@ test('buildProjectPanel: без плана часов бюджет не выду
 
 test('buildProjectPanel: без строки — нечего показывать', () => {
   assert.equal(buildProjectPanel(null), null)
+})
+
+// --- Боковая панель проекта ---
+
+test('findProjectRowById: находит выбранную строку, а не первую попавшуюся', () => {
+  const rows = buildProjectRows([
+    makeCard({ project_id: '101', project_name: 'Портал ОРТК' }),
+    makeCard({ project_id: '202', project_name: 'Внедрение CRM' }),
+  ])
+
+  assert.equal(findProjectRowById(rows, '202')?.name, 'Внедрение CRM')
+})
+
+test('findProjectRowById: выбранный проект выпал из отбора — панели нечего показывать', () => {
+  const rows = buildProjectRows([makeCard({ project_id: '101' })])
+
+  // Подстановки «первой строки» быть не должно: панель открыта поверх экрана,
+  // и подменять в ней проект под руками у сотрудника нельзя.
+  assert.equal(findProjectRowById(rows, '999'), null)
+  assert.equal(findProjectRowById(rows, ''), null)
+  assert.equal(findProjectRowById(rows, null), null)
+  assert.equal(findProjectRowById([], '101'), null)
+  assert.equal(findProjectRowById(null, '101'), null)
+})
+
+test('getProjectStageClass: автоматические стадии важнее ручных', () => {
+  assert.equal(getProjectStageClass('Нет списаний 3 месяца'), 'bg-rose-100 text-rose-700')
+  assert.equal(getProjectStageClass('Нет списаний 1 месяц'), 'bg-amber-100 text-amber-700')
+  assert.equal(getProjectStageClass('В просчете'), 'bg-indigo-100 text-indigo-700')
+  assert.equal(getProjectStageClass('В работе'), 'bg-emerald-100 text-emerald-700')
+})
+
+test('getProjectStageClass: незнакомая и пустая стадия — нейтральный бейдж', () => {
+  assert.equal(getProjectStageClass('Заморожен'), 'bg-slate-100 text-slate-700')
+  assert.equal(getProjectStageClass(''), 'bg-slate-100 text-slate-700')
+  assert.equal(getProjectStageClass(null), 'bg-slate-100 text-slate-700')
 })
