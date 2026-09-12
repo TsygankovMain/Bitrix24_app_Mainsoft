@@ -13,6 +13,7 @@
 import io
 import json
 from datetime import datetime
+from urllib.parse import quote
 from unittest.mock import patch
 
 import openpyxl
@@ -25,6 +26,7 @@ from .models import (
     BillingEntry,
     Bitrix24Account,
     PortalFeature,
+    PortalTask,
     PortalUser,
     ProjectCard,
     TimesheetItem,
@@ -720,28 +722,87 @@ class ActTest(BillingEndpointFixture):
 
 
 class DetailExportTest(BillingEndpointFixture):
-    def test_xlsx_contains_entries_and_total(self):
-        self.entry(1, hours=2.0)
-        self.entry(2, hours=3.0)
-        self.close_august()
-        document = self.post("/api/billing/documents", self.default_filter()).json()["document"]
+    """Выгрузка детализации: уровни, названия задач, итог, имя файла.
 
+    Вёрстка и резолв названий разобраны по кусочкам в
+    tests_billing_detail_export; здесь — что ручка отдаёт именно такой файл.
+    """
+
+    def _export(self, document):
         response = self.get(f"/api/billing/documents/{document['id']}/detail.xlsx")
-
         self.assertEqual(response.status_code, 200)
         self.assertIn("spreadsheetml", response["Content-Type"])
         workbook = openpyxl.load_workbook(io.BytesIO(response.content))
-        rows = list(workbook.active.values)
-        header = rows[1]
+        return response, list(workbook.active.values)
+
+    def test_xlsx_is_grouped_by_task_and_employee(self):
+        self.entry(1, hours=2.0)
+        self.entry(2, hours=3.0, day=16)
+        self.close_august()
+        document = self.post("/api/billing/documents", self.default_filter()).json()["document"]
+
+        _, rows = self._export(document)
+
         self.assertEqual(
-            list(header),
-            ["Дата", "Сотрудник", "Задача", "Описание", "Часы", "Ставка", "Сумма"],
+            list(rows[3]),
+            ["Задача / сотрудник", "Дата", "Описание", "Часы", "Ставка, ₽", "Сумма, ₽"],
         )
-        self.assertEqual(len(rows), 5)  # заголовок, шапка, две записи, итог
+        # Шапка документа: клиент, наше юрлицо, период, итоги.
+        self.assertIn("Клиент: ООО Клиент", rows[1][0])
+        self.assertIn("Наше юрлицо: ООО Майнсофт", rows[1][0])
+        self.assertIn("Период: 01.08.2026 — 31.08.2026", rows[1][0])
+        self.assertIn("Итого по документу: 5,0 ч", rows[2][0])
+        # Уровни: задача, сотрудник, два списания, ИТОГО.
+        self.assertEqual(len(rows), 9)
+        self.assertEqual(rows[4][0], "Задача")   # название из снимка списания
+        self.assertEqual(rows[4][3], 5.0)
+        self.assertEqual(rows[5][0], "Цыганков Егор")
+        self.assertEqual(rows[6][1], "15.08.2026")
+        self.assertEqual(rows[6][2], "разработка")
         self.assertEqual(rows[-1][0], "ИТОГО")
-        self.assertEqual(rows[-1][4], 5.0)
-        self.assertEqual(rows[-1][6], 10000.0)
-        self.assertEqual(rows[2][1], "Цыганков Егор")
+        self.assertEqual(rows[-1][3], 5.0)
+        self.assertEqual(rows[-1][5], 10000.0)
+
+    def test_task_column_shows_the_title_from_the_directory(self):
+        """Названия нет в снимке списания — берётся из справочника задач."""
+        item = self.entry(1)
+        item.task_hierarchy_titles = []
+        item.save(update_fields=["task_hierarchy_titles"])
+        PortalTask.objects.create(
+            bitrix24_account=self.account, bitrix_id="8365",
+            title="Доработка отчётов", group_id="73",
+        )
+        self.close_august()
+        document = self.post("/api/billing/documents", self.default_filter()).json()["document"]
+
+        _, rows = self._export(document)
+
+        self.assertEqual(rows[4][0], "Доработка отчётов")
+
+    def test_task_without_any_title_keeps_its_id_readable(self):
+        item = self.entry(1)
+        item.task_hierarchy_titles = []
+        item.save(update_fields=["task_hierarchy_titles"])
+        self.close_august()
+        document = self.post("/api/billing/documents", self.default_filter()).json()["document"]
+
+        _, rows = self._export(document)
+
+        self.assertEqual(rows[4][0], "Задача 8365 (название не найдено)")
+
+    def test_filename_is_human_readable(self):
+        self.entry(1)
+        self.close_august()
+        document = self.post("/api/billing/documents", self.default_filter()).json()["document"]
+
+        response, _ = self._export(document)
+
+        disposition = response["Content-Disposition"]
+        self.assertIn("attachment;", disposition)
+        # ASCII-фолбэк + русское имя через filename* (RFC 5987).
+        self.assertIn('filename="billing_detail_00042.xlsx"', disposition)
+        self.assertIn("filename*=UTF-8''", disposition)
+        self.assertIn(quote("Детализация к счёту № Б-00042"), disposition)
 
     def test_export_of_unknown_document_is_404(self):
         response = self.get("/api/billing/documents/нет-такого/detail.xlsx")

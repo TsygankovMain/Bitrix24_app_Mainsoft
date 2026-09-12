@@ -534,74 +534,285 @@ def build_table_workbook(columns, rows, *, title, date_from="", date_to="", tota
 
 
 # ---------------------------------------------------------------------------
-# Детализация к акту (счёт и акт)
+# Детализация к счёту и акту: иерархия задача → сотрудник → списание
 # ---------------------------------------------------------------------------
 
+# Вёрстка та же, что у выгрузок отчётов: уровни с отступом в первой колонке,
+# outline-группировка (кнопка сворачивания на строке-родителе), заливки по
+# уровням, числа настоящими числами, ИТОГО внизу. Плоская таблица здесь была
+# до 12.09.2026 — по просьбе «сделать как в отчётах, с группировкой».
+#
+# Отдельные колонки Дата и Описание (а не «описание · дата» в имени, как у
+# отчётов) — потому что это приложение к документу: бухгалтер по нему
+# фильтрует и сверяет даты, а не только читает.
+
 BILLING_DETAIL_COLUMNS = (
-    {"key": "date", "label": "Дата", "fmt": "text", "width": 12},
-    {"key": "employee_name", "label": "Сотрудник", "fmt": "text", "width": 28},
-    {"key": "task", "label": "Задача", "fmt": "text", "width": 46},
-    {"key": "description", "label": "Описание", "fmt": "text", "width": 60},
-    {"key": "hours", "label": "Часы", "fmt": "hours", "width": 10},
-    {"key": "rate", "label": "Ставка", "fmt": "money2", "width": 14},
-    {"key": "amount", "label": "Сумма", "fmt": "money2", "width": 16},
+    {"label": "Задача / сотрудник", "width": 58, "align": "left"},
+    {"label": "Дата", "width": 12, "align": "left"},
+    {"label": "Описание", "width": 52, "align": "left"},
+    {"label": "Часы", "width": 10, "align": "right"},
+    {"label": "Ставка, ₽", "width": 14, "align": "right"},
+    {"label": "Сумма, ₽", "width": 16, "align": "right"},
 )
 
+_MONEY_FORMAT = "#,##0.00"
+_BILLING_LAST_COL = get_column_letter(len(BILLING_DETAIL_COLUMNS))
 
-def build_billing_detail_workbook(document, entries):
-    """XLSX-детализация к акту: строка на каждое потреблённое списание.
+_FILL_WARN = PatternFill("solid", fgColor="FEF3C7")
+_COLOR_WARN = "92400E"
 
-    Берётся СНИМОК документа (BillingEntry), а не текущие списания. Это
-    приложение к подписанному документу: оно обязано показывать то, за что
-    выставлен счёт, даже если часы в Битриксе потом поправили. Расхождения
-    живут отдельно — на карточке документа (drift).
 
-    Переиспользует build_table_workbook: своя вёрстка таблицы здесь ничего
-    не добавила бы, а разошлась бы с отчётами при первой же правке стилей.
-    """
-    rows = []
-    for entry in entries:
-        date_value = getattr(entry, "date_reflection", None)
-        rows.append({
-            "date": _format_iso_date(date_value.isoformat()) if date_value else "",
-            "employee_name": getattr(entry, "employee_name", "") or "",
-            "task": (
-                f"{entry.task_title} (#{entry.task_id})"
-                if getattr(entry, "task_title", "") and getattr(entry, "task_id", "")
-                else (getattr(entry, "task_title", "") or (f"#{entry.task_id}" if getattr(entry, "task_id", "") else ""))
-            ),
-            "description": getattr(entry, "description", "") or "",
-            "hours": _num(getattr(entry, "hours", 0)),
-            "rate": _num(getattr(entry, "rate_snapshot", 0)),
-            "amount": _num(getattr(entry, "amount", 0)),
-        })
+def _hours_text(value: Any) -> str:
+    """Часы в текст шапки: 5.0 -> «5,0» (шапка — текст, не число)."""
+    return f"{_num(value):.1f}".replace(".", ",")
 
-    total_row = {
-        "date": "ИТОГО",
-        "employee_name": "",
-        "task": "",
-        "description": "",
-        "hours": _num(getattr(document, "total_hours", 0)),
-        "rate": None,
-        "amount": _num(getattr(document, "total_amount", 0)),
-    }
 
-    number = getattr(document, "crm_account_number", "") or ""
-    company = getattr(document, "company_name", "") or ""
-    title = "Детализация к акту"
-    if number:
-        title = f"{title} по счёту № {number}"
-    if company:
-        title = f"{title} · {company}"
+def _money_text(value: Any) -> str:
+    """Деньги в текст шапки: 10000 -> «10 000,00»."""
+    return f"{_num(value):,.2f}".replace(",", " ").replace(".", ",")
 
+
+def _count_billing_detail_rows(groups: Sequence[Dict[str, Any]]) -> int:
+    total = 0
+    for group in groups:
+        total += 1
+        for employee in group.get("employees") or []:
+            total += 1 + len(employee.get("items") or [])
+    return total
+
+
+def _billing_detail_row(
+    ws: Worksheet,
+    row: int,
+    *,
+    name: str,
+    date: str = "",
+    description: str = "",
+    hours: Optional[float] = None,
+    rate: Optional[float] = None,
+    amount: Optional[float] = None,
+    depth: int = 0,
+    fill: PatternFill,
+    bold: bool = False,
+    italic: bool = False,
+    name_color: Optional[str] = None,
+    outline_level: int = 0,
+) -> None:
+    """Одна строка детализации: три текстовых колонки и три числовых."""
+    for col, value in ((1, name), (2, date), (3, description)):
+        cell = ws.cell(row=row, column=col, value=_safe_cell_text(value or ""))
+        cell.alignment = Alignment(
+            horizontal="left", vertical="center",
+            indent=depth if col == 1 else 0,
+            wrap_text=False,
+        )
+        cell.font = Font(bold=bold, italic=italic, color=name_color or "0F172A")
+        cell.fill = fill
+        cell.border = _BORDER
+
+    for col, value, number_format in (
+        (4, hours, _HOURS_FORMAT),
+        (5, rate, _MONEY_FORMAT),
+        (6, amount, _MONEY_FORMAT),
+    ):
+        cell = ws.cell(
+            row=row, column=col,
+            value=None if value is None else round(_num(value), 2),
+        )
+        cell.number_format = number_format
+        cell.alignment = Alignment(horizontal="right", vertical="center")
+        cell.font = Font(bold=bold, italic=italic, color="0F172A")
+        cell.fill = fill
+        cell.border = _BORDER
+
+    if outline_level > 0:
+        ws.row_dimensions[row].outline_level = min(outline_level, 7)
+
+
+def _billing_detail_banner(ws: Worksheet, row: int, text: str, *, fill: PatternFill,
+                           color: str, size: int = 10, bold: bool = False,
+                           height: Optional[int] = None) -> None:
+    """Строка шапки на всю ширину (объединённые ячейки)."""
+    ws.merge_cells(f"A{row}:{_BILLING_LAST_COL}{row}")
+    cell = ws.cell(row=row, column=1, value=_safe_cell_text(text))
+    cell.font = Font(bold=bold, color=color, size=size)
+    cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    cell.fill = fill
+    if height:
+        ws.row_dimensions[row].height = height
+
+
+def billing_detail_title(document) -> str:
+    """Заголовок файла: «Детализация к счёту № … от … (отменён)»."""
+    number = str(getattr(document, "crm_account_number", "") or "").strip()
+    title = f"Детализация к счёту № {number}" if number else "Детализация к счёту"
+
+    created_at = getattr(document, "created_at", None)
+    if created_at:
+        title = f"{title} от {created_at.strftime('%d.%m.%Y')}"
+
+    if str(getattr(document, "status", "") or "") == "cancelled":
+        title = f"{title} · ДОКУМЕНТ ОТМЕНЁН"
+    return title
+
+
+def _billing_detail_period(document) -> str:
     period_from = getattr(document, "period_from", None)
     period_to = getattr(document, "period_to", None)
+    if period_from and period_to:
+        return f"{period_from.strftime('%d.%m.%Y')} — {period_to.strftime('%d.%m.%Y')}"
+    if period_from:
+        return f"с {period_from.strftime('%d.%m.%Y')}"
+    if period_to:
+        return f"по {period_to.strftime('%d.%m.%Y')}"
+    return ""
 
-    return build_table_workbook(
-        list(BILLING_DETAIL_COLUMNS),
-        rows,
-        title=title,
-        date_from=period_from.strftime("%d.%m.%Y") if period_from else "",
-        date_to=period_to.strftime("%d.%m.%Y") if period_to else "",
-        total_row=total_row,
+
+def render_billing_detail_workbook(document, groups: Sequence[Dict[str, Any]]) -> io.BytesIO:
+    """Рисует xlsx детализации по уже собранной иерархии.
+
+    Иерархию собирает `billing_detail_report.build_detail_groups`: здесь
+    только вёрстка, чтобы стиль выгрузок менялся в одном месте.
+
+    Уровни: задача (0) → сотрудник (1) → списание (2). Подытоги часов и суммы
+    стоят на строке задачи и на строке сотрудника, внизу — ИТОГО по сумме
+    строк. Если сумма строк расходится с итогом документа, ниже добавляется
+    предупреждение: молчать о расхождении в приложении к акту нельзя.
+    """
+    groups = list(groups)
+    n_rows = _count_billing_detail_rows(groups)
+    if n_rows > MAX_EXPORT_ROWS:
+        raise ExportTooLargeError(n_rows)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Детализация"
+    # Кнопка сворачивания на строке-родителе (она ВЫШЕ потомков) — как в отчётах.
+    ws.sheet_properties.outlinePr.summaryBelow = False
+    ws.sheet_properties.outlinePr.summaryRight = False
+
+    # --- Шапка документа ---
+    _billing_detail_banner(
+        ws, 1, billing_detail_title(document),
+        fill=_FILL_TITLE, color="FFFFFF", size=12, bold=True, height=24,
     )
+
+    parties = []
+    company = str(getattr(document, "company_name", "") or "").strip()
+    our_company = str(getattr(document, "our_company_name", "") or "").strip()
+    parties.append(f"Клиент: {company}" if company else "Клиент: не указан")
+    if our_company:
+        parties.append(f"Наше юрлицо: {our_company}")
+    period = _billing_detail_period(document)
+    if period:
+        parties.append(f"Период: {period}")
+    _billing_detail_banner(ws, 2, " · ".join(parties), fill=_FILL_SUBTITLE, color="E2E8F0")
+
+    entries_count = sum(
+        len(employee.get("items") or [])
+        for group in groups
+        for employee in group.get("employees") or []
+    )
+    # «задач» считается по настоящим задачам: группа «Без задачи» — про
+    # недостающие данные, и складывать её в счёт задач значит врать в шапке.
+    tasks_count = sum(1 for group in groups if group.get("task_id"))
+    totals_label = (
+        f"Итого по документу: {_hours_text(getattr(document, 'total_hours', 0))} ч"
+        f" · {_money_text(getattr(document, 'total_amount', 0))} "
+        f"{getattr(document, 'currency', '') or 'RUB'}"
+        f" · задач: {tasks_count} · списаний: {entries_count}"
+    )
+    if tasks_count < len(groups):
+        totals_label = f"{totals_label} · есть списания без задачи"
+    _billing_detail_banner(ws, 3, totals_label, fill=_FILL_SUBTITLE, color="E2E8F0")
+
+    # --- Шапка колонок ---
+    for col, meta in enumerate(BILLING_DETAIL_COLUMNS, start=1):
+        cell = ws.cell(row=4, column=col, value=meta["label"])
+        cell.font = Font(bold=True, color="111827")
+        cell.fill = _FILL_HEAD
+        cell.border = _BORDER
+        cell.alignment = Alignment(horizontal=meta["align"], vertical="center")
+
+    # --- Данные ---
+    row = 5
+    total_hours = total_amount = 0.0
+    for group in groups:
+        total_hours += _num(group.get("hours"))
+        total_amount += _num(group.get("amount"))
+        _billing_detail_row(
+            ws, row,
+            name=group.get("name") or "—",
+            hours=group.get("hours"),
+            rate=group.get("rate"),
+            amount=group.get("amount"),
+            depth=0,
+            fill=_FILL_PROJECT,
+            bold=True,
+            name_color="3F6212",
+        )
+        row += 1
+
+        for employee in group.get("employees") or []:
+            _billing_detail_row(
+                ws, row,
+                name=employee.get("name") or "—",
+                hours=employee.get("hours"),
+                rate=employee.get("rate"),
+                amount=employee.get("amount"),
+                depth=1,
+                fill=_FILL_TASK,
+                name_color="1E293B",
+                outline_level=1,
+            )
+            row += 1
+
+            for item in employee.get("items") or []:
+                _billing_detail_row(
+                    ws, row,
+                    name="",
+                    date=item.get("date") or "",
+                    description=item.get("description") or "",
+                    hours=item.get("hours"),
+                    rate=item.get("rate"),
+                    amount=item.get("amount"),
+                    depth=2,
+                    fill=_FILL_ITEM,
+                    italic=True,
+                    name_color="64748B",
+                    outline_level=2,
+                )
+                row += 1
+
+    # --- ИТОГО по строкам ---
+    _billing_detail_row(
+        ws, row,
+        name="ИТОГО",
+        hours=total_hours,
+        amount=total_amount,
+        depth=0,
+        fill=_FILL_TOTAL,
+        bold=True,
+    )
+    row += 1
+
+    doc_hours = _num(getattr(document, "total_hours", 0))
+    doc_amount = _num(getattr(document, "total_amount", 0))
+    if abs(doc_hours - total_hours) > 0.01 or abs(doc_amount - total_amount) > 0.01:
+        _billing_detail_banner(
+            ws, row,
+            "Внимание: сумма строк детализации расходится с итогом документа "
+            f"({_hours_text(doc_hours)} ч · {_money_text(doc_amount)}). "
+            "Сверьте документ перед отправкой клиенту.",
+            fill=_FILL_WARN, color=_COLOR_WARN, bold=True,
+        )
+        row += 1
+
+    for col, meta in enumerate(BILLING_DETAIL_COLUMNS, start=1):
+        ws.column_dimensions[get_column_letter(col)].width = meta["width"]
+    ws.freeze_panes = "A5"
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output

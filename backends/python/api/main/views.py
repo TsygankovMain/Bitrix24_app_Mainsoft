@@ -26,6 +26,8 @@ from .models import (
 
 import logging
 import json
+import re
+from urllib.parse import quote
 import openpyxl
 from openpyxl.styles import Font, Alignment
 
@@ -59,8 +61,11 @@ from .report_queries import (
     materialize_rows,
     resolve_project_name_for_row,
 )
-from .report_excel import (
+from .billing_detail_report import (
     build_billing_detail_workbook,
+    detail_export_filename,
+)
+from .report_excel import (
     build_project_task_workbook,
     build_hierarchy_workbook,
     build_matrix_workbook,
@@ -3821,15 +3826,26 @@ def billing_document_detail_export(request: AuthorizedRequest, document_id: str)
 
     entries = list(document.entries.all().order_by("date_reflection", "timesheet_bitrix_id"))
     try:
-        output = build_billing_detail_workbook(document, entries)
+        output = build_billing_detail_workbook(
+            document, entries, account=request.bitrix24_account
+        )
     except ExportTooLargeError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
-    suffix = document.crm_account_number or str(document.pk)
-    filename = f"billing_detail_{suffix}.xlsx".replace(" ", "_").replace("/", "-")
     response = HttpResponse(
         output.read(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    # Имя файла русское («Детализация к счёту № … (период).xlsx»), поэтому
+    # уходит через filename* (RFC 5987). ASCII-фолбэк обязателен: клиенты,
+    # не понимающие filename*, иначе сохранят файл под именем из URL.
+    human_name = detail_export_filename(document)
+    ascii_suffix = re.sub(
+        r"[^A-Za-z0-9._-]+", "_", document.crm_account_number or str(document.pk)
+    ).strip("_-.") or "document"
+    ascii_name = f"billing_detail_{ascii_suffix}.xlsx"
+    response["Content-Disposition"] = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8\'\'{quote(human_name)}"
+    )
     return response

@@ -404,7 +404,12 @@ class BillingCrmService:
         result = response.get("result") if isinstance(response, dict) else None
         raw: List[Any]
         if isinstance(result, dict):
-            raw = result.get("templates") or result.get("items") or []
+            container = result.get("templates") or result.get("items") or []
+            # Портал отдаёт шаблоны СЛОВАРЁМ по id: {"2": {...}}. Перебор dict
+            # даёт строковые ключи, они не проходят isinstance(row, dict) ниже,
+            # и все шаблоны молча отбрасывались — печать акта падала с
+            # «шаблонов нет» при живом штатном «Акт (Россия)» (id 2).
+            raw = list(container.values()) if isinstance(container, dict) else container
         elif isinstance(result, list):
             raw = result
         else:
