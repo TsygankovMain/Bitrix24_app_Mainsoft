@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   buildAppNavigation,
   buildOverflowSection,
+  buildSettingsMenuItems,
   collectSectionRoutes,
   estimateNavSectionWidth,
   isNavLinkActive,
@@ -13,6 +14,7 @@ import {
   splitNavigationByWidth,
   toNavigationMenuItems,
   NAV_MORE_LABEL,
+  SETTINGS_NAV_GROUPS,
   type NavSection,
 } from '../app/utils/appNavigation'
 
@@ -39,6 +41,7 @@ const EXISTING_ROUTES = new Set([
   '/reports/time-discipline',
   '/reports/focus-analysis',
   '/settings',
+  '/settings/mapping',
   '/settings/periods',
   '/settings/projects-health',
   '/reports/raw-data',
@@ -154,8 +157,18 @@ test('resolveActiveSectionId: побеждает самый длинный ма�
 test('resolveActiveSectionId: чужой адрес не подсвечивает ничего', () => {
   const sections = buildAppNavigation(BASE_OPTIONS)
 
-  assert.equal(resolveActiveSectionId('/settings/mapping', sections), null)
   assert.equal(resolveActiveSectionId('/guide', sections), null)
+  assert.equal(resolveActiveSectionId('/settings/debug', sections), null)
+})
+
+test('resolveActiveSectionId: сопоставление полей подсвечивает «Контроль»', () => {
+  // Экран лежит по адресу /settings/mapping, но пункт на него стоит в
+  // «Контроле»: без сопоставления полей человек идёт именно туда, разбираться,
+  // почему экраны пустые. Раньше этого пункта не было нигде, и адрес не
+  // подсвечивал ни один раздел.
+  const sections = buildAppNavigation(BASE_OPTIONS)
+
+  assert.equal(resolveActiveSectionId('/settings/mapping', sections), 'control')
 })
 
 test('isNavLinkActive: вложенный адрес подсвечивает свою ссылку', () => {
@@ -411,4 +424,57 @@ test('buildAppNavigation: бейдж БДДС не протекает в «Сч�
 
   assert.equal(billing?.locked, true)
   assert.equal(billing?.badge, 'по подписке')
+})
+
+// --- Настройки под шестерёнкой ---
+//
+// Раньше шестерёнка была простой ссылкой на /settings, а сопоставление полей
+// лежало кнопкой внизу той страницы — человек его не нашёл. Проверки ниже
+// закрепляют два обещания: экран сопоставления виден сразу, а прежний переход
+// в «Все настройки» одним нажатием не потерян.
+
+test('buildSettingsMenuItems: сопоставление полей — первый пункт под шестерёнкой', () => {
+  const items = buildSettingsMenuItems('/')
+  const firstGroup = items[0] || []
+
+  assert.equal(firstGroup[0]?.type, 'label')
+  assert.equal(firstGroup[1]?.label, 'Сопоставление полей')
+  assert.equal(firstGroup[1]?.to, '/settings/mapping')
+  assert.equal(firstGroup[2]?.to, '/settings')
+})
+
+test('buildSettingsMenuItems: каждая группа начинается со своего заголовка', () => {
+  const items = buildSettingsMenuItems('/')
+
+  assert.equal(items.length, SETTINGS_NAV_GROUPS.length)
+  for (const group of items) {
+    assert.equal(group[0]?.type, 'label')
+    assert.ok(group.length > 1, 'группа без пунктов не нужна')
+  }
+})
+
+test('buildSettingsMenuItems: активный пункт отмечен по текущему адресу', () => {
+  const items = buildSettingsMenuItems('/settings/mapping')
+  const links = items.flat().filter(item => item.type !== 'label')
+  const active = links.filter(item => item.active)
+
+  assert.deepEqual(active.map(item => item.to), ['/settings/mapping'])
+})
+
+test('SETTINGS_NAV_GROUPS: все адреса ведут на существующие страницы', () => {
+  for (const group of SETTINGS_NAV_GROUPS) {
+    for (const link of group.links) {
+      assert.ok(
+        EXISTING_ROUTES.has(link.to) || link.to === '/settings/debug',
+        `маршрут ${link.to} не найден среди страниц приложения`
+      )
+    }
+  }
+})
+
+test('buildAppNavigation: сопоставление полей есть и в «Контроле»', () => {
+  const control = buildAppNavigation(BASE_OPTIONS).find(section => section.id === 'control')
+  const routes = (control?.groups || []).flatMap(group => group.links.map(link => link.to))
+
+  assert.ok(routes.includes('/settings/mapping'))
 })

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { requestIframeAutoHeight } from '~/utils/iframe-resizer'
 import { shouldShowSectionNavigation } from '~/utils/appNavigation'
 import SectionNavigation from '~/components/nav/SectionNavigation.vue'
+import MappingHealthBanner from '~/components/common/MappingHealthBanner.vue'
 
 const route = useRoute()
 const contentRef = ref<HTMLElement | null>(null)
@@ -121,6 +122,7 @@ onBeforeUnmount(() => {
     </template>
 
     <div ref="contentRef" class="min-h-full w-full">
+      <MappingHealthBanner />
       <slot />
     </div>
   </B24SidebarLayout>

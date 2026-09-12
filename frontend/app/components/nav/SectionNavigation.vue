@@ -25,6 +25,7 @@ import SettingsIcon from '@bitrix24/b24icons-vue/main/SettingsIcon'
 import {
   buildAppNavigation,
   buildOverflowSection,
+  buildSettingsMenuItems,
   isNavLinkActive,
   resolveActiveSectionId,
   splitNavigationByWidth,
@@ -132,7 +133,12 @@ const menuItems = computed(() => toNavigationMenuItems(shownSections.value, show
       : undefined,
   })))
 
-const isSettingsActive = computed(() => isNavLinkActive(route.path, SETTINGS_NAV_LINK))
+const isSettingsActive = computed(() => (
+  isNavLinkActive(route.path, SETTINGS_NAV_LINK)
+  || route.path.startsWith('/settings')
+))
+
+const settingsMenuItems = computed(() => buildSettingsMenuItems(route.path))
 
 /** Раскрытый список после перехода надо закрыть руками: ссылки в нём наши, не рековские. */
 watch(() => route.fullPath, () => {
@@ -231,15 +237,31 @@ function linkClasses(link: NavLink) {
       </template>
 
       <template #list-trailing>
-        <NuxtLink
-          :to="SETTINGS_NAV_LINK.to"
-          class="ml-2 inline-flex size-9 shrink-0 items-center justify-center rounded-lg transition"
-          :class="isSettingsActive ? 'bg-blue-50 text-[#0075ff]' : 'text-slate-500 hover:bg-slate-100'"
-          :title="SETTINGS_NAV_LINK.label"
-          :aria-label="SETTINGS_NAV_LINK.label"
+        <!--
+          Шестерёнка — выпадающий список, а не прямая ссылка.
+
+          Причина: сопоставление полей (без него у приложения не работает
+          ничего) лежало кнопкой внизу страницы настроек, и человек его не
+          нашёл. Теперь оно первым пунктом сразу под шестерёнкой; «Все
+          настройки» стоит рядом, так что прежний переход одним нажатием
+          сохранился. Состав пунктов — SETTINGS_NAV_GROUPS в
+          utils/appNavigation.ts, под тестами.
+        -->
+        <B24DropdownMenu
+          :items="settingsMenuItems"
+          :content="{ side: 'bottom', align: 'end', sideOffset: 8 }"
+          :b24ui="{ content: 'w-[min(92vw,320px)] bg-white' }"
         >
-          <SettingsIcon class="size-5" aria-hidden="true" />
-        </NuxtLink>
+          <button
+            type="button"
+            class="ml-2 inline-flex size-9 shrink-0 items-center justify-center rounded-lg transition"
+            :class="isSettingsActive ? 'bg-blue-50 text-[#0075ff]' : 'text-slate-500 hover:bg-slate-100'"
+            :title="SETTINGS_NAV_LINK.label"
+            :aria-label="SETTINGS_NAV_LINK.label"
+          >
+            <SettingsIcon class="size-5" aria-hidden="true" />
+          </button>
+        </B24DropdownMenu>
       </template>
     </B24NavigationMenu>
   </div>

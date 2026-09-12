@@ -10,6 +10,49 @@
     </B24PageHeader>
 
     <div class="mt-6 space-y-6">
+      <!--
+        Сопоставление полей — ПЕРВОЙ картой на странице.
+
+        До разбора она была восьмой: карточка «Конфигурация» лежала в гриде
+        ниже блоков «Счёт и акт» и «БДДС», то есть примерно на третьем экране
+        прокрутки. При этом без сопоставления полей не работает ничего —
+        включая те самые счета и БДДС, настройки которых стояли выше. Человек,
+        который искал эту настройку, её не нашёл.
+
+        Заодно карточка показывает СОСТОЯНИЕ настройки, а не просто ведёт на
+        экран: решение о состоянии принимает resolveMappingHealth
+        (app/utils/fieldMapping.ts) по уже загруженной конфигурации, лишнего
+        запроса нет.
+      -->
+      <B24Card>
+        <template #header>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-base font-semibold text-slate-900">Сопоставление полей</span>
+            <span
+              class="rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+              :class="mappingStatusPillClass"
+            >
+              {{ mappingStatusPillText }}
+            </span>
+          </div>
+        </template>
+
+        <p class="text-sm text-slate-600">
+          {{ mappingStatusText }}
+        </p>
+        <p v-if="mappingMissingPreview" class="mt-2 text-sm text-slate-500">
+          Не сопоставлено: {{ mappingMissingPreview }}
+        </p>
+
+        <template #footer>
+          <B24Button
+            :label="mappingHealth.level === 'ok' ? 'Открыть сопоставление полей' : mappingHealth.actionLabel"
+            :color="mappingHealth.level === 'critical' ? 'danger' : 'success'"
+            @click="router.push('/settings/mapping')"
+          />
+        </template>
+      </B24Card>
+
       <!-- Тумблер «Кликабельные метки» -->
       <B24Card>
         <template #header>
@@ -514,20 +557,13 @@
         </template>
       </B24Card>
 
-      <!-- Грид основных разделов -->
-      <B24PageGrid>
-        <B24Card>
-          <template #header>
-            <span class="text-base font-semibold text-slate-900">Конфигурация</span>
-          </template>
-          <p class="text-sm text-slate-500">
-            Сопоставление полей процесса с данными приложения.
-          </p>
-          <template #footer>
-            <B24Button label="Настройка полей" color="success" @click="router.push('/settings/mapping')" />
-          </template>
-        </B24Card>
+      <!--
+        Грид основных разделов.
 
+        Карточки «Конфигурация» здесь больше нет: она переехала наверх
+        страницы и стала блоком «Сопоставление полей» с состоянием настройки.
+      -->
+      <B24PageGrid>
         <B24Card>
           <template #header>
             <span class="text-base font-semibold text-slate-900">Данные</span>
@@ -648,6 +684,7 @@ import {
   readBillingSettings,
   type BillingSettings,
 } from '~/utils/billingSettings'
+import { resolveMappingHealth } from '~/utils/fieldMapping'
 import type { AppConfigurationPayload } from '~/types/config'
 import type { FilterOption } from '~/types/report'
 
@@ -689,6 +726,71 @@ const billingSaveNotice = ref('')
 const isSavingBilling = ref(false)
 
 const configuration = ref<AppConfigurationPayload>({})
+
+/**
+ * Состояние сопоставления полей для карточки наверху страницы.
+ *
+ * Считается из той же конфигурации, которую страница и так загружает, —
+ * отдельного запроса нет. Пока конфигурация не пришла, карточка показывает
+ * нейтральное «загружаем»: пугать «не настроено» из-за неотвеченной ручки
+ * нельзя.
+ */
+const mappingHealth = computed(() => resolveMappingHealth(
+  billingSettingsReady.value ? configuration.value : null
+))
+
+const mappingStatusPillText = computed(() => {
+  if (!billingSettingsReady.value) {
+    return 'проверяем'
+  }
+
+  switch (mappingHealth.value.level) {
+    case 'critical':
+      return 'не работает'
+    case 'warning':
+      return 'неполное'
+    default:
+      return 'настроено'
+  }
+})
+
+const mappingStatusPillClass = computed(() => {
+  if (!billingSettingsReady.value) {
+    return 'bg-slate-100 text-slate-500'
+  }
+
+  switch (mappingHealth.value.level) {
+    case 'critical':
+      return 'bg-rose-100 text-rose-700'
+    case 'warning':
+      return 'bg-amber-100 text-amber-800'
+    default:
+      return 'bg-emerald-100 text-emerald-700'
+  }
+})
+
+const mappingStatusText = computed(() => {
+  if (!billingSettingsReady.value) {
+    return 'Проверяем, сопоставлены ли поля приложения с полями смарт-процессов портала.'
+  }
+
+  return mappingHealth.value.level === 'ok'
+    ? 'Поля приложения сопоставлены с полями смарт-процессов. Возвращаться сюда нужно, только если поля на портале изменились.'
+    : mappingHealth.value.text
+})
+
+const mappingMissingPreview = computed(() => {
+  const labels = mappingHealth.value.missingLabels
+  if (!labels.length) {
+    return ''
+  }
+
+  const shown = labels.slice(0, 5)
+  const rest = labels.length - shown.length
+
+  return rest > 0 ? `${shown.join(', ')} и ещё ${rest}` : shown.join(', ')
+})
+
 const bddsSettings = ref<BddsSettings>(defaultBddsSettings())
 const savedBddsSettings = ref<BddsSettings>(defaultBddsSettings())
 const bddsSaveNotice = ref('')
