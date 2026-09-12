@@ -387,6 +387,191 @@ class FinanceOperationsEndpointTest(BddsEndpointFixture):
         self.assertEqual(len(self.portal.added), 1)
 
 
+class FinanceOperationsPagingTest(BddsEndpointFixture):
+    """Страницы, период, тип и итоги реестра операций.
+
+    Предмет проверки — честность ответа. Реестр денег обязан отличать «это
+    все операции» от «это первая страница», а итог по выборке от итога по
+    видимым строкам: итог по странице не итог, и человек, сложивший его с
+    бюджетом, получит неверный вывод, не заметив этого.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # Порядок — как у портала при order: {id: DESC}: двойник фильтры и
+        # сортировку не применяет, и «правильный» ответ на неупорядоченном
+        # наборе ничего бы не доказал.
+        self.portal.items = [
+            self.operation("5", "expense", "1000", "2026-09-05"),
+            self.operation("4", "expense", "3000", "2026-08-20"),
+            self.operation("3", "Поступление", "5000", "2026-08-01"),
+            self.operation("2", "расход", "2000", "2026-07-15"),
+            self.operation("1", "income", "10000", "2026-07-01"),
+        ]
+
+    @staticmethod
+    def operation(item_id, operation_type, amount, day):
+        return {
+            "id": item_id,
+            "ufCrmProjectItemId": "500",
+            "ufCrmOperationType": operation_type,
+            "ufCrmAmount": amount,
+            "ufCrmOperationDate": day,
+            "ufCrmSource": "manual",
+        }
+
+    def test_first_page_reports_more_without_claiming_a_total(self):
+        data = self.get("/api/finance-operations?project_item_id=500&limit=2").json()
+
+        self.assertEqual([row["id"] for row in data["operations"]], ["5", "4"])
+        self.assertTrue(data["has_more"])
+        # total на коротком пути НЕ считается: мы видели окно, а не выборку.
+        self.assertIsNone(data["total"])
+
+    def test_second_page_continues_and_knows_the_total(self):
+        data = self.get("/api/finance-operations?project_item_id=500&limit=2&offset=2").json()
+
+        self.assertEqual([row["id"] for row in data["operations"]], ["3", "2"])
+        self.assertEqual(data["offset"], 2)
+        self.assertEqual(data["total"], 5)
+        self.assertTrue(data["has_more"])
+
+    def test_last_page_says_there_is_nothing_more(self):
+        data = self.get("/api/finance-operations?project_item_id=500&limit=2&offset=4").json()
+
+        self.assertEqual([row["id"] for row in data["operations"]], ["1"])
+        self.assertFalse(data["has_more"])
+
+    def test_type_filter_understands_portal_spellings(self):
+        """«расход» и «Поступление» — те же тип, что expense и income."""
+        income = self.get("/api/finance-operations?operation_type=income&totals=1").json()
+        expense = self.get("/api/finance-operations?operation_type=expense&totals=1").json()
+
+        self.assertEqual([row["id"] for row in income["operations"]], ["3", "1"])
+        self.assertEqual(income["totals"]["income"], 15000.0)
+        self.assertEqual([row["id"] for row in expense["operations"]], ["5", "4", "2"])
+        self.assertEqual(expense["totals"]["expense"], 6000.0)
+
+    def test_totals_are_counted_over_selection_not_over_page(self):
+        data = self.get("/api/finance-operations?limit=1&totals=1").json()
+
+        self.assertEqual(len(data["operations"]), 1)
+        self.assertEqual(data["totals"], {
+            "income": 15000.0,
+            "expense": 6000.0,
+            "net": 9000.0,
+            "count": 5,
+        })
+
+    def test_period_is_filtered_by_the_portal(self):
+        """Период уходит фильтром crm.item.list, а не отбирается у нас.
+
+        Проверяем именно параметры вызова: двойник портала фильтры не
+        применяет, и «правильный» ответ здесь ничего не доказал бы.
+        """
+        self.get("/api/finance-operations?date_from=2026-08-01&date_to=2026-08-31")
+
+        list_calls = [params for method, params in self.portal.calls if method == "crm.item.list"]
+        self.assertEqual(list_calls[-1]["filter"][">=ufCrmOperationDate"], "2026-08-01")
+        self.assertEqual(list_calls[-1]["filter"]["<=ufCrmOperationDate"], "2026-08-31")
+
+    def test_unparseable_period_is_dropped_not_guessed(self):
+        """Не-ISO граница в фильтр не уходит вовсе.
+
+        «01.08.2026» портал сравнил бы со своими датами как строку и вернул
+        не ту выборку — неверный отбор в реестре денег хуже отсутствующего.
+        """
+        self.get("/api/finance-operations?date_from=01.08.2026")
+
+        list_calls = [params for method, params in self.portal.calls if method == "crm.item.list"]
+        self.assertNotIn(">=ufCrmOperationDate", list_calls[-1]["filter"])
+
+    def test_garbage_paging_params_do_not_break_the_answer(self):
+        data = self.get("/api/finance-operations?limit=abc&offset=-5").json()
+
+        self.assertEqual(data["limit"], 20)
+        self.assertEqual(data["offset"], 0)
+        self.assertEqual(len(data["operations"]), 5)
+
+
+class FinanceOperationWriteRightsTest(BddsEndpointFixture):
+    """Кто заводит операции: администратор портала или «Бухгалтерия».
+
+    Список тот же, что у выставления счёта (billing_accountants) — операция
+    попадает в финансовый результат проекта так же, как счёт, а второй
+    список тех же людей разошёлся бы с первым.
+    """
+
+    PAYLOAD = {
+        "project_item_id": "500",
+        "operation_type": "expense",
+        "amount": 15000,
+        "operation_date": "2026-09-01",
+        "source": "manual",
+    }
+
+    def demote(self):
+        self.account.is_b24_user_admin = False
+        self.account.save(update_fields=["is_b24_user_admin"])
+
+    def test_plain_employee_cannot_create_an_operation(self):
+        self.demote()
+
+        response = self.post("/api/finance-operations/create", self.PAYLOAD)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["code"], "bdds_operations_forbidden")
+        self.assertEqual(self.portal.added, [])
+
+    def test_accountant_from_settings_can_create_an_operation(self):
+        self.demote()
+        self.set_config(billing_accountants=["11"])
+
+        response = self.post("/api/finance-operations/create", self.PAYLOAD)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.portal.added), 1)
+
+    def test_plain_employee_still_reads_operations(self):
+        """Чтение правами не закрыто: в CRM эти элементы человек и так видит."""
+        self.demote()
+
+        self.assertEqual(self.get("/api/finance-operations").status_code, 200)
+
+    def test_purpose_becomes_the_item_title(self):
+        response = self.post("/api/finance-operations/create", {
+            **self.PAYLOAD,
+            "title": "Аванс подрядчику по этапу 2",
+            "comment": "договор 14/26",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.portal.added[0]["fields"]["title"], "Аванс подрядчику по этапу 2")
+
+    def test_operations_differing_only_in_purpose_are_treated_as_a_repeat(self):
+        """Назначение НЕ входит в ключ идемпотентности — и это осознанно.
+
+        Учёт заголовка в ключе перестал бы узнавать дубль в элементах,
+        заведённых руками в CRM: у них заголовок свой. Цена обратная и
+        безопасная — повтор, про который интерфейс обязан сказать человеку.
+        """
+        self.post("/api/finance-operations/create", {**self.PAYLOAD, "title": "Первый платёж"})
+        self.portal.items = [{
+            "id": "4242",
+            "title": "Первый платёж",
+            "ufCrmProjectItemId": "500",
+            "ufCrmOperationType": "expense",
+            "ufCrmAmount": "15000",
+            "ufCrmOperationDate": "2026-09-01",
+            "ufCrmSource": "manual",
+        }]
+
+        second = self.post("/api/finance-operations/create", {**self.PAYLOAD, "title": "Второй платёж"})
+
+        self.assertEqual(second.json()["status"], "duplicate")
+        self.assertEqual(len(self.portal.added), 1)
+
+
 class BudgetNotifierEndpointTest(BddsEndpointFixture):
     def test_risk_event_is_sent_to_curator_once(self):
         self.entry(1, hours=45.0, rate=2000.0)  # 90 % -> «Риск»

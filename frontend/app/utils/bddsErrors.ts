@@ -23,6 +23,15 @@ export type BddsErrorView = {
   isFeatureDisabled: boolean
   /** Проект не найден: адрес открыт с чужим или устаревшим id. */
   isProjectMissing: boolean
+  /**
+   * Смарт-процесс операций не настроен (код finance_spa_not_configured).
+   *
+   * Отдельный признак, а не разбор текста на экране: это не ошибка и не
+   * «операций нет», а незаполненная настройка приложения, и список обязан
+   * показать отказ со ссылкой в настройки. Отличать такое состояние по
+   * подстроке в заголовке — значит поломать его при первой правке текста.
+   */
+  isSmartProcessMissing: boolean
 }
 
 export function describeBddsError(error: unknown): BddsErrorView {
@@ -37,6 +46,7 @@ export function describeBddsError(error: unknown): BddsErrorView {
       hint: '',
       isFeatureDisabled: false,
       isProjectMissing: false,
+      isSmartProcessMissing: false,
     }
   }
 
@@ -46,6 +56,7 @@ export function describeBddsError(error: unknown): BddsErrorView {
       hint: 'Подписку включает администратор приложения.',
       isFeatureDisabled: true,
       isProjectMissing: false,
+      isSmartProcessMissing: false,
     }
   }
 
@@ -55,6 +66,7 @@ export function describeBddsError(error: unknown): BddsErrorView {
       hint: 'Возможно, карточка проекта ещё не синхронизирована с портала — откройте «Проекты» и обновите доску.',
       isFeatureDisabled: false,
       isProjectMissing: true,
+      isSmartProcessMissing: false,
     }
   }
 
@@ -64,6 +76,7 @@ export function describeBddsError(error: unknown): BddsErrorView {
       hint: 'План и факт по часам считаются и без него, а поступления и внешние платежи не видны. Настроить — «Настройки → Настройка полей».',
       isFeatureDisabled: false,
       isProjectMissing: false,
+      isSmartProcessMissing: true,
     }
   }
 
@@ -73,6 +86,7 @@ export function describeBddsError(error: unknown): BddsErrorView {
       hint: 'Повторите через минуту. Если повторяется — «Настройки → Диагностика системы».',
       isFeatureDisabled: false,
       isProjectMissing: false,
+      isSmartProcessMissing: false,
     }
   }
 
@@ -81,5 +95,6 @@ export function describeBddsError(error: unknown): BddsErrorView {
     hint: '',
     isFeatureDisabled: false,
     isProjectMissing: false,
+    isSmartProcessMissing: false,
   }
 }

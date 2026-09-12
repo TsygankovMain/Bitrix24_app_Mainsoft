@@ -27,8 +27,12 @@ ProjectBudgetService. Порог — это управленческое реш�
 """
 
 import logging
+from functools import wraps
 from typing import Any, Dict, List, Optional
 
+from django.http import JsonResponse
+
+from .billing_settings import can_manage_billing
 from .configuration_service import ConfigurationService
 
 logger = logging.getLogger(__name__)
@@ -194,3 +198,38 @@ def load_bdds_settings(account, client: Optional[Any] = None) -> Dict[str, Any]:
         logger.warning("load_bdds_settings: не удалось прочитать конфигурацию: %s", exc)
         return normalize_bdds_settings(None)
     return normalize_bdds_settings(config)
+
+
+def bdds_operations_manager_required(view_func):
+    """Серверный гейт «заводить операции БДДС». Применять ПОСЛЕ @auth_required.
+
+    Права те же и из того же списка, что у счёта: администратор портала или
+    сотрудник из «Бухгалтерии» (``billing_accountants``). Причина —
+    ``can_manage_billing``, а не свой список: операция БДДС попадает в
+    финансовый результат проекта и в отчётность клиента ровно так же, как
+    выставленный счёт, а второй список тех же людей гарантированно разойдётся
+    с первым. Когда клиенту понадобится развести эти роли, здесь появится
+    свой ключ настроек — но заводить его раньше спроса значит требовать
+    заполнить две настройки вместо одной.
+
+    ЧТЕНИЕ операций этим гейтом не закрыто: реестр операций не показывает
+    ничего, чего человек не увидел бы в самом смарт-процессе на портале.
+    """
+
+    @wraps(view_func)
+    def wrapped(request, *args, **kwargs):
+        account = getattr(request, "bitrix24_account", None)
+        if not can_manage_billing(account):
+            return JsonResponse(
+                {
+                    "error": (
+                        "Заводить операции по проектам может администратор портала "
+                        "или сотрудник из списка «Бухгалтерия» в настройках приложения."
+                    ),
+                    "code": "bdds_operations_forbidden",
+                },
+                status=403,
+            )
+        return view_func(request, *args, **kwargs)
+
+    return wrapped
