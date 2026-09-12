@@ -3,9 +3,7 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import EmployeeProjectTable from '../../components/reports/EmployeeProjectTable.vue'
-import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
-import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
-import DataFreshnessIndicator from '../../components/common/DataFreshnessIndicator.vue'
+import ReportShell from '../../components/reports/ReportShell.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import { useProgress } from '~/composables/useProgress'
@@ -96,6 +94,14 @@ function handleDataRefreshed() {
     }
 }
 
+// Пресет меняет фильтр целиком. Перестраиваем отчёт только если он уже на экране:
+// запускать генерацию за человека, который ещё ничего не нажимал, — не наше дело.
+function handleFiltersApplied() {
+    if (hasGenerated.value) {
+        void fetchReport()
+    }
+}
+
 async function handleExportExcel() {
     progress.begin('Excel: «По сотрудникам»', 0, 'Готовим файл выгрузки')
     try {
@@ -163,67 +169,37 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="ms-page-shell">
-    <div class="ms-page-frame">
-      <div class="mb-4">
-          <B24Button label="Назад" color="link" @click="$router.push('/')" />
-      </div>
-
-      <B24Card v-if="isInit" class="ms-surface ms-report-surface">
-          <template #header>
-            <div class="flex flex-col gap-4 w-full">
-                <div class="flex flex-row justify-between items-center w-full">
-                    <ProseH2 class="!text-slate-900">Отчет по сотрудникам</ProseH2>
-                    <div class="flex flex-wrap items-center justify-end gap-3">
-                        <DataFreshnessIndicator @refreshed="handleDataRefreshed" />
-                        <div class="flex gap-2">
-                            <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-                            <B24Button label="Сформировать" loading-auto @click="fetchReport" />
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Filters -->
-                <div class="ms-filter-wrap flex flex-wrap gap-4 items-end">
-                    <DateRangeFilter 
-                        v-model:date-from="dateFrom" 
-                        v-model:date-to="dateTo" 
-                    />
-                    
-                    <MultiSelectFilter 
-                        v-model="selectedEmployees" 
-                        v-model:mode="employeeFilterMode" 
-                        label="Сотрудники" 
-                        :options="filterOptions.employees"
-                    />
-                    
-                    <MultiSelectFilter 
-                        v-model="selectedProjects" 
-                        v-model:mode="projectFilterMode" 
-                        label="Проекты" 
-                        :options="filterOptions.projects"
-                    />
-                </div>
-            </div>
-          </template>
-
-          <div v-if="syncWarning" class="ms-panel-warning">
-              {{ syncWarning }}
-          </div>
-
-          <div v-if="isLoading" class="flex justify-center py-8">
-              <span class="text-slate-500">Загрузка...</span>
-          </div>
-          <div v-else-if="hasGenerated && reportData.length > 0">
-              <EmployeeProjectTable :data="reportData" :clickable-labels="clickableLabelsEnabled" :entity-type-id="entityTypeId" />
-          </div>
-          <div v-else-if="hasGenerated" class="ms-empty-state">
-              Нет данных
-          </div>
-          <div v-else class="ms-empty-state">
-              Выберите фильтры и нажмите «Сформировать»
-          </div>
-      </B24Card>
-    </div>
-  </div>
+  <ReportShell
+    v-if="isInit"
+    title="Отчёт по сотрудникам"
+    description="Сотрудник → проект → задача: сколько часов у кого ушло"
+    :date-from="dateFrom"
+    :date-to="dateTo"
+    :employees="selectedEmployees"
+    :employee-mode="employeeFilterMode"
+    :projects="selectedProjects"
+    :project-mode="projectFilterMode"
+    :employee-options="filterOptions.employees"
+    :project-options="filterOptions.projects"
+    :is-loading="isLoading"
+    :has-generated="hasGenerated"
+    :is-empty="reportData.length === 0"
+    :warning="syncWarning"
+    @update:date-from="dateFrom = $event"
+    @update:date-to="dateTo = $event"
+    @update:employees="selectedEmployees = $event"
+    @update:employee-mode="employeeFilterMode = $event"
+    @update:projects="selectedProjects = $event"
+    @update:project-mode="projectFilterMode = $event"
+    @refreshed="handleDataRefreshed"
+    @filters-applied="handleFiltersApplied"
+    @generate="fetchReport"
+    @export="handleExportExcel"
+  >
+    <EmployeeProjectTable
+      :data="reportData"
+      :clickable-labels="clickableLabelsEnabled"
+      :entity-type-id="entityTypeId"
+    />
+  </ReportShell>
 </template>

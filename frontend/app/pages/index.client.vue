@@ -1,13 +1,52 @@
 <script setup lang="ts">
+/**
+ * Главная приложения.
+ *
+ * До редизайна («вариант A: родной портал») здесь лежали плитки-кнопки: экран
+ * отвечал на вопрос «куда пойти» и ни на один вопрос про работу. Навигацию
+ * забрало постоянное меню разделов в шапке (layouts/default.vue), и место
+ * освободилось под показатели выбранного месяца и таблицу проектов.
+ *
+ * Цифры берутся только из существующих ручек — `/api/periods/check` и
+ * `/api/homepage-portfolio`; расчёты вынесены в app/utils/homeDashboard.ts и
+ * покрыты тестами.
+ *
+ * Маршрутизация по placement'ам НЕ ТРОНУТА: этот же маршрут служит точкой
+ * входа для TASK_VIEW_TAB и SONET_GROUP_DETAIL_TAB, и редирект должен
+ * случиться раньше, чем экран начнёт что-либо грузить.
+ */
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref, watch } from 'vue'
 import { buildReportRouteLocation, type ReportRouteName, type ReportRoutePayload } from '~/utils/reportNavigation'
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption } from '~/utils/projectBoard'
+import type { PeriodCheckResult, PeriodRow } from '~/types/period'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import CreateProjectDrawer from '~/components/projects/CreateProjectDrawer.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
-import { CREATE_PROJECT_BUTTON_ENABLED, TASK_TAB_ROUTE } from '~/utils/featureFlags'
+import { CREATE_PROJECT_BUTTON_ENABLED, FINANCE_BILLING_ENABLED, TASK_TAB_ROUTE } from '~/utils/featureFlags'
+import { NAV_CONTROL_ISSUES_STATE_KEY } from '~/utils/appNavigation'
+import {
+  applyProjectQuickFilter,
+  buildHomeMetrics,
+  buildProjectPanel,
+  buildProjectRows,
+  buildProjectUtilization,
+  countPeriodBlockers,
+  countProjectQuickFilters,
+  filterProjectRows,
+  findPeriodRow,
+  formatLastWriteoff,
+  formatMonthTitle,
+  formatMonthValue,
+  initialsOf,
+  parseMonthValue,
+  PROJECT_QUICK_FILTERS,
+  sortProjectRows,
+  type ProjectQuickFilterId,
+  type ProjectRow,
+} from '~/utils/homeDashboard'
+import { PAID_FEATURE_BADGE, paidFeatureRoute } from '~/utils/paidFeatures'
 
 const { t, locales: localesI18n, setLocale } = useI18n()
 const router = useRouter()
@@ -71,7 +110,25 @@ const isInit = ref(false)
 const isPortfolioLoading = ref(false)
 const portfolioData = ref<PortfolioData | null>(null)
 const projectSearch = ref('')
+const quickFilter = ref<ProjectQuickFilterId>('active')
 const selectedProjectId = ref('')
+const userStore = useUserStore()
+
+// --- Показатели месяца ---
+const selectedMonth = ref(formatMonthValue(new Date()))
+const periodCheck = ref<PeriodCheckResult | null>(null)
+const periodRows = ref<PeriodRow[] | null>(null)
+const isPeriodLoading = ref(false)
+const periodError = ref('')
+
+/**
+ * Счётчик проблем для пункта «Контроль» в меню разделов.
+ *
+ * Меню лежит в лейауте и своего запроса позволить себе не может (оно рисуется
+ * раньше, чем приложение получило токен), поэтому число блокеров кладёт сюда
+ * главная — она проверку месяца и так спрашивает.
+ */
+const controlIssues = useState<number | null>(NAV_CONTROL_ISSUES_STATE_KEY, () => null)
 
 // --- Drawer state ---
 const isDrawerOpen = ref(false)
@@ -84,66 +141,6 @@ const legalEntityDirectory = ref<ProjectBoardDirectoryOption[]>([])
 
 // --- Create project modal state ---
 const createProjectOpen = ref(false)
-
-type AppSection = {
-  id: string
-  title: string
-  description: string
-  toneClass: string
-  action: () => void
-}
-
-const appSections = computed<AppSection[]>(() => [
-  {
-    id: 'report-project',
-    title: 'Отчет по проектам',
-    description: 'Сводка по проектам',
-    toneClass: 'bg-indigo-50 text-indigo-700',
-    action: () => openReport('project')
-  },
-  {
-    id: 'report-project-task',
-    title: 'Учет по проектам/задачам',
-    description: 'Проект → Задача → Сотрудник',
-    toneClass: 'bg-teal-50 text-teal-700',
-    action: () => openReport('project-task')
-  },
-  {
-    id: 'report-employee',
-    title: 'Отчет по сотрудникам',
-    description: 'Детальный отчет по часам',
-    toneClass: 'bg-blue-50 text-blue-700',
-    action: () => openReport('employee')
-  },
-  {
-    id: 'report-daily',
-    title: 'Ежедневная нагрузка',
-    description: 'Матрица часов по дням',
-    toneClass: 'bg-orange-50 text-orange-700',
-    action: () => openReport('daily')
-  },
-  {
-    id: 'report-revenue',
-    title: 'Потери выручки',
-    description: 'Неучитываемые зоны',
-    toneClass: 'bg-rose-50 text-rose-700',
-    action: () => openReport('revenue-leakage')
-  },
-  {
-    id: 'report-discipline',
-    title: 'Дисциплина времени',
-    description: 'Скорость внесения записей',
-    toneClass: 'bg-amber-50 text-amber-700',
-    action: () => openReport('time-discipline')
-  },
-  {
-    id: 'report-focus',
-    title: 'Фокус и распыление',
-    description: 'Распределение часов',
-    toneClass: 'bg-cyan-50 text-cyan-700',
-    action: () => openReport('focus-analysis')
-  },
-])
 
 function mergeSelectOptions(...groups: Array<ProjectBoardDirectoryOption[]>) {
   const seenIds = new Set<string>()
@@ -217,70 +214,80 @@ const drawerLegalEntityOptions = computed(() =>
   )
 )
 
-const activePortfolioCards = computed<ProjectBoardCardRecord[]>(() => {
-  const cards = (portfolioData.value?.cards || []) as ProjectBoardCardRecord[]
-  const query = projectSearch.value.trim().toLowerCase()
+const monthTitle = computed(() => formatMonthTitle(selectedMonth.value))
+const selectedPeriodRow = computed(() => findPeriodRow(periodRows.value, parseMonthValue(selectedMonth.value)))
 
-  return cards
-    .filter(card => !card.is_archived)
-    .filter((card) => {
-      if (!query) {
-        return true
-      }
-      return [
-        card.project_name,
-        card.company_name,
-        card.curator_name,
-        card.stage,
-        card.project_id,
-      ].some(value => String(value || '').toLowerCase().includes(query))
-    })
-    .sort((left, right) => {
-      const leftWeight = Number(left.last_writeoff_days || 0)
-      const rightWeight = Number(right.last_writeoff_days || 0)
-      return rightWeight - leftWeight
-    })
-})
+const metrics = computed(() => buildHomeMetrics({
+  check: periodCheck.value,
+  period: selectedPeriodRow.value,
+  periodsLoaded: periodRows.value !== null,
+  portfolio: portfolioData.value?.summary || null,
+}))
 
-const selectedProject = computed<ProjectBoardCardRecord | null>(() => {
-  const cards = activePortfolioCards.value
-  if (!cards.length) {
+const quickFilterContext = computed(() => ({ currentUserId: userStore.id }))
+
+const allProjectRows = computed(() => sortProjectRows(buildProjectRows(portfolioData.value?.cards)))
+const quickFilterCounts = computed(() => countProjectQuickFilters(allProjectRows.value, quickFilterContext.value))
+const projectRows = computed(() => filterProjectRows(
+  applyProjectQuickFilter(allProjectRows.value, quickFilter.value, quickFilterContext.value),
+  projectSearch.value
+))
+
+/**
+ * Строки таблицы вместе с посчитанным освоением бюджета.
+ *
+ * Считаем один раз на строку, а не по разу на каждую ячейку: в шаблоне
+ * освоение нужно и полосе, и подписи, и цвету, и вызов из разметки повторился
+ * бы четырежды на каждый проект.
+ */
+const decoratedProjectRows = computed(() => projectRows.value.map(row => ({
+  row,
+  utilization: buildProjectUtilization(row),
+})))
+
+/**
+ * Строка, о которой рассказывает правая панель.
+ *
+ * Если выбранный проект выпал из текущего отбора, панель показывает первую
+ * строку списка, а не пустоту: панель в макете — постоянная часть экрана, и
+ * пустая колонка справа читается как поломка.
+ */
+const selectedProjectRow = computed<ProjectRow | null>(() => {
+  const rows = projectRows.value
+
+  if (!rows.length) {
     return null
   }
 
-  const current = cards.find(card => card.project_id === selectedProjectId.value)
-  return current || cards[0]
+  return rows.find(row => row.id === selectedProjectId.value) || rows[0]
 })
 
-const summary = computed(() => portfolioData.value?.summary || {
-  total_count: 0,
-  active_count: 0,
-  archived_count: 0,
-  support_count: 0,
-  inactive_30_count: 0,
-  inactive_90_count: 0,
-})
+const projectPanel = computed(() => buildProjectPanel(selectedProjectRow.value))
 
-watch(
-  () => activePortfolioCards.value,
-  (cards) => {
-    if (!cards.length) {
-      selectedProjectId.value = ''
-      return
-    }
-    if (!selectedProjectId.value || !cards.some(card => card.project_id === selectedProjectId.value)) {
-      selectedProjectId.value = cards[0].project_id
-    }
-  },
-  { immediate: true }
-)
+const METRIC_TONE_CLASS = {
+  neutral: 'text-slate-900',
+  success: 'text-emerald-600',
+  warning: 'text-amber-600',
+  danger: 'text-rose-600',
+} as const
+
+const METRIC_BADGE_CLASS = {
+  neutral: 'bg-slate-100 text-slate-700',
+  success: 'bg-emerald-100 text-emerald-700',
+  warning: 'bg-amber-100 text-amber-700',
+  danger: 'bg-rose-100 text-rose-700',
+} as const
+
+const UTILIZATION_BAR_CLASS = {
+  neutral: 'bg-[#0075ff]',
+  warning: 'bg-amber-500',
+  danger: 'bg-rose-500',
+} as const
+
+const billingFeatureRoute = paidFeatureRoute('billing')
 
 function openReport(target: ReportRouteName | ReportRoutePayload) {
   router.push(buildReportRouteLocation(target))
-}
-
-function openSettings() {
-  router.push('/settings')
 }
 
 function openGuide() {
@@ -304,10 +311,20 @@ function getStageClass(stage?: string | null) {
   return 'bg-slate-100 text-slate-700'
 }
 
+function getWriteoffClass(days: number) {
+  if (days >= 90) {
+    return 'text-rose-600 font-semibold'
+  }
+  if (days >= 30) {
+    return 'text-amber-600 font-semibold'
+  }
+  return 'text-slate-700'
+}
+
 async function loadPortfolio(forceRefresh = false) {
   isPortfolioLoading.value = true
   try {
-    portfolioData.value = await apiStore.getHomepagePortfolio(forceRefresh)
+    portfolioData.value = await apiStore.getHomepagePortfolio(forceRefresh) as PortfolioData
   } catch (error) {
     processErrorGlobal(error)
   } finally {
@@ -315,16 +332,89 @@ async function loadPortfolio(forceRefresh = false) {
   }
 }
 
+/**
+ * Проверка выбранного месяца.
+ *
+ * Ошибку сюда не пускаем в processErrorGlobal: показатели — не единственное,
+ * ради чего открывают главную, и уронить из-за них таблицу проектов было бы
+ * несоразмерно. Пишем текст рядом с показателями и оставляем прочерки.
+ */
+async function loadPeriodCheck() {
+  const parsed = parseMonthValue(selectedMonth.value)
+
+  if (!parsed) {
+    periodCheck.value = null
+    controlIssues.value = null
+    return
+  }
+
+  isPeriodLoading.value = true
+  periodError.value = ''
+  try {
+    periodCheck.value = await apiStore.checkPeriod(parsed.year, parsed.month)
+    controlIssues.value = countPeriodBlockers(periodCheck.value)
+  } catch (error) {
+    periodCheck.value = null
+    controlIssues.value = null
+    periodError.value = 'Показатели месяца сейчас недоступны.'
+    console.warn('[IndexPage] Failed to load period check', error)
+  } finally {
+    isPeriodLoading.value = false
+  }
+}
+
+/**
+ * Журнал закрытия месяцев.
+ *
+ * Отдельной ручки «статус одного месяца» нет: `/api/periods` отдаёт все
+ * месяцы разом, нужный выбирается на клиенте (findPeriodRow). Ошибку, как и у
+ * проверки, глушим: показатель закрытия покажет прочерк, остальной экран
+ * работает.
+ */
+async function loadPeriods() {
+  try {
+    periodRows.value = (await apiStore.getPeriods()).periods || []
+  } catch (error) {
+    periodRows.value = null
+    console.warn('[IndexPage] Failed to load periods journal', error)
+  }
+}
+
+function selectProject(row: ProjectRow) {
+  selectedProjectId.value = row.id
+}
+
+function setQuickFilter(id: ProjectQuickFilterId) {
+  quickFilter.value = id
+}
+
+function openBillingFeature() {
+  router.push(billingFeatureRoute)
+}
+
+watch(selectedMonth, () => {
+  if (isInit.value) {
+    loadPeriodCheck()
+  }
+})
+
+// Смена быстрого фильтра или поиска может выкинуть выбранный проект из списка —
+// панель тогда сама перейдёт на первую строку (см. selectedProjectRow).
+watch([quickFilter, projectSearch], () => {
+  if (!projectRows.value.some(row => row.id === selectedProjectId.value)) {
+    selectedProjectId.value = projectRows.value[0]?.id || ''
+  }
+})
+
 async function onProjectCreated() {
   await loadPortfolio(true)
 }
 
 function openProject(card?: ProjectBoardCardRecord | null) {
-  const targetCard = card || selectedProject.value
-  if (!targetCard) {
+  if (!card) {
     return
   }
-  openProjectGroup(targetCard.project_id)
+  openProjectGroup(card.project_id)
 }
 
 async function loadMeta() {
@@ -397,18 +487,11 @@ function openSpa(card?: ProjectBoardCardRecord | null) {
   }
 }
 
-
-function openSelectedProjectReport(report: ReportRouteName = 'project') {
-  const card = selectedProject.value
-  if (!card) {
-    openReport(report)
-    return
-  }
-
+function openProjectReport(row: ProjectRow, report: ReportRouteName = 'project') {
   openReport({
     report,
-    projectId: card.project_id,
-    projectName: card.project_name,
+    projectId: row.id,
+    projectName: row.name,
     autogenerate: true,
   })
 }
@@ -448,6 +531,8 @@ onMounted(async () => {
     await Promise.all([
       loadPortfolio(),
       loadMeta(),
+      loadPeriodCheck(),
+      loadPeriods(),
     ])
   } catch (error) {
     processErrorGlobal(error)
@@ -456,201 +541,224 @@ onMounted(async () => {
 </script>
 
 <template>
-  <B24Container>
-    <!-- ms-page-header: шапка страницы с кнопками в слоте #links -->
-    <B24PageHeader
-      title="Рабочее пространство"
-      description="Единая главная: список проектов, контекст и переходы во все разделы приложения."
-    >
-      <template #links>
-        <B24Button label="Настройки" color="default" @click="openSettings" />
-        <B24Button label="Юзергайд" color="default" @click="openGuide" />
-        <B24Button label="Канбан проектов" color="primary" @click="router.push('/projects')" />
-        <B24Button v-if="CREATE_PROJECT_BUTTON_ENABLED" label="Создать проект" color="primary" @click="createProjectOpen = true" />
-      </template>
-    </B24PageHeader>
+  <div class="ms-page-shell">
+    <div class="ms-page-frame">
+      <!-- Шапка экрана: что это и чем управляем -->
+      <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 class="text-2xl font-semibold tracking-tight text-slate-900">Главная</h1>
+          <p class="mt-1 text-sm text-slate-500">
+            Портфель проектов и часы за {{ monthTitle }}. Разделы приложения — в меню сверху.
+          </p>
+        </div>
 
-    <div v-if="isInit" class="mt-6 space-y-6">
-      <!-- ms-kpi-grid: ряд KPI-карточек → B24PageGrid + B24Card -->
-      <B24PageGrid>
-        <B24Card>
-          <div class="text-xs text-slate-400">Активные проекты</div>
-          <div class="mt-2 text-3xl font-semibold text-slate-900">{{ summary.active_count }}</div>
-          <div class="mt-1 text-xs text-slate-500">Портфель в работе</div>
-        </B24Card>
-        <B24Card>
-          <div class="text-xs text-slate-400">Нет списаний 1 месяц</div>
-          <div class="mt-2 text-3xl font-semibold text-amber-600">{{ summary.inactive_30_count }}</div>
-          <div class="mt-1 text-xs text-slate-500">Требуют внимания</div>
-        </B24Card>
-        <B24Card>
-          <div class="text-xs text-slate-400">Нет списаний 3 месяца</div>
-          <div class="mt-2 text-3xl font-semibold text-rose-600">{{ summary.inactive_90_count }}</div>
-          <div class="mt-1 text-xs text-slate-500">Высокий риск</div>
-        </B24Card>
-        <B24Card>
-          <div class="text-xs text-slate-400">Support-проекты</div>
-          <div class="mt-2 text-3xl font-semibold text-cyan-700">{{ summary.support_count }}</div>
-          <div class="mt-1 text-xs text-slate-500">Отдельный режим</div>
-        </B24Card>
-      </B24PageGrid>
-
-      <!-- ms-surface (список) + ms-surface (панель) → два B24Card в сетке -->
-      <div class="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
-        <!-- Список проектов -->
-        <B24Card>
-          <template #header>
-            <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-              <div>
-                <span class="text-base font-semibold text-slate-900">Проекты</span>
-                <p class="mt-1 text-sm text-slate-500">Выберите проект и работайте с ним справа.</p>
-              </div>
-              <!-- Поиск: нативный input без lime, фокус на синем #0075ff -->
-              <label class="grid gap-1 text-sm">
-                <span class="font-medium text-slate-700">Поиск проекта</span>
-                <input
-                  v-model="projectSearch"
-                  type="search"
-                  placeholder="Название, компания, стадия"
-                  class="w-full min-w-[250px] rounded-xl border border-slate-200 bg-white px-3 py-2 outline-none transition focus:border-[#0075ff] focus:ring-1 focus:ring-[#0075ff]"
-                >
-              </label>
-            </div>
-          </template>
-
-          <!-- ms-empty-state → B24Empty -->
-          <B24Empty v-if="isPortfolioLoading" title="Загружаем портфель проектов…" size="sm" />
-          <B24Empty v-else-if="activePortfolioCards.length === 0" title="Проекты не найдены по текущему фильтру." size="sm" />
-          <div v-else class="mt-4 max-h-[560px] space-y-2 overflow-y-auto pr-1">
-            <button
-              v-for="card in activePortfolioCards"
-              :key="card.project_id"
-              type="button"
-              class="w-full rounded-2xl border px-4 py-3 text-left transition"
-              :class="selectedProject?.project_id === card.project_id
-                ? 'border-[#0075ff] bg-blue-50/40 shadow-sm'
-                : 'border-slate-200 bg-white hover:border-slate-300'"
-              @click="selectedProjectId = card.project_id"
+        <div class="flex flex-wrap items-end gap-2">
+          <label class="grid gap-1 text-sm">
+            <span class="font-medium text-slate-700">Месяц</span>
+            <input
+              v-model="selectedMonth"
+              type="month"
+              class="h-[38px] w-full min-w-[170px] rounded-lg border border-slate-200 bg-white px-3 outline-none transition focus:border-[#0075ff] focus:ring-1 focus:ring-[#0075ff]"
             >
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="truncate text-sm font-semibold text-slate-900">{{ card.project_name }}</div>
-                  <div class="mt-1 truncate text-xs text-slate-500">
-                    {{ card.company_name || 'Компания не указана' }} · {{ card.curator_name || 'Куратор не указан' }}
-                  </div>
-                </div>
-                <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold" :class="getStageClass(card.stage)">
-                  {{ card.stage }}
-                </span>
-              </div>
-            </button>
-          </div>
-        </B24Card>
+          </label>
+          <B24Button label="Канбан проектов" color="default" @click="router.push('/projects')" />
+          <B24Button label="Юзергайд" color="default" @click="openGuide" />
+          <B24Button
+            v-if="CREATE_PROJECT_BUTTON_ENABLED"
+            label="Создать проект"
+            color="primary"
+            @click="createProjectOpen = true"
+          />
+        </div>
+      </div>
 
-        <!-- Правая панель выбранного проекта -->
-        <B24Card>
-          <div v-if="selectedProject" class="space-y-4">
+      <div v-if="isInit" class="mt-5 flex flex-col gap-5">
+        <p v-if="periodError" class="text-sm text-rose-600">{{ periodError }}</p>
+
+        <!-- Четыре показателя выбранного месяца -->
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div
+            v-for="metric in metrics"
+            :key="metric.id"
+            class="rounded-2xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm"
+          >
+            <div class="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">
+              {{ metric.label }}
+            </div>
+
+            <div v-if="metric.asBadge" class="mt-2.5 flex min-h-[32px] items-center">
+              <span
+                class="inline-flex rounded-full px-3 py-1 text-sm font-semibold"
+                :class="METRIC_BADGE_CLASS[metric.tone]"
+              >
+                {{ isPeriodLoading ? '…' : metric.value }}
+              </span>
+            </div>
+            <div v-else class="mt-1 text-3xl font-semibold tabular-nums" :class="METRIC_TONE_CLASS[metric.tone]">
+              {{ isPeriodLoading ? '…' : metric.value }}
+            </div>
+
+            <div class="mt-1 text-xs text-slate-500">{{ metric.hint }}</div>
+          </div>
+        </div>
+
+        <!-- Проекты: таблица с быстрыми фильтрами и панель выбранного проекта -->
+        <div class="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+          <section class="ms-surface flex min-w-0 flex-col gap-3 p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 class="text-base font-semibold text-slate-900">Проекты</h2>
+              <B24Button label="Все проекты" color="link" size="xs" @click="router.push('/projects')" />
+            </div>
+
             <div class="flex flex-wrap items-center gap-2">
-              <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold" :class="getStageClass(selectedProject.stage)">
-                {{ selectedProject.stage }}
-              </span>
-              <span class="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-                ID {{ selectedProject.project_id }}
-              </span>
+              <button
+                v-for="filter in PROJECT_QUICK_FILTERS"
+                :key="filter.id"
+                type="button"
+                class="rounded-full border px-3 py-1.5 text-xs font-semibold transition"
+                :class="quickFilter === filter.id
+                  ? 'border-[#0075ff] bg-[#0075ff] text-white'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'"
+                :aria-pressed="quickFilter === filter.id"
+                @click="setQuickFilter(filter.id)"
+              >
+                {{ filter.label }} · {{ quickFilterCounts[filter.id] }}
+              </button>
+
+              <input
+                v-model="projectSearch"
+                type="search"
+                placeholder="Проект, компания, куратор, ID"
+                aria-label="Поиск по проектам"
+                class="h-[34px] min-w-[200px] grow rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-[#0075ff]"
+              >
+            </div>
+
+            <B24Empty v-if="isPortfolioLoading" title="Загружаем портфель проектов…" size="sm" />
+            <B24Empty v-else-if="allProjectRows.length === 0" title="Активных проектов нет." size="sm" />
+            <B24Empty v-else-if="projectRows.length === 0" title="По этому отбору проектов не нашлось." size="sm" />
+
+            <div v-else class="ms-table-shell max-h-[560px] overflow-y-auto">
+              <table class="ms-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Проект</th>
+                    <th scope="col">Куратор</th>
+                    <th scope="col">Стадия</th>
+                    <th scope="col">Освоение</th>
+                    <th scope="col" class="text-right">Списание</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="item in decoratedProjectRows"
+                    :key="item.row.id"
+                    class="cursor-pointer"
+                    :class="selectedProjectRow?.id === item.row.id ? 'bg-blue-50/70' : ''"
+                    @click="selectProject(item.row)"
+                  >
+                    <td>
+                      <div class="text-sm font-semibold text-slate-900">{{ item.row.name }}</div>
+                      <div class="text-xs text-slate-500">{{ item.row.companyName }}</div>
+                    </td>
+                    <td>
+                      <span class="inline-flex items-center gap-2 whitespace-nowrap">
+                        <span
+                          class="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600"
+                          aria-hidden="true"
+                        >{{ initialsOf(item.row.curatorName) }}</span>
+                        <span class="text-sm text-slate-700">{{ item.row.curatorName }}</span>
+                      </span>
+                    </td>
+                    <td>
+                      <span class="ms-pill" :class="getStageClass(item.row.stage)">{{ item.row.stage }}</span>
+                    </td>
+                    <td>
+                      <span v-if="item.utilization.isEmpty" class="text-xs text-slate-500">
+                        {{ item.utilization.label }}
+                      </span>
+                      <span v-else class="inline-flex items-center gap-2">
+                        <span class="h-1.5 w-10 overflow-hidden rounded-full bg-slate-200">
+                          <span
+                            class="block h-full rounded-full"
+                            :class="UTILIZATION_BAR_CLASS[item.utilization.tone]"
+                            :style="{ width: item.utilization.barPercent + '%' }"
+                          />
+                        </span>
+                        <span class="text-xs font-semibold tabular-nums" :class="METRIC_TONE_CLASS[item.utilization.tone]">
+                          {{ item.utilization.label }}
+                        </span>
+                      </span>
+                    </td>
+                    <td class="text-right tabular-nums" :class="getWriteoffClass(item.row.lastWriteoffDays)">
+                      {{ formatLastWriteoff(item.row.lastWriteoffDays) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- Панель выбранного проекта -->
+          <aside v-if="projectPanel && selectedProjectRow" class="ms-surface flex h-fit flex-col gap-4 p-4">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="ms-pill" :class="getStageClass(projectPanel.stage)">{{ projectPanel.stage }}</span>
+              <span class="ms-pill bg-slate-100 text-slate-600">ID {{ projectPanel.id }}</span>
             </div>
 
             <div>
-              <h2 class="text-xl font-semibold text-slate-900">{{ selectedProject.project_name }}</h2>
-              <p class="mt-1 text-sm text-slate-500">
-                {{ selectedProject.company_name || 'Компания не указана' }} · {{ selectedProject.curator_name || 'Куратор не указан' }}
-              </p>
+              <h2 class="text-base font-semibold text-slate-900">{{ projectPanel.name }}</h2>
+              <p class="mt-1 text-xs text-slate-500">{{ projectPanel.subtitle }}</p>
             </div>
 
-            <div class="grid grid-cols-2 gap-2 text-sm">
-              <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <div class="text-[11px] uppercase tracking-[0.08em] text-slate-500">Последнее списание</div>
-                <div class="mt-1 font-semibold text-slate-900">{{ selectedProject.last_writeoff_days || 0 }} дней назад</div>
+            <dl class="grid grid-cols-2 gap-3">
+              <div v-for="stat in projectPanel.stats" :key="stat.id" class="rounded-xl bg-slate-50 px-3 py-2">
+                <dt class="text-[11px] font-medium uppercase tracking-[0.06em] text-slate-500">{{ stat.label }}</dt>
+                <dd class="mt-0.5 text-sm font-semibold text-slate-900">{{ stat.value }}</dd>
               </div>
-              <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <div class="text-[11px] uppercase tracking-[0.08em] text-slate-500">Бюджет часов</div>
-                <div class="mt-1 font-semibold text-slate-900">{{ selectedProject.project_hours_budget || 'поддержка' }}</div>
-              </div>
-              <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <div class="text-[11px] uppercase tracking-[0.08em] text-slate-500">Ставка</div>
-                <div class="mt-1 font-semibold text-slate-900">{{ selectedProject.hourly_rate || 0 }} ₽</div>
-              </div>
-              <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                <div class="text-[11px] uppercase tracking-[0.08em] text-slate-500">Юрлицо</div>
-                <div class="mt-1 font-semibold text-slate-900">{{ selectedProject.our_legal_entity_name || 'Не указано' }}</div>
-              </div>
-            </div>
+            </dl>
 
-            <!-- ms-action-card → B24PageCard (кликабельные карточки-действия) -->
-            <div class="grid grid-cols-2 gap-2">
-              <B24PageCard
-                title="Открыть проект"
-                description="Группа проекта в Bitrix24"
-                :on-click="() => openProject(selectedProject)"
-              />
-              <B24PageCard
-                title="Сформировать отчет"
-                description="Отчет по проекту с пресетом"
-                :on-click="() => openSelectedProjectReport('project')"
-              />
-              <B24PageCard
-                title="Открыть канбан проектов"
-                description="Перейти в управление проектами"
-                :on-click="() => router.push('/projects')"
-              />
-              <B24PageCard
-                title="Карточка проекта"
-                description="Ставка, юрлицо и параметры"
-                :on-click="() => openProjectCard(selectedProject)"
-              />
+            <div class="flex flex-col gap-1.5">
+              <button type="button" class="ms-action-card" @click="openProject(selectedProjectRow.card)">
+                Группа проекта в Битрикс24
+              </button>
+              <button type="button" class="ms-action-card" @click="openProjectReport(selectedProjectRow)">
+                Отчёт по проекту за {{ monthTitle }}
+              </button>
+              <button type="button" class="ms-action-card" @click="openProjectCard(selectedProjectRow.card)">
+                Карточка проекта: ставка, юрлицо, сроки
+              </button>
+              <button
+                type="button"
+                class="ms-action-card flex items-center justify-between gap-2"
+                :class="FINANCE_BILLING_ENABLED ? '' : 'cursor-not-allowed opacity-70'"
+                @click="openBillingFeature"
+              >
+                <span>Счёт и акт по часам проекта</span>
+                <span v-if="!FINANCE_BILLING_ENABLED" class="ms-pill bg-amber-100 text-amber-800">
+                  {{ PAID_FEATURE_BADGE }}
+                </span>
+              </button>
             </div>
-          </div>
-
-          <!-- ms-empty-state → B24Empty -->
-          <B24Empty v-else title="Нет доступных проектов для отображения." size="sm" />
-        </B24Card>
+          </aside>
+        </div>
       </div>
 
-      <!-- ms-surface (рабочие разделы) → B24Card + B24PageGrid -->
-      <B24Card>
-        <template #header>
-          <div>
-            <span class="text-base font-semibold text-slate-900">Рабочие разделы</span>
-            <p class="mt-1 text-sm text-slate-500">
-              Ключевые рабочие сценарии на главной. Служебные и настройочные разделы перенесены в «Настройки».
-            </p>
-          </div>
-        </template>
-        <B24PageGrid class="mt-2">
-          <B24PageCard
-            v-for="section in appSections"
-            :key="section.id"
-            :title="section.title"
-            :description="section.description"
-            :on-click="section.action"
-          />
-        </B24PageGrid>
-      </B24Card>
+      <ProjectBoardDrawer
+        v-model="isDrawerOpen"
+        :card="drawerCard"
+        :employees="drawerEmployeeOptions"
+        :companies="drawerCompanyOptions"
+        :legal-entities="drawerLegalEntityOptions"
+        :is-saving="isSaving"
+        :is-archiving="isArchiving"
+        @save="handleSaveProjectCard"
+        @archive="handleArchiveProjectCard"
+        @open-project="openProject"
+        @open-spa="openSpa"
+      />
+
+      <CreateProjectDrawer v-if="CREATE_PROJECT_BUTTON_ENABLED" v-model:open="createProjectOpen" @created="onProjectCreated" />
     </div>
-
-    <ProjectBoardDrawer
-      v-model="isDrawerOpen"
-      :card="drawerCard"
-      :employees="drawerEmployeeOptions"
-      :companies="drawerCompanyOptions"
-      :legal-entities="drawerLegalEntityOptions"
-      :is-saving="isSaving"
-      :is-archiving="isArchiving"
-      @save="handleSaveProjectCard"
-      @archive="handleArchiveProjectCard"
-      @open-project="openProject"
-      @open-spa="openSpa"
-    />
-
-    <CreateProjectDrawer v-if="CREATE_PROJECT_BUTTON_ENABLED" v-model:open="createProjectOpen" @created="onProjectCreated" />
-  </B24Container>
+  </div>
 </template>

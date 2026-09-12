@@ -7,7 +7,20 @@ const props = defineProps<{
     options: { id: string | number, name: string | number }[],
     modelValue: (string | number)[],
     label: string,
-    mode?: 'include' | 'exclude'
+    mode?: 'include' | 'exclude',
+    /**
+     * Компактный вид для строки фильтра отчёта («вариант A: родной портал»).
+     *
+     * Подпись уезжает ВНУТРЬ кнопки («Сотрудники: все»), а не стоит строкой
+     * сверху: в шапке отчёта период, сотрудники и проекты должны уместиться в
+     * одну строку, а подпись над каждым полем растит её вдвое. Правило базы
+     * UX «подписи у полей, а не только плейсхолдеры» при этом соблюдено —
+     * подпись никуда не делась, она просто слева от значения.
+     *
+     * По умолчанию false: на форме подстановки ИНН фильтр по-прежнему стоит в
+     * колонке с подписями сверху, и ломать её ради отчётов незачем.
+     */
+    compact?: boolean
 }>()
 
 const emit = defineEmits(['update:modelValue', 'update:mode'])
@@ -38,6 +51,8 @@ const displayLabel = computed(() => {
     }
     return `${selectedCount.value} выбрано`
 })
+
+const isCompact = computed(() => props.compact === true)
 
 const selectAllLabel = computed(() => currentMode.value === 'exclude' ? 'Исключить все' : 'Выбрать все')
 const clearLabel = computed(() => currentMode.value === 'exclude' ? 'Без исключений' : 'Сбросить')
@@ -116,14 +131,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div ref="rootRef" class="relative inline-block w-full max-w-[320px] text-left">
-        <label class="mb-1 block text-sm font-medium text-slate-700">{{ label }}</label>
-        <button 
+    <div
+        ref="rootRef"
+        class="relative inline-block text-left"
+        :class="isCompact ? 'w-auto min-w-[168px] max-w-[260px]' : 'w-full max-w-[320px]'"
+    >
+        <label v-if="!isCompact" class="mb-1 block text-sm font-medium text-slate-700">{{ label }}</label>
+        <button
             type="button"
-            class="inline-flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-[#0075ff]" 
+            class="inline-flex w-full items-center justify-between border border-slate-200 bg-white font-medium text-slate-700 shadow-sm outline-none transition hover:border-slate-300 focus:border-[#0075ff]"
+            :class="isCompact ? 'h-[38px] rounded-lg px-3 text-sm' : 'rounded-xl px-3 py-2 text-sm'"
+            :aria-label="isCompact ? label : undefined"
             @click="toggleDropdown"
         >
-            <span class="truncate">{{ displayLabel }}</span>
+            <span class="truncate">
+                <span v-if="isCompact" class="text-slate-500">{{ label }}: </span>{{ displayLabel }}
+            </span>
             <svg class="-mr-1 ml-2 h-5 w-5 text-slate-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
             </svg>
@@ -158,7 +181,8 @@ onBeforeUnmount(() => {
         -->
         <div
             v-if="isOpen"
-            class="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
+            class="absolute left-0 z-30 mt-2 min-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
+            :class="isCompact ? 'w-[280px]' : 'right-0'"
         >
                 <div class="space-y-3 border-b border-slate-100 p-3">
                     <input

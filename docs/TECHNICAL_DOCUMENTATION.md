@@ -49,13 +49,12 @@ CloudPub не считается production-архитектурой.
 
 Root page определяет placement и маршрутизирует пользователя:
 
-- `TASK_VIEW_TAB` -> `/task`
+- `TASK_VIEW_TAB` -> корень приложения, дальше клиентский редирект на `/embedded`
 - `SONET_GROUP_DETAIL_TAB` -> `/reports/project-report`
 
 ### Embedded / задача
 
 - `frontend/app/pages/embedded.vue`
-- `frontend/app/pages/task.vue`
 - `frontend/app/composables/useTaskTreeLoader.ts`
 
 Отвечают за:
