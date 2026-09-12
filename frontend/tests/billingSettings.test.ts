@@ -16,7 +16,11 @@ import {
   readTemplateId,
   type BillingSettings,
 } from '../app/utils/billingSettings'
-import { DEFAULT_BILLING_LINE_TEMPLATE } from '../app/utils/billingLineTemplate'
+import {
+  DEFAULT_BILLING_LINE_TEMPLATE,
+  DEFAULT_BILLING_LINE_TEMPLATES,
+  DEFAULT_BILLING_SERVICE_NAME,
+} from '../app/utils/billingLineTemplate'
 
 /** Заготовка настроек: тесты задают только то, что проверяют. */
 function settings(patch: Partial<BillingSettings> = {}): BillingSettings {
@@ -25,7 +29,9 @@ function settings(patch: Partial<BillingSettings> = {}): BillingSettings {
     accountantIds: [],
     ourCompanyId: '',
     ourCompanyName: '',
-    lineTemplate: DEFAULT_BILLING_LINE_TEMPLATE,
+    lineVariant: 'task',
+    lineTemplates: { ...DEFAULT_BILLING_LINE_TEMPLATES },
+    serviceName: DEFAULT_BILLING_SERVICE_NAME,
     taskLevel: 'task',
     actTemplateId: '',
     invoiceTemplateId: '',
@@ -46,7 +52,8 @@ test('readBillingSettings: формулировка строки и уровен
   // поэтому «не задано» читается как «как по умолчанию».
   const empty = readBillingSettings({})
 
-  assert.equal(empty.lineTemplate, DEFAULT_BILLING_LINE_TEMPLATE)
+  assert.deepEqual(empty.lineTemplates, DEFAULT_BILLING_LINE_TEMPLATES)
+  assert.equal(empty.lineTemplates.task, DEFAULT_BILLING_LINE_TEMPLATE)
   assert.equal(empty.taskLevel, 'task')
 
   const configured = readBillingSettings({
@@ -54,7 +61,9 @@ test('readBillingSettings: формулировка строки и уровен
     [BILLING_LINE_TASK_LEVEL_KEY]: 'root',
   })
 
-  assert.equal(configured.lineTemplate, '{задача} за {период}')
+  assert.equal(configured.lineTemplates.task, '{задача} за {период}')
+  // Формулировка одного варианта не задевает остальные три.
+  assert.equal(configured.lineTemplates.single, DEFAULT_BILLING_LINE_TEMPLATES.single)
   assert.equal(configured.taskLevel, 'root')
 
   // Чужой уровень не имеет права укрупнить строки счёта.
@@ -62,7 +71,10 @@ test('readBillingSettings: формулировка строки и уровен
 })
 
 test('applyBillingSettings: формулировка и уровень уходят на сервер нормализованными', () => {
-  const next = applyBillingSettings({}, settings({ lineTemplate: '   ', taskLevel: 'root' }))
+  const next = applyBillingSettings({}, settings({
+    lineTemplates: { ...DEFAULT_BILLING_LINE_TEMPLATES, task: '   ' },
+    taskLevel: 'root',
+  }))
 
   assert.equal(next[BILLING_LINE_TEMPLATE_KEY], DEFAULT_BILLING_LINE_TEMPLATE)
   assert.equal(next[BILLING_LINE_TASK_LEVEL_KEY], 'root')
@@ -71,11 +83,18 @@ test('applyBillingSettings: формулировка и уровень уход�
 test('billingSettingsChanged: видит правку шаблона и уровня, но не лишний пробел', () => {
   const base = settings()
 
-  assert.equal(billingSettingsChanged(base, settings({ lineTemplate: '{задача}' })), true)
+  const wording = (patch: Partial<Record<string, string>>) => settings({
+    lineTemplates: { ...DEFAULT_BILLING_LINE_TEMPLATES, ...patch },
+  })
+
+  assert.equal(billingSettingsChanged(base, wording({ task: '{задача}' })), true)
+  // Правка формулировки ЛЮБОГО варианта зажигает «Сохранить»: они четыре
+  // равноправные настройки, а не одна главная и три второстепенных.
+  assert.equal(billingSettingsChanged(base, wording({ single: 'Услуги за {месяц}' })), true)
   assert.equal(billingSettingsChanged(base, settings({ taskLevel: 'root' })), true)
-  assert.equal(billingSettingsChanged(base, settings({ lineTemplate: '' })), false)
+  assert.equal(billingSettingsChanged(base, wording({ task: '' })), false)
   assert.equal(
-    billingSettingsChanged(base, settings({ lineTemplate: `  ${DEFAULT_BILLING_LINE_TEMPLATE}  ` })),
+    billingSettingsChanged(base, wording({ task: `  ${DEFAULT_BILLING_LINE_TEMPLATE}  ` })),
     false
   )
 })

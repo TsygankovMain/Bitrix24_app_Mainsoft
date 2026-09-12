@@ -27,6 +27,8 @@ import BillingGate from '~/components/finance/BillingGate.vue'
 import BillingErrorNote from '~/components/finance/BillingErrorNote.vue'
 import BillingCancelDrawer from '~/components/finance/BillingCancelDrawer.vue'
 import { describeBillingError, type BillingErrorView } from '~/utils/billingErrors'
+import { describeBillingGrouping } from '~/utils/billingGrouping'
+import { normalizeBillingGrouping } from '~/utils/billingFilter'
 import { billingCancelledNotice } from '~/utils/billingCancel'
 import {
   billingDocumentNumber,
@@ -117,6 +119,17 @@ const driftChanged = computed(() => drift.value.filter(item => String(item?.kind
 const driftDeleted = computed(() => drift.value.filter(item => String(item?.kind || '') === 'deleted'))
 
 const isCancelled = computed(() => String(document.value?.status || '') === 'cancelled')
+
+/**
+ * Вариант наполнения выставленного документа — словами.
+ *
+ * Берётся из документа, а не из настроек портала: настройку могли поменять
+ * после выставления, и подпись соврала бы про то, как счёт собран.
+ */
+const groupingView = computed(() => describeBillingGrouping(
+  normalizeBillingGrouping(document.value?.grouping),
+  String(document.value?.task_level || 'task'),
+))
 
 useHead({
   title: computed(() => document.value
@@ -468,7 +481,18 @@ onMounted(async () => {
 
       <!-- Строки документа -->
       <section class="ms-surface flex flex-col gap-3 p-5">
-        <h2 class="text-base font-semibold text-slate-900">Строки документа</h2>
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 class="text-base font-semibold text-slate-900">Строки документа</h2>
+          <!--
+            Вариант наполнения выставленного документа. Нужен здесь потому,
+            что вариант решает, ЧТО описывает строка: без подписи «одна
+            строка на задачу» короткий счёт из одной строки читается как
+            потерянная детализация.
+          -->
+          <p v-if="groupingView.summary" class="text-xs text-slate-500">
+            {{ groupingView.label }} · {{ groupingView.summary }}
+          </p>
+        </div>
 
         <div v-if="!lines.length" class="ms-empty-state">Строк нет.</div>
 
