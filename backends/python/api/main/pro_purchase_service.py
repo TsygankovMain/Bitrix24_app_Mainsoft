@@ -203,20 +203,25 @@ def pro_managers(account: Bitrix24Account) -> List[str]:
     """Кто может запросить счёт — для текста сотруднику «Pro подключает …».
 
     Администраторы портала, которых знает приложение, и люди с ролями,
-    у которых есть право выставлять счета (при действующих ролях — ещё и
-    назначенные «Администраторы»).
+    у которых есть право выставлять счета. При действующих ролях круг ролей
+    берётся из матрицы прав портала — её можно поменять на экране «Роли и
+    права».
     """
     from .roles import (
         ROLE_ACCOUNTANT,
-        ROLE_ADMIN,
         ensure_accountants_imported,
+        permission_matrix,
         portal_admin_user_ids,
         resolve_access,
         role_queryset,
+        roles_with_permission,
     )
 
     ensure_accountants_imported(account)
-    allowed = [ROLE_ADMIN, ROLE_ACCOUNTANT] if resolve_access(account).roles_enabled else [ROLE_ACCOUNTANT]
+    if resolve_access(account).roles_enabled:
+        allowed = roles_with_permission(PRO_REQUEST_PERMISSION, permission_matrix(account))
+    else:
+        allowed = [ROLE_ACCOUNTANT]
     role_ids = [str(value) for value in role_queryset(account).filter(role__in=allowed)
                 .values_list("b24_user_id", flat=True)]
     ordered = list(dict.fromkeys(portal_admin_user_ids(account) + role_ids))

@@ -87,6 +87,7 @@ from .roles import (
     PERM_RATES_EDIT,
     PERM_ROLES_MANAGE,
     PERM_SETTINGS_MANAGE,
+    PermissionMatrixError,
     RoleAssignmentError,
     assign_role,
     assignable_roles,
@@ -94,11 +95,13 @@ from .roles import (
     ensure_accountants_imported,
     has_permission,
     list_assignments,
+    matrix_log,
     normalize_role,
     permission_required,
     resolve_access,
     roles_catalog,
     roles_feature_state,
+    save_permission_matrix,
 )
 from .project_budget_notifier import ProjectBudgetNotifier
 from .billing_service import BillingError, BillingService
@@ -4305,8 +4308,9 @@ def billing_document_detail_export(request: AuthorizedRequest, document_id: str)
 # ---------------------------------------------------------------------------
 #
 # Модель, матрица и довод «почему в нашей БД» — в докстринге main/roles.py.
-# Здесь три ручки: свои права (для кнопок интерфейса), каталог с
-# назначениями (для экрана настроек) и назначение роли.
+# Здесь четыре ручки: свои права (для кнопок интерфейса), каталог с
+# назначениями и матрицей портала (для экрана настроек), назначение роли и
+# сохранение прав ролей.
 #
 # Тариф закрывает ИЗМЕНЕНИЕ ролей, а не их действие. Проверка прав по
 # назначенным ролям идёт по billing_features.feature_restrictions_active: она
@@ -4352,9 +4356,13 @@ def roles_list(request: AuthorizedRequest):
         "subscription_active": access.subscription_active,
         "assignable_roles": assignable_roles(access),
         "can_manage": access.has(PERM_ROLES_MANAGE),
+        # Менять права ролей — то же условие, что назначать роли: право
+        # roles_manage и живой Pro. Сервер проверяет его сам на сохранении.
+        "can_edit_matrix": access.has(PERM_ROLES_MANAGE) and access.subscription_active,
         "accountants_imported": imported,
-        "catalog": roles_catalog(),
+        "catalog": roles_catalog(account),
         "assignments": list_assignments(account),
+        "matrix_log": matrix_log(account),
     })
 
 
@@ -4639,3 +4647,41 @@ def pro_requests_invoice_pdf(request: AuthorizedRequest, request_id: str):
     filename = f"Счёт-{pro_request.invoice_number}.pdf"
     response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
     return response
+
+
+# Права ролей: сохранение матрицы (см. блок «Роли и права» выше).
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("roles_matrix_save")
+@auth_required
+@feature_required(FEATURE_ROLES)
+@permission_required(PERM_ROLES_MANAGE, code="roles_forbidden", legacy_code="roles_forbidden")
+@rate_limit("roles_matrix_save", 30, 60, key="account")
+def roles_matrix_save(request: AuthorizedRequest):
+    """Сохранить права ролей портала: {"matrix": {роль: [права]}, "revision": N}.
+
+    Как и назначение ролей: сначала тариф (@feature_required(FEATURE_ROLES) —
+    после окончания Pro сохранённая матрица действует, но не меняется), потом
+    право roles_manage. Неизменяемые ячейки, зависимости прав и неизвестные
+    права проверяет roles.validate_permission_matrix; «вернуть по умолчанию»
+    для роли или всей таблицы экран присылает той же матрицей.
+    """
+    account = request.bitrix24_account
+    payload = _load_request_json(request)
+    try:
+        result = save_permission_matrix(
+            account, payload.get("matrix"),
+            base_revision=payload.get("revision"),
+            by_id=str(account.b24_user_id or ""),
+            by_name=_current_user_display_name(request),
+        )
+    except PermissionMatrixError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    access = resolve_access(account)
+    return JsonResponse({
+        **result,
+        "me": access.as_payload(),
+        "catalog": roles_catalog(account),
+        "matrix_log": matrix_log(account),
+    })

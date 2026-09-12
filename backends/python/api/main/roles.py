@@ -20,8 +20,8 @@
    billing_features.feature_restrictions_active отвечает True, и права по
    назначенным ролям проверяются как прежде — иначе в день окончания все
    сотрудники разом увидели бы ставки и суммы. Закрывается только ИЗМЕНЕНИЕ
-   ролей — назначение и правка (@feature_required(FEATURE_ROLES) на
-   /api/roles/assign).
+   ролей и их прав — назначение, правка и матрица прав
+   (@feature_required(FEATURE_ROLES) на /api/roles/assign и /api/roles/matrix).
 
 Где хранятся роли и почему это нельзя подделать. В нашей БД (PortalRole),
 по member_id портала. Прежний список «Бухгалтерия» лежал в app.option портала,
@@ -31,6 +31,20 @@
 портала» — is_b24_user_admin, его сервер сам спрашивает у портала методом
 user.admin (views._refresh_admin_flag), клиент его не передаёт. Тариф —
 PortalSubscription на нашем сервере (billing_features), по REST не пишется.
+
+Права ролей редактируются (экран «Роли и права»). Матрица по умолчанию —
+ROLE_PERMISSIONS ниже; портал хранит только отличия от неё
+(PortalPermissionMatrix, по member_id, пишет только сервер). Редактор не
+может нарушить три правила, и они закреплены здесь, а не в интерфейсе:
+  - у «Администратора» всегда есть settings_manage и roles_manage, а
+    roles_manage есть ТОЛЬКО у него (LOCKED_CELLS): иначе портал запер бы сам
+    себя, или любая роль с правом назначать роли назначила бы себе всё;
+  - работа с часами правами не описывается вовсе — в PERMISSIONS её нет, и
+    сохранить неизвестное право нельзя (урок июня 2026);
+  - зависимые права без базового не сохраняются (PERMISSION_REQUIRES): счета,
+    ставка и операции без «видеть суммы» не работают.
+Редактирование закрыто, как и назначение ролей, при окончании Pro
+(@feature_required(FEATURE_ROLES)); сохранённая матрица при этом действует.
 
 Перенос «Бухгалтерии». Список billing_accountants при первой проверке прав на
 портале переносится в роль «Бухгалтерия» (ensure_accountants_imported) и
@@ -42,7 +56,7 @@ PortalSubscription на нашем сервере (billing_features), по REST 
 import logging
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple
 
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
@@ -57,7 +71,7 @@ from .billing_features import (
     get_feature_state,
     restrictions_active_from_access,
 )
-from .models import PortalRole, PortalRoleState
+from .models import PortalPermissionChange, PortalPermissionMatrix, PortalRole, PortalRoleState
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +115,15 @@ ROLE_TITLES = {
     ROLE_EMPLOYEE: "Сотрудник",
 }
 
+#: Для кого роль. Что она может, показывает таблица прав: её можно поменять,
+#: поэтому здесь нет перечня прав, который разошёлся бы с таблицей.
 ROLE_DESCRIPTIONS = {
-    ROLE_ADMIN: "Всё, включая настройки приложения и назначение ролей. "
+    ROLE_ADMIN: "Управляет приложением: настройки, роли и права. "
                 "Администраторы портала получают эту роль автоматически.",
-    ROLE_ACCOUNTANT: "Деньги: счета и акты, начисления и списания, ставки, закрытие месяца.",
-    ROLE_PROJECT_MANAGER: "Видит суммы по проектам — бюджеты, операции, счета, — но ничего не выставляет.",
-    ROLE_EMPLOYEE: "Списывает время, смотрит отчёты по часам и доску проектов. Сумм не видит. "
-                   "Роль по умолчанию для всех, кому роль не назначена.",
+    ROLE_ACCOUNTANT: "Для тех, кто работает с деньгами: счета и акты, начисления и списания, закрытие месяца.",
+    ROLE_PROJECT_MANAGER: "Для руководителей проектов: следить за бюджетами и счетами своих проектов.",
+    ROLE_EMPLOYEE: "Роль по умолчанию для всех, кому роль не назначена. "
+                   "Списание времени и отчёты по часам открыты всем ролям.",
 }
 
 PERMISSION_TITLES = {
@@ -121,7 +137,81 @@ PERMISSION_TITLES = {
     PERM_ROLES_MANAGE: "Назначать роли",
 }
 
-#: Что может каждая роль, когда ограничения ролей действуют (Pro или «только чтение» после него).
+#: Что даёт право — словами, для экрана «Роли и права».
+PERMISSION_DESCRIPTIONS = {
+    PERM_MONEY_VIEW: "Открывает реестр счетов и актов, бюджеты проектов (БДДС), начисления и списания. "
+                     "Без него эти разделы закрыты, суммы не видны.",
+    PERM_RATES_EDIT: "Позволяет поменять часовую ставку в карточке проекта. Остальные поля карточки "
+                     "правит любой сотрудник.",
+    PERM_BILLING_ISSUE: "Позволяет выставить счёт в CRM и напечатать счёт и акт.",
+    PERM_BILLING_CANCEL: "Позволяет отменить выставленный счёт — списания снова становятся свободными.",
+    PERM_OPERATIONS_CREATE: "Позволяет завести начисление или списание по проекту.",
+    PERM_PERIOD_CLOSE: "Позволяет закрыть месяц (после этого часы за него не меняются), открыть его снова "
+                       "и исправлять находки проверки данных. Смотреть проверку может любой.",
+    PERM_SETTINGS_MANAGE: "Позволяет менять настройки приложения, сопоставление полей и смарт-процессов.",
+    PERM_ROLES_MANAGE: "Позволяет назначать роли сотрудникам и менять права ролей в этой таблице.",
+}
+
+#: Группы строк таблицы — в порядке PERMISSIONS.
+PERMISSION_GROUPS: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
+    ("money", "Суммы и ставки", (PERM_MONEY_VIEW, PERM_RATES_EDIT)),
+    ("billing", "Счета и акты", (PERM_BILLING_ISSUE, PERM_BILLING_CANCEL)),
+    ("operations", "Начисления и списания", (PERM_OPERATIONS_CREATE,)),
+    ("period", "Закрытие месяца", (PERM_PERIOD_CLOSE,)),
+    ("admin", "Управление приложением", (PERM_SETTINGS_MANAGE, PERM_ROLES_MANAGE)),
+)
+
+#: Зависимости: право -> базовые права, без которых оно не работает.
+#: Экран при включении зависимого включает базовое, при выключении базового
+#: выключает зависимые; сервер матрицу с нарушением не сохраняет.
+PERMISSION_REQUIRES: Dict[str, Tuple[str, ...]] = {
+    PERM_RATES_EDIT: (PERM_MONEY_VIEW,),
+    PERM_BILLING_ISSUE: (PERM_MONEY_VIEW,),
+    PERM_BILLING_CANCEL: (PERM_MONEY_VIEW,),
+    PERM_OPERATIONS_CREATE: (PERM_MONEY_VIEW,),
+}
+
+#: Почему зависимое право не работает без базового.
+PERMISSION_REQUIRE_REASONS = {
+    PERM_RATES_EDIT: "ставка — это деньги: менять её, не видя сумм, нельзя",
+    PERM_BILLING_ISSUE: "счета выставляются из реестра, а он закрыт без права видеть суммы",
+    PERM_BILLING_CANCEL: "счёт отменяют в реестре, а он закрыт без права видеть суммы",
+    PERM_OPERATIONS_CREATE: "начисления и списания заводятся в разделе БДДС, а он закрыт без права видеть суммы",
+}
+
+#: Ячейки, которые редактор не меняет: (роль, право) -> (значение, почему).
+LOCKED_CELLS: Dict[Tuple[str, str], Tuple[bool, str]] = {
+    (ROLE_ADMIN, PERM_SETTINGS_MANAGE): (
+        True,
+        "У «Администратора» право менять настройки не снимается: иначе на портале не останется "
+        "никого, кто может их поправить.",
+    ),
+    (ROLE_ADMIN, PERM_ROLES_MANAGE): (
+        True,
+        "У «Администратора» право назначать роли не снимается: иначе портал запер бы сам себя — "
+        "вернуть права было бы некому.",
+    ),
+    **{
+        (role, PERM_ROLES_MANAGE): (
+            False,
+            "Назначать роли и менять права может только «Администратор»: с этим правом любая роль "
+            "назначила бы себе «Администратора» и получила бы всё.",
+        )
+        for role in (ROLE_ACCOUNTANT, ROLE_PROJECT_MANAGER, ROLE_EMPLOYEE)
+    },
+}
+
+#: Что открыто всем и в таблицу прав не попадает никогда (урок июня 2026).
+ALWAYS_OPEN_WORK = (
+    "Списание времени в задачах",
+    "Отчёты по часам",
+    "Доска проектов",
+    "Проверка данных (просмотр)",
+)
+
+#: Что может каждая роль ПО УМОЛЧАНИЮ, когда ограничения ролей действуют (Pro
+#: или «только чтение» после него). Портал может её поменять — действующая
+#: матрица портала: permission_matrix(account).
 ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
     ROLE_ADMIN: ALL_PERMISSIONS,
     ROLE_ACCOUNTANT: frozenset({
@@ -162,6 +252,8 @@ LEGACY_DENIAL_TEXTS = {
 }
 
 IMPORT_FAILURE_CACHE_SECONDS = 300
+MATRIX_CACHE_SECONDS = 300
+MATRIX_LOG_LIMIT = 30
 IMPORT_SOURCE = "billing_accountants"
 
 
@@ -169,23 +261,67 @@ IMPORT_SOURCE = "billing_accountants"
 # Каталог — для экрана настроек
 # ---------------------------------------------------------------------------
 
-def roles_catalog() -> Dict[str, Any]:
-    """Роли, права и матрица одним ответом. Экран рисует таблицу из него."""
+def _group_of(permission: str) -> str:
+    for code, _title, members in PERMISSION_GROUPS:
+        if permission in members:
+            return code
+    return ""
+
+
+def _matrix_payload(matrix: Mapping[str, FrozenSet[str]]) -> Dict[str, List[str]]:
+    """Матрица в JSON: права роли в порядке строк таблицы."""
+    return {role: [perm for perm in PERMISSIONS if perm in matrix.get(role, ())] for role in ROLES}
+
+
+def roles_catalog(account=None) -> Dict[str, Any]:
+    """Роли, права и матрица одним ответом. Экран рисует таблицу из него.
+
+    С учёткой — действующая матрица её портала, без — матрица по умолчанию.
+    """
+    state = matrix_state(account) if account is not None else None
+    matrix = state["matrix"] if state else ROLE_PERMISSIONS
     return {
         "roles": [
-            {"code": code, "title": ROLE_TITLES[code], "description": ROLE_DESCRIPTIONS[code]}
+            {
+                "code": code,
+                "title": ROLE_TITLES[code],
+                "description": ROLE_DESCRIPTIONS[code],
+                "customized": matrix.get(code, frozenset()) != ROLE_PERMISSIONS[code],
+            }
             for code in ROLES
         ],
         "permissions": [
-            {"code": code, "title": PERMISSION_TITLES[code]} for code in PERMISSIONS
+            {
+                "code": code,
+                "title": PERMISSION_TITLES[code],
+                "description": PERMISSION_DESCRIPTIONS[code],
+                "group": _group_of(code),
+                "requires": list(PERMISSION_REQUIRES.get(code, ())),
+                "requires_reason": PERMISSION_REQUIRE_REASONS.get(code, ""),
+            }
+            for code in PERMISSIONS
         ],
-        "matrix": {code: sorted(ROLE_PERMISSIONS[code]) for code in ROLES},
+        "groups": [
+            {"code": code, "title": title, "permissions": list(members)}
+            for code, title, members in PERMISSION_GROUPS
+        ],
+        "locks": [
+            {"role": role, "permission": perm, "value": value, "reason": reason}
+            for (role, perm), (value, reason) in LOCKED_CELLS.items()
+        ],
+        "always_open": list(ALWAYS_OPEN_WORK),
+        "matrix": _matrix_payload(matrix),
+        "default_matrix": _matrix_payload(ROLE_PERMISSIONS),
         "legacy_matrix": {code: sorted(perms) for code, perms in LEGACY_PERMISSIONS.items()},
+        "revision": state["revision"] if state else 0,
+        "updated_at": state["updated_at"] if state else None,
+        "updated_by_name": state["updated_by_name"] if state else "",
     }
 
 
-def roles_with_permission(permission: str) -> List[str]:
-    return [code for code in ROLES if permission in ROLE_PERMISSIONS[code]]
+def roles_with_permission(permission: str, matrix: Optional[Mapping[str, FrozenSet[str]]] = None) -> List[str]:
+    source = ROLE_PERMISSIONS if matrix is None else matrix
+    return [code for code in ROLES if permission in source.get(code, ())]
 
 
 def normalize_role(value: Any) -> Optional[str]:
@@ -313,6 +449,263 @@ def stored_role(account, client=None) -> str:
     return ROLE_EMPLOYEE
 
 
+# ---------------------------------------------------------------------------
+# Матрица прав портала
+# ---------------------------------------------------------------------------
+
+class PermissionMatrixError(Exception):
+    """Матрицу нельзя сохранить: нарушено ограничение, зависимость или версия."""
+
+    def __init__(self, message: str, code: str, status: int = 400, **details: Any):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.status = status
+        self.details = details
+
+    def as_payload(self) -> Dict[str, Any]:
+        return {"error": self.message, "code": self.code, **self.details}
+
+
+def default_matrix() -> Dict[str, FrozenSet[str]]:
+    return {role: frozenset(ROLE_PERMISSIONS[role]) for role in ROLES}
+
+
+def enforce_matrix_rules(matrix: Mapping[str, Any]) -> Dict[str, FrozenSet[str]]:
+    """Привести матрицу к правилам: неизменяемые ячейки и зависимости.
+
+    Для ЧТЕНИЯ сохранённого, а не для сохранения присланного: присланное с
+    нарушением отклоняется (validate_permission_matrix), а сохранённое могло
+    разойтись с правилами, только если правила поменялись в коде, — тогда
+    зависимое право без базового снимается (в сторону «меньше прав»).
+    """
+    result: Dict[str, set] = {
+        role: {perm for perm in (matrix.get(role) or ()) if perm in ALL_PERMISSIONS} for role in ROLES
+    }
+    for (role, perm), (value, _reason) in LOCKED_CELLS.items():
+        if value:
+            result[role].add(perm)
+        else:
+            result[role].discard(perm)
+    changed = True
+    while changed:
+        changed = False
+        for role in ROLES:
+            for perm in list(result[role]):
+                if any(base not in result[role] for base in PERMISSION_REQUIRES.get(perm, ())):
+                    if LOCKED_CELLS.get((role, perm), (False, ""))[0]:
+                        continue
+                    result[role].discard(perm)
+                    changed = True
+    return {role: frozenset(perms) for role, perms in result.items()}
+
+
+def apply_overrides(overrides: Any) -> Dict[str, FrozenSet[str]]:
+    """Матрица по умолчанию + отличия портала. Мусор в отличиях игнорируется."""
+    result = {role: set(ROLE_PERMISSIONS[role]) for role in ROLES}
+    if isinstance(overrides, dict):
+        for role, cells in overrides.items():
+            if role not in result or not isinstance(cells, dict):
+                continue
+            for perm, granted in cells.items():
+                if perm not in ALL_PERMISSIONS or not isinstance(granted, bool):
+                    continue
+                if granted:
+                    result[role].add(perm)
+                else:
+                    result[role].discard(perm)
+    return enforce_matrix_rules(result)
+
+
+def overrides_from_matrix(matrix: Mapping[str, FrozenSet[str]]) -> Dict[str, Dict[str, bool]]:
+    """Отличия матрицы от матрицы по умолчанию — то, что хранится в БД."""
+    result: Dict[str, Dict[str, bool]] = {}
+    for role in ROLES:
+        cells = {}
+        for perm in PERMISSIONS:
+            granted = perm in matrix.get(role, ())
+            if granted != (perm in ROLE_PERMISSIONS[role]):
+                cells[perm] = granted
+        if cells:
+            result[role] = cells
+    return result
+
+
+def matrix_changes(before: Mapping[str, FrozenSet[str]], after: Mapping[str, FrozenSet[str]]) -> List[Dict[str, Any]]:
+    """Ячейки, которые поменялись, — в порядке ролей и строк таблицы."""
+    changes = []
+    for role in ROLES:
+        for perm in PERMISSIONS:
+            was = perm in before.get(role, ())
+            now = perm in after.get(role, ())
+            if was != now:
+                changes.append({"role": role, "permission": perm, "granted": now})
+    return changes
+
+
+def validate_permission_matrix(raw: Any) -> Dict[str, FrozenSet[str]]:
+    """Присланная экраном матрица -> проверенная. Нарушение -> PermissionMatrixError.
+
+    Ничего не «чинит» молча: неизвестное право, снятое у «Администратора»
+    право или зависимое право без базового — отказ с объяснением. Экран сам
+    включает базовые и выключает зависимые права, так что отказ здесь значит
+    запрос мимо экрана или его ошибку.
+    """
+    if not isinstance(raw, dict):
+        raise PermissionMatrixError("Не передана таблица прав.", "matrix_required")
+
+    unknown_roles = sorted(str(role) for role in raw if role not in ROLES)
+    if unknown_roles:
+        raise PermissionMatrixError(
+            f"Такой роли нет: {', '.join(unknown_roles)}.", "unknown_role", roles=unknown_roles,
+        )
+    missing = [role for role in ROLES if role not in raw]
+    if missing:
+        raise PermissionMatrixError(
+            "В таблице прав должны быть все роли: " + ", ".join(f"«{ROLE_TITLES[r]}»" for r in missing) + ".",
+            "matrix_incomplete",
+        )
+
+    matrix: Dict[str, FrozenSet[str]] = {}
+    for role in ROLES:
+        values = raw[role]
+        if not isinstance(values, (list, tuple)):
+            raise PermissionMatrixError("Права роли передаются списком.", "matrix_invalid", role=role)
+        perms = {str(value) for value in values}
+        unknown = sorted(perms - ALL_PERMISSIONS)
+        if unknown:
+            raise PermissionMatrixError(
+                f"Права {', '.join(unknown)} нет. Настраиваются только права из таблицы: работа с "
+                "часами — списание времени, отчёты, доска проектов, проверка данных — открыта всем "
+                "и правами не закрывается.",
+                "unknown_permission", role=role, permissions=unknown,
+            )
+        matrix[role] = frozenset(perms)
+
+    for (role, perm), (value, reason) in LOCKED_CELLS.items():
+        if (perm in matrix[role]) != value:
+            raise PermissionMatrixError(reason, "permission_locked", role=role, permission=perm)
+
+    for role in ROLES:
+        for perm in PERMISSIONS:
+            if perm not in matrix[role]:
+                continue
+            for base in PERMISSION_REQUIRES.get(perm, ()):
+                if base not in matrix[role]:
+                    raise PermissionMatrixError(
+                        f"«{ROLE_TITLES[role]}»: право «{PERMISSION_TITLES[perm]}» не работает без "
+                        f"«{PERMISSION_TITLES[base]}» — {PERMISSION_REQUIRE_REASONS.get(perm, '')}.",
+                        "permission_dependency", role=role, permission=perm, requires=base,
+                    )
+    return matrix
+
+
+def matrix_cache_key(account) -> str:
+    return f"roles-permission-matrix:{portal_key(account)}"
+
+
+def forget_matrix(account) -> None:
+    cache.delete(matrix_cache_key(account))
+    forget_access(account)
+
+
+def matrix_state(account) -> Dict[str, Any]:
+    """Действующая матрица портала с версией. Кэш сбрасывается при сохранении."""
+    key = matrix_cache_key(account)
+    cached = cache.get(key)
+    if isinstance(cached, dict) and isinstance(cached.get("matrix"), dict):
+        return {**cached, "matrix": {role: frozenset(perms) for role, perms in cached["matrix"].items()}}
+
+    row = PortalPermissionMatrix.objects.filter(member_id=portal_key(account)).first()
+    matrix = apply_overrides(row.overrides if row else None)
+    state = {
+        "matrix": matrix,
+        "revision": row.revision if row else 0,
+        "updated_at": row.updated_at.isoformat() if row and row.revision else None,
+        "updated_by_name": row.updated_by_name if row else "",
+    }
+    cache.set(key, {**state, "matrix": _matrix_payload(matrix)}, MATRIX_CACHE_SECONDS)
+    return state
+
+
+def permission_matrix(account) -> Dict[str, FrozenSet[str]]:
+    """Действующая матрица прав портала (при действующих ограничениях ролей)."""
+    if account is None:
+        return default_matrix()
+    return matrix_state(account)["matrix"]
+
+
+def save_permission_matrix(account, raw_matrix: Any, *, base_revision: Any = None,
+                           by_id: str = "", by_name: str = "") -> Dict[str, Any]:
+    """Сохранить матрицу портала. Права и тариф проверяет вызывающий.
+
+    ``base_revision`` — версия, которую человек видел на экране. Разошлась —
+    отказ matrix_conflict: кто-то сохранил раньше, и молча затирать его правку
+    нельзя. Без изменений ничего не пишется и журнал не растёт.
+    """
+    proposed = validate_permission_matrix(raw_matrix)
+    key = portal_key(account)
+    try:
+        with transaction.atomic():
+            row, _created = PortalPermissionMatrix.objects.select_for_update().get_or_create(member_id=key)
+            if base_revision not in (None, "") and str(base_revision) != str(row.revision):
+                raise PermissionMatrixError(
+                    "Права ролей уже поменял другой человек. Обновите страницу и повторите изменения.",
+                    "matrix_conflict", status=409, revision=row.revision,
+                )
+            before = apply_overrides(row.overrides)
+            changes = matrix_changes(before, proposed)
+            if not changes:
+                return {"status": "unchanged", "revision": row.revision, "changes": []}
+
+            row.overrides = overrides_from_matrix(proposed)
+            row.revision += 1
+            row.updated_by_id = str(by_id or "")
+            row.updated_by_name = str(by_name or "")[:255]
+            row.save()
+            PortalPermissionChange.objects.create(
+                member_id=key,
+                revision=row.revision,
+                changes=changes,
+                matrix=_matrix_payload(proposed),
+                changed_by_id=row.updated_by_id,
+                changed_by_name=row.updated_by_name,
+            )
+    except IntegrityError:
+        raise PermissionMatrixError(
+            "Права ролей сохраняет кто-то ещё. Обновите страницу и повторите изменения.",
+            "matrix_conflict", status=409,
+        )
+    finally:
+        forget_matrix(account)
+
+    logger.info("roles: портал %s — права ролей изменены, ячеек: %s, ревизия %s", key, len(changes), row.revision)
+    return {"status": "ok", "revision": row.revision, "changes": changes}
+
+
+def matrix_log(account, limit: int = MATRIX_LOG_LIMIT) -> List[Dict[str, Any]]:
+    """Журнал изменений прав ролей портала, новые сверху."""
+    rows = PortalPermissionChange.objects.filter(member_id=portal_key(account)).order_by("-created_at", "-revision")
+    defaults = _matrix_payload(ROLE_PERMISSIONS)
+    result = []
+    for row in rows[:limit]:
+        result.append({
+            "revision": row.revision,
+            "changed_at": row.created_at.isoformat() if row.created_at else None,
+            "changed_by_name": row.changed_by_name,
+            "reset_to_default": row.matrix == defaults,
+            "changes": [
+                {
+                    **change,
+                    "role_title": ROLE_TITLES.get(change.get("role"), change.get("role")),
+                    "permission_title": PERMISSION_TITLES.get(change.get("permission"), change.get("permission")),
+                }
+                for change in (row.changes or []) if isinstance(change, dict)
+            ],
+        })
+    return result
+
+
 def roles_mode(account) -> Dict[str, bool]:
     """Режим ролевой модели портала — одним чтением тарифа.
 
@@ -366,12 +759,21 @@ def assignable_roles(access: "Access") -> List[str]:
     return list(ROLES) if access.subscription_active else []
 
 
-def compute_permissions(role: str, *, roles_enabled: bool, is_portal_admin: bool) -> FrozenSet[str]:
-    """Чистая функция матрицы — её и проверяют тесты."""
+def compute_permissions(role: str, *, roles_enabled: bool, is_portal_admin: bool,
+                        matrix: Optional[Mapping[str, FrozenSet[str]]] = None) -> FrozenSet[str]:
+    """Чистая функция матрицы — её и проверяют тесты.
+
+    ``matrix`` — действующая матрица портала (permission_matrix); без неё —
+    матрица по умолчанию. Администратор портала при действующих ролях получает
+    права роли «Администратор» этой матрицы (настройки и роли у неё не
+    снимаются), без ролей — всё, как до ролей.
+    """
+    if roles_enabled:
+        source = ROLE_PERMISSIONS if matrix is None else matrix
+        effective_role = ROLE_ADMIN if is_portal_admin else role
+        return frozenset(source.get(effective_role, frozenset()))
     if is_portal_admin:
         return ALL_PERMISSIONS
-    if roles_enabled:
-        return ROLE_PERMISSIONS.get(role, frozenset())
     legacy_role = ROLE_ACCOUNTANT if role == ROLE_ACCOUNTANT else ROLE_EMPLOYEE
     return LEGACY_PERMISSIONS[legacy_role]
 
@@ -408,7 +810,10 @@ def resolve_access(account, client=None) -> Access:
         roles_enabled=roles_enabled,
         role=role,
         is_portal_admin=is_portal_admin,
-        permissions=compute_permissions(role, roles_enabled=roles_enabled, is_portal_admin=is_portal_admin),
+        permissions=compute_permissions(
+            role, roles_enabled=roles_enabled, is_portal_admin=is_portal_admin,
+            matrix=permission_matrix(account) if roles_enabled else None,
+        ),
         subscription_active=mode["subscription_active"],
     )
     try:
@@ -430,14 +835,20 @@ def forget_access(account) -> None:
             pass
 
 
-def denial_text(permission: str, *, roles_enabled: bool, action: str = "") -> str:
+def denial_text(permission: str, *, roles_enabled: bool, action: str = "",
+                matrix: Optional[Mapping[str, FrozenSet[str]]] = None) -> str:
     """Текст отказа: что нельзя, какие роли могут и где их назначают."""
     if not roles_enabled:
         return LEGACY_DENIAL_TEXTS.get(
             permission, "Недостаточно прав для этого действия."
         )
-    titles = [f"«{ROLE_TITLES[code]}»" for code in roles_with_permission(permission)]
+    titles = [f"«{ROLE_TITLES[code]}»" for code in roles_with_permission(permission, matrix)]
     what = action or PERMISSION_TITLES.get(permission, "Это действие")
+    if not titles:
+        return (
+            f"{what} — сейчас это право не дано ни одной роли. Права ролей настраивает "
+            "администратор приложения: Настройки → Роли и права."
+        )
     who = f"роль {titles[0]}" if len(titles) == 1 else "одна из ролей: " + ", ".join(titles)
     return (
         f"{what} — нужна {who}. Роли назначает администратор приложения: "
@@ -449,13 +860,14 @@ def denial_response(account, permission: str, *, code: str = "", legacy_code: st
                     action: str = "") -> JsonResponse:
     access = resolve_access(account)
     resolved_code = (code if access.roles_enabled else (legacy_code or code)) or "permission_denied"
+    matrix = permission_matrix(account) if access.roles_enabled and account is not None else None
     return JsonResponse(
         {
-            "error": denial_text(permission, roles_enabled=access.roles_enabled, action=action),
+            "error": denial_text(permission, roles_enabled=access.roles_enabled, action=action, matrix=matrix),
             "code": resolved_code,
             "permission": permission,
             "roles_enabled": access.roles_enabled,
-            "allowed_roles": roles_with_permission(permission),
+            "allowed_roles": roles_with_permission(permission, matrix),
         },
         status=403,
     )

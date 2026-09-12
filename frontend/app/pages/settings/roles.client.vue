@@ -9,7 +9,11 @@
  *
  * Что на экране — сверху вниз, в порядке вопросов человека:
  *  1. какой режим действует (подключена ли ролевая модель) и какая роль у меня;
- *  2. таблица «что может роль» — прямо здесь, без документации;
+ *  2. таблица «что может роль» — прямо здесь, без документации; у роли
+ *     «Администратор» при живом Pro она редактируется (права × роли с
+ *     переключателями, предпросмотр до сохранения, «вернуть по умолчанию»,
+ *     журнал изменений). Логика редактора — app/utils/permissionMatrix.ts,
+ *     проверка и хранение — на сервере (main/roles.py);
  *  3. кто сейчас в какой роли;
  *  4. поиск сотрудника и назначение роли.
  *
@@ -35,12 +39,38 @@ import {
   parseRoleAssignments,
   parseRolesCatalog,
   parseRolesMe,
+  type PermissionCode,
   type RoleAssignment,
   type RoleCode,
   type RolesCatalog,
   type RolesMe,
   type RoleUserRow,
 } from '~/utils/appRoles'
+import {
+  buildMatrixSections,
+  cloneMatrix,
+  describeLocks,
+  describeLogEntry,
+  describeMatrixSaveError,
+  describeRequirement,
+  describeRoleChange,
+  diffMatrices,
+  formatLogDate,
+  isRoleAtDefault,
+  matrixCellView,
+  matrixEditMode,
+  parseMatrixEditor,
+  parseMatrixLog,
+  pluralChanges,
+  resetAllToDefault,
+  resetRoleToDefault,
+  summarizeChanges,
+  togglePermission,
+  type AutoChange,
+  type MatrixEditorData,
+  type MatrixLogEntry,
+  type PermissionMatrix,
+} from '~/utils/permissionMatrix'
 
 const router = useRouter()
 const apiStore = useApiStore()
@@ -87,6 +117,115 @@ const roleOptions = computed(() => buildRoleOptions(catalog.value, canChangeRole
 const modeBadge = computed(() => rolesModeBadge(modeInput.value))
 const rolesActiveNow = computed(() => rolesAccess.value.restrictionsActive && rolesAccess.value.canWrite)
 
+// --- Права ролей: редактор матрицы --------------------------------------
+
+const editor = ref<MatrixEditorData>(parseMatrixEditor(null))
+/** Черновик на экране; сохранённое — editor.matrix. */
+const draft = ref<PermissionMatrix>(cloneMatrix(editor.value.matrix))
+const matrixLog = ref<MatrixLogEntry[]>([])
+const canEditMatrixOnServer = ref(false)
+const autoNotes = ref<AutoChange[]>([])
+const blockedNote = ref('')
+const matrixSaving = ref(false)
+const matrixNotice = ref('')
+const matrixError = ref('')
+
+const editMode = computed(() => matrixEditMode({
+  canManage: canManage.value,
+  restrictionsActive: rolesAccess.value.restrictionsActive,
+  canWrite: rolesAccess.value.canWrite,
+  unknown: rolesAccess.value.unknown,
+}))
+/** Экран и сервер согласны: править можно (сервер всё равно проверит сам). */
+const matrixEditable = computed(() => editMode.value.editable && canEditMatrixOnServer.value)
+const matrixSections = computed(() => buildMatrixSections(editor.value))
+const pendingChanges = computed(() => diffMatrices(editor.value.matrix, draft.value))
+const pendingSummary = computed(() => summarizeChanges(editor.value, pendingChanges.value))
+const lockLegend = computed(() => describeLocks(editor.value))
+const draftAtDefault = computed(() => editor.value.roles.every(role => isRoleAtDefault(editor.value, draft.value, role.code)))
+const customizedOnPortal = computed(() => editor.value.roles.some(role => role.customized))
+const roleColumnsWidth = computed(() => `${Math.max(760, 360 + editor.value.roles.length * 150)}px`)
+
+function applyRolesPayload(data: Record<string, unknown>) {
+  editor.value = parseMatrixEditor(data.catalog)
+  draft.value = cloneMatrix(editor.value.matrix)
+  matrixLog.value = parseMatrixLog(data.matrix_log)
+  autoNotes.value = []
+  blockedNote.value = ''
+}
+
+function cell(role: RoleCode, permission: PermissionCode) {
+  return matrixCellView(editor.value, editor.value.matrix, draft.value, role, permission)
+}
+
+function onToggle(role: RoleCode, permission: PermissionCode, value: boolean) {
+  matrixNotice.value = ''
+  matrixError.value = ''
+  const result = togglePermission(editor.value, draft.value, role, permission, value)
+  if (result.blocked) {
+    blockedNote.value = result.blocked
+    return
+  }
+  blockedNote.value = ''
+  draft.value = result.matrix
+  // Пояснение показываем про последние авто-изменения; прежние, уже
+  // отменённые ручным переключением, не копим.
+  autoNotes.value = [
+    ...autoNotes.value.filter(note => !result.auto.some(next => next.role === note.role && next.permission === note.permission)),
+    ...result.auto,
+  ].filter(note => (draft.value[note.role] || []).includes(note.permission) === note.granted)
+}
+
+function resetRole(role: RoleCode) {
+  draft.value = resetRoleToDefault(editor.value, draft.value, role)
+  autoNotes.value = autoNotes.value.filter(note => note.role !== role)
+  blockedNote.value = ''
+  matrixNotice.value = ''
+}
+
+function resetAll() {
+  draft.value = resetAllToDefault(editor.value)
+  autoNotes.value = []
+  blockedNote.value = ''
+  matrixNotice.value = ''
+}
+
+function discardDraft() {
+  draft.value = cloneMatrix(editor.value.matrix)
+  autoNotes.value = []
+  blockedNote.value = ''
+  matrixError.value = ''
+}
+
+async function saveMatrix() {
+  if (!pendingChanges.value.length) {
+    return
+  }
+  matrixSaving.value = true
+  matrixNotice.value = ''
+  matrixError.value = ''
+  const count = pendingChanges.value.length
+  try {
+    const result = await apiStore.saveRolesMatrix(draft.value, editor.value.revision)
+    applyRolesPayload(result)
+    if (result.me) {
+      me.value = parseRolesMe(result.me)
+      sharedMe.value = me.value
+    }
+    matrixNotice.value = `Права сохранены (${pluralChanges(count)}). Сотрудники получат их при следующем действии — `
+      + 'перезаходить в приложение не нужно.'
+  } catch (e) {
+    const failure = describeMatrixSaveError(e)
+    matrixError.value = failure.text
+    if (failure.conflict) {
+      await loadRoles()
+      matrixError.value = failure.text
+    }
+  } finally {
+    matrixSaving.value = false
+  }
+}
+
 /** Назначенные роли; администраторы портала сервер отдаёт первыми строками. */
 const assignedRows = computed(() => assignments.value)
 
@@ -102,7 +241,9 @@ async function loadRoles() {
     catalog.value = parseRolesCatalog(data.catalog)
     assignments.value = parseRoleAssignments(data.assignments)
     canManage.value = data.can_manage === true
+    canEditMatrixOnServer.value = data.can_edit_matrix === true
     assignable.value = me.value?.assignableRoles || []
+    applyRolesPayload(data)
   } catch (e) {
     loadError.value = e instanceof Error && e.message && !/^\[[A-Z]+\]/.test(e.message)
       ? e.message
@@ -222,40 +363,180 @@ onMounted(async () => {
         </p>
       </B24Card>
 
-      <!-- 2. Что может роль -->
+      <!-- 2. Права ролей -->
       <B24Card>
         <template #header>
-          <span class="text-base font-semibold text-slate-900">Что может каждая роль</span>
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-base font-semibold text-slate-900">Права ролей</span>
+              <span
+                v-if="rolesEnabled && customizedOnPortal"
+                class="rounded-full bg-sky-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700"
+              >
+                изменены на портале
+              </span>
+            </div>
+            <B24Button
+              v-if="matrixEditable"
+              label="Вернуть всё по умолчанию"
+              color="link"
+              size="sm"
+              :disabled="draftAtDefault || matrixSaving"
+              @click="resetAll"
+            />
+          </div>
         </template>
 
-        <p class="mb-3 text-sm text-slate-500">
-          Работа с часами — списание времени, отчёты по часам, доска проектов, проверка данных — открыта всем
-          ролям. Роли ограничивают только деньги, закрытие месяца и настройки.
-          <template v-if="!rolesEnabled">
+        <div class="ms-panel-muted mb-4">
+          <p class="text-sm font-medium text-slate-800">Всем ролям всегда открыто</p>
+          <p class="mt-1 text-sm text-slate-600">
+            {{ editor.alwaysOpen.join(' · ') }}.
+            Работа с часами правами не настраивается: права ограничивают только деньги, закрытие месяца и настройки.
+          </p>
+        </div>
+
+        <template v-if="rolesEnabled">
+          <p v-if="editMode.reason" class="ms-note ms-note-info mb-4">{{ editMode.reason }}</p>
+          <p v-else-if="matrixEditable" class="mb-3 text-sm text-slate-500">
+            Отметьте, что может каждая роль. Изменения видны в предпросмотре и начинают действовать только после
+            сохранения. Серые ячейки с замком закреплены — почему, написано под таблицей.
+          </p>
+
+          <div class="ms-table-shell">
+            <table class="ms-table" :style="{ minWidth: roleColumnsWidth }">
+              <thead>
+                <tr>
+                  <th class="w-[360px] align-bottom">Право и что оно даёт</th>
+                  <th v-for="role in editor.roles" :key="role.code" class="w-[150px] text-center align-bottom">
+                    <div class="flex flex-col items-center gap-1">
+                      <span>{{ role.title }}</span>
+                      <span v-if="role.customized" class="text-[10px] font-medium normal-case tracking-normal text-sky-700">
+                        изменена
+                      </span>
+                      <button
+                        v-if="matrixEditable"
+                        type="button"
+                        class="text-[11px] font-medium normal-case tracking-normal text-sky-700 underline-offset-2 hover:underline disabled:cursor-default disabled:text-slate-300 disabled:no-underline"
+                        :disabled="isRoleAtDefault(editor, draft, role.code) || matrixSaving"
+                        :aria-label="`Вернуть права роли «${role.title}» по умолчанию`"
+                        @click="resetRole(role.code)"
+                      >
+                        по умолчанию
+                      </button>
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <template v-for="section in matrixSections" :key="section.code">
+                  <tr class="bg-slate-50 hover:bg-slate-50">
+                    <td :colspan="editor.roles.length + 1" class="py-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      {{ section.title }}
+                    </td>
+                  </tr>
+                  <tr v-for="permission in section.rows" :key="permission.code">
+                    <td class="align-top">
+                      <p class="font-medium text-slate-800">{{ permission.title }}</p>
+                      <p v-if="permission.description" class="mt-1 text-xs text-slate-500">{{ permission.description }}</p>
+                      <p v-if="describeRequirement(editor, permission.code)" class="mt-1 text-xs text-amber-700">
+                        {{ describeRequirement(editor, permission.code) }}
+                      </p>
+                    </td>
+                    <td
+                      v-for="role in editor.roles"
+                      :key="role.code"
+                      class="text-center align-middle"
+                      :class="cell(role.code, permission.code).changed ? 'bg-amber-50' : ''"
+                    >
+                      <template v-if="matrixEditable">
+                        <label
+                          class="inline-flex flex-col items-center gap-1"
+                          :title="cell(role.code, permission.code).lockReason || undefined"
+                        >
+                          <input
+                            type="checkbox"
+                            class="size-[18px] accent-sky-600 disabled:cursor-not-allowed"
+                            :checked="cell(role.code, permission.code).checked"
+                            :disabled="cell(role.code, permission.code).locked || matrixSaving"
+                            :aria-label="`${role.title}: ${permission.title}`"
+                            @change="onToggle(role.code, permission.code, ($event.target as HTMLInputElement).checked)"
+                          >
+                          <span v-if="cell(role.code, permission.code).locked" class="text-[10px] text-slate-400">
+                            закреплено
+                          </span>
+                        </label>
+                      </template>
+                      <template v-else>
+                        <span
+                          v-if="cell(role.code, permission.code).checked"
+                          class="font-semibold text-emerald-700"
+                          aria-label="можно"
+                          :title="cell(role.code, permission.code).lockReason || undefined"
+                        >✓</span>
+                        <span v-else class="text-slate-300" aria-label="нельзя">—</span>
+                      </template>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <p v-if="blockedNote" class="ms-note ms-note-danger mt-3">{{ blockedNote }}</p>
+
+          <div v-if="matrixEditable && lockLegend.length" class="mt-3 flex flex-col gap-1 text-xs text-slate-500">
+            <p class="font-medium text-slate-600">Закреплённые ячейки:</p>
+            <p v-for="reason in lockLegend" :key="reason">{{ reason }}</p>
+          </div>
+
+          <!-- Предпросмотр до сохранения -->
+          <div v-if="matrixEditable && pendingChanges.length" class="ms-panel-warning mt-4">
+            <p class="font-semibold">Не сохранено: {{ pluralChanges(pendingChanges.length) }}</p>
+            <ul class="mt-2 flex list-disc flex-col gap-1 pl-5">
+              <li v-for="summary in pendingSummary" :key="summary.role">{{ describeRoleChange(summary) }}</li>
+            </ul>
+            <div v-if="autoNotes.length" class="mt-3 flex flex-col gap-1 text-xs">
+              <p class="font-medium">Изменено автоматически из-за зависимостей:</p>
+              <p v-for="note in autoNotes" :key="`${note.role}:${note.permission}`">
+                {{ editor.roles.find(role => role.code === note.role)?.title }}: {{ note.reason }}
+              </p>
+            </div>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <B24Button label="Сохранить права" color="primary" :loading="matrixSaving" @click="saveMatrix" />
+              <B24Button label="Отменить изменения" color="link" :disabled="matrixSaving" @click="discardDraft" />
+            </div>
+          </div>
+
+          <p v-if="matrixNotice" class="ms-note ms-note-success mt-4">{{ matrixNotice }}</p>
+          <p v-if="matrixError" class="ms-note ms-note-danger mt-4">{{ matrixError }}</p>
+        </template>
+
+        <template v-else>
+          <p class="mb-3 text-sm text-slate-500">
             Пока тариф Pro не подключён, таблица показывает права, которые действуют сейчас: столбец
             «Администратор» — это администраторы портала, «Руководитель проекта» работает как «Сотрудник».
-          </template>
-        </p>
-
-        <div class="ms-table-shell">
-          <table class="ms-table min-w-[760px]">
-            <thead>
-              <tr>
-                <th class="w-[320px]">Право</th>
-                <th v-for="role in catalog.roles" :key="role.code" class="text-center">{{ role.title }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in matrixRows" :key="row.permission">
-                <td class="text-slate-800">{{ row.title }}</td>
-                <td v-for="cell in row.cells" :key="cell.role" class="text-center">
-                  <span v-if="cell.allowed" class="font-semibold text-emerald-700" aria-label="можно">✓</span>
-                  <span v-else class="text-slate-300" aria-label="нельзя">—</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+            Настраивать права ролей можно после подключения Pro.
+          </p>
+          <div class="ms-table-shell">
+            <table class="ms-table min-w-[760px]">
+              <thead>
+                <tr>
+                  <th class="w-[320px]">Право</th>
+                  <th v-for="role in catalog.roles" :key="role.code" class="text-center">{{ role.title }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in matrixRows" :key="row.permission">
+                  <td class="text-slate-800">{{ row.title }}</td>
+                  <td v-for="legacyCell in row.cells" :key="legacyCell.role" class="text-center">
+                    <span v-if="legacyCell.allowed" class="font-semibold text-emerald-700" aria-label="можно">✓</span>
+                    <span v-else class="text-slate-300" aria-label="нельзя">—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
 
         <div class="mt-4 grid gap-3 sm:grid-cols-2">
           <div v-for="role in catalog.roles" :key="role.code" class="ms-panel-muted">
@@ -263,6 +544,26 @@ onMounted(async () => {
             <p class="mt-1 text-xs text-slate-500">{{ role.description }}</p>
           </div>
         </div>
+      </B24Card>
+
+      <!-- Журнал изменений прав -->
+      <B24Card v-if="rolesEnabled">
+        <template #header>
+          <span class="text-base font-semibold text-slate-900">Журнал изменений прав</span>
+        </template>
+
+        <p v-if="!matrixLog.length" class="text-sm text-slate-500">
+          Права ролей на портале не менялись — действуют значения по умолчанию.
+        </p>
+        <ol v-else class="flex flex-col divide-y divide-slate-200">
+          <li v-for="entry in matrixLog" :key="entry.revision" class="py-3 first:pt-0 last:pb-0">
+            <p class="text-sm font-medium text-slate-800">{{ describeLogEntry(entry).title }}</p>
+            <p v-for="line in describeLogEntry(entry).lines" :key="line" class="mt-1 text-sm text-slate-600">{{ line }}</p>
+          </li>
+        </ol>
+        <p v-if="editor.updatedAt" class="mt-3 text-xs text-slate-400">
+          Последнее изменение: {{ formatLogDate(editor.updatedAt) }}<template v-if="editor.updatedByName">, {{ editor.updatedByName }}</template>.
+        </p>
       </B24Card>
 
       <!-- 3. Назначение -->
