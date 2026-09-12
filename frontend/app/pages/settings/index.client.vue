@@ -32,9 +32,9 @@
       <!--
         Настройки «Счёта и акта».
 
-        Стоят ЗДЕСЬ, а не на отдельном экране: все три настройки — про то, от
-        кого, кому и когда можно выставлять, и искать их человек будет в
-        настройках приложения. Сохраняются существующим механизмом — POST
+        Стоят ЗДЕСЬ, а не на отдельном экране: все они — про то, от кого,
+        кому, когда и какими строками можно выставлять, и искать их человек
+        будет в настройках приложения. Сохраняются существующим механизмом — POST
         /api/configuration/save, тот же, что у сопоставления полей: все они
         нужны СЕРВЕРУ (контракт, правила 1 и 3, плюс выбор нашего юрлица), а
         app.option портала сервер сам не читает.
@@ -137,35 +137,80 @@
           </div>
 
           <!--
-            Формулировка строки счёта. Стоит сразу после юрлица: это второе,
+            Варианты наполнения счёта. Стоят сразу после юрлица: это второе,
             что клиент читает в документе. До настройки строка называлась
             ровно так, как названа карточка проекта, и у клиента НУОЛАБ
             карточка названа по клиенту — наименованием работ в счёте
             оказалось «НУОЛАБ».
+
+            Формулировка у КАЖДОГО варианта своя. Одного общего шаблона не
+            хватало: «{задача}, {месяц}» в счёте на одну строку читается как
+            «Услуги по договору, август 2026».
           -->
           <div>
-            <label class="block text-sm font-medium text-slate-700" for="billing-line-template">
-              Наименование работ в строке счёта
+            <label class="block text-sm font-medium text-slate-700" for="billing-line-variant">
+              Вариант наполнения счёта по умолчанию
             </label>
             <p class="mb-2 mt-1 text-sm text-slate-500">
-              По этому шаблону собирается текст каждой строки счёта и акта. Доступные подстановки —
-              под полем; текст можно поправить и вручную в предпросмотре перед выставлением.
+              Этот вариант мастер «Выставить» подставляет при открытии. Переключить его на один
+              счёт можно прямо в предпросмотре — настройка от этого не меняется.
             </p>
-            <input
-              id="billing-line-template"
-              v-model="billingSettings.lineTemplate"
-              type="text"
+            <select
+              id="billing-line-variant"
+              v-model="billingSettings.lineVariant"
               class="w-full"
               :disabled="!userStore.isAdmin"
-              :placeholder="DEFAULT_BILLING_LINE_TEMPLATE"
             >
-            <p class="mt-1 text-xs text-slate-500">
-              Получится так: <span class="font-medium text-slate-900">{{ lineTemplateExample }}</span>
+              <option v-for="variant in BILLING_LINE_VARIANTS" :key="variant.id" :value="variant.id">
+                {{ variant.label }}
+              </option>
+            </select>
+          </div>
+
+          <div>
+            <p class="text-sm font-medium text-slate-700">Наименование работ в строке</p>
+            <p class="mb-2 mt-1 text-sm text-slate-500">
+              По этим шаблонам собирается текст строк счёта и акта — по одному на каждый вариант
+              наполнения. Под полем видно, как строка прочитается на вымышленных данных; текст
+              можно поправить и вручную в предпросмотре перед выставлением.
             </p>
-            <p v-if="unknownPlaceholders.length" class="mt-1 text-xs font-medium text-amber-700">
-              Подстановки {{ unknownPlaceholders.join(', ') }} приложение не знает — они уйдут в счёт
-              как есть, фигурными скобками. Проверьте написание.
-            </p>
+
+            <div class="space-y-3">
+              <div
+                v-for="row in lineVariantRows"
+                :key="row.id"
+                class="rounded-lg border px-3 py-2"
+                :class="row.isDefaultVariant ? 'border-[#0075ff] bg-blue-50/40' : 'border-slate-200'"
+              >
+                <div class="flex flex-wrap items-baseline justify-between gap-2">
+                  <label class="text-sm font-medium text-slate-700" :for="`billing-line-template-${row.id}`">
+                    {{ row.label }}
+                  </label>
+                  <span v-if="row.isDefaultVariant" class="text-[11px] font-semibold uppercase tracking-wide text-[#0075ff]">
+                    по умолчанию
+                  </span>
+                </div>
+                <p class="mb-1 text-xs text-slate-500">{{ row.summary }}</p>
+                <input
+                  :id="`billing-line-template-${row.id}`"
+                  :value="row.template"
+                  type="text"
+                  class="w-full"
+                  :disabled="!userStore.isAdmin"
+                  :placeholder="row.defaultTemplate"
+                  @input="setLineTemplate(row.id, ($event.target as HTMLInputElement).value)"
+                >
+                <p class="mt-1 text-xs text-slate-500">
+                  Так будет выглядеть строка:
+                  <span class="font-medium text-slate-900">{{ row.example }}</span>
+                </p>
+                <p v-if="row.unknown.length" class="mt-1 text-xs font-medium text-amber-700">
+                  Подстановки {{ row.unknown.join(', ') }} приложение не знает — они уйдут в счёт
+                  как есть, фигурными скобками. Проверьте написание.
+                </p>
+              </div>
+            </div>
+
             <ul class="mt-2 space-y-0.5 text-xs text-slate-500">
               <li v-for="item in BILLING_LINE_PLACEHOLDERS" :key="item.token">
                 <span class="font-mono text-slate-700">{{ item.token }}</span> — {{ item.hint }}
@@ -173,12 +218,36 @@
             </ul>
           </div>
 
+          <!--
+            Текст услуги отдельной настройкой, а не словом внутри шаблонов:
+            услуга повторяется в формулировках («Разработка по проекту…»,
+            «Услуги по разработке…»), и менять её правкой четырёх полей
+            человек забудет.
+          -->
+          <div>
+            <label class="block text-sm font-medium text-slate-700" for="billing-service-name">
+              Услуга для подстановки {{ '{услуга}' }}
+            </label>
+            <p class="mb-2 mt-1 text-sm text-slate-500">
+              Предмет договора одним словом: он подставляется в формулировки вместо
+              {{ '{услуга}' }} — «Разработка по проекту „Личный кабинет“».
+            </p>
+            <input
+              id="billing-service-name"
+              v-model="billingSettings.serviceName"
+              type="text"
+              class="w-full"
+              :disabled="!userStore.isAdmin"
+              :placeholder="DEFAULT_BILLING_SERVICE_NAME"
+            >
+          </div>
+
           <div>
             <label class="block text-sm font-medium text-slate-700" for="billing-task-level">
               Уровень задачи в строке
             </label>
             <p class="mb-2 mt-1 text-sm text-slate-500">
-              Работает при группировке строк по задачам. Часы, не привязанные ни к одной задаче,
+              Работает при варианте «Строка на задачу». Часы, не привязанные ни к одной задаче,
               в любом случае уходят отдельной строкой «Работы без привязки к задаче» — они не
               теряются.
             </p>
@@ -427,8 +496,10 @@ import MultiSelectFilter from '~/components/common/MultiSelectFilter.vue'
 import { describeBillingError } from '~/utils/billingErrors'
 import {
   BILLING_LINE_PLACEHOLDERS,
+  BILLING_LINE_VARIANTS,
   BILLING_TASK_LEVEL_OPTIONS,
-  DEFAULT_BILLING_LINE_TEMPLATE,
+  DEFAULT_BILLING_LINE_TEMPLATES,
+  DEFAULT_BILLING_SERVICE_NAME,
   previewBillingLineTemplate,
   unknownBillingPlaceholders,
 } from '~/utils/billingLineTemplate'
@@ -457,10 +528,12 @@ function emptyBillingSettings(): BillingSettings {
     accountantIds: [],
     ourCompanyId: '',
     ourCompanyName: '',
-    // Формулировка и уровень — не «строгая» часть настроек: пустая строка
-    // оставила бы строки счёта без наименования работ, поэтому исходное
-    // состояние равно значению по умолчанию.
-    lineTemplate: DEFAULT_BILLING_LINE_TEMPLATE,
+    // Вариант, формулировки и уровень — не «строгая» часть настроек: пустая
+    // строка оставила бы строки счёта без наименования работ, поэтому
+    // исходное состояние равно значениям по умолчанию.
+    lineVariant: 'task',
+    lineTemplates: { ...DEFAULT_BILLING_LINE_TEMPLATES },
+    serviceName: DEFAULT_BILLING_SERVICE_NAME,
     taskLevel: 'task',
     // Шаблоны: «не выбран». Для акта это прежнее поведение (подбор по
     // названию), для счёта — печать недоступна.
@@ -511,18 +584,37 @@ const templatesError = ref('')
 const templatesSkipped = ref(false)
 
 /**
- * Живой пример строки. Считается ЗДЕСЬ, а не на сервере: пример нужен на
- * каждое нажатие клавиши, а запрос на каждое нажатие — нет. Правила
- * подстановки в utils/billingLineTemplate.ts повторяют серверные.
+ * Четыре варианта наполнения с полем формулировки и живым примером у каждого.
+ *
+ * Пример считается ЗДЕСЬ, а не на сервере: он нужен на каждое нажатие
+ * клавиши, а запрос на каждое нажатие — нет. Правила подстановки в
+ * utils/billingLineTemplate.ts повторяют серверные.
+ *
+ * Опечатки в подстановках показываются вслух у ТОГО поля, где сделаны: одно
+ * общее предупреждение под четырьмя полями не сказало бы, в каком из них
+ * искать.
  */
-const lineTemplateExample = computed(
-  () => previewBillingLineTemplate(billingSettings.value.lineTemplate)
-)
+const lineVariantRows = computed(() => BILLING_LINE_VARIANTS.map((variant) => {
+  const template = billingSettings.value.lineTemplates?.[variant.id] ?? ''
 
-/** Опечатки в подстановках — вслух, а не «ждём, пока заметит скобки». */
-const unknownPlaceholders = computed(
-  () => unknownBillingPlaceholders(billingSettings.value.lineTemplate)
-)
+  return {
+    ...variant,
+    template,
+    example: previewBillingLineTemplate(
+      template, variant.id, billingSettings.value.serviceName,
+    ),
+    unknown: unknownBillingPlaceholders(template),
+    isDefaultVariant: billingSettings.value.lineVariant === variant.id,
+  }
+}))
+
+/** Правка формулировки одного варианта. */
+function setLineTemplate(variant: string, value: string) {
+  billingSettings.value.lineTemplates = {
+    ...billingSettings.value.lineTemplates,
+    [variant]: value,
+  }
+}
 
 const taskLevelHint = computed(
   () => BILLING_TASK_LEVEL_OPTIONS.find(

@@ -41,6 +41,7 @@ import DateRangeFilter from '~/components/common/DateRangeFilter.vue'
 import MultiSelectFilter from '~/components/common/MultiSelectFilter.vue'
 import SearchableSelect from '~/components/common/SearchableSelect.vue'
 import {
+  BILLING_GROUPING_AS_SETTINGS_LABEL,
   BILLING_GROUPING_OPTIONS,
   buildBillingFilterBody,
   createBillingFilterForm,
@@ -58,7 +59,7 @@ import {
   toggleDraftExcluded,
   type BillingLineDraft,
 } from '~/utils/billingPreview'
-import { describeBillingGrouping } from '~/utils/billingGrouping'
+import { describeBillingGrouping, describeBillingGroupingSource } from '~/utils/billingGrouping'
 import { splitBillingWarnings } from '~/utils/billingWarnings'
 import { extractMixedCompanies, type BillingCompanyChoice } from '~/utils/billingCompanies'
 import { describeBillingOurCompany } from '~/utils/billingOurCompany'
@@ -396,14 +397,47 @@ async function runPreview() {
  * мастера, и врать о ней экран не должен.
  */
 const groupingView = computed(() => describeBillingGrouping(
-  normalizeBillingGrouping(preview.value?.grouping ?? form.value.grouping),
+  normalizeBillingGrouping(preview.value?.grouping || form.value.grouping),
   String(preview.value?.task_level || 'task'),
 ))
 
-/** Подсказка под селектом группировки на шаге отбора. */
-const groupingFormHint = computed(
-  () => describeBillingGrouping(form.value.grouping).hint
+/**
+ * Кто выбрал вариант: настройка портала или человек в этом мастере.
+ *
+ * Источник тоже серверный: только сервер знает, было ли поле grouping в теле
+ * запроса. Без источника непонятно, где менять вариант навсегда, — и человек
+ * либо правит настройку, которая и так верна, либо каждый месяц переключает
+ * вариант руками.
+ */
+const groupingSourceView = computed(
+  () => describeBillingGroupingSource(preview.value?.grouping_source)
 )
+
+/**
+ * Значение селекта «Пересобрать» в предпросмотре.
+ *
+ * Читается из ОТВЕТА сервера, пока человек ничего не выбирал: иначе
+ * переключатель показывал бы пустое «как в настройках» рядом с уже
+ * собранными строками. Запись в него — осознанный выбор варианта на этот
+ * счёт, и она же делает источник «выбран в этом мастере».
+ */
+const groupingChoice = computed<string>({
+  get: () => form.value.grouping
+    || normalizeBillingGrouping(preview.value?.grouping || 'task'),
+  set: (value: string) => {
+    form.value.grouping = normalizeBillingGrouping(value)
+  },
+})
+
+/** Подсказка под селектом варианта на шаге отбора. */
+const groupingFormHint = computed(() => {
+  if (!form.value.grouping) {
+    return 'Вариант возьмётся из настроек приложения. Переключить его можно и потом, '
+      + 'в предпросмотре.'
+  }
+
+  return describeBillingGrouping(form.value.grouping).hint
+})
 
 /**
  * Переключение группировки в предпросмотре пересобирает строки заново.
@@ -639,7 +673,13 @@ onMounted(async () => {
           <label class="mb-2 block text-sm font-medium text-slate-700" for="billing-grouping">
             Строки документа
           </label>
+          <!--
+            Пустой выбор идёт ПЕРВЫМ и он же значение по умолчанию: вариант
+            наполнения задаётся настройкой портала, и зашитое в форму «по
+            задачам» перебивало бы её при каждом открытии мастера.
+          -->
           <select id="billing-grouping" v-model="form.grouping" class="w-full">
+            <option value="">{{ BILLING_GROUPING_AS_SETTINGS_LABEL }}</option>
             <option v-for="option in BILLING_GROUPING_OPTIONS" :key="option.id" :value="option.id">
               {{ option.label }}
             </option>
@@ -825,13 +865,16 @@ onMounted(async () => {
               <span class="text-slate-500">Строки собраны:</span>
               <span class="font-medium text-slate-900">{{ groupingView.label }}</span>
               <span class="text-slate-500"> · {{ groupingView.summary }}</span>
+              <span v-if="groupingSourceView.text" class="text-slate-500">
+                · {{ groupingSourceView.text }}
+              </span>
             </p>
             <label class="flex items-center gap-2 text-xs text-slate-500">
               Пересобрать
               <select
-                v-model="form.grouping"
+                v-model="groupingChoice"
                 class="text-sm"
-                aria-label="Признак группировки строк счёта"
+                aria-label="Вариант наполнения счёта"
                 :disabled="isPreviewLoading"
                 @change="changeGrouping"
               >
@@ -842,6 +885,9 @@ onMounted(async () => {
             </label>
           </div>
           <p class="mt-1 text-xs text-slate-500">{{ groupingView.hint }}</p>
+          <p v-if="groupingSourceView.hint" class="mt-1 text-xs text-slate-500">
+            {{ groupingSourceView.hint }}
+          </p>
           <p v-if="edited" class="mt-1 text-xs text-amber-700">
             Пересборка строк отменит правки текста и цены: они относились к прежним строкам.
           </p>

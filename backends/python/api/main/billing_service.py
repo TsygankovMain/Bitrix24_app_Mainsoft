@@ -36,11 +36,18 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .billing_line_template import (
-    DEFAULT_LINE_TEMPLATE,
+    DEFAULT_LINE_VARIANT,
     DEFAULT_TASK_LEVEL,
+    LINE_VARIANT_EMPLOYEE,
+    LINE_VARIANT_SINGLE,
+    LINE_VARIANT_TASK,
+    LINE_VARIANTS,
     TASK_LEVEL_ROOT,
     TASK_LEVELS,
     month_label,
+    normalize_line_template,
+    normalize_line_variant,
+    normalize_service_name,
     period_label,
     render_line_template,
 )
@@ -64,13 +71,23 @@ from .tenant_scoping import scope_to_tenant
 logger = logging.getLogger(__name__)
 audit = logging.getLogger("main.audit")
 
-GROUPINGS = ("project", "task", "employee", "single")
-# По умолчанию — ПО ЗАДАЧАМ. Раньше было «по проектам», и в счёт уходило
-# название карточки проекта: у клиента НУОЛАБ карточка названа по самому
-# клиенту, и наименованием работ в документе оказалось «НУОЛАБ». Названия
-# задач — единственное описание работ, которое в приложении есть; проектная
-# группировка осталась вариантом, но перестала быть значением по умолчанию.
-DEFAULT_GROUPING = "task"
+# Группировка строк = ВАРИАНТ наполнения счёта. Кортеж один на оба понятия
+# (billing_line_template.LINE_VARIANTS): у каждого варианта своя формулировка
+# строки, и два списка с одними и теми же четырьмя словами однажды разошлись
+# бы.
+GROUPINGS = LINE_VARIANTS
+# Вариант по умолчанию, когда его не выбрали ни в мастере, ни настройкой
+# портала, — ПО ЗАДАЧАМ. Раньше было «по проектам», и в счёт уходило название
+# карточки проекта: у клиента НУОЛАБ карточка названа по самому клиенту, и
+# наименованием работ в документе оказалось «НУОЛАБ».
+DEFAULT_GROUPING = DEFAULT_LINE_VARIANT
+
+# Откуда взялся вариант наполнения показанного документа. Ровно два
+# источника, и мастер обязан показать который: «строки собраны по задачам»
+# без объяснения, кто так решил, оставляет человека в догадках, надо ли
+# править настройку портала или достаточно переключить вариант здесь.
+GROUPING_FROM_SETTINGS = "settings"
+GROUPING_FROM_REQUEST = "request"
 
 # Уровень задачи в строке (настройка billing_line_task_level) объявлен в
 # billing_line_template — его читает и разбор настроек. По умолчанию «task»:
@@ -177,6 +194,28 @@ def _as_list(value: Any) -> List[str]:
         if text and text not in result:
             result.append(text)
     return result
+
+
+def _shared_field(rows: Sequence[Dict[str, Any]], key: str) -> str:
+    """Значение поля, ОДИНАКОВОЕ у всех строк. Иначе пусто.
+
+    Нужно там, где строка счёта собрала списания нескольких проектов или
+    нескольких людей: назвать в такой строке один проект из нескольких —
+    соврать в печатной форме, а пустое значение известной подстановки
+    убирается из формулировки вместе с разделителем (см.
+    billing_line_template, правило 2).
+    """
+    found = ""
+    for row in rows:
+        value = _clean(row.get(key))
+        if not value:
+            # Пустое значение у части строк не делает остальные «разными»:
+            # проект без названия — это неизвестность, а не второй проект.
+            continue
+        if found and value != found:
+            return ""
+        found = value
+    return found
 
 
 def _opt_num(value: Any, what: str) -> Optional[float]:
@@ -331,9 +370,25 @@ class BillingFilter:
     only_closed_periods: bool = False
     exclude_invoiced: bool = True
     grouping: str = DEFAULT_GROUPING
+    # Откуда взялся вариант: выбран в запросе (мастером) или взят из
+    # настройки портала. Полем фильтра, а не выводом интерфейса: решает это
+    # сервер, и только он знает, было ли поле в теле запроса.
+    grouping_source: str = GROUPING_FROM_SETTINGS
 
     @classmethod
-    def from_payload(cls, payload: Optional[Dict[str, Any]]) -> "BillingFilter":
+    def from_payload(
+        cls,
+        payload: Optional[Dict[str, Any]],
+        *,
+        default_grouping: Optional[str] = None,
+    ) -> "BillingFilter":
+        """Фильтр из тела запроса.
+
+        ``default_grouping`` — вариант наполнения из настройки портала. Мастер
+        при открытии НЕ присылает grouping вовсе: вариант по умолчанию решает
+        портал, а не зашитая в код константа. Присланный вариант всегда
+        сильнее настройки — это осознанный выбор человека на экране.
+        """
         payload = payload if isinstance(payload, dict) else {}
 
         def flag(key: str, default: bool) -> bool:
@@ -344,7 +399,17 @@ class BillingFilter:
                 return value
             return _clean(value).lower() in {"1", "true", "yes", "y", "on"}
 
-        grouping = _clean(payload.get("grouping")) or DEFAULT_GROUPING
+        requested = _clean(payload.get("grouping"))
+        if requested:
+            grouping = requested
+            grouping_source = GROUPING_FROM_REQUEST
+        else:
+            # Негодная настройка портала не имеет права уронить предпросмотр:
+            # normalize_line_variant читает её как «по задачам».
+            grouping = normalize_line_variant(
+                default_grouping if default_grouping is not None else DEFAULT_GROUPING
+            )
+            grouping_source = GROUPING_FROM_SETTINGS
         if grouping not in GROUPINGS:
             raise BillingError(
                 f"Неизвестная группировка: {grouping}. Допустимы: {', '.join(GROUPINGS)}.",
@@ -363,6 +428,7 @@ class BillingFilter:
             only_closed_periods=flag("only_closed_periods", False),
             exclude_invoiced=flag("exclude_invoiced", True),
             grouping=grouping,
+            grouping_source=grouping_source,
         )
 
     def as_snapshot(self) -> Dict[str, Any]:
@@ -378,6 +444,7 @@ class BillingFilter:
             "only_closed_periods": self.only_closed_periods,
             "exclude_invoiced": self.exclude_invoiced,
             "grouping": self.grouping,
+            "grouping_source": self.grouping_source,
         }
 
 
@@ -430,6 +497,9 @@ class Selection:
     # подписывал таблицу («одна строка на задачу»), а не заставлял человека
     # догадываться о признаке по самим строкам.
     grouping: str = DEFAULT_GROUPING
+    # Кто выбрал вариант: настройка портала или мастер. Предпросмотр обязан
+    # это показать — иначе непонятно, где менять вариант навсегда.
+    grouping_source: str = GROUPING_FROM_SETTINGS
     task_level: str = DEFAULT_TASK_LEVEL
 
     @property
@@ -467,6 +537,7 @@ class Selection:
         payload = {
             "lines": self.lines,
             "grouping": self.grouping,
+            "grouping_source": self.grouping_source,
             "task_level": self.task_level,
             "entries_count": len(self.entries),
             "total_hours": self.total_hours,
@@ -519,9 +590,52 @@ class BillingService:
         return value if value in TASK_LEVELS else DEFAULT_TASK_LEVEL
 
     @property
+    def line_variant(self) -> str:
+        """Вариант наполнения счёта из настройки портала.
+
+        Именно он подставляется в мастер при открытии. Раньше здесь стояла
+        константа «по задачам», и порталу, выставляющему одной строкой,
+        приходилось переключать вариант в каждом счёте руками.
+        """
+        return normalize_line_variant(self.settings.get("line_variant"))
+
+    @property
+    def service_name(self) -> str:
+        """Текст услуги для подстановки ``{услуга}``."""
+        return normalize_service_name(self.settings.get("service_name"))
+
+    @property
+    def line_templates(self) -> Dict[str, str]:
+        """Формулировка на каждый вариант наполнения.
+
+        Одиночный ключ ``line_template`` читается как формулировка варианта
+        «по задачам»: под этим именем она лежит в конфигурации порталов с
+        первой версии, и требовать от них нового ключа значило бы молча
+        вернуть таким порталам текст по умолчанию.
+        """
+        raw = self.settings.get("line_templates")
+        legacy = _clean(self.settings.get("line_template"))
+        result: Dict[str, str] = {}
+        for variant in LINE_VARIANTS:
+            value = _clean(raw.get(variant)) if isinstance(raw, dict) else ""
+            if not value and variant == LINE_VARIANT_TASK:
+                value = legacy
+            result[variant] = normalize_line_template(value, variant)
+        return result
+
+    @property
     def line_template(self) -> str:
-        """Шаблон формулировки строки. Пусто — значение по умолчанию."""
-        return _clean(self.settings.get("line_template")) or DEFAULT_LINE_TEMPLATE
+        """Формулировка варианта «по задачам». Оставлена ради совместимости."""
+        return self.line_templates[LINE_VARIANT_TASK]
+
+    def build_filter(self, payload: Optional[Dict[str, Any]]) -> BillingFilter:
+        """Фильтр запроса с вариантом наполнения по умолчанию ИЗ НАСТРОЕК.
+
+        Разбор фильтра нельзя оставить чистым classmethod'ом: вариант по
+        умолчанию — настройка портала, а её читает только сервис. Вьюхи зовут
+        этот метод, а не ``BillingFilter.from_payload`` напрямую.
+        """
+        return BillingFilter.from_payload(payload, default_grouping=self.line_variant)
 
     @property
     def period_service(self) -> PeriodService:
@@ -713,6 +827,7 @@ class BillingService:
         selection.conflicting_documents = sorted(conflicting)
         selection.open_periods = sorted(open_periods.values())
         selection.grouping = filters.grouping
+        selection.grouping_source = filters.grouping_source
         selection.task_level = self.task_level
         selection.lines = self._build_lines(
             selection.entries, filters,
@@ -784,7 +899,7 @@ class BillingService:
         смыслу: ключ по id задачи с предметом-названием проекта дал бы строки
         с одинаковым текстом и разными часами.
         """
-        if filters.grouping == "task":
+        if filters.grouping == LINE_VARIANT_TASK:
             if self.task_level == TASK_LEVEL_ROOT:
                 task_id = _clean(row.get("root_task_id")) or _clean(row.get("task_id"))
                 title = _clean(row.get("root_task_title")) or _clean(row.get("task_title"))
@@ -801,7 +916,7 @@ class BillingService:
             # наименование работ не указывает ни на что.
             return task_id, title or f"Задача {task_id}"
 
-        if filters.grouping == "employee":
+        if filters.grouping == LINE_VARIANT_EMPLOYEE:
             return _clean(row.get("employee_id")) or "—", row["employee_name"]
 
         key = _clean(row.get("project_id")) or _clean(row.get("project_name")) or "—"
@@ -834,18 +949,18 @@ class BillingService:
         if not entries:
             return []
 
-        if filters.grouping == "single":
-            keyed = [("", LINE_TITLE_SINGLE, "", list(entries))]
+        variant = filters.grouping if filters.grouping in LINE_VARIANTS else DEFAULT_GROUPING
+
+        if variant == LINE_VARIANT_SINGLE:
+            keyed = [("", LINE_TITLE_SINGLE, list(entries))]
         else:
             buckets: Dict[str, Dict[str, Any]] = {}
             for row in entries:
                 key, subject = self._line_subject(row, filters)
-                bucket = buckets.setdefault(
-                    key, {"subject": subject, "project_id": row["project_id"], "rows": []},
-                )
+                bucket = buckets.setdefault(key, {"subject": subject, "rows": []})
                 bucket["rows"].append(row)
             keyed = [
-                (key, bucket["subject"], bucket["project_id"], bucket["rows"])
+                (key, bucket["subject"], bucket["rows"])
                 for key, bucket in buckets.items()
             ]
             # По алфавиту, но «Работы без привязки к задаче» — в конец: это
@@ -854,28 +969,41 @@ class BillingService:
             keyed.sort(key=lambda item: (item[1] == LINE_TITLE_NO_TASK, item[1]))
 
         period_from, period_to = self._line_period(entries, filters)
-        template = self.line_template
+        template = self.line_templates[variant]
+        service = self.service_name
         month = month_label(period_from, period_to)
         period = period_label(period_from, period_to)
 
         lines: List[Dict[str, Any]] = []
-        for sort, (_key, subject, project_id, bucket_rows) in enumerate(keyed):
+        for sort, (_key, subject, bucket_rows) in enumerate(keyed):
             hours = round(sum(_num(row["hours"]) for row in bucket_rows), 2)
             amount = _money(sum(_num(row["amount"]) for row in bucket_rows))
-            project_name = bucket_rows[0]["project_name"] if bucket_rows else ""
+            # Проект и сотрудник строки — только ОБЩИЕ для всех её списаний.
+            # Раньше брался первый попавшийся, и в счёте, собранном одной
+            # строкой или по сотрудникам, у строки оказывался случайный
+            # проект из отбора: подстановка «{проект}» врала, а project_id
+            # строки документа указывал не туда. Разных проектов в строке —
+            # значит проекта у строки нет, и известная подстановка без
+            # значения честно убирается вместе с разделителем.
+            project_id = _shared_field(bucket_rows, "project_id")
+            project_name = _shared_field(bucket_rows, "project_name")
+            employee_name = _shared_field(bucket_rows, "employee_name")
             title = render_line_template(
                 template,
                 {
                     "задача": subject,
                     "проект": project_name,
+                    "сотрудник": employee_name,
+                    "услуга": service,
                     "клиент": company_name,
                     "месяц": month,
                     "период": period,
                 },
                 fallback=subject,
+                variant=variant,
             )
             lines.append({
-                "project_id": project_id or "",
+                "project_id": project_id,
                 "project_name": project_name,
                 "title": title,
                 # Предмет строки отдаётся отдельно от наименования: мастер
@@ -1490,6 +1618,13 @@ class BillingService:
             "total_hours": document.total_hours,
             "total_amount": document.total_amount,
             "grouping": document.grouping,
+            # Уровень задачи НА МОМЕНТ выставления — из снимка фильтра, а не
+            # из текущей настройки портала: настройку могли поменять после
+            # выставления, и подпись строк документа соврала бы про то, как
+            # он собран. Ключа в старых снимках нет — тогда отдаём пусто, а
+            # не «task»: врать про то, чего не записано, нельзя.
+            "task_level": _clean((document.filter_snapshot or {}).get("task_level"))
+            if isinstance(document.filter_snapshot, dict) else "",
             "crm_entity_id": document.crm_entity_id,
             "crm_account_number": document.crm_account_number,
             "act_document_id": document.act_document_id,

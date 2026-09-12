@@ -17,6 +17,48 @@ import { normalizeBillingTaskLevel } from './billingLineTemplate'
 import type { BillingTaskLevel } from './billingLineTemplate'
 import type { BillingGrouping } from '~/types/billing'
 
+/**
+ * Откуда взялся вариант наполнения показанного документа.
+ *
+ * Значения серверные (billing_service.GROUPING_FROM_*). Мастер обязан
+ * показать источник: «строки собраны по задачам» без объяснения, кто так
+ * решил, оставляет человека в догадках — править настройку портала или
+ * достаточно переключить вариант здесь.
+ */
+export type BillingGroupingSource = 'settings' | 'request'
+
+export type BillingGroupingSourceDescription = {
+  /** Короткая подпись рядом с вариантом. */
+  text: string
+  /** Что с этим делать. Пусто, когда объяснять нечего. */
+  hint: string
+}
+
+export function describeBillingGroupingSource(
+  source: unknown
+): BillingGroupingSourceDescription {
+  const value = String(source ?? '').trim().toLowerCase()
+
+  if (value === 'request') {
+    return {
+      text: 'вариант выбран в этом мастере',
+      hint: 'Выбор действует только для этого счёта. Чтобы он подставлялся сразу, '
+        + 'поменяйте вариант по умолчанию в настройках приложения.',
+    }
+  }
+
+  if (value === 'settings') {
+    return {
+      text: 'вариант по умолчанию из настроек приложения',
+      hint: '',
+    }
+  }
+
+  // Сервер источника не передал (старый ответ). Врать про настройку
+  // приложения нельзя — молчим.
+  return { text: '', hint: '' }
+}
+
 /** Наименование строки для часов, не привязанных к задаче (константа сервера). */
 export const BILLING_NO_TASK_LINE_TITLE = 'Работы без привязки к задаче'
 

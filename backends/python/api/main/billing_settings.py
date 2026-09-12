@@ -9,7 +9,14 @@ ConfigurationService) — параллельный механизм не зав�
 - ``billing_invoice_template_id`` — выбранный шаблон печатной формы СЧЁТА;
 - ``billing_our_company_id`` / ``billing_our_company_name`` — наше юрлицо, от
   которого выставляются все счета;
-- ``billing_line_template`` — формулировка строки счёта («{задача}, {месяц}»);
+- ``billing_line_variant`` — вариант наполнения счёта, который мастер
+  подставляет при открытии: ``task`` | ``project`` | ``employee`` | ``single``;
+- ``billing_line_template`` и ``billing_line_template_{project,employee,single}``
+  — формулировка строки, СВОЯ У КАЖДОГО варианта. Один общий шаблон не годится:
+  «{задача}, {месяц}» в счёте на одну строку читается как «Услуги по договору,
+  август 2026»;
+- ``billing_service_name`` — текст услуги для подстановки ``{услуга}``
+  («Разработка»);
 - ``billing_line_task_level`` — уровень задачи в строке: сама задача или её
   родитель верхнего уровня.
 
@@ -43,9 +50,16 @@ from django.http import JsonResponse
 
 from .billing_line_template import (
     DEFAULT_LINE_TEMPLATE,
+    DEFAULT_LINE_VARIANT,
+    DEFAULT_SERVICE_NAME,
+    LINE_TEMPLATE_SETTING_KEYS,
+    LINE_VARIANTS,
     TASK_LEVEL_TASK,
     TASK_LEVELS,
+    default_line_template,
     normalize_line_template,
+    normalize_line_variant,
+    normalize_service_name,
 )
 from .configuration_service import ConfigurationService
 
@@ -82,7 +96,12 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
         # конфигурации счёт всё равно должен собираться, просто по значениям
         # по умолчанию. Пустой шаблон оставил бы строки счёта без названия,
         # а это хуже, чем «как по умолчанию».
+        "line_variant": DEFAULT_LINE_VARIANT,
         "line_template": DEFAULT_LINE_TEMPLATE,
+        "line_templates": {
+            variant: default_line_template(variant) for variant in LINE_VARIANTS
+        },
+        "service_name": DEFAULT_SERVICE_NAME,
         "task_level": TASK_LEVEL_TASK,
     }
     try:
@@ -133,7 +152,18 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
         # названию нельзя, а показывать «настройка задана» при пустом id —
         # врать. Поэтому имя читается только вместе с id.
         "our_company_name": _text(config.get("billing_our_company_name")) if our_company_id else "",
-        "line_template": normalize_line_template(config.get("billing_line_template")),
+        "line_variant": normalize_line_variant(config.get("billing_line_variant")),
+        # Одиночный ключ остаётся формулировкой варианта «по задачам»: под
+        # ним она уже лежит в конфигурации порталов, и новый ключ с суффиксом
+        # «_task» стёр бы настроенный текст.
+        "line_template": normalize_line_template(
+            config.get("billing_line_template"), "task",
+        ),
+        "line_templates": {
+            variant: normalize_line_template(config.get(key), variant)
+            for variant, key in LINE_TEMPLATE_SETTING_KEYS.items()
+        },
+        "service_name": normalize_service_name(config.get("billing_service_name")),
         "task_level": task_level,
     }
 

@@ -35,6 +35,15 @@ export const BILLING_GROUPING_OPTIONS: Array<{ id: BillingGrouping, label: strin
   { id: 'single', label: 'Одной строкой', hint: 'Весь период одной строкой «Услуги по договору»' },
 ]
 
+/**
+ * Подпись пустого выбора: вариант берётся из настроек приложения.
+ *
+ * Мастер НЕ подставляет вариант сам. Пустое значение в форме означает «как в
+ * настройках», и сервер сам подставит вариант портала — иначе зашитая в
+ * форму константа перебивала бы настройку, ради которой она и заведена.
+ */
+export const BILLING_GROUPING_AS_SETTINGS_LABEL = 'Как в настройках приложения'
+
 const GROUPING_IDS = BILLING_GROUPING_OPTIONS.map(option => option.id)
 
 /**
@@ -47,6 +56,19 @@ export function normalizeBillingGrouping(raw: unknown): BillingGrouping {
   const value = String(raw ?? '').trim() as BillingGrouping
 
   return GROUPING_IDS.includes(value) ? value : 'task'
+}
+
+/**
+ * Выбор группировки В ФОРМЕ, где пусто — законное состояние «как в настройках».
+ *
+ * Отличается от normalizeBillingGrouping ровно этим: там пустое значение
+ * читается как «по задачам» (так отвечает сервер), здесь оно сохраняется, и
+ * тело запроса поля grouping не несёт вовсе.
+ */
+export function normalizeBillingGroupingChoice(raw: unknown): BillingGrouping | '' {
+  const value = String(raw ?? '').trim() as BillingGrouping
+
+  return GROUPING_IDS.includes(value) ? value : ''
 }
 
 /**
@@ -64,8 +86,11 @@ export function normalizeBillingGrouping(raw: unknown): BillingGrouping {
  * «Только оплачиваемые» и «исключить уже выставленное» включены по контракту
  * (billable_only и exclude_invoiced по умолчанию true).
  *
- * Группировка по умолчанию — ПО ЗАДАЧАМ, как и на сервере: в наименовании
- * работ должно стоять название задачи, а не имя карточки проекта.
+ * Группировка ПУСТА — «как в настройках приложения». Раньше здесь стояло
+ * зашитое «по задачам», и настройка «вариант наполнения по умолчанию» ничего
+ * бы не значила: форма перебивала бы её при каждом открытии мастера. Вариант
+ * подставляет сервер и возвращает его в ответе предпросмотра вместе с тем,
+ * откуда он взят.
  */
 export function createBillingFilterForm(now: Date = new Date()): BillingFilterForm {
   const range = getMonthRange(-1, now)
@@ -81,7 +106,7 @@ export function createBillingFilterForm(now: Date = new Date()): BillingFilterFo
     billableOnly: true,
     onlyClosedPeriods: true,
     excludeInvoiced: true,
-    grouping: 'task',
+    grouping: '',
   }
 }
 
@@ -126,7 +151,14 @@ export function buildBillingFilterBody(form: BillingFilterForm): BillingFilterBo
     billable_only: Boolean(form.billableOnly),
     only_closed_periods: Boolean(form.onlyClosedPeriods),
     exclude_invoiced: Boolean(form.excludeInvoiced),
-    grouping: normalizeBillingGrouping(form.grouping),
+  }
+
+  // Поле grouping отправляется ТОЛЬКО при выбранном варианте. Пустое
+  // значение — «как в настройках приложения», и присланное «task» сервер
+  // прочитал бы как осознанный выбор человека, перебив настройку портала.
+  const grouping = normalizeBillingGroupingChoice(form.grouping)
+  if (grouping) {
+    body.grouping = grouping
   }
 
   const companyId = String(form.companyId || '').trim()

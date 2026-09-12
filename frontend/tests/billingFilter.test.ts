@@ -9,6 +9,7 @@ import {
   createBillingFilterForm,
   createBillingRegistryFilter,
   normalizeBillingGrouping,
+  normalizeBillingGroupingChoice,
   parseTaskIdsInput,
   validateBillingFilter,
 } from '../app/utils/billingFilter'
@@ -21,7 +22,7 @@ test('createBillingFilterForm: по умолчанию прошлый месяц
   assert.equal(form.billableOnly, true)
   assert.equal(form.excludeInvoiced, true)
   assert.equal(form.onlyClosedPeriods, true)
-  assert.equal(form.grouping, 'task')
+  assert.equal(form.grouping, '')
 })
 
 test('createBillingFilterForm: январь берёт декабрь предыдущего года', () => {
@@ -40,23 +41,43 @@ test('normalizeBillingGrouping: чужая группировка превращ
   assert.equal(normalizeBillingGrouping(undefined), 'task')
 })
 
-test('createBillingFilterForm: группировка по умолчанию — по задачам', () => {
-  // Строка счёта обязана описывать работы. Группировка по проектам брала имя
-  // карточки проекта, и у клиента НУОЛАБ в счёт ушло «НУОЛАБ».
-  assert.equal(createBillingFilterForm(new Date(2026, 8, 12)).grouping, 'task')
-  assert.equal(buildBillingFilterBody(createBillingFilterForm(new Date(2026, 8, 12))).grouping, 'task')
+test('createBillingFilterForm: вариант наполнения берётся из настроек портала', () => {
+  // Раньше форма подставляла «по задачам» сама, и настройка «вариант
+  // наполнения по умолчанию» ничего не значила бы: форма перебивала бы её при
+  // каждом открытии мастера. Пустое значение — «как в настройках», и поля
+  // grouping в теле нет вовсе.
+  const form = createBillingFilterForm(new Date(2026, 8, 12))
+
+  assert.equal(form.grouping, '')
+  assert.equal('grouping' in buildBillingFilterBody(form), false)
+})
+
+test('buildBillingFilterBody: выбранный вариант отправляется и перебивает настройку', () => {
+  const form = { ...createBillingFilterForm(new Date(2026, 8, 12)), grouping: 'single' as const }
+
+  assert.equal(buildBillingFilterBody(form).grouping, 'single')
+})
+
+test('normalizeBillingGroupingChoice: пустой выбор сохраняется, чужой тоже пустеет', () => {
+  for (const option of BILLING_GROUPING_OPTIONS) {
+    assert.equal(normalizeBillingGroupingChoice(option.id), option.id)
+  }
+
+  assert.equal(normalizeBillingGroupingChoice(''), '')
+  assert.equal(normalizeBillingGroupingChoice('company'), '')
+  assert.equal(normalizeBillingGroupingChoice(undefined), '')
 })
 
 test('buildBillingFilterBody: в теле только поля контракта', () => {
   const form = createBillingFilterForm(new Date(2026, 8, 12))
   const body = buildBillingFilterBody(form)
 
+  // grouping в списке нет: вариант не выбран, и его подставит сервер.
   assert.deepEqual(Object.keys(body).sort(), [
     'billable_only',
     'date_from',
     'date_to',
     'exclude_invoiced',
-    'grouping',
     'only_closed_periods',
   ])
 })

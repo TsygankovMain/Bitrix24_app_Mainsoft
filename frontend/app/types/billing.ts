@@ -48,7 +48,12 @@ export interface BillingFilterForm {
   billableOnly: boolean
   onlyClosedPeriods: boolean
   excludeInvoiced: boolean
-  grouping: BillingGrouping
+  /**
+   * Выбранный вариант наполнения. ПУСТО — «как в настройках приложения»:
+   * тогда тело запроса поля grouping не несёт, и вариант подставляет сервер
+   * из настройки портала billing_line_variant.
+   */
+  grouping: BillingGrouping | ''
 }
 
 /** Тело POST /api/billing/preview и POST /api/billing/documents. */
@@ -63,7 +68,11 @@ export interface BillingFilterBody {
   billable_only: boolean
   only_closed_periods: boolean
   exclude_invoiced: boolean
-  grouping: BillingGrouping
+  /**
+   * Вариант наполнения. Поля НЕТ, когда вариант не выбран: сервер подставит
+   * его из настройки портала и вернёт в ответе вместе с grouping_source.
+   */
+  grouping?: BillingGrouping
 }
 
 /** Уровень задачи в строке счёта (настройка billing_line_task_level). */
@@ -124,6 +133,12 @@ export interface BillingPreviewResponse {
    * форму могли поправить, и подпись таблицы разошлась бы со строками.
    */
   grouping?: string | null
+  /**
+   * Откуда взялся вариант: `settings` — настройка портала, `request` — выбор
+   * в этом мастере. Показывается рядом с вариантом: без источника непонятно,
+   * где менять вариант навсегда.
+   */
+  grouping_source?: string | null
   task_level?: string | null
   entries_count?: number | null
   total_hours?: number | string | null
@@ -168,6 +183,15 @@ export interface BillingDocumentPayload {
   vat_rate?: number | string | null
   total_hours?: number | string | null
   total_amount?: number | string | null
+  /**
+   * Вариант наполнения, по которому документ собран, и уровень задачи на
+   * момент выставления. Нужны карточке, чтобы подписать таблицу строк:
+   * короткий счёт из одной строки без подписи читается как потерянная
+   * детализация. `task_level` может отсутствовать у документов, выставленных
+   * до появления настройки.
+   */
+  grouping?: string | null
+  task_level?: string | null
   crm_entity_id?: number | string | null
   crm_account_number?: string | null
   act_document_id?: number | string | null
