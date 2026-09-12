@@ -18,7 +18,25 @@
  * закрывает, а вкладка встанет на этап 2, когда появятся статьи и её
  * содержимое перестанет повторять этот экран.
  *
- * Расчётов в компоненте нет: всё в app/utils/bddsRegistry.ts.
+ * Расчётов в компоненте нет: всё в app/utils/bddsRegistry.ts и
+ * app/utils/bddsOperations.ts.
+ *
+ * БЛОК «ОПЕРАЦИИ» — то, чего в приложении не было вовсе. Серверные ручки
+ * операций (GET /api/finance-operations, POST .../create) включены ещё на
+ * этапе 1, но звала их только вкладка сделки, выключенная флагом и не
+ * регистрируемая при установке. То есть поступления и списания по проектам
+ * считались в бюджете, а завести или посмотреть их человек не мог нигде.
+ * Здесь они появляются: список постранично, форма добавления и показ того,
+ * как операция сказалась на бюджете.
+ *
+ * Три состояния блока различаются намеренно и по-разному:
+ *  - смарт-процесс операций не настроен (сервер отвечает 409
+ *    finance_spa_not_configured) — отказ со ссылкой в настройки. Пустой
+ *    список здесь был бы ложью: он читается как «операций нет»;
+ *  - операций нет — рабочее состояние с объяснением, откуда они берутся;
+ *  - права. Смотреть операции может любой, у кого открыт раздел; заводить —
+ *    администратор портала или «Бухгалтерия» из настроек, тот же список,
+ *    что выставляет счета (гейт на сервере — bdds_operations_manager_required).
  */
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref, watch } from 'vue'
@@ -43,12 +61,43 @@ import {
   getBudgetStatusBadgeClass,
 } from '~/utils/projectBoard'
 import { buildBoardUtilization, formatBoardActivity } from '~/utils/projectBoardView'
-import type { BddsProjectRecord } from '~/types/bdds'
+import BddsOperationForm from '~/components/finance/BddsOperationForm.vue'
+import BddsOperationsTable from '~/components/finance/BddsOperationsTable.vue'
+import {
+  BDDS_OPERATIONS_PAGE_SIZE,
+  BDDS_OPERATIONS_SETTINGS_PATH,
+  DEFAULT_BDDS_OPERATION_FILTERS,
+  describeBddsBudgetImpact,
+  describeBddsOperationDuplicate,
+  describeBddsOperationFormBlock,
+  describeBddsOperationsEmpty,
+  formatBddsOperationAmount,
+  formatBddsOperationDelta,
+  normalizeBddsOperation,
+  parseBddsOperationsPage,
+  sumBddsOperations,
+  type BddsOperationRow,
+} from '~/utils/bddsOperations'
+import type { BddsOperationCreatePayload, BddsProjectRecord } from '~/types/bdds'
 
 const route = useRoute()
 const router = useRouter()
 const apiStore = useApiStore()
 const { access } = useBddsFeature()
+
+/**
+ * Кто может ЗАВОДИТЬ операции.
+ *
+ * Тот же список, что выставляет счета: администратор портала или
+ * «Бухгалтерия» из настроек приложения (isBillingManager). Своего списка у
+ * БДДС не заводится сознательно — операция попадает в финансовый результат
+ * проекта ровно так же, как счёт, а второй перечень тех же людей
+ * гарантированно разойдётся с первым и заставит клиента заполнять две
+ * настройки вместо одной. Настоящая охрана — на сервере
+ * (bdds_operations_manager_required); здесь забота о человеке: не показывать
+ * форму, которую сервер всё равно отклонит.
+ */
+const { isManager, loadBillingSettings } = useBillingFeature()
 
 const { initApp, processErrorGlobal } = useAppInit('BddsProjectPage')
 const { $initializeB24Frame } = useNuxtApp()
@@ -74,6 +123,20 @@ const isLoading = ref(false)
 const error = ref<BddsErrorView | null>(null)
 const project = ref<BddsProjectRecord | null>(null)
 
+// --- Операции ---
+const operationRows = ref<BddsOperationRow[]>([])
+const operationsLoading = ref(false)
+const operationsError = ref<BddsErrorView | null>(null)
+const operationsHasMore = ref(false)
+const operationsTruncated = ref(false)
+const operationsEntityTypeId = ref<number | null>(null)
+const authorNames = ref<Record<string, string>>({})
+const formOpen = ref(false)
+const formSaving = ref(false)
+const formServerError = ref('')
+const impact = ref<ReturnType<typeof describeBddsBudgetImpact>>(null)
+const impactNotice = ref('')
+
 const projectId = computed(() => {
   const raw = Array.isArray(route.params.projectId) ? route.params.projectId[0] : route.params.projectId
   return String(raw || '').trim()
@@ -95,6 +158,121 @@ async function loadProject() {
     project.value = null
   } finally {
     isLoading.value = false
+  }
+}
+
+/** project_item_id: операции привязаны к элементу СП, а не к project_id. */
+const projectItemId = computed(() => String(project.value?.project_item_id || '').trim())
+
+/**
+ * Страница операций.
+ *
+ * `append` отличает «Показать ещё» от первой загрузки: дописать страницу и
+ * перерисовать список — разные вещи, и путать их значит либо терять
+ * прокрутку, либо копить дубли строк.
+ */
+async function loadOperations(options: { append?: boolean } = {}) {
+  if (!access.value.enabled || !projectItemId.value) {
+    operationRows.value = []
+    operationsHasMore.value = false
+    return
+  }
+
+  const append = Boolean(options.append)
+  operationsLoading.value = true
+  if (!append) {
+    operationsError.value = null
+  }
+
+  try {
+    const response = await apiStore.getFinanceOperations({
+      project_item_id: projectItemId.value,
+      limit: BDDS_OPERATIONS_PAGE_SIZE,
+      offset: append ? operationRows.value.length : 0,
+    })
+    const page = parseBddsOperationsPage(response)
+
+    operationRows.value = append ? [...operationRows.value, ...page.rows] : page.rows
+    operationsHasMore.value = page.hasMore
+    operationsTruncated.value = page.truncated
+    operationsEntityTypeId.value = page.entityTypeId
+    operationsError.value = null
+    await loadAuthorNames()
+  } catch (e) {
+    operationsError.value = describeBddsError(e)
+    if (!append) {
+      operationRows.value = []
+      operationsHasMore.value = false
+    }
+  } finally {
+    operationsLoading.value = false
+  }
+}
+
+/**
+ * Имена авторов операций.
+ *
+ * Справочник спрашиваем ОДИН раз на экран и только когда есть кого
+ * называть. Страница справочника ограничена сервером (лимит 200), поэтому
+ * отсутствующее имя рисуется как «сотрудник #id», а не как пустая ячейка:
+ * по id человека находят в портале, по пустоте — нет.
+ */
+async function loadAuthorNames() {
+  const needed = operationRows.value.some(row => row.authorId && !authorNames.value[row.authorId])
+  if (!needed || Object.keys(authorNames.value).length > 0) {
+    return
+  }
+
+  try {
+    const response = await apiStore.getUsers(1, 200, false)
+    const map: Record<string, string> = {}
+    for (const item of response.items || []) {
+      map[String(item.id)] = [item.last_name, item.name].filter(Boolean).join(' ').trim()
+    }
+    authorNames.value = map
+  } catch {
+    // Справочник — украшение списка, а не его условие: без имён показываем id.
+    authorNames.value = {}
+  }
+}
+
+/**
+ * Сохранение операции и пересчёт бюджета.
+ *
+ * Бюджет НЕ считается на клиенте: перечитываем карточку проекта у сервера и
+ * сравниваем снимок до и после. Любая своя формула здесь была бы вторым
+ * ответом на вопрос, на который уже отвечает project_budget_service, — и
+ * однажды разошлась бы с ним.
+ */
+async function saveOperation(payload: BddsOperationCreatePayload) {
+  formSaving.value = true
+  formServerError.value = ''
+  impact.value = null
+  impactNotice.value = ''
+
+  const before = project.value
+
+  try {
+    const result = await apiStore.createFinanceOperation(payload)
+
+    if (result.status === 'duplicate') {
+      impactNotice.value = describeBddsOperationDuplicate(
+        result.operation ? normalizeBddsOperation(result.operation) : null
+      )
+    } else {
+      impactNotice.value = 'Операция записана в смарт-процесс портала.'
+      formOpen.value = false
+    }
+
+    await loadProject()
+    await loadOperations()
+    impact.value = describeBddsBudgetImpact(before, project.value)
+  } catch (e) {
+    formServerError.value = [describeBddsError(e).title, describeBddsError(e).hint]
+      .filter(Boolean)
+      .join(' ')
+  } finally {
+    formSaving.value = false
   }
 }
 
@@ -165,7 +343,39 @@ const kpis = computed(() => {
   ]
 })
 
-const operations = computed(() => project.value?.recent_finance_operations || [])
+/** Смарт-процесс не настроен — это отдельное состояние, а не пустой список. */
+const operationsNotConfigured = computed(() => Boolean(operationsError.value?.isSmartProcessMissing))
+
+/** Прочие отказы списка операций — обычной плашкой над таблицей. */
+const operationsOtherError = computed(
+  () => operationsError.value && !operationsError.value.isSmartProcessMissing
+    ? operationsError.value
+    : null
+)
+
+/** Сумма ЗАГРУЖЕННЫХ операций. Подписана в шаблоне именно так. */
+const loadedTotals = computed(() => sumBddsOperations(operationRows.value))
+
+const operationsEmptyText = computed(() => describeBddsOperationsEmpty({
+  filtersActive: 0,
+  scope: 'project',
+}))
+
+const canCreateOperation = computed(() => Boolean(isManager.value))
+
+const formBlockReason = computed(() => describeBddsOperationFormBlock({
+  projectItemId: projectItemId.value,
+  canCreate: canCreateOperation.value,
+}))
+
+function openAllOperations() {
+  const query = projectItemId.value ? `?project=${encodeURIComponent(projectItemId.value)}` : ''
+  void router.push(`/finance/bdds/operations${query}`)
+}
+
+function openFieldSettings() {
+  void router.push(BDDS_OPERATIONS_SETTINGS_PATH)
+}
 
 useHead({
   title: computed(() => project.value
@@ -175,14 +385,17 @@ useHead({
 
 watch(() => access.value.enabled, (enabled) => {
   if (enabled && isReady.value) {
-    void loadProject()
+    void loadProject().then(() => loadOperations())
   }
 })
 
 /** Смена проекта в адресе — новая загрузка: страница одна на все проекты. */
 watch(projectId, () => {
   if (isReady.value) {
-    void loadProject()
+    formOpen.value = false
+    impact.value = null
+    impactNotice.value = ''
+    void loadProject().then(() => loadOperations())
   }
 })
 
@@ -196,7 +409,13 @@ onMounted(async () => {
     return
   }
 
+  // Настройки «Бухгалтерии» нужны, чтобы решить, показывать ли форму.
+  // Отказ этого запроса не должен мешать чтению операций: без него человек
+  // считается не-менеджером, и форма просто не появится.
+  void loadBillingSettings()
+
   await loadProject()
+  await loadOperations()
 })
 </script>
 
@@ -284,41 +503,107 @@ onMounted(async () => {
         <p class="text-xs text-slate-400">{{ BDDS_FORECAST_METHOD_HINT }}</p>
       </section>
 
-      <section class="ms-surface flex flex-col gap-3 p-5">
-        <h2 class="text-base font-semibold text-slate-900">Последние операции смарт-процесса</h2>
+      <section class="ms-surface flex flex-col gap-4 p-5">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h2 class="text-base font-semibold text-slate-900">Операции</h2>
+            <p class="mt-1 text-sm text-slate-500">
+              Поступления и списания по проекту мимо часов: авансы, этапы договора, подрядчики,
+              лицензии. Живут в смарт-процессе «Доходы-расходы» на портале — приложение их читает
+              и заводит, но не хранит.
+            </p>
+          </div>
 
-        <p v-if="!operations.length" class="text-sm text-slate-500">
-          Операций по этому проекту не видно. Поступления и внешние платежи ведутся в смарт-процессе
-          «Доходы-расходы (App)» на портале; если он не настроен, план и факт по часам всё равно считаются.
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            <B24Button
+              v-if="canCreateOperation && projectItemId && !operationsNotConfigured"
+              :label="formOpen ? 'Свернуть форму' : 'Добавить операцию'"
+              color="success"
+              @click="formOpen = !formOpen"
+            />
+            <B24Button label="Все операции" color="link" @click="openAllOperations" />
+          </div>
+        </div>
+
+        <p v-if="formBlockReason && !operationsNotConfigured" class="ms-note ms-note-info">
+          {{ formBlockReason }}
         </p>
 
-        <div v-else class="ms-table-shell">
-          <table class="ms-table">
-            <thead>
-              <tr>
-                <th>Дата</th>
-                <th>Тип</th>
-                <th class="text-right">Сумма</th>
-                <th>Источник</th>
-                <th>Комментарий</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(operation, index) in operations" :key="operation.id || index">
-                <td>{{ formatProjectDate(operation.operation_date) }}</td>
-                <td>{{ operation.operation_type === 'income' ? 'Поступление' : 'Выбытие' }}</td>
-                <td
-                  class="text-right"
-                  :class="operation.operation_type === 'income' ? 'text-emerald-700' : 'text-rose-700'"
-                >
-                  {{ formatProjectCurrency(operation.amount) }}
-                </td>
-                <td>{{ operation.source || '—' }}</td>
-                <td>{{ operation.comment || '—' }}</td>
-              </tr>
-            </tbody>
-          </table>
+        <div v-if="formOpen" class="ms-panel-muted">
+          <BddsOperationForm
+            :project-item-id="projectItemId || null"
+            :project-name="project.project_name"
+            :saving="formSaving"
+            :server-error="formServerError"
+            @submit="saveOperation"
+            @cancel="formOpen = false"
+          />
         </div>
+
+        <p v-if="impactNotice" class="ms-note ms-note-success">{{ impactNotice }}</p>
+
+        <!--
+          Влияние на бюджет: до -> после по ответам сервера.
+
+          Остаток и факт затрат здесь часто «без изменений», и это не сбой:
+          они считаются по списанным часам, а операция идёт в финансовый
+          результат. Поясняющая строка под таблицей обязательна — иначе
+          человек, добавивший расход, пойдёт искать поломку.
+        -->
+        <div v-if="impact" class="ms-panel-muted flex flex-col gap-2">
+          <p class="text-sm font-medium text-slate-700">Как изменился бюджет проекта</p>
+          <div class="ms-table-shell">
+            <table class="ms-table min-w-[520px]">
+              <thead>
+                <tr>
+                  <th>Показатель</th>
+                  <th class="text-right">До</th>
+                  <th class="text-right">После</th>
+                  <th class="text-right">Изменение</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in impact.rows" :key="row.id">
+                  <td>{{ row.label }}</td>
+                  <td class="text-right">{{ formatBddsOperationAmount(row.before) }}</td>
+                  <td class="text-right">{{ formatBddsOperationAmount(row.after) }}</td>
+                  <td
+                    class="text-right"
+                    :class="row.changed ? 'font-semibold text-slate-900' : 'text-slate-400'"
+                  >
+                    {{ formatBddsOperationDelta(row.delta) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-if="impact.note" class="text-xs text-slate-500">{{ impact.note }}</p>
+        </div>
+
+        <div v-if="operationsOtherError" class="ms-note ms-note-danger">
+          <p class="font-medium">{{ operationsOtherError.title }}</p>
+          <p v-if="operationsOtherError.hint" class="mt-1 text-sm">{{ operationsOtherError.hint }}</p>
+        </div>
+
+        <BddsOperationsTable
+          :rows="operationRows"
+          :author-names="authorNames"
+          :entity-type-id="operationsEntityTypeId"
+          :loading="operationsLoading"
+          :has-more="operationsHasMore"
+          :truncated="operationsTruncated"
+          :not-configured="operationsNotConfigured"
+          :empty-text="operationsEmptyText"
+          @load-more="loadOperations({ append: true })"
+          @open-settings="openFieldSettings"
+        />
+
+        <p v-if="operationRows.length" class="text-xs text-slate-500">
+          Загружено {{ loadedTotals.count }} оп.: поступления
+          {{ formatBddsOperationAmount(loadedTotals.income) }}, списания
+          {{ formatBddsOperationAmount(loadedTotals.expense) }}. Это сумма ПОКАЗАННЫХ строк,
+          а не всей истории проекта — итоги по выборке считает реестр операций.
+        </p>
       </section>
     </template>
 

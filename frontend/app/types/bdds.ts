@@ -147,3 +147,59 @@ export interface BddsNotifierRunResult {
     recipients?: string[]
   }>
 }
+
+// ---------------------------------------------------------------------------
+// Операции «поступление / списание» по проектам
+// ---------------------------------------------------------------------------
+//
+// Ответ GET /api/finance-operations. Сама операция описана ОДИН раз —
+// ProjectFinanceOperationRecord в types/project-board.ts, и второго описания
+// здесь не появляется: это те же элементы смарт-процесса, что участвуют в
+// расчёте бюджета проекта. Здесь только обвязка страницы: сколько их,
+// есть ли ещё и итоги по выборке.
+
+/** Тип операции в интерфейсе. Строка — потому что портал пишет по-разному. */
+export type BddsOperationType = 'income' | 'expense'
+
+/** Итоги по ВЫБОРКЕ (не по видимой странице): сервер считает при totals=1. */
+export interface BddsOperationTotals {
+  income: number
+  expense: number
+  /** Поступления минус списания. Не финрезультат проекта: часов здесь нет. */
+  net: number
+  count: number
+}
+
+export interface BddsOperationsResponse {
+  operations: ProjectFinanceOperationRecord[]
+  count: number
+  entity_type_id?: number
+  offset?: number
+  limit?: number
+  /**
+   * Всего операций в выборке — либо null.
+   *
+   * null означает «сервер не считал»: на коротком пути он видел окно
+   * страницы, а не всю выборку. Показывать вместо этого длину окна значило
+   * бы выдать 21 операцию за все операции проекта.
+   */
+  total?: number | null
+  has_more?: boolean
+  /** Выборка длиннее предела одного прохода: показано не всё. */
+  truncated?: boolean
+  totals?: BddsOperationTotals | null
+}
+
+export interface BddsOperationCreatePayload {
+  project_item_id: string
+  operation_type: BddsOperationType
+  amount: number
+  operation_date: string
+  /** Назначение платежа — заголовок элемента смарт-процесса. */
+  title?: string | null
+  comment?: string | null
+  currency?: string | null
+  source?: string | null
+  deal_id?: string | null
+  responsible_user_id?: string | null
+}

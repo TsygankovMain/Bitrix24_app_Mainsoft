@@ -154,6 +154,21 @@ function resetFilters() {
   filters.value = { ...DEFAULT_BDDS_FILTERS }
 }
 
+/**
+ * Реестр операций, отфильтрованный по этому проекту.
+ *
+ * Ведём по project_item_id, а не по project_id: операции привязаны к
+ * элементу смарт-процесса проекта, и фильтр реестра работает по нему же.
+ */
+function openProjectOperations(projectItemId: string | null) {
+  const id = String(projectItemId || '').trim()
+  if (!id) {
+    return
+  }
+
+  void router.push(`/finance/bdds/operations?project=${encodeURIComponent(id)}`)
+}
+
 function openProject(projectId: string) {
   const id = String(projectId || '').trim()
   if (!id) {
@@ -197,6 +212,12 @@ onMounted(async () => {
   >
     <template #actions>
       <B24Button label="Обновить" color="default" :loading="isLoading" @click="loadProjects" />
+      <!--
+        Вход в реестр операций. Он живёт отдельным экраном, а не второй
+        таблицей здесь: у этого реестра строка — проект, у того — документ,
+        и фильтры у них разные (см. докстринг operations.client.vue).
+      -->
+      <B24Button label="Операции" color="default" @click="router.push('/finance/bdds/operations')" />
       <B24Button label="Проекты" color="link" @click="router.push('/projects')" />
     </template>
 
@@ -446,6 +467,13 @@ onMounted(async () => {
             label="Открыть бюджет проекта"
             color="default"
             @click="openProject(selectedProject.project_id)"
+          />
+
+          <B24Button
+            v-if="selectedProject.project_item_id"
+            label="Операции проекта"
+            color="link"
+            @click="openProjectOperations(selectedProject.project_item_id)"
           />
         </aside>
       </div>

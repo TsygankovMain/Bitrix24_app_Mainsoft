@@ -78,7 +78,7 @@ from .company_search_service import CompanySearchService
 from .project_creation_service import ProjectCreationService
 from .billing_crm_service import BillingCrmService
 from .bdds_service import BddsService
-from .bdds_settings import load_bdds_settings
+from .bdds_settings import bdds_operations_manager_required, load_bdds_settings
 from .billing_features import FEATURE_BDDS, FEATURE_BILLING, feature_required, feature_states
 from .finance_operation_service import FinanceOperationService
 from .project_budget_notifier import ProjectBudgetNotifier
@@ -3604,17 +3604,28 @@ def get_finance_operations(request: AuthorizedRequest):
     (часы, отчёты, проекты), не настроена именно эта функция, и текст отказа
     обязан вести в настройки, а не в поддержку.
     """
-    try:
-        limit = int(request.GET.get("limit") or 20)
-    except (TypeError, ValueError):
-        limit = 20
+    def _int_param(name: str, default: int) -> int:
+        try:
+            return int(request.GET.get(name) or default)
+        except (TypeError, ValueError):
+            return default
+
+    # totals=1 просит ИТОГИ ПО ВЫБОРКЕ, а не по странице, и это отдельный
+    # параметр, потому что стоит полного прохода по смарт-процессу: карточке
+    # проекта итоги не нужны (там их считает бюджет), реестру — нужны.
+    with_totals = str(request.GET.get("totals") or "").strip().lower() in {"1", "true", "yes", "y"}
 
     service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
     try:
         payload = service.list_operations(
             project_item_id=request.GET.get("project_item_id"),
             deal_id=request.GET.get("deal_id"),
-            limit=limit,
+            limit=_int_param("limit", 20),
+            offset=_int_param("offset", 0),
+            date_from=request.GET.get("date_from"),
+            date_to=request.GET.get("date_to"),
+            operation_type=request.GET.get("operation_type"),
+            with_totals=with_totals,
         )
     except ValueError as exc:
         return JsonResponse(
@@ -3630,6 +3641,7 @@ def get_finance_operations(request: AuthorizedRequest):
 @log_errors("create_finance_operation")
 @auth_required
 @feature_required(FEATURE_BDDS)
+@bdds_operations_manager_required
 @rate_limit("finance_operation_create", 20, 60, key="account")
 def create_finance_operation(request: AuthorizedRequest):
     """Создание операции в смарт-процессе портала.
@@ -3638,6 +3650,12 @@ def create_finance_operation(request: AuthorizedRequest):
     повтор возвращает status=duplicate с уже существующим элементом, а не
     второй элемент с той же суммой. Двойной клик по «Сохранить» на слабой
     связи — самый обычный сценарий, и он не должен раздваивать деньги.
+
+    Права — @bdds_operations_manager_required: администратор портала или
+    «Бухгалтерия» из настроек, тот же список, что у выставления счёта (см.
+    bdds_settings). ЧТЕНИЕ операций открыто всем, у кого есть подписка:
+    реестр не показывает ничего, чего человек не увидел бы в самом
+    смарт-процессе на портале.
     """
     service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
     try:

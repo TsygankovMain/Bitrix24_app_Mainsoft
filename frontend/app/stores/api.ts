@@ -87,6 +87,32 @@ type FinanceOperationsResponse = {
   operations: FinanceOperationRecord[]
   count: number
   entity_type_id?: number
+  offset?: number
+  limit?: number
+  /** null — сервер не считал: он видел окно страницы, а не всю выборку. */
+  total?: number | null
+  has_more?: boolean
+  truncated?: boolean
+  totals?: { income: number, expense: number, net: number, count: number } | null
+}
+
+/** Что можно спросить у GET /api/finance-operations. */
+type FinanceOperationsQuery = {
+  project_item_id?: string | null
+  deal_id?: string | null
+  limit?: number
+  offset?: number
+  /** Границы периода — ТОЛЬКО ISO (ГГГГ-ММ-ДД): прочее сервер отбросит. */
+  date_from?: string | null
+  date_to?: string | null
+  operation_type?: string | null
+  /**
+   * Итоги по всей выборке.
+   *
+   * Просить только там, где они нужны: на сервере это полный проход по
+   * смарт-процессу. Карточке проекта незачем — там итоги считает бюджет.
+   */
+  totals?: boolean
 }
 
 type FinanceOperationCreatePayload = {
@@ -96,6 +122,8 @@ type FinanceOperationCreatePayload = {
   amount: number
   currency?: string | null
   operation_date: string
+  /** Назначение платежа — заголовок элемента смарт-процесса. */
+  title?: string | null
   source?: string | null
   comment?: string | null
   responsible_user_id?: string | null
@@ -1011,12 +1039,16 @@ export const useApiStore = defineStore(
     // деньги, и показать вчерашний остаток бюджета из localStorage хуже, чем
     // подождать запрос.
 
-    /** Операции «доход/расход» смарт-процесса портала. */
-    const getFinanceOperations = async (params: {
-      project_item_id?: string | null
-      deal_id?: string | null
-      limit?: number
-    }): Promise<FinanceOperationsResponse> => {
+    /**
+     * Операции «поступление/списание» смарт-процесса портала, страницей.
+     *
+     * Постраничность серверная (offset), а не «загрузить всё и нарезать на
+     * клиенте»: операций у портала могут быть тысячи, и тянуть их целиком в
+     * браузер ради двадцати видимых строк незачем.
+     */
+    const getFinanceOperations = async (
+      params: FinanceOperationsQuery
+    ): Promise<FinanceOperationsResponse> => {
       const search = new URLSearchParams()
       if (params.project_item_id) {
         search.set('project_item_id', String(params.project_item_id))
@@ -1026,6 +1058,21 @@ export const useApiStore = defineStore(
       }
       if (params.limit && Number(params.limit) > 0) {
         search.set('limit', String(params.limit))
+      }
+      if (params.offset && Number(params.offset) > 0) {
+        search.set('offset', String(params.offset))
+      }
+      if (params.date_from) {
+        search.set('date_from', String(params.date_from))
+      }
+      if (params.date_to) {
+        search.set('date_to', String(params.date_to))
+      }
+      if (params.operation_type) {
+        search.set('operation_type', String(params.operation_type))
+      }
+      if (params.totals) {
+        search.set('totals', '1')
       }
 
       const query = search.toString()
