@@ -1682,6 +1682,59 @@ export const useApiStore = defineStore(
     }
     // endregion ////
 
+    // region Покупка Pro ////
+    // Сервер — backends/python/api/main/pro_purchase_service.py. Портал заявки
+    // сервер берёт из авторизации: ни домена, ни member_id в запросах нет.
+    // Кэша нет: суммы и статус счёта показываем только свежими.
+
+    /** Цены по срокам, НДС, портал и код, контакт, текущая заявка, можно ли запрашивать. */
+    const getProOffer = async (): Promise<unknown> => {
+      return await $api('/api/pro/offer', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Реквизиты из CRM портала: без ИНН — свои юрлица, с ИНН — поиск. */
+    const getProRequisites = async (inn?: string): Promise<unknown> => {
+      const query = inn ? `?inn=${encodeURIComponent(inn)}` : ''
+
+      return await $api(`/api/pro/requisites${query}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Создать заявку на счёт. 400 — ошибки полей в errors. */
+    const createProRequest = async (body: Record<string, unknown>): Promise<unknown> => {
+      return await $api('/api/pro/requests', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body,
+      })
+    }
+
+    const getProCurrentRequest = async (): Promise<unknown> => {
+      return await $api('/api/pro/requests/current', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const cancelProRequest = async (id: string, reason = ''): Promise<unknown> => {
+      return await $api(`/api/pro/requests/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { reason },
+      })
+    }
+
+    /** PDF счёта через наш сервер. */
+    const downloadProInvoice = async (id: string): Promise<Blob> => {
+      return await $api(`/api/pro/requests/${encodeURIComponent(id)}/invoice.pdf`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        responseType: 'blob',
+      })
+    }
+    // endregion ////
+
     return {
       /**
        * Есть ли рабочий токен.
@@ -1780,7 +1833,14 @@ export const useApiStore = defineStore(
       printBillingAct,
       printBillingInvoiceForm,
       getBillingTemplates,
-      exportBillingDetail
+      exportBillingDetail,
+
+      getProOffer,
+      getProRequisites,
+      createProRequest,
+      getProCurrentRequest,
+      cancelProRequest,
+      downloadProInvoice
     }
   }
 )

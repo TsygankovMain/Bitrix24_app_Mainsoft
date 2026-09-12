@@ -22,6 +22,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import LockIcon from '@bitrix24/b24icons-vue/main/LockIcon'
 import SettingsIcon from '@bitrix24/b24icons-vue/main/SettingsIcon'
+import ProNavButton from '~/components/pro/ProNavButton.vue'
+import ProFinanceFooter from '~/components/pro/ProFinanceFooter.vue'
+import { shouldShowProNavButton } from '~/utils/proPurchase'
 import {
   buildAppNavigation,
   buildOverflowSection,
@@ -40,6 +43,8 @@ const route = useRoute()
 
 /** Ширина, которую забирает шестерёнка справа. Ей место в ряду резервируем заранее. */
 const SETTINGS_SLOT_WIDTH = 56
+/** Кнопка «Купить Pro» справа (бейдж срока на узких экранах прячется). */
+const PRO_SLOT_WIDTH = 170
 
 const controlIssues = useState<number | null>(NAV_CONTROL_ISSUES_STATE_KEY, () => null)
 
@@ -103,7 +108,9 @@ const sections = computed<NavSection[]>(() => buildAppNavigation({
 
 const split = computed(() => splitNavigationByWidth(
   sections.value,
-  barWidth.value > 0 ? barWidth.value - SETTINGS_SLOT_WIDTH : 0
+  barWidth.value > 0
+    ? barWidth.value - SETTINGS_SLOT_WIDTH - (shouldShowProNavButton(route.path) ? PRO_SLOT_WIDTH : 0)
+    : 0
 ))
 
 const overflowSection = computed(() => buildOverflowSection(split.value.overflow))
@@ -234,10 +241,12 @@ function linkClasses(link: NavLink) {
               </span>
             </NuxtLink>
           </div>
+          <ProFinanceFooter v-if="sectionOf(item)?.id === 'finance'" @navigate="openSectionId = ''" />
         </div>
       </template>
 
       <template #list-trailing>
+        <ProNavButton />
         <!--
           Шестерёнка — выпадающий список, а не прямая ссылка.
 

@@ -4392,3 +4392,250 @@ def roles_assign(request: AuthorizedRequest):
     if normalize_role(role) is None:
         return JsonResponse({"error": "Такой роли нет.", "code": "unknown_role"}, status=400)
     return _roles_assign(request, payload.get("user_id"), role)
+
+
+# ---------------------------------------------------------------------------
+# Покупка Pro: заявка на счёт (main/pro_purchase_service.py)
+# ---------------------------------------------------------------------------
+#
+# Портал заявки — ТОЛЬКО из авторизации (request.bitrix24_account), тело
+# запроса портал не задаёт: запросить счёт на чужой портал нельзя. Право —
+# «выставлять счета» ролевой модели (администратор и «Бухгалтерия», при
+# ролях и без них — main/roles.py). Подписка на эти ручки не нужна: купить
+# Pro можно как раз без Pro.
+
+
+def pro_request_required(view_func):
+    """Гейт «запросить счёт на Pro». Применять ПОСЛЕ @auth_required."""
+    from functools import wraps
+
+    from .pro_purchase_service import can_request_pro
+
+    @wraps(view_func)
+    def wrapped(request, *args, **kwargs):
+        if not can_request_pro(getattr(request, "bitrix24_account", None)):
+            return JsonResponse(
+                {
+                    "error": "Счёт на Pro запрашивает администратор портала или сотрудник "
+                             "с ролью «Бухгалтерия».",
+                    "code": "pro_request_forbidden",
+                },
+                status=403,
+            )
+        return view_func(request, *args, **kwargs)
+
+    return wrapped
+
+
+def _pro_error(exc) -> JsonResponse:
+    return JsonResponse(exc.as_payload(), status=exc.status)
+
+
+def _pro_request_of_portal(request: AuthorizedRequest, request_id: str):
+    """Заявка ТОЛЬКО своего портала; чужая неотличима от несуществующей."""
+    import uuid as _uuid
+
+    from .models import ProRequest
+    from .pro_purchase_service import portal_for_account
+
+    try:
+        _uuid.UUID(str(request_id))
+    except ValueError:
+        return None
+    portal = portal_for_account(request.bitrix24_account)
+    return ProRequest.objects.filter(pk=request_id, portal=portal).first()
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_offer")
+@auth_required
+def pro_offer(request: AuthorizedRequest):
+    """Всё для экрана /pro одним ответом: цены по срокам, НДС, портал и код,
+    контакт, состояние подписки, текущая заявка, можно ли запрашивать счёт."""
+    from .pro_purchase_service import PurchaseError, build_offer, can_request_pro
+
+    try:
+        payload = build_offer(request.bitrix24_account, can_request=can_request_pro(request.bitrix24_account))
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_quote")
+@auth_required
+def pro_quote(request: AuthorizedRequest):
+    """Сумма за срок (?months=N). Считает только сервер."""
+    from .pro_purchase_service import PurchaseError, portal_for_account, quote_for
+
+    try:
+        quote = quote_for(portal_for_account(request.bitrix24_account), request.GET.get("months"))
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    return JsonResponse(quote.as_payload())
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_requisites")
+@auth_required
+@pro_request_required
+@rate_limit("pro_requisites", 30, 60, key="account")
+def pro_requisites(request: AuthorizedRequest):
+    """Реквизиты из CRM портала клиента.
+
+    Без ?inn — свои юрлица с реквизитами (подсказки формы); с ?inn — поиск
+    реквизита по ИНН. Внешнего справочника ЕГРЮЛ в этой версии нет.
+    """
+    from .inn_validation import validate_inn
+    from .pro_purchase_service import lookup_requisites_by_inn, my_company_requisites
+
+    inn = "".join(str(request.GET.get("inn") or "").split())
+    if not inn:
+        return JsonResponse(my_company_requisites(request.bitrix24_account))
+    error = validate_inn(inn)
+    if error:
+        return JsonResponse({"error": error, "code": "inn_invalid"}, status=400)
+    return JsonResponse(lookup_requisites_by_inn(request.bitrix24_account, inn))
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("pro_requests_create")
+@auth_required
+@pro_request_required
+@rate_limit("pro_requests_create", 10, 600, key="account")
+def pro_requests_create(request: AuthorizedRequest):
+    """Создать заявку на счёт и отправить её в CRM Mainsoft.
+
+    Заявка сохраняется до обращения к CRM: недоступный портал Mainsoft или
+    ненастроенный вебхук оставляют её со статусом «ожидает отправки».
+    """
+    from .pro_purchase_crm import load_crm_settings
+    from .pro_purchase_service import PurchaseError, create_request, dispatch, serialize_request
+
+    payload = _load_request_json(request)
+    try:
+        result = create_request(request.bitrix24_account, payload)
+    except PurchaseError as exc:
+        return _pro_error(exc)
+
+    crm_settings = load_crm_settings()
+    if result.replaced is not None:
+        from .pro_purchase_service import sync_cancellation
+
+        sync_cancellation(result.replaced, crm_settings=crm_settings)
+    pro_request = dispatch(result.request, crm_settings=crm_settings, use_env=False)
+    return JsonResponse(
+        {
+            "request": serialize_request(pro_request, crm_settings=crm_settings),
+            "replaced_invoice_number": result.replaced.invoice_number if result.replaced else None,
+            "updated_in_place": result.updated_in_place,
+            "crm_mode": "auto" if crm_settings is not None else "manual",
+        },
+        status=200 if result.updated_in_place else 201,
+    )
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_requests_current")
+@auth_required
+def pro_requests_current(request: AuthorizedRequest):
+    """Текущая заявка портала и её статус. Сотруднику без права — без реквизитов."""
+    from .pro_purchase_crm import load_crm_settings
+    from .pro_purchase_service import (
+        PurchaseError,
+        can_request_pro,
+        current_request,
+        portal_for_account,
+        serialize_request,
+    )
+
+    account = request.bitrix24_account
+    try:
+        pro_request = current_request(portal_for_account(account))
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    if pro_request is None:
+        return JsonResponse({"request": None})
+    return JsonResponse({
+        "request": serialize_request(pro_request, full=can_request_pro(account), crm_settings=load_crm_settings()),
+    })
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("pro_requests_cancel")
+@auth_required
+@pro_request_required
+@rate_limit("pro_requests_cancel", 20, 600, key="account")
+def pro_requests_cancel(request: AuthorizedRequest, request_id: str):
+    from .pro_purchase_crm import load_crm_settings
+    from .pro_purchase_service import PurchaseError, cancel_request, display_name, serialize_request
+
+    try:
+        pro_request = _pro_request_of_portal(request, request_id)
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    if pro_request is None:
+        return JsonResponse({"error": "Заявка не найдена.", "code": "not_found"}, status=404)
+    account = request.bitrix24_account
+    reason = str(_load_request_json(request).get("reason") or "").strip()[:500]
+    crm_settings = load_crm_settings()
+    try:
+        cancel_request(
+            pro_request,
+            actor=display_name(account) or f"user:{account.b24_user_id}",
+            reason=reason or "Отменена в приложении",
+            crm_settings=crm_settings,
+        )
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    return JsonResponse({"request": serialize_request(pro_request, crm_settings=crm_settings)})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_requests_invoice_pdf")
+@auth_required
+@pro_request_required
+@rate_limit("pro_requests_invoice_pdf", 20, 60, key="account")
+def pro_requests_invoice_pdf(request: AuthorizedRequest, request_id: str):
+    """PDF счёта через наш сервер: ссылка генератора документов наружу не отдаётся."""
+    from . import pro_purchase_service
+    from .pro_purchase_crm import CrmSyncError, load_crm_settings
+    from .pro_purchase_service import PurchaseError
+
+    try:
+        pro_request = _pro_request_of_portal(request, request_id)
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    if pro_request is None:
+        return JsonResponse({"error": "Заявка не найдена.", "code": "not_found"}, status=404)
+    crm_settings = load_crm_settings()
+    if not pro_request.crm_pdf_url or crm_settings is None:
+        return JsonResponse(
+            {"error": "PDF счёта ещё не готов — пришлём его на почту.", "code": "pdf_not_ready"},
+            status=404,
+        )
+    from urllib.parse import urlsplit
+
+    # Скачиваем только с портала Mainsoft: ссылка пришла из ответа REST, и
+    # ходить сервером по произвольному адресу из базы незачем.
+    pdf_url = urlsplit(pro_request.crm_pdf_url)
+    if pdf_url.scheme != "https" or pdf_url.netloc != urlsplit(crm_settings.webhook).netloc:
+        return JsonResponse({"error": "PDF счёта недоступен — пришлём его на почту.", "code": "pdf_unavailable"},
+                            status=502)
+    try:
+        content = pro_purchase_service.build_transport(crm_settings).fetch_bytes(pro_request.crm_pdf_url)
+    except CrmSyncError as exc:
+        return JsonResponse({"error": str(exc), "code": "pdf_unavailable"}, status=502)
+    response = HttpResponse(content, content_type="application/pdf")
+    filename = f"Счёт-{pro_request.invoice_number}.pdf"
+    response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return response

@@ -6,9 +6,9 @@
  * PLAN_FEATURES. Биллинг по порталу, цена по умолчанию 3000 ₽ в месяц; если
  * сервер прислал другую цену (price_month_rub в /api/features), показываем её.
  *
- * Формы запроса счёта пока нет. Кнопка «Подключить Pro» ведёт на заглушку
- * /pro (app/pages/pro.client.vue) — это единственная точка, которую позже
- * заменит форма, поэтому маршрут и тексты живут здесь, а не в разметке.
+ * Все кнопки «Купить Pro» ведут на /pro (app/pages/pro.client.vue) — форму
+ * запроса счёта. Её модель, проверки и тексты состояний —
+ * app/utils/proPurchase.ts.
  *
  * Всё чистыми функциями и без Vue: node:test через tsx не резолвит .vue.
  */
@@ -17,11 +17,10 @@ export const PRO_PLAN_CODE = 'pro'
 export const PRO_PLAN_LABEL = 'Pro'
 export const PRO_PRICE_MONTH_RUB = 3000
 
-/** Маршрут, куда ведёт «Подключить Pro». Позже здесь будет форма запроса счёта. */
+/** Маршрут формы запроса счёта на Pro. */
 export const PRO_ROUTE = '/pro'
-export const PRO_CTA_LABEL = 'Подключить Pro'
+export const PRO_CTA_LABEL = 'Купить Pro'
 export const PRO_CONTACT_EMAIL = 'timesheet@mainsoft.su'
-export const PRO_STUB_TEXT = `Скоро здесь можно будет запросить счёт; пока напишите на ${PRO_CONTACT_EMAIL}`
 
 const NBSP = '\u00A0'
 
@@ -34,10 +33,9 @@ export function proPriceText(price: unknown = PRO_PRICE_MONTH_RUB): string {
 }
 
 /**
- * Адрес «Подключить Pro» с функцией, с которой человек пришёл.
- *
- * Параметр нужен будущей форме (какую функцию хотели), заглушке — чтобы
- * вернуть человека назад. Незнакомый код не передаём.
+ * Адрес «Купить Pro» с функцией, с которой человек пришёл: форма подсвечивает
+ * её в списке того, что входит в Pro, и возвращает назад. Незнакомый код не
+ * передаём.
  */
 export function proRoute(featureId?: string | null): string {
   const id = String(featureId || '').trim()

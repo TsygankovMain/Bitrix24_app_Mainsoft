@@ -79,6 +79,11 @@ echo -e "${GREEN}Starting Gunicorn (WSGI) server...${NC}"
 ( python manage.py sync_all_portals --scope tasks || true
   while true; do sleep 600; python manage.py sync_all_portals --scope tasks || true; done ) &
 
+# Заявки на Pro: повтор отправки в CRM Mainsoft тех, что «ожидают отправки»
+# (портал Mainsoft не ответил в момент заявки), и донесение отмен. Без
+# MAINSOFT_BILLING_WEBHOOK команда ничего не отправляет и молчит (--quiet).
+( while true; do sleep 900; python manage.py pro_requests sync --quiet || true; done ) &
+
 # Очистка логов: request_log и system_log старше 30 дней. Команда
 # purge_request_logs существовала с самого начала, но не запускалась ниоткуда —
 # таблицы росли без ограничения. Это стало заметно, когда логирование

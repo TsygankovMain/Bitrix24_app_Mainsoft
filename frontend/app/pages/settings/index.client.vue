@@ -10,6 +10,9 @@
     </B24PageHeader>
 
     <div class="mt-6 space-y-6">
+      <!-- Подписка на Pro — первой: срок, последний счёт и «Купить» (макет покупки Pro, экран 1.3). -->
+      <ProSubscriptionCard />
+
       <!--
         Сопоставление полей — ПЕРВОЙ картой на странице.
 
@@ -708,6 +711,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import MultiSelectFilter from '~/components/common/MultiSelectFilter.vue'
+import ProSubscriptionCard from '~/components/pro/ProSubscriptionCard.vue'
 import { describeBillingError } from '~/utils/billingErrors'
 import {
   BILLING_LINE_PLACEHOLDERS,
