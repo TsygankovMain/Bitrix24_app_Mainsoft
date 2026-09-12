@@ -1498,6 +1498,15 @@ class BillingService:
             "act_public_url": document.act_public_url,
             "act_pdf_url": document.act_pdf_url,
             "act_error": document.act_error,
+            # Печатная форма самого счёта — отдельный документ генератора со
+            # своим шаблоном. Отдаётся рядом с актом: карточка показывает обе
+            # половины комплекта «счёт + акт».
+            "invoice_document_id": document.invoice_document_id,
+            "invoice_document_number": document.invoice_document_number,
+            "invoice_download_url": document.invoice_download_url,
+            "invoice_public_url": document.invoice_public_url,
+            "invoice_pdf_url": document.invoice_pdf_url,
+            "invoice_print_error": document.invoice_print_error,
             "created_by_id": document.created_by_id,
             "created_by_name": document.created_by_name,
             "created_at": document.created_at.isoformat() if document.created_at else None,

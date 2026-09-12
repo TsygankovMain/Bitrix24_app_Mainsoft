@@ -122,10 +122,18 @@ class ConfigurationService:
         normalized['billing_line_task_level'] = (
             task_level if task_level in TASK_LEVELS else TASK_LEVEL_TASK
         )
-        try:
-            normalized['billing_act_template_id'] = int(normalized.get('billing_act_template_id') or 0)
-        except (TypeError, ValueError):
-            normalized['billing_act_template_id'] = 0
+        # Шаблоны генератора документов: целыми числами, 0 — «не выбран».
+        # Строка из select'а («4») и число (4) обязаны стать одним значением,
+        # иначе сравнение «настройка изменилась» срабатывало бы на каждом
+        # сохранении, а живая проверка шаблона — на каждом сохранении чего
+        # угодно.
+        for key in ('billing_act_template_id', 'billing_invoice_template_id'):
+            try:
+                normalized[key] = int(normalized.get(key) or 0)
+            except (TypeError, ValueError):
+                normalized[key] = 0
+            if normalized[key] < 0:
+                normalized[key] = 0
 
         try:
             normalized['finance_sp_entity_type_id'] = int(normalized.get('finance_sp_entity_type_id') or 0)

@@ -195,6 +195,105 @@
             <p class="mt-1 text-xs text-slate-500">{{ taskLevelHint }}</p>
           </div>
 
+          <!--
+            Шаблоны генератора документов. Стоят ПОСЛЕ формулировки строки и
+            ПЕРЕД списком «Бухгалтерия»: это последняя настройка про то, как
+            выглядит документ, а дальше идут настройки про людей.
+
+            Список приходит с портала (GET /api/billing/templates) и в
+            приложении не редактируется — поэтому подпись про это стоит над
+            обоими полями, а не под каждым: главное недоразумение здесь не
+            «какой шаблон выбрать», а «где поменять текст акта».
+          -->
+          <div class="space-y-4 rounded-lg border border-slate-200 p-4">
+            <div>
+              <p class="text-sm font-medium text-slate-700">Шаблоны печатных форм</p>
+              <p class="mt-1 text-sm text-slate-500">{{ BILLING_TEMPLATE_SOURCE_HINT }}</p>
+            </div>
+
+            <p v-if="!templatesReady" class="text-sm text-slate-500">Загружаем шаблоны с портала…</p>
+
+            <!--
+              Пустой список НЕ показываем пустым селектом: человеку нужно
+              знать, что шаблоны создаются на портале, а не искать их в
+              приложении. Отказ портала и честный ноль различаются текстом.
+            -->
+            <p
+              v-else-if="!templates.length && !templatesSkipped"
+              :class="templatesFailed ? 'ms-panel-warning' : 'ms-note ms-note-info'"
+            >
+              {{ templatesEmptyText }}
+            </p>
+
+            <div>
+              <label class="block text-sm font-medium text-slate-700" for="billing-act-template">
+                Шаблон акта
+              </label>
+              <select
+                id="billing-act-template"
+                v-model="billingSettings.actTemplateId"
+                class="mt-2 w-full"
+                :disabled="!userStore.isAdmin"
+              >
+                <!--
+                  Пустое значение у акта — это не «не печатать», а прежнее
+                  поведение: подбор по названию. Писать «не выбран» было бы
+                  неправдой — акт всё равно напечатается.
+                -->
+                <option value="">Подбирать по названию (как было)</option>
+                <option v-for="template in templates" :key="template.id" :value="template.id">
+                  {{ billingTemplateOptionLabel(template) }}
+                </option>
+                <!--
+                  Сохранённый шаблон, которого нет в списке портала: не
+                  показать его значило бы, что select молча покажет первый
+                  вариант и соврёт про действующую настройку.
+                -->
+                <option
+                  v-if="actTemplateSetting.missing"
+                  :value="billingSettings.actTemplateId"
+                >
+                  Шаблон {{ billingSettings.actTemplateId }} — удалён на портале
+                </option>
+              </select>
+              <p
+                class="mt-1 text-xs"
+                :class="actTemplateSetting.missing ? 'font-medium text-red-700' : 'text-slate-500'"
+              >
+                {{ actTemplateSetting.text }}
+              </p>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-slate-700" for="billing-invoice-template">
+                Шаблон счёта
+              </label>
+              <select
+                id="billing-invoice-template"
+                v-model="billingSettings.invoiceTemplateId"
+                class="mt-2 w-full"
+                :disabled="!userStore.isAdmin"
+              >
+                <option value="">Не печатать счёт из приложения</option>
+                <option v-for="template in templates" :key="template.id" :value="template.id">
+                  {{ billingTemplateOptionLabel(template) }}
+                </option>
+                <option
+                  v-if="invoiceTemplateSetting.missing"
+                  :value="billingSettings.invoiceTemplateId"
+                >
+                  Шаблон {{ billingSettings.invoiceTemplateId }} — удалён на портале
+                </option>
+              </select>
+              <p
+                class="mt-1 text-xs"
+                :class="invoiceTemplateSetting.missing ? 'font-medium text-red-700' : 'text-slate-500'"
+              >
+                {{ invoiceTemplateSetting.text }}
+              </p>
+            </div>
+          </div>
+
           <div>
             <p class="text-sm font-medium text-slate-700">Бухгалтерия</p>
             <p class="mb-2 mt-1 text-sm text-slate-500">
@@ -325,6 +424,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import MultiSelectFilter from '~/components/common/MultiSelectFilter.vue'
+import { describeBillingError } from '~/utils/billingErrors'
 import {
   BILLING_LINE_PLACEHOLDERS,
   BILLING_TASK_LEVEL_OPTIONS,
@@ -333,6 +433,14 @@ import {
   unknownBillingPlaceholders,
 } from '~/utils/billingLineTemplate'
 import { describeOurCompanySetting } from '~/utils/billingOurCompany'
+import {
+  BILLING_TEMPLATE_SOURCE_HINT,
+  billingTemplateOptionLabel,
+  billingTemplatesEmptyText,
+  describeBillingTemplateSetting,
+  parseBillingTemplates,
+  type BillingTemplate,
+} from '~/utils/billingTemplates'
 import {
   applyBillingSettings,
   billingSettingsChanged,
@@ -354,6 +462,10 @@ function emptyBillingSettings(): BillingSettings {
     // состояние равно значению по умолчанию.
     lineTemplate: DEFAULT_BILLING_LINE_TEMPLATE,
     taskLevel: 'task',
+    // Шаблоны: «не выбран». Для акта это прежнее поведение (подбор по
+    // названию), для счёта — печать недоступна.
+    actTemplateId: '',
+    invoiceTemplateId: '',
   }
 }
 
@@ -380,6 +492,23 @@ const employeeOptions = ref<FilterOption[]>([])
 const myCompanies = ref<Array<{ id: string, name: string }>>([])
 /** Портал не подтвердил полноту списка — это НЕ «юрлиц нет». */
 const myCompaniesFailed = ref(false)
+/** Шаблоны генератора документов портала (GET /api/billing/templates). */
+const templates = ref<BillingTemplate[]>([])
+/** Список получен (пусть и пустой) — только тогда с ним можно сверять настройку. */
+const templatesReady = ref(false)
+/** Портал список не отдал. Это НЕ «шаблонов нет»: текст на экране разный. */
+const templatesFailed = ref(false)
+/** Что именно ответил портал — чтобы не гадать, дело в модуле или в правах. */
+const templatesError = ref('')
+/**
+ * Список не запрашивали вовсе — читатель не админ и менять настройку всё
+ * равно не может.
+ *
+ * Отдельное состояние, а не «пустой список»: сказать не-админу «на портале
+ * нет шаблонов» значило бы соврать, а показать ему отказ по правам —
+ * пожаловаться на то, чего он не просил.
+ */
+const templatesSkipped = ref(false)
 
 /**
  * Живой пример строки. Считается ЗДЕСЬ, а не на сервере: пример нужен на
@@ -400,6 +529,27 @@ const taskLevelHint = computed(
     option => option.id === billingSettings.value.taskLevel
   )?.hint || ''
 )
+
+const templatesEmptyText = computed(() => billingTemplatesEmptyText({
+  failed: templatesFailed.value,
+  errorText: templatesError.value,
+}))
+
+const actTemplateSetting = computed(() => describeBillingTemplateSetting({
+  kind: 'act',
+  templateId: billingSettings.value.actTemplateId,
+  templates: templates.value,
+  // Недогруженный список сверять нельзя: пометка «удалён на портале» из-за
+  // недоступного генератора документов врёт про рабочую настройку.
+  listLoaded: templatesReady.value && !templatesFailed.value && !templatesSkipped.value,
+}))
+
+const invoiceTemplateSetting = computed(() => describeBillingTemplateSetting({
+  kind: 'invoice',
+  templateId: billingSettings.value.invoiceTemplateId,
+  templates: templates.value,
+  listLoaded: templatesReady.value && !templatesFailed.value && !templatesSkipped.value,
+}))
 
 const ourCompanySetting = computed(() => describeOurCompanySetting({
   ourCompanyId: billingSettings.value.ourCompanyId,
@@ -477,10 +627,18 @@ onMounted(async () => {
     return
   }
 
-  const [configResult, employeesResult, companiesResult] = await Promise.allSettled([
+  const [configResult, employeesResult, companiesResult, templatesResult] = await Promise.allSettled([
     apiStore.getConfiguration(),
     apiStore.getFilterEmployees(),
     apiStore.getMyCompanies(),
+    // Шаблоны тянем вместе с остальным, но их отказ закрывает только свой
+    // блок: настройку шаблона при недоступном генераторе документов менять
+    // нельзя, а всё остальное — можно.
+    //
+    // Не-админу список не нужен: сохранить настройку он всё равно не может,
+    // а ручка закрыта тем же гейтом, что выставление, и ответила бы ему 403
+    // — жалобой на права, которых он не запрашивал.
+    userStore.isAdmin ? apiStore.getBillingTemplates() : Promise.resolve(null),
   ])
 
   if (configResult.status !== 'fulfilled') {
@@ -505,6 +663,21 @@ onMounted(async () => {
     myCompaniesFailed.value = true
   }
 
+  if (!userStore.isAdmin) {
+    templatesSkipped.value = true
+  } else if (templatesResult.status === 'fulfilled') {
+    templates.value = parseBillingTemplates(templatesResult.value)
+    templatesFailed.value = false
+    templatesError.value = ''
+  } else {
+    templates.value = []
+    templatesFailed.value = true
+    // Текст берём разобранным: сырое сообщение ofetch выглядит как
+    // «[GET] "/api/billing/templates": 502» и ничего не объясняет.
+    templatesError.value = describeBillingError(templatesResult.reason).text
+  }
+
+  templatesReady.value = true
   billingSettingsReady.value = true
 })
 

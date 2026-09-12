@@ -43,12 +43,25 @@ class ActTemplateListShapeTest(TestCase):
     def test_slovar_po_id_razbiraetsya(self):
         """Форма портала: templates — словарь по id."""
         service = self._service({"result": {"templates": {
-            "2": {"id": "2", "name": "Акт (Россия)", "code": "ACT_RU", "isDefault": "Y"},
+            "2": {
+                "id": "2", "name": "Акт (Россия)", "code": "ACT_RU", "isDefault": "Y",
+                "region": "ru", "active": "Y", "numeratorId": "2",
+                "productsTableVariant": "service",
+            },
         }}})
 
         templates = service.list_templates()
 
-        self.assertEqual(templates, [{"id": 2, "name": "Акт (Россия)"}])
+        self.assertEqual(templates, [{
+            "id": 2,
+            "name": "Акт (Россия)",
+            "code": "ACT_RU",
+            "region": "ru",
+            "active": True,
+            "is_default": True,
+            "numerator_id": 2,
+            "products_table_variant": "service",
+        }])
 
     def test_spisok_tozhe_razbiraetsya(self):
         """Форма двойника и части порталов: templates — список."""
@@ -56,7 +69,16 @@ class ActTemplateListShapeTest(TestCase):
             {"id": "7", "name": "Счёт (Россия)"},
         ]}})
 
-        self.assertEqual(service.list_templates(), [{"id": 7, "name": "Счёт (Россия)"}])
+        templates = service.list_templates()
+
+        self.assertEqual(len(templates), 1)
+        self.assertEqual(templates[0]["id"], 7)
+        self.assertEqual(templates[0]["name"], "Счёт (Россия)")
+        # Флаги портала приходят строками "Y"/"N", наружу уходят булевыми:
+        # строка "N" в JavaScript истинна и поставила бы галочку «по
+        # умолчанию» всем шаблонам подряд.
+        self.assertIs(templates[0]["active"], True)
+        self.assertIs(templates[0]["is_default"], False)
 
     def test_akt_nahoditsya_po_nazvaniyu_v_slovare(self):
         """Запасной путь выбора шаблона акта работает и на словаре."""

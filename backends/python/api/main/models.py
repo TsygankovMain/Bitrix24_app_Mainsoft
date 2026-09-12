@@ -644,6 +644,18 @@ class BillingDocument(models.Model):
     act_pdf_url = models.TextField(blank=True, default="")
     act_error = models.TextField(blank=True, default="")
 
+    # Печатная форма САМОГО счёта (шаблон «Счет (Россия)» и подобные) —
+    # отдельный документ генератора, не путать с crm_entity_id (это сам
+    # смарт-счёт в CRM) и не путать с актом. Бухгалтер отправляет клиенту
+    # пару «счёт + акт», и обе половины должны быть доступны из карточки
+    # документа приложения, а не из двух разных мест.
+    invoice_document_id = models.CharField(max_length=50, blank=True, default="")
+    invoice_document_number = models.CharField(max_length=100, blank=True, default="")
+    invoice_download_url = models.TextField(blank=True, default="")
+    invoice_public_url = models.TextField(blank=True, default="")
+    invoice_pdf_url = models.TextField(blank=True, default="")
+    invoice_print_error = models.TextField(blank=True, default="")
+
     created_by_id = models.CharField(max_length=50, blank=True, default="")
     created_by_name = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
