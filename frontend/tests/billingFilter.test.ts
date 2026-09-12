@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  BILLING_COMPANY_REQUIRED_ERROR,
   BILLING_GROUPING_OPTIONS,
   buildBillingFilterBody,
   buildBillingRegistryQuery,
@@ -103,22 +104,42 @@ test('parseTaskIdsInput: принимаем любые разделители �
 test('validateBillingFilter: без дат предпросмотр не запускается', () => {
   const form = createBillingFilterForm(new Date(2026, 8, 12))
 
-  assert.deepEqual(validateBillingFilter({ ...form, dateFrom: '' }).length, 1)
-  assert.deepEqual(validateBillingFilter({ ...form, dateTo: '' }).length, 1)
+  assert.deepEqual(validateBillingFilter({ ...form, dateFrom: '', companyId: '7' }).length, 1)
+  assert.deepEqual(validateBillingFilter({ ...form, dateTo: '', companyId: '7' }).length, 1)
 })
 
 test('validateBillingFilter: перевёрнутый период — ошибка с понятным текстом', () => {
   const form = createBillingFilterForm(new Date(2026, 8, 12))
-  const errors = validateBillingFilter({ ...form, dateFrom: '2026-09-30', dateTo: '2026-09-01' })
+  const errors = validateBillingFilter({
+    ...form,
+    companyId: '7',
+    dateFrom: '2026-09-30',
+    dateTo: '2026-09-01',
+  })
 
   assert.equal(errors.length, 1)
   assert.match(errors[0], /позже/)
 })
 
-test('validateBillingFilter: клиента для предпросмотра не требуем — его покажет mixed_companies', () => {
+test('validateBillingFilter: без клиента предпросмотр не запускается', () => {
+  const form = createBillingFilterForm(new Date(2026, 8, 12))
+  const errors = validateBillingFilter({ ...form, companyId: '' })
+
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0], BILLING_COMPANY_REQUIRED_ERROR)
+  assert.match(errors[0], /одному клиенту/)
+})
+
+test('validateBillingFilter: с клиентом и нормальным периодом претензий нет', () => {
   const form = createBillingFilterForm(new Date(2026, 8, 12))
 
-  assert.deepEqual(validateBillingFilter({ ...form, companyId: '' }), [])
+  assert.deepEqual(validateBillingFilter({ ...form, companyId: '1758' }), [])
+})
+
+test('validateBillingFilter: пробелы в клиенте за выбор не считаются', () => {
+  const form = createBillingFilterForm(new Date(2026, 8, 12))
+
+  assert.deepEqual(validateBillingFilter({ ...form, companyId: '   ' }), [BILLING_COMPANY_REQUIRED_ERROR])
 })
 
 test('buildBillingRegistryQuery: пустой фильтр не шлёт ни одного параметра', () => {

@@ -78,6 +78,12 @@ export interface BillingLinePayload {
   sort?: number | null
 }
 
+/** Клиент отбора: пара «идентификатор — название». */
+export interface BillingCompanyRef {
+  id?: string | number | null
+  name?: string | null
+}
+
 /** Предупреждение preview. Код обязателен, остальное — по желанию сервера. */
 export interface BillingWarningPayload {
   code?: string | null
@@ -88,6 +94,16 @@ export interface BillingWarningPayload {
   blocking?: boolean | null
   /** Документы, в которых уже лежат эти списания (already_invoiced). */
   document_ids?: Array<string | number> | null
+  /**
+   * Клиенты отбора (mixed_companies).
+   *
+   * Сервер кладёт сюда пары id/name, причём name равен идентификатору, когда в
+   * карточке проекта названия нет. Из этого списка мастер делает кнопки выбора
+   * клиента — иначе блокирующее предупреждение оставляет человека без выхода.
+   */
+  companies?: BillingCompanyRef[] | null
+  /** Незакрытые месяцы «2026-09» (period_open). */
+  periods?: string[] | null
 }
 
 /** Ответ POST /api/billing/preview. */
@@ -97,6 +113,13 @@ export interface BillingPreviewResponse {
   total_hours?: number | string | null
   total_amount?: number | string | null
   warnings?: BillingWarningPayload[] | null
+  /**
+   * Все клиенты отбора. В нормальном случае их ровно один, и тогда интерфейсу
+   * удобнее скаляр company_id/company_name; список нужен, чтобы показать
+   * mixed_companies списком кнопок.
+   */
+  companies?: BillingCompanyRef[] | null
+  our_companies?: BillingCompanyRef[] | null
   company_id?: string | number | null
   company_name?: string | null
   our_company_id?: string | number | null

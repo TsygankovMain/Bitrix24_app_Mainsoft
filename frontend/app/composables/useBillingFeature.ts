@@ -29,6 +29,14 @@ import { FINANCE_BILLING_ENABLED } from '~/utils/featureFlags'
 export const PORTAL_FEATURES_STATE_KEY = 'app-portal-features'
 export const PORTAL_FEATURES_FAILED_STATE_KEY = 'app-portal-features-failed'
 export const BILLING_ACCOUNTANTS_STATE_KEY = 'app-billing-accountants'
+/**
+ * Настройка «Разрешить выставление за открытый период».
+ *
+ * Читается тем же запросом конфигурации, что и список «Бухгалтерия», и живёт
+ * рядом с ним: мастеру она нужна, чтобы не предлагать снять галочку «только
+ * закрытые месяцы», когда сервер всё равно откажет (контракт, правило 3).
+ */
+export const BILLING_ALLOW_OPEN_PERIOD_STATE_KEY = 'app-billing-allow-open-period'
 
 /**
  * Запросы «в полёте».
@@ -51,6 +59,8 @@ export const useBillingFeature = () => {
   const featuresFailed = useState<boolean>(PORTAL_FEATURES_FAILED_STATE_KEY, () => false)
   /** null — список «Бухгалтерия» ещё не читали (конфигурация не загружена). */
   const accountantIds = useState<string[] | null>(BILLING_ACCOUNTANTS_STATE_KEY, () => null)
+  /** Разрешает ли портал выставлять за незакрытый месяц. До ответа — нет. */
+  const allowOpenPeriod = useState<boolean>(BILLING_ALLOW_OPEN_PERIOD_STATE_KEY, () => false)
 
   /**
    * Состояния платных функций портала.
@@ -105,9 +115,12 @@ export const useBillingFeature = () => {
     settingsRequest = (async () => {
       try {
         const config = await apiStore.getConfiguration(force)
-        accountantIds.value = readBillingSettings(config).accountantIds
+        const settings = readBillingSettings(config)
+        accountantIds.value = settings.accountantIds
+        allowOpenPeriod.value = settings.allowOpenPeriod
       } catch {
         accountantIds.value = []
+        allowOpenPeriod.value = false
       }
     })().finally(() => {
       settingsRequest = null
@@ -134,6 +147,7 @@ export const useBillingFeature = () => {
     features,
     featuresFailed,
     accountantIds,
+    allowOpenPeriod,
     access,
     isManager,
     permissions,
