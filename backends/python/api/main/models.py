@@ -943,6 +943,20 @@ class BillingEntry(models.Model):
                 condition=models.Q(is_active=True),
                 name="billing_entry_one_active_per_timesheet",
             ),
+            # Второй, portal-уровневый констрейнт. Под USE_PORTAL_SCOPING=False
+            # (текущее прод-значение) portal у новых записей не проставляется
+            # (см. scope_to_tenant), поэтому constraint из-за condition с
+            # portal__isnull=False на этих записях не срабатывает — они
+            # по-прежнему защищены только account-констрейнтом выше. Когда
+            # флаг включат и portal начнёт заполняться, этот индекс не даст
+            # двум РАЗНЫМ учёткам (двум бухгалтерам) одного портала активно
+            # выставить один и тот же timesheet_bitrix_id — сценарий, который
+            # верхний констрейнт (он per-account) не ловит.
+            models.UniqueConstraint(
+                fields=["portal", "timesheet_bitrix_id"],
+                condition=models.Q(is_active=True, portal__isnull=False),
+                name="billing_entry_one_active_per_timesheet_per_portal",
+            ),
         ]
 
 

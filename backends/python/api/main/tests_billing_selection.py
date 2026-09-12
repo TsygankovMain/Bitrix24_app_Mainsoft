@@ -28,6 +28,7 @@ from .models import (
     BillingDocument,
     BillingEntry,
     Bitrix24Account,
+    Portal,
     PortalUser,
     ProjectCard,
     TimesheetItem,
@@ -473,6 +474,58 @@ class PartialIndexTest(BillingFixture):
             )
 
         self.assertEqual(BillingEntry.objects.filter(timesheet_bitrix_id=1).count(), 3)
+
+    def test_two_accounts_of_one_portal_cannot_both_bill_the_same_timesheet(self):
+        """С USE_PORTAL_SCOPING включённым и portal проставленным — второй
+        constraint (portal, timesheet_bitrix_id) ловит гонку ДВУХ РАЗНЫХ
+        учёток одного портала (два бухгалтера), которую account-констрейнт
+        не видит вовсе — у них разные bitrix24_account."""
+        from django.db import IntegrityError, transaction
+
+        portal = Portal.objects.create(member_id="m-billing-portal")
+        other_account = Bitrix24Account.objects.create(
+            b24_user_id=22, is_b24_user_admin=True, member_id="m-billing-2",
+            is_master_account=True, domain_url="billing.bitrix24.ru",
+            status="active", application_version=1, portal=portal,
+        )
+        self.account.portal = portal
+        self.account.save(update_fields=["portal"])
+
+        BillingEntry.objects.create(
+            document=self._document(), bitrix24_account=self.account,
+            portal=portal, timesheet_bitrix_id=1, is_active=True,
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                BillingEntry.objects.create(
+                    document=self._document(), bitrix24_account=other_account,
+                    portal=portal, timesheet_bitrix_id=1, is_active=True,
+                )
+
+    def test_accounts_without_portal_are_unaffected(self):
+        """portal=NULL (сегодняшнее прод-состояние при USE_PORTAL_SCOPING=False)
+        — второй constraint не срабатывает вовсе, поведение не меняется:
+        несколько записей с portal=NULL и одним timesheet_bitrix_id уживаются,
+        пока их не сталкивает первый (account-уровневый) констрейнт."""
+        other_account = Bitrix24Account.objects.create(
+            b24_user_id=23, is_b24_user_admin=True, member_id="m-billing-3",
+            is_master_account=True, domain_url="billing-3.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+        BillingEntry.objects.create(
+            document=self._document(), bitrix24_account=self.account,
+            portal=None, timesheet_bitrix_id=1, is_active=True,
+        )
+        BillingEntry.objects.create(
+            document=self._document(), bitrix24_account=other_account,
+            portal=None, timesheet_bitrix_id=1, is_active=True,
+        )
+
+        self.assertEqual(
+            BillingEntry.objects.filter(timesheet_bitrix_id=1, is_active=True).count(), 2,
+        )
 
 
 class DriftTest(BillingFixture):

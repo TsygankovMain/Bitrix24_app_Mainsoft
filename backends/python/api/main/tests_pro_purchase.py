@@ -18,6 +18,7 @@ from unittest.mock import patch
 from django.core.cache import cache
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import IntegrityError
 from django.test import Client, SimpleTestCase, TestCase
 
 from . import pro_plan_service
@@ -570,6 +571,78 @@ class CreateRequestSafeModeTest(ProPurchaseFixture):
         response = self.get(f"/api/pro/requests/{request_id}/invoice.pdf")
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["code"], "pdf_not_ready")
+
+
+class CreateRequestRaceTest(ProPurchaseFixture):
+    """Два быстрых POST без открытой заявки: select_for_update().first()
+    ничего не блокирует, когда блокировать ещё нечего, поэтому оба запроса
+    доходят до INSERT и второй ловит partial unique index
+    pro_request_one_open_per_portal (IntegrityError). До фикса это долетало
+    до log_errors и клиент получал сырой 500 с текстом Postgres — ручка
+    (pro_requests_create в views.py) ловит только PurchaseError.
+
+    Гонку эмулируем патчем service._locked_open_request: первый вызов (в
+    начале create_request) возвращает None — «конкурент ещё не виден», а
+    request.save() бросает настоящий IntegrityError на тот же частичный
+    индекс, как это сделал бы sqlite/postgres при реальном столкновении.
+    Второй вызов _locked_open_request (внутри except) уже отдаёт
+    per-side-effect то, что нужно проверить в каждом тесте.
+    """
+
+    def _integrity_error(self):
+        return IntegrityError(
+            'duplicate key value violates unique constraint "pro_request_one_open_per_portal"'
+            '\nDETAIL:  Key (portal_id) already exists.'
+        )
+
+    def test_same_term_race_merges_into_the_winner_not_500(self):
+        """Конкурент выиграл гонку с тем же тарифом — сливаемся в его заявку,
+        как при обычном «уже есть заявка», а не 500."""
+        winner = self.create().json()["request"]
+        winner_row = ProRequest.objects.get(invoice_number=winner["invoice_number"])
+
+        with patch.object(service, "_locked_open_request", side_effect=[None, winner_row]), \
+             patch.object(ProRequest, "save", side_effect=self._integrity_error()) as fake_save:
+            # Первый save() (нашей новой заявки) должен упасть с IntegrityError;
+            # чтобы не сорвать и последующий save() слияния (winner.save()),
+            # разрешаем ему пройти нормально после первого вызова.
+            fake_save.side_effect = [self._integrity_error(), None]
+            response = self.create(payer_name="ООО «Кварц Интеграция» (новое наименование)")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["updated_in_place"])
+        self.assertEqual(data["request"]["invoice_number"], winner["invoice_number"])
+        self.assertEqual(ProRequest.objects.count(), 1)
+
+    def test_different_term_race_gives_understandable_409_not_500(self):
+        """Конкурент выиграл гонку с ДРУГИМ тарифом — понятный 409, без
+        текста ошибки БД в ответе, вместо давки второй попытки вставки."""
+        winner = self.create(months=3).json()["request"]
+        winner_row = ProRequest.objects.get(invoice_number=winner["invoice_number"])
+
+        with patch.object(service, "_locked_open_request", side_effect=[None, winner_row]), \
+             patch.object(ProRequest, "save", side_effect=self._integrity_error()):
+            response = self.create(months=12)
+
+        self.assertEqual(response.status_code, 409)
+        payload = response.json()
+        self.assertEqual(payload["code"], "request_conflict")
+        self.assertNotIn("constraint", payload["error"])
+        self.assertNotIn("DETAIL", payload["error"])
+        # Проигранной вставки не осталось, выигранная заявка на месте одна.
+        self.assertEqual(ProRequest.objects.count(), 1)
+
+    def test_missing_winner_after_race_gives_409_not_500(self):
+        """Крайний случай: после проигранной вставки перечитать конкурента не
+        удалось — тоже понятный 409, а не необработанное исключение."""
+        with patch.object(service, "_locked_open_request", side_effect=[None, None]), \
+             patch.object(ProRequest, "save", side_effect=self._integrity_error()):
+            response = self.create()
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "request_conflict")
+        self.assertEqual(ProRequest.objects.count(), 0)
 
 
 class CrmDispatchTest(ProPurchaseFixture):
