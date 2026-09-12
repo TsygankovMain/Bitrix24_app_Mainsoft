@@ -457,7 +457,11 @@ def build_matrix_workbook(header_days, rows, *, title, date_from="", date_to="")
     return output
 
 
-_TABLE_FMT = {"text": "@", "hours": "0.0", "money": "#,##0", "percent": "0.0%", "int": "0"}
+# money2 — деньги С КОПЕЙКАМИ. Отчётам хватало округления до рубля ("money"),
+# но детализация к акту — приложение к документу: её итог обязан совпадать с
+# суммой счёта до копейки, иначе бухгалтер сверяет два разных числа.
+_TABLE_FMT = {"text": "@", "hours": "0.0", "money": "#,##0",
+              "money2": "#,##0.00", "percent": "0.0%", "int": "0"}
 
 
 def build_table_workbook(columns, rows, *, title, date_from="", date_to="", total_row=None):
@@ -527,3 +531,77 @@ def build_table_workbook(columns, rows, *, title, date_from="", date_to="", tota
     wb.save(output)
     output.seek(0)
     return output
+
+
+# ---------------------------------------------------------------------------
+# Детализация к акту (счёт и акт)
+# ---------------------------------------------------------------------------
+
+BILLING_DETAIL_COLUMNS = (
+    {"key": "date", "label": "Дата", "fmt": "text", "width": 12},
+    {"key": "employee_name", "label": "Сотрудник", "fmt": "text", "width": 28},
+    {"key": "task", "label": "Задача", "fmt": "text", "width": 46},
+    {"key": "description", "label": "Описание", "fmt": "text", "width": 60},
+    {"key": "hours", "label": "Часы", "fmt": "hours", "width": 10},
+    {"key": "rate", "label": "Ставка", "fmt": "money2", "width": 14},
+    {"key": "amount", "label": "Сумма", "fmt": "money2", "width": 16},
+)
+
+
+def build_billing_detail_workbook(document, entries):
+    """XLSX-детализация к акту: строка на каждое потреблённое списание.
+
+    Берётся СНИМОК документа (BillingEntry), а не текущие списания. Это
+    приложение к подписанному документу: оно обязано показывать то, за что
+    выставлен счёт, даже если часы в Битриксе потом поправили. Расхождения
+    живут отдельно — на карточке документа (drift).
+
+    Переиспользует build_table_workbook: своя вёрстка таблицы здесь ничего
+    не добавила бы, а разошлась бы с отчётами при первой же правке стилей.
+    """
+    rows = []
+    for entry in entries:
+        date_value = getattr(entry, "date_reflection", None)
+        rows.append({
+            "date": _format_iso_date(date_value.isoformat()) if date_value else "",
+            "employee_name": getattr(entry, "employee_name", "") or "",
+            "task": (
+                f"{entry.task_title} (#{entry.task_id})"
+                if getattr(entry, "task_title", "") and getattr(entry, "task_id", "")
+                else (getattr(entry, "task_title", "") or (f"#{entry.task_id}" if getattr(entry, "task_id", "") else ""))
+            ),
+            "description": getattr(entry, "description", "") or "",
+            "hours": _num(getattr(entry, "hours", 0)),
+            "rate": _num(getattr(entry, "rate_snapshot", 0)),
+            "amount": _num(getattr(entry, "amount", 0)),
+        })
+
+    total_row = {
+        "date": "ИТОГО",
+        "employee_name": "",
+        "task": "",
+        "description": "",
+        "hours": _num(getattr(document, "total_hours", 0)),
+        "rate": None,
+        "amount": _num(getattr(document, "total_amount", 0)),
+    }
+
+    number = getattr(document, "crm_account_number", "") or ""
+    company = getattr(document, "company_name", "") or ""
+    title = "Детализация к акту"
+    if number:
+        title = f"{title} по счёту № {number}"
+    if company:
+        title = f"{title} · {company}"
+
+    period_from = getattr(document, "period_from", None)
+    period_to = getattr(document, "period_to", None)
+
+    return build_table_workbook(
+        list(BILLING_DETAIL_COLUMNS),
+        rows,
+        title=title,
+        date_from=period_from.strftime("%d.%m.%Y") if period_from else "",
+        date_to=period_to.strftime("%d.%m.%Y") if period_to else "",
+        total_row=total_row,
+    )

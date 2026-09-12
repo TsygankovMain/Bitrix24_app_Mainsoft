@@ -25,6 +25,14 @@ import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, P
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
 import type { PeriodBulkPlan, PeriodCheckResult, PeriodEntryRow, PeriodFixResult, PeriodRow } from '~/types/period'
+import type {
+  BillingDocumentDetail,
+  BillingDocumentsResponse,
+  BillingFilterBody,
+  BillingLinePayload,
+  BillingPreviewResponse,
+  PortalFeaturesPayload,
+} from '~/types/billing'
 
 type SaveConfigurationResponse = {
   status?: string
@@ -1418,6 +1426,109 @@ export const useApiStore = defineStore(
       })
     }
 
+
+    // region Счёт и акт ////
+    // Контракт: docs/superpowers/specs/2026-09-12-billing-mvp-contract.md.
+    // Ни одной ручки сверх контракта здесь нет и быть не должно: бэкенд пишется
+    // по тому же документу, и «удобный» лишний адрес с фронта просто получит 404.
+    //
+    // Кэша у этих ручек нет намеренно (кроме /api/features, см. ниже): реестр и
+    // карточка документа — про деньги, и показать вчерашнюю сумму из
+    // localStorage хуже, чем подождать запрос.
+
+    /**
+     * Состояния платных функций портала.
+     *
+     * Единственная ручка «Счёта и акта», которую зовёт бутстрап приложения
+     * (useBillingFeature -> initApp), поэтому запрос кэшируется в браузере на
+     * несколько минут: подписка меняется management-командой, а не по ходу
+     * работы, и дёргать её на каждой навигации незачем.
+     */
+    const getFeatures = async (forceRefresh = false): Promise<PortalFeaturesPayload> => {
+      return await withBrowserCache('portal-features', browserCacheTtl.config, async () => {
+        return await $api<PortalFeaturesPayload>('/api/features', {
+          headers: { Authorization: `Bearer ${tokenJWT.value}` }
+        })
+      }, forceRefresh)
+    }
+
+    /** Собрать строки и предупреждения по фильтру. Ничего не пишет. */
+    const previewBillingDocument = async (filter: BillingFilterBody): Promise<BillingPreviewResponse> => {
+      return await $api('/api/billing/preview', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: filter,
+      })
+    }
+
+    /**
+     * Выставить: смарт-счёт в CRM и документ у нас.
+     *
+     * lines[] отправляются рядом с фильтром — это строки, которые человек
+     * утвердил в предпросмотре (исключённые убраны, цены и текст могли быть
+     * поправлены). Без них правки предпросмотра до сервера не доедут.
+     *
+     * 409 здесь ШТАТНЫЙ ответ (контракт, правило 8): повторный запрос с тем же
+     * набором списаний упирается в частичный уникальный индекс и возвращает
+     * ссылку на существующий документ. Ошибку не глотаем — её разбирает
+     * describeBillingError и показывает ссылкой, а не «ошибкой сервера».
+     */
+    const createBillingDocument = async (
+      filter: BillingFilterBody,
+      lines: BillingLinePayload[]
+    ): Promise<BillingDocumentDetail> => {
+      return await $api('/api/billing/documents', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { ...filter, lines },
+      })
+    }
+
+    /** Реестр документов: фильтр по клиенту, периоду и статусу. */
+    const getBillingDocuments = async (params: URLSearchParams): Promise<BillingDocumentsResponse> => {
+      const query = params.toString()
+
+      return await $api(`/api/billing/documents${query ? `?${query}` : ''}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Карточка: документ, строки, потреблённые списания и расхождения. */
+    const getBillingDocument = async (id: string | number): Promise<BillingDocumentDetail> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Отменить документ и освободить списания. Причина обязательна. */
+    const cancelBillingDocument = async (
+      id: string | number,
+      reason: string
+    ): Promise<BillingDocumentDetail> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { reason },
+      })
+    }
+
+    /** Напечатать акт по счёту (номер и дата акта равны номеру и дате счёта). */
+    const printBillingAct = async (id: string | number): Promise<BillingDocumentDetail> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}/act`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+      })
+    }
+
+    /** XLSX-детализация к акту. */
+    const exportBillingDetail = async (id: string | number): Promise<Blob> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}/detail.xlsx`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        responseType: 'blob',
+      })
+    }
+    // endregion ////
+
     return {
       init,
       getEnum,
@@ -1490,7 +1601,16 @@ export const useApiStore = defineStore(
       getSystemLogs,
       createSmartProcess,
       createFields,
-      createMappedField
+      createMappedField,
+
+      getFeatures,
+      previewBillingDocument,
+      createBillingDocument,
+      getBillingDocuments,
+      getBillingDocument,
+      cancelBillingDocument,
+      printBillingAct,
+      exportBillingDetail
     }
   }
 )

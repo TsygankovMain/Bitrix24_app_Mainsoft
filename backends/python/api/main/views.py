@@ -8,13 +8,21 @@ from django.http import JsonResponse, HttpResponse
 from django.conf import settings
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 from django.views.decorators.clickjacking import xframe_options_exempt
 
 from .utils.decorators import auth_required, log_errors, rate_limit
 from .utils.decorators.sync_lock import sync_lock, account_sync_lock, SyncLockBusy
 from .utils import AuthorizedRequest
-from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard, PortalUser
+from .models import (
+    ApplicationInstallation,
+    BillingDocument,
+    TimesheetItem,
+    RequestLog,
+    SystemLog,
+    ProjectCard,
+    PortalUser,
+)
 
 import logging
 import json
@@ -52,6 +60,7 @@ from .report_queries import (
     resolve_project_name_for_row,
 )
 from .report_excel import (
+    build_billing_detail_workbook,
     build_project_task_workbook,
     build_hierarchy_workbook,
     build_matrix_workbook,
@@ -62,6 +71,10 @@ from .report_excel import (
 from .inn_backfill_service import InnBackfillService
 from .company_search_service import CompanySearchService
 from .project_creation_service import ProjectCreationService
+from .billing_crm_service import BillingCrmService
+from .billing_features import FEATURE_BILLING, feature_required, feature_states
+from .billing_service import BillingError, BillingFilter, BillingService
+from .billing_settings import billing_manager_required
 
 __all__ = [
     "root",
@@ -126,6 +139,14 @@ __all__ = [
     "create_fields",
     "create_mapped_field",
     "export_raw_data",
+    # Счёт и акт
+    "get_features",
+    "billing_preview",
+    "billing_documents",
+    "billing_document_detail",
+    "billing_document_cancel",
+    "billing_document_act",
+    "billing_document_detail_export",
 ]
 
 config = load_config()
@@ -3457,3 +3478,342 @@ def serve_spa(request):
             "Please ensure 'npm run generate' ran successfully during build.",
             status=404
         )
+
+
+# ---------------------------------------------------------------------------
+# Счёт и акт (billing)
+# ---------------------------------------------------------------------------
+#
+# Контракт: docs/superpowers/specs/2026-09-12-billing-mvp-contract.md.
+# Ядро — billing_service (отбор, суммы, транзакция), канал CRM —
+# billing_crm_service (смарт-счёт, товарные строки, печать акта).
+#
+# Два гейта на пишущих эндпоинтах, и они РАЗНЫЕ по смыслу:
+# - @billing_manager_required — права: админ портала или «Бухгалтерия» из
+#   настроек приложения. Точечное исключение из решения от 11.06.2026,
+#   снявшего серверный гейт по ролям, — того же класса, что @admin_required
+#   на закрытии месяца: операция превращается в деньги клиента;
+# - @feature_required("billing") — подписка. При выключенной функции нельзя
+#   создавать и печатать, но ЧИТАТЬ реестр и ОТМЕНЯТЬ можно: отключение
+#   подписки не должно лишать клиента уже выставленных документов.
+#
+# Порядок декораторов на POST /api/billing/documents: сначала права и
+# подписка, затем rate_limit, и только потом advisory-замок портала —
+# захватывать замок ради запроса, который всё равно будет отклонён, незачем.
+
+
+def _billing_service(request: AuthorizedRequest) -> BillingService:
+    return BillingService(request.bitrix24_account)
+
+
+def _billing_actor(request: AuthorizedRequest):
+    account = request.bitrix24_account
+    return str(account.b24_user_id or ""), _current_user_display_name(request)
+
+
+def _billing_card_response(service: BillingService, document) -> JsonResponse:
+    """Карточка документа одним ответом.
+
+    Строки, потреблённые списания и расхождения лежат И внутри document, И
+    на верхнем уровне. Контракт («документ, строки, потреблённые списания и
+    drift[]») не фиксирует вложенность, а читает этот ответ параллельно
+    написанный интерфейс, который ждёт их наверху. Дублирование дешевле
+    рассогласования: одно и то же значение, собранное один раз.
+    """
+    payload = service.serialize_document(document, with_details=True)
+    return JsonResponse({
+        "document": payload,
+        "lines": payload["lines"],
+        "entries": payload["entries"],
+        "drift": payload["drift"],
+    })
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_features")
+@auth_required
+def get_features(request: AuthorizedRequest):
+    """Состояния платных функций портала — для меню и экранов фронта.
+
+    Только чтение: писать состояние по REST нельзя ни при каких условиях,
+    иначе подписку включил бы токен приложения из консоли браузера. Менять —
+    management-командой billing_feature.
+    """
+    return JsonResponse(feature_states(request.bitrix24_account))
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("billing_preview")
+@auth_required
+@billing_manager_required
+@rate_limit("billing_preview", 30, 60, key="account")
+def billing_preview(request: AuthorizedRequest):
+    """Предпросмотр отбора: строки, итоги и предупреждения. Ничего не пишет.
+
+    @feature_required здесь НЕ стоит: предпросмотр — чтение, и запрет на него
+    ничего не защищает (те же цифры видны в отчётах), а вот показать
+    подписчику-новичку, что именно он получит, полезно. Запрещено ровно то,
+    что предписывает контракт: создание и печать.
+    """
+    service = _billing_service(request)
+    try:
+        filters = BillingFilter.from_payload(_load_request_json(request))
+        selection = service.collect(filters)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    return JsonResponse(selection.as_payload())
+
+
+@billing_manager_required
+@feature_required(FEATURE_BILLING)
+@rate_limit("billing_issue", 10, 60, key="account")
+def _billing_documents_create(request: AuthorizedRequest):
+    """Выставление: наша БД -> счёт в CRM -> сверка перечитанного счёта.
+
+    Порядок «сначала БД» намеренный (см. докстринг billing_service): конфликт
+    частичного индекса обязан всплыть раньше, чем на портале появится счёт,
+    удалить который приложение не сможет. Если CRM-шаг падает, документ
+    снимается discard_failed — списания освобождаются.
+
+    Замок — account_sync_lock со своим scope="billing" и субъектом-ПОРТАЛОМ,
+    тем же приёмом, что и кнопка «Создать проект» (project_creation_service):
+    «Выставить» могут нажать два разных бухгалтера одного портала, и
+    сериализовать нужно обоих. Декоратор @sync_lock здесь не годится — он
+    отвечает про синхронизацию («Синхронизация уже выполняется»), а человек
+    жмёт «Выставить»; текст отказа обязан говорить о том, что он делал.
+    """
+    try:
+        with account_sync_lock(request.bitrix24_account, scope="billing"):
+            return _billing_issue_under_lock(request)
+    except SyncLockBusy:
+        return JsonResponse(
+            {
+                "error": "Кто-то уже выставляет счёт на этом портале. Повторите через несколько секунд.",
+                "code": "billing_busy",
+            },
+            status=409,
+        )
+
+
+def _billing_issue_under_lock(request: AuthorizedRequest):
+    """Тело выставления под замком портала. Вынесено только ради читаемости."""
+    payload = _load_request_json(request)
+    service = _billing_service(request)
+    user_id, user_name = _billing_actor(request)
+
+    try:
+        filters = BillingFilter.from_payload(payload)
+        selection = service.collect(filters)
+        service.validate_for_issue(selection, filters)
+        # Утверждённые строки применяются ПОСЛЕ проверок отбора: блокеры
+        # (несколько клиентов, открытый период, «уже выставлено» с его 409)
+        # относятся к отбору целиком, и исключение строки в мастере не
+        # должно их обходить. А вот документ и счёт собираются уже по
+        # утверждённому: исключённая строка не потребляет списания.
+        selection = service.apply_approved_lines(selection, payload.get("lines"))
+        document = service.create_document(
+            selection, filters,
+            created_by_id=user_id,
+            created_by_name=user_name,
+            vat_mode=str(payload.get("vat_mode") or BillingDocument.VAT_INCLUDED),
+            vat_rate=payload.get("vat_rate") or 0,
+        )
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+
+    crm_service = BillingCrmService(request.bitrix24_account, service=service)
+    try:
+        crm_service.issue(document)
+    except BillingError as exc:
+        service.discard_failed(document, exc.message)
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("billing_documents_create: сбой канала CRM")
+        service.discard_failed(document, str(exc))
+        return JsonResponse(
+            {"error": f"Не удалось выставить счёт: {exc}", "code": "crm_invoice_failed"},
+            status=502,
+        )
+
+    response = _billing_card_response(service, document)
+    response.status_code = 201
+    return response
+
+
+def _billing_documents_list(request: AuthorizedRequest):
+    """Реестр документов: фильтр по клиенту, периоду и статусу."""
+    service = _billing_service(request)
+    queryset = service.documents_queryset()
+
+    company_id = (request.GET.get("company_id") or "").strip()
+    if company_id:
+        queryset = queryset.filter(company_id=company_id)
+    status_value = (request.GET.get("status") or "").strip()
+    if status_value:
+        queryset = queryset.filter(status=status_value)
+
+    date_from = (request.GET.get("date_from") or "").strip()
+    date_to = (request.GET.get("date_to") or "").strip()
+    # Пересечение с периодом, а не попадание внутрь: счёт за 01-31.08
+    # обязан находиться и по запросу «август», и по запросу «с 15.08».
+    if date_from:
+        queryset = queryset.filter(period_to__gte=date_from)
+    if date_to:
+        queryset = queryset.filter(period_from__lte=date_to)
+
+    page_size = _parse_page_size(request, default=50, max_value=200)
+    paginator = Paginator(queryset, page_size)
+    page = paginator.get_page(request.GET.get("page") or 1)
+
+    return JsonResponse({
+        "documents": [service.serialize_document(row) for row in page.object_list],
+        "total": paginator.count,
+        "page": page.number,
+        "pages": paginator.num_pages,
+        "page_size": page_size,
+    })
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+@log_errors("billing_documents")
+@auth_required
+def billing_documents(request: AuthorizedRequest):
+    """Один адрес, два метода: GET — реестр (без гейтов), POST — выставление.
+
+    Гейты навешены не здесь, а на _billing_documents_create: чтение реестра
+    обязано работать и у сотрудника без прав выставления, и при выключенной
+    подписке.
+    """
+    if request.method == "POST":
+        return _billing_documents_create(request)
+    return _billing_documents_list(request)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("billing_document_detail")
+@auth_required
+def billing_document_detail(request: AuthorizedRequest, document_id: str):
+    """Карточка: документ, строки, потреблённые списания и расхождения."""
+    service = _billing_service(request)
+    try:
+        document = service.get_document(document_id)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    return _billing_card_response(service, document)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("billing_document_cancel")
+@auth_required
+@billing_manager_required
+@rate_limit("billing_cancel", 20, 60, key="account")
+def billing_document_cancel(request: AuthorizedRequest, document_id: str):
+    """Отмена: освобождает списания. Причина обязательна.
+
+    @feature_required намеренно НЕТ (контракт, п. 2): при выключенной
+    подписке отмена остаётся разрешена — иначе клиент, у которого кончилась
+    подписка, не смог бы исправить ошибочно выставленный счёт.
+    """
+    service = _billing_service(request)
+    payload = _load_request_json(request)
+    user_id, user_name = _billing_actor(request)
+    try:
+        document = service.get_document(document_id)
+        service.cancel(
+            document,
+            payload.get("reason") or payload.get("cancel_reason") or "",
+            user_id=user_id, user_name=user_name,
+        )
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    return _billing_card_response(service, document)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("billing_document_act")
+@auth_required
+@billing_manager_required
+@feature_required(FEATURE_BILLING)
+@rate_limit("billing_act", 10, 60, key="account")
+def billing_document_act(request: AuthorizedRequest, document_id: str):
+    """Печать акта по счёту генератором документов портала.
+
+    Живьём не проверено (см. докстринг billing_crm_service). Любой отказ
+    портала — понятный код в теле ответа и в act_error документа, а не 500:
+    act_template_missing, documentgenerator_unavailable, act_generation_failed.
+    Текст последней ошибки остаётся на документе, чтобы настройщик видел
+    причину, не поднимая логи.
+    """
+    service = _billing_service(request)
+    payload = _load_request_json(request)
+    try:
+        document = service.get_document(document_id)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+
+    crm_service = BillingCrmService(request.bitrix24_account, service=service)
+    try:
+        result = crm_service.print_act(
+            document,
+            template_id=int(payload.get("template_id") or 0),
+            template_docx_base64=str(payload.get("template_docx_base64") or ""),
+        )
+    except BillingError as exc:
+        document.act_error = exc.message[:4000]
+        document.save(update_fields=["act_error", "updated_at"])
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    except (TypeError, ValueError) as exc:
+        document.act_error = f"Негодные параметры печати акта: {exc}"[:4000]
+        document.save(update_fields=["act_error", "updated_at"])
+        return JsonResponse(
+            {"error": document.act_error, "code": "act_bad_request"}, status=400
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("billing_document_act: сбой печати акта")
+        document.act_error = f"Сбой печати акта: {exc}"[:4000]
+        document.save(update_fields=["act_error", "updated_at"])
+        return JsonResponse(
+            {"error": document.act_error, "code": "act_generation_failed"}, status=502
+        )
+
+    result["document"] = service.serialize_document(document, with_details=False)
+    return JsonResponse(result)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("billing_document_detail_export")
+@auth_required
+@rate_limit("export", 12, 60, key="account")
+def billing_document_detail_export(request: AuthorizedRequest, document_id: str):
+    """XLSX-детализация к акту по снимку документа."""
+    service = _billing_service(request)
+    try:
+        document = service.get_document(document_id)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+
+    entries = list(document.entries.all().order_by("date_reflection", "timesheet_bitrix_id"))
+    try:
+        output = build_billing_detail_workbook(document, entries)
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    suffix = document.crm_account_number or str(document.pk)
+    filename = f"billing_detail_{suffix}.xlsx".replace(" ", "_").replace("/", "-")
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response

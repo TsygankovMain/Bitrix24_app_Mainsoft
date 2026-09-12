@@ -508,3 +508,262 @@ class SyncRun(models.Model):
         indexes = [
             models.Index(fields=["started_at"], name="sync_run_started_idx"),
         ]
+
+
+class PortalFeature(models.Model):
+    """Выключатель платной функции на портале (счёт и акт, БДДС).
+
+    Живёт на НАШЕМ сервере, а не в app.option портала: у фронта есть токен
+    приложения, и app.option.set из консоли браузера включил бы платную
+    функцию мимо нас. Писать состояние по REST нельзя ни при каких условиях —
+    только management-командой (main/management/commands/billing_feature.py).
+
+    Ключ — пара (bitrix24_account, code), как записано в контракте. При этом
+    подписка по смыслу портальная, а Bitrix24Account в этом приложении —
+    запись НА СОТРУДНИКА (уникальность по паре «пользователь + домен»).
+    Поэтому чтение состояния идёт не по своей учётке, а по всем учёткам того
+    же member_id (см. billing_features.get_feature_state): иначе функция,
+    включённая администратору, была бы выключена у бухгалтера того же
+    портала. Команда включения по этой же причине пишет строки сразу всем
+    учёткам портала.
+    """
+
+    STATE_ON = "on"
+    STATE_TRIAL = "trial"
+    STATE_OFF = "off"
+    STATES = (STATE_ON, STATE_TRIAL, STATE_OFF)
+
+    CODE_BILLING = "billing"
+    CODE_BDDS = "bdds"
+    CODES = (CODE_BILLING, CODE_BDDS)
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(
+        Bitrix24Account, on_delete=models.CASCADE, related_name="portal_features",
+    )
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="portal_features", db_index=True,
+    )
+    code = models.CharField(max_length=32)
+    state = models.CharField(max_length=16, default=STATE_OFF)
+    trial_until = models.DateTimeField(null=True, blank=True)
+    comment = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_feature"
+        unique_together = ("bitrix24_account", "code")
+        indexes = [
+            models.Index(fields=["code", "state"], name="portal_feature_code_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.code}={self.state}"
+
+    def is_enabled(self, now=None) -> bool:
+        """trial считается включённым, пока не вышел срок.
+
+        trial_until=None у trial трактуется как бессрочный тест: это ручная
+        выдача командой, и «молча выключить» её было бы хуже, чем оставить
+        включённой до явного выключения.
+        """
+        if self.state == self.STATE_ON:
+            return True
+        if self.state != self.STATE_TRIAL:
+            return False
+        if self.trial_until is None:
+            return True
+        return (now or timezone.now()) <= self.trial_until
+
+
+class BillingDocument(models.Model):
+    """Выставленный документ: счёт в CRM + его снимок у нас.
+
+    Почему снимок, а не ссылка на списания: списание уникально по паре
+    «учётка + bitrix_id» (при USE_PORTAL_SCOPING=False у каждого сотрудника
+    своя копия строки), а синхронизация физически удаляет записи, пропавшие
+    в Битриксе (timesheet_sync_service). Ссылаться на TimesheetItem.pk
+    нельзя — документ хранит собственные часы, ставку и сумму и помнит
+    списание только по bitrix_id.
+
+    Черновиков нет: статусы ровно два — issued и cancelled. Документ ничего
+    не пересчитывает после выставления; расхождения с текущими списаниями
+    показываются как drift на карточке.
+    """
+
+    STATUS_ISSUED = "issued"
+    STATUS_CANCELLED = "cancelled"
+
+    VAT_INCLUDED = "included"
+    VAT_NONE = "none"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(
+        Bitrix24Account, on_delete=models.CASCADE, related_name="billing_documents",
+    )
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="billing_documents", db_index=True,
+    )
+
+    status = models.CharField(max_length=16, default=STATUS_ISSUED, db_index=True)
+    period_from = models.DateField(null=True, blank=True)
+    period_to = models.DateField(null=True, blank=True)
+
+    company_id = models.CharField(max_length=50, blank=True, default="")
+    company_name = models.CharField(max_length=255, blank=True, default="")
+    our_company_id = models.CharField(max_length=50, blank=True, default="")
+    our_company_name = models.CharField(max_length=255, blank=True, default="")
+
+    currency = models.CharField(max_length=10, default="RUB")
+    vat_mode = models.CharField(max_length=16, default=VAT_INCLUDED)
+    vat_rate = models.FloatField(default=0.0)
+
+    total_hours = models.FloatField(default=0.0)
+    total_amount = models.FloatField(default=0.0)
+
+    # Снимок параметров отбора: чем документ собран. Нужен карточке и
+    # переоформлению («отменить и выставить тем же фильтром»), пересчётом
+    # документа он не управляет никогда.
+    grouping = models.CharField(max_length=16, default="project")
+    filter_snapshot = models.JSONField(default=dict, blank=True)
+
+    crm_entity_id = models.CharField(max_length=50, blank=True, default="")
+    crm_account_number = models.CharField(max_length=100, blank=True, default="")
+
+    act_document_id = models.CharField(max_length=50, blank=True, default="")
+    act_number = models.CharField(max_length=100, blank=True, default="")
+    # Ссылки генератора документов: без них напечатанный акт некуда отдать.
+    # В контракте их нет, но контракт перечисляет модель, а не запрещает
+    # хранить результат вызова, который сам же предписывает делать.
+    act_download_url = models.TextField(blank=True, default="")
+    act_public_url = models.TextField(blank=True, default="")
+    act_pdf_url = models.TextField(blank=True, default="")
+    act_error = models.TextField(blank=True, default="")
+
+    created_by_id = models.CharField(max_length=50, blank=True, default="")
+    created_by_name = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by_id = models.CharField(max_length=50, blank=True, default="")
+    cancelled_by_name = models.CharField(max_length=255, blank=True, default="")
+    cancel_reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        managed = True
+        db_table = "billing_document"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["bitrix24_account", "status"], name="billing_doc_acc_status_idx"),
+            models.Index(fields=["bitrix24_account", "company_id"], name="billing_doc_acc_comp_idx"),
+            models.Index(fields=["bitrix24_account", "period_from"], name="billing_doc_acc_period_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"BillingDocument<{self.crm_account_number or self.pk}>"
+
+    @property
+    def is_issued(self) -> bool:
+        return self.status == self.STATUS_ISSUED
+
+
+class BillingLine(models.Model):
+    """Строка документа: то, что уходит товарной строкой в счёт CRM.
+
+    По умолчанию одна строка на проект, количество — в часах. Сумма строки
+    считается как сумма сумм её списаний, а не как round(часы × ставка):
+    ставка внутри строки может быть разной (ставку помнит каждое списание),
+    и пересчёт от общего количества часов разошёлся бы с детализацией.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        BillingDocument, on_delete=models.CASCADE, related_name="lines",
+    )
+    project_id = models.CharField(max_length=50, blank=True, default="")
+    project_name = models.CharField(max_length=255, blank=True, default="")
+    title = models.CharField(max_length=500, blank=True, default="")
+    hours = models.FloatField(default=0.0)
+    rate = models.FloatField(default=0.0)
+    amount = models.FloatField(default=0.0)
+    sort = models.IntegerField(default=0)
+
+    class Meta:
+        managed = True
+        db_table = "billing_line"
+        ordering = ["sort", "id"]
+
+
+class BillingEntry(models.Model):
+    """Потреблённое списание: снимок часов, ставки и суммы на момент выставления.
+
+    ЗАЧЕМ is_active — денормализация статуса документа.
+
+    Контракт требует частичный уникальный индекс
+    (bitrix24_account, timesheet_bitrix_id) с условием «документ действует»:
+    одно списание не может попасть в два действующих документа, и защищать
+    это должна БАЗА, а не проверка в коде — два бухгалтера, нажавшие
+    «Выставить» одновременно, проверку в коде обходят.
+
+    В Django частичный уникальный индекс — это UniqueConstraint(condition=Q(...)),
+    но условие Q может ссылаться только на поля САМОЙ модели: выразить
+    document__status='issued' в condition нельзя (Django отвергает join в
+    условии индекса, да и СУБД такого индекса не построит — индекс строится
+    по одной таблице). Поэтому статус документа продублирован здесь полем
+    is_active, а индекс строится по нему.
+
+    Поле поддерживает СЕРВИС (billing_service): выставление создаёт записи с
+    is_active=True, отмена документа переводит все его записи в False одним
+    UPDATE в той же транзакции. Ручная правка статуса документа мимо сервиса
+    рассинхронизирует пару — этого делать нельзя.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        BillingDocument, on_delete=models.CASCADE, related_name="entries",
+    )
+    line = models.ForeignKey(
+        BillingLine, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="entries",
+    )
+    bitrix24_account = models.ForeignKey(
+        Bitrix24Account, on_delete=models.CASCADE, related_name="billing_entries",
+    )
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="billing_entries", db_index=True,
+    )
+
+    timesheet_bitrix_id = models.IntegerField()
+    is_active = models.BooleanField(default=True)
+
+    employee_id = models.CharField(max_length=50, blank=True, default="")
+    employee_name = models.CharField(max_length=255, blank=True, default="")
+    date_reflection = models.DateTimeField(null=True, blank=True)
+    hours = models.FloatField(default=0.0)
+    rate_snapshot = models.FloatField(default=0.0)
+    amount = models.FloatField(default=0.0)
+    project_id = models.CharField(max_length=50, blank=True, default="")
+    project_name = models.CharField(max_length=255, blank=True, default="")
+    task_id = models.CharField(max_length=50, blank=True, default="")
+    task_title = models.CharField(max_length=500, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+
+    class Meta:
+        managed = True
+        db_table = "billing_entry"
+        indexes = [
+            models.Index(fields=["bitrix24_account", "timesheet_bitrix_id"], name="billing_entry_acc_ts_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["bitrix24_account", "timesheet_bitrix_id"],
+                condition=models.Q(is_active=True),
+                name="billing_entry_one_active_per_timesheet",
+            ),
+        ]

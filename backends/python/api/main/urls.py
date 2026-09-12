@@ -95,6 +95,19 @@ urlpatterns = [
     path('api/smart-processes/create-fields', views.create_fields, name='create_fields'),
     path('api/smart-processes/create-field', views.create_mapped_field, name='create_mapped_field'),
     
+    # Счёт и акт (billing). Контракт —
+    # docs/superpowers/specs/2026-09-12-billing-mvp-contract.md.
+    # Один адрес api/billing/documents на GET (реестр) и POST (выставление):
+    # гейты прав и подписки висят внутри, на POST-ветке, чтобы реестр читался
+    # и без права выставлять, и при выключенной подписке.
+    path('api/features', views.get_features, name='get_features'),
+    path('api/billing/preview', views.billing_preview, name='billing_preview'),
+    path('api/billing/documents', views.billing_documents, name='billing_documents'),
+    path('api/billing/documents/<str:document_id>', views.billing_document_detail, name='billing_document_detail'),
+    path('api/billing/documents/<str:document_id>/cancel', views.billing_document_cancel, name='billing_document_cancel'),
+    path('api/billing/documents/<str:document_id>/act', views.billing_document_act, name='billing_document_act'),
+    path('api/billing/documents/<str:document_id>/detail.xlsx', views.billing_document_detail_export, name='billing_document_detail_export'),
+
     # Logs
     path('api/logs/requests', views.get_request_logs, name='get_request_logs'),
     path('api/logs/system', views.get_system_logs, name='get_system_logs'),

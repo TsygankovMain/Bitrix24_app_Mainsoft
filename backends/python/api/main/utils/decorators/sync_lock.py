@@ -47,7 +47,12 @@ from django.http import JsonResponse
 
 logger = logging.getLogger(__name__)
 
-SCOPE_BITS = {"timesheet": 1, "project": 2, "users": 3, "project_create": 4, "tasks": 5}
+# billing: 6 — выставление счёта («Счёт и акт»). Отдельный scope и, как у
+# project_create, субъект-ПОРТАЛ: кнопку «Выставить» могут нажать два
+# разных бухгалтера одного портала, и сериализовать их обоих обязательно
+# независимо от USE_PORTAL_SCOPING (см. _lock_subject_pk).
+SCOPE_BITS = {"timesheet": 1, "project": 2, "users": 3, "project_create": 4,
+              "tasks": 5, "billing": 6}
 
 
 class SyncLockBusy(Exception):
@@ -74,7 +79,8 @@ def _advisory_key(account_pk, scope: str) -> int:
 def _lock_subject_pk(account, scope: str):
     """Субъект advisory-замка. Условие зависит от scope:
 
-    - scope="project_create": portal.pk при наличии portal, иначе account.pk
+    - scope="project_create" и scope="billing": portal.pk при наличии portal,
+      иначе account.pk
       — БЕЗУСЛОВНО, независимо от USE_PORTAL_SCOPING. Кнопку «Создать проект»
       могут нажать два разных сотрудника (два разных Bitrix24Account) одного
       портала одновременно, и защита от этой гонки не имеет права молча
@@ -88,7 +94,7 @@ def _lock_subject_pk(account, scope: str):
     Под portal-скоупингом синк логически идёт по компании (один представитель
     синкает данные всей компании в общие portal-таблицы), поэтому замок должен
     быть «по компании», а не по учётке."""
-    if scope == "project_create":
+    if scope in {"project_create", "billing"}:
         portal = getattr(account, "portal", None)
         if portal is not None:
             return portal.pk
