@@ -25,8 +25,10 @@ import {
   describeProjectSpaValidation,
   describeSuggestions,
   getLegacyStageValue,
+  hasUnsavedMappingChanges,
   isFieldTypeCompatible,
   isMappedFieldMissing,
+  isStaleSpFieldsResponse,
   mergeCreatedFieldMapping,
   normalizeMappingState,
   normalizeProjectMappingState,
@@ -701,6 +703,68 @@ test('неизвестная ошибка показывает текст сер
     'Некорректный формат тела запроса.'
   )
   assert.match(describeMappingSaveError({}).text, /Причина неизвестна/)
+})
+
+test('Баг 6: конфликт ревизии (config_conflict) различается с устаревшей вкладкой', () => {
+  const conflict = describeMappingSaveError({
+    status: 409,
+    data: { error: 'Настройки изменили в другой вкладке или другой пользователь — обновите страницу', code: 'config_conflict' },
+  })
+
+  assert.equal(conflict.conflict, true)
+  assert.match(conflict.text, /обновите страницу/)
+
+  const staleApp = describeMappingSaveError({ status: 409 })
+  assert.notEqual(staleApp.conflict, true)
+  assert.match(staleApp.text, /Перезагрузите/)
+})
+
+test('Баг 8: гонка ответов при быстрой смене смарт-процесса', () => {
+  // Пока в полёте ответ на старый выбор (1100), человек уже выбрал 1200.
+  assert.equal(isStaleSpFieldsResponse(1100, 1200), true)
+  // Ответ пришёл для того же процесса, что выбран сейчас — актуален.
+  assert.equal(isStaleSpFieldsResponse(1200, 1200), false)
+  // Процесс сбросили (null/0) — ответ на прежний выбор больше не актуален.
+  assert.equal(isStaleSpFieldsResponse(1100, null), true)
+  assert.equal(isStaleSpFieldsResponse(null, null), false)
+})
+
+test('Баг 7: hasUnsavedMappingChanges видит правку в любом из трёх блоков', () => {
+  const saved = {
+    sp_entity_type_id: 1100,
+    fields_mapping: { id_zadachi: 'ufCrm5TaskId' },
+    project_sp_entity_type_id: 1102,
+    project_fields_mapping: { title: 'TITLE', stage_id: 'STAGE_ID' },
+    finance_sp_entity_type_id: 0,
+    finance_fields_mapping: {},
+  }
+
+  const unchangedDraft = {
+    saved,
+    timesheet: { entityTypeId: 1100, mapping: { id_zadachi: 'ufCrm5TaskId' } },
+    project: { entityTypeId: 1102, mapping: normalizeProjectMappingState(saved) },
+    finance: { entityTypeId: 0, mapping: {} },
+  }
+
+  assert.equal(hasUnsavedMappingChanges(unchangedDraft), false)
+
+  // Правка списаний (раньше вообще не отслеживалась).
+  assert.equal(hasUnsavedMappingChanges({
+    ...unchangedDraft,
+    timesheet: { entityTypeId: 1100, mapping: { id_zadachi: 'ufCrm5OtherField' } },
+  }), true)
+
+  // Правка проектов (раньше вообще не отслеживалась).
+  assert.equal(hasUnsavedMappingChanges({
+    ...unchangedDraft,
+    project: { entityTypeId: 1102, mapping: { ...unchangedDraft.project.mapping, title: 'OTHER_TITLE' } },
+  }), true)
+
+  // Правка «Доходов-расходов» — уже отслеживалась isFinanceMappingChanged, остаётся рабочей.
+  assert.equal(hasUnsavedMappingChanges({
+    ...unchangedDraft,
+    finance: { entityTypeId: 1104, mapping: { amount: 'ufCrm9Amount' } },
+  }), true)
 })
 
 // endregion

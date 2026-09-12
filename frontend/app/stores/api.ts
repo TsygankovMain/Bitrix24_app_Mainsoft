@@ -45,6 +45,13 @@ type SaveConfigurationResponse = {
   /** Сервер сохранил по отдельной ветке (сейчас только 'finance'). */
   scope?: string
   config?: AppConfigurationPayload
+  /**
+   * Новая ревизия конфигурации после сохранения (Баг 6, оптимистическая
+   * блокировка). Экран запоминает её и шлёт следующим сохранением как
+   * `baseRevision` — так сервер отличает «сохраняю то, что видел» от
+   * «кто-то сохранил конфигурацию, пока я редактировал».
+   */
+  config_revision?: number
   project_sync?: Record<string, unknown>
   timesheet_backfill?: Record<string, unknown>
   validation?: ProjectSpaValidationPayload
@@ -1400,12 +1407,24 @@ export const useApiStore = defineStore(
      */
     const saveConfiguration = async (
       config: AppConfigurationPayload,
-      options: { scope?: 'finance' } = {}
+      options: { scope?: 'finance', baseRevision?: number | string | null } = {}
     ): Promise<SaveConfigurationResponse> => {
+      const body: Record<string, unknown> = { config }
+      if (options.scope) {
+        body.scope = options.scope
+      }
+      // Оптимистическая блокировка (Баг 6): ревизия, с которой экран открыл
+      // или последний раз сохранил конфигурацию. Не передана (undefined/null)
+      // — сервер сохраняет как раньше, без сравнения (совместимость со
+      // старым клиентом и внутренними сохранениями без отслеживания ревизии).
+      if (options.baseRevision !== undefined && options.baseRevision !== null) {
+        body.base_revision = options.baseRevision
+      }
+
       const result = await $api<SaveConfigurationResponse>('/api/configuration/save', {
         method: 'POST',
         headers: { Authorization: `Bearer ${tokenJWT.value}` },
-        body: JSON.stringify(options.scope ? { config, scope: options.scope } : { config })
+        body: JSON.stringify(body)
       })
       clearCache('app-configuration', 'project-board-meta', 'homepage-portfolio', 'bitrix-lists:lists', 'bitrix-lists:lists_socnet')
       return result

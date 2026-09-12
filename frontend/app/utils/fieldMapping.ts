@@ -1526,17 +1526,25 @@ export function applyFinanceMappingToConfig(
   }
 }
 
-/** Отличается ли черновик «Доходов-расходов» от сохранённого на сервере. */
-export function isFinanceMappingChanged(
-  saved: AppConfigurationPayload,
-  input: { entityTypeId: number | null | undefined, mapping: Record<string, string> }
+/**
+ * Отличается ли черновик блока (процесс + сопоставление) от сохранённого.
+ *
+ * Общий кусок isFinanceMappingChanged и hasUnsavedMappingChanges (Баг 7):
+ * оба блока — «процесс + карта полей» — сравниваются одинаково, разница
+ * только в том, откуда берутся сохранённые значения.
+ */
+function isMappingDraftChanged(
+  savedEntityTypeId: unknown,
+  savedMapping: Record<string, string> | undefined | null,
+  draftEntityTypeId: number | null | undefined,
+  draftMapping: Record<string, string>
 ): boolean {
-  if (Number(saved.finance_sp_entity_type_id || 0) !== Number(input.entityTypeId || 0)) {
+  if (Number(savedEntityTypeId || 0) !== Number(draftEntityTypeId || 0)) {
     return true
   }
 
-  const before = normalizeMappingState(saved.finance_fields_mapping || {})
-  const after = normalizeMappingState(input.mapping)
+  const before = normalizeMappingState(savedMapping || {})
+  const after = normalizeMappingState(draftMapping)
   const keys = new Set([...Object.keys(before), ...Object.keys(after)])
 
   for (const key of keys) {
@@ -1546,6 +1554,52 @@ export function isFinanceMappingChanged(
   }
 
   return false
+}
+
+/** Отличается ли черновик «Доходов-расходов» от сохранённого на сервере. */
+export function isFinanceMappingChanged(
+  saved: AppConfigurationPayload,
+  input: { entityTypeId: number | null | undefined, mapping: Record<string, string> }
+): boolean {
+  return isMappingDraftChanged(
+    saved.finance_sp_entity_type_id,
+    saved.finance_fields_mapping,
+    input.entityTypeId,
+    input.mapping
+  )
+}
+
+/**
+ * Есть ли на экране сопоставления несохранённая правка хоть в одном блоке
+ * (Баг 7: раньше черновик отслеживался только у «Доходов-расходов», и уход
+ * с экрана кнопкой «К настройкам» терял правки списаний и проектов молча).
+ *
+ * `project.mapping` и `saved.project_fields_mapping` сравниваются в одной и
+ * той же форме — с консолидированной стадией под ключом `stage`
+ * (normalizeProjectMappingState) — так их и хранит экран в projectMapping.
+ */
+export function hasUnsavedMappingChanges(input: {
+  saved: AppConfigurationPayload
+  timesheet: { entityTypeId: number | null | undefined, mapping: Record<string, string> }
+  project: { entityTypeId: number | null | undefined, mapping: Record<string, string> }
+  finance: { entityTypeId: number | null | undefined, mapping: Record<string, string> }
+}): boolean {
+  const { saved } = input
+
+  if (isMappingDraftChanged(saved.sp_entity_type_id, saved.fields_mapping, input.timesheet.entityTypeId, input.timesheet.mapping)) {
+    return true
+  }
+
+  if (isMappingDraftChanged(
+    saved.project_sp_entity_type_id,
+    normalizeProjectMappingState(saved),
+    input.project.entityTypeId,
+    input.project.mapping
+  )) {
+    return true
+  }
+
+  return isFinanceMappingChanged(saved, input.finance)
 }
 
 /**
@@ -1968,7 +2022,17 @@ export type MappingErrorReport = {
   title: string
   text: string
   validation: ProjectSpaValidationPayload | null
+  /**
+   * Оптимистическая блокировка сохранения конфигурации (Баг 6): настройки
+   * изменили в другой вкладке или другой пользователь. Экран должен
+   * показать кнопку «Обновить» (перечитать конфигурацию), а не выкинуть
+   * несохранённый черновик молча.
+   */
+  conflict?: boolean
 }
+
+/** Код 409-ответа save_configuration при разошедшейся ревизии (см. ConfigurationConflict в backends/python/api/main/configuration_service.py). */
+export const CONFIG_SAVE_CONFLICT_CODE = 'config_conflict'
 
 type ErrorLike = {
   status?: number
@@ -1976,6 +2040,7 @@ type ErrorLike = {
   message?: string
   data?: {
     error?: string
+    code?: string
     validation?: unknown
     status?: string
   } | null
@@ -2022,6 +2087,15 @@ export function describeMappingSaveError(error: unknown): MappingErrorReport {
     }
   }
 
+  if (status === 409 && String(payload?.code || '') === CONFIG_SAVE_CONFLICT_CODE) {
+    return {
+      title: 'Настройки изменили в другой вкладке',
+      text: serverText || 'Настройки изменили в другой вкладке или другой пользователь — обновите страницу.',
+      validation: null,
+      conflict: true,
+    }
+  }
+
   if (status === 409) {
     return {
       title: 'Вкладка работает на старой версии',
@@ -2058,6 +2132,33 @@ export function describeSmartProcessCreated(input: {
     text: `Смарт-процесс создан${id ? ` (ID ${id})` : ''}, в нём заведено полей: ${count}. Сопоставление заполнено автоматически — проверьте его ниже и нажмите «Сохранить».`,
     warnings: (input.warnings || []).filter(Boolean),
   }
+}
+
+// endregion
+
+// region Гонка ответов при смене смарт-процесса
+
+/**
+ * Ответ на загрузку полей смарт-процесса устарел (Баг 8).
+ *
+ * loadSpFields/loadProjectSpFields/loadFinanceSpFields шлют запрос на
+ * каждую смену процесса в выпадающем списке. Если человек успевает
+ * переключить процесс ещё раз до ответа на первый запрос, ответы могут
+ * прийти в обратном порядке — и более старый, придя ПОСЛЕ нового, подменит
+ * список полей чужим процессом.
+ *
+ * Проверка без внутреннего состояния: вызывающий код запоминает
+ * entityTypeId, с которым СТАРТОВАЛ конкретный запрос, и в момент, когда
+ * ответ пришёл, сравнивает его с тем, что выбрано СЕЙЧАС. Несовпадение —
+ * ответ устарел, применять его нельзя (включая ветку ошибки: показывать
+ * «не удалось загрузить поля» про процесс, который человек уже не выбрал,
+ * тоже не нужно).
+ */
+export function isStaleSpFieldsResponse(
+  requestedEntityTypeId: number | null | undefined,
+  currentEntityTypeId: number | null | undefined
+): boolean {
+  return Number(requestedEntityTypeId || 0) !== Number(currentEntityTypeId || 0)
 }
 
 // endregion

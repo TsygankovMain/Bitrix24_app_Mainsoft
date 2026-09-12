@@ -36,6 +36,7 @@ from .services import (
     BitrixDataService,
     ReportService,
     TimesheetSyncService,
+    ConfigurationConflict,
     ConfigurationService,
     ProjectCardService,
     ProjectSyncService,
@@ -2740,7 +2741,8 @@ def _project_spa_part_unchanged(stored: dict, incoming: dict) -> bool:
 
 @rate_limit("config_save_sync", 6, 60, key="account")
 def _save_configuration_with_project_sync(
-    request: AuthorizedRequest, service: ConfigurationService, config: dict
+    request: AuthorizedRequest, service: ConfigurationService, config: dict,
+    base_revision=None,
 ) -> JsonResponse:
     """Ветка save_configuration при заданном (> 0) project_sp_entity_type_id —
 
@@ -2809,11 +2811,14 @@ def _save_configuration_with_project_sync(
             status=400,
         )
 
-    service.save_configuration_sync(config)
+    try:
+        saved_config = service.save_configuration_sync(config, base_revision=base_revision)
+    except ConfigurationConflict as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
     invalidate_project_runtime_caches(request.bitrix24_account)
     invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
 
-    response_payload = {"status": "success"}
+    response_payload = {"status": "success", "config_revision": saved_config.get("config_revision")}
     project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     try:
         with account_sync_lock(request.bitrix24_account, scope="project"):
@@ -2877,6 +2882,11 @@ def save_configuration(request: AuthorizedRequest):
         if not isinstance(config, dict):
             return JsonResponse({"error": "Некорректный формат конфигурации."}, status=400)
 
+        # Ревизия, с которой экран открыли/последний раз сохранили (см.
+        # ConfigurationConflict). Отсутствует — старый клиент или внутренний
+        # вызов; save_configuration_sync тогда пишет без проверки версии.
+        base_revision = body.get('base_revision')
+
         config = service.normalize_configuration_sync(config)
 
         # Живая проверка выбранного шаблона генератора документов — только
@@ -2907,10 +2917,17 @@ def save_configuration(request: AuthorizedRequest):
             and str(body.get("scope") or "").strip().lower() == CONFIG_SAVE_SCOPE_FINANCE
             and _project_spa_part_unchanged(service.get_configuration_sync(), config)
         ):
-            service.save_configuration_sync(config)
+            try:
+                saved_config = service.save_configuration_sync(config, base_revision=base_revision)
+            except ConfigurationConflict as exc:
+                return JsonResponse(exc.as_payload(), status=exc.status)
             invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
             invalidate_project_runtime_caches(request.bitrix24_account)
-            return JsonResponse({"status": "success", "scope": CONFIG_SAVE_SCOPE_FINANCE})
+            return JsonResponse({
+                "status": "success",
+                "scope": CONFIG_SAVE_SCOPE_FINANCE,
+                "config_revision": saved_config.get("config_revision"),
+            })
 
         if should_validate_project_spa:
             # project_sp_entity_type_id > 0 -> эта ветка попытается запустить
@@ -2918,14 +2935,17 @@ def save_configuration(request: AuthorizedRequest):
             # поэтому лимитируется отдельно — см. docstring
             # _save_configuration_with_project_sync. Ветка ниже (без Project
             # SPA в конфигурации) синк не запускает и не лимитируется вовсе.
-            return _save_configuration_with_project_sync(request, service, config)
+            return _save_configuration_with_project_sync(request, service, config, base_revision)
 
-        service.save_configuration_sync(config)
+        try:
+            saved_config = service.save_configuration_sync(config, base_revision=base_revision)
+        except ConfigurationConflict as exc:
+            return JsonResponse(exc.as_payload(), status=exc.status)
         invalidate_project_runtime_caches(request.bitrix24_account)
         # Суммы операций кэшируются по сопоставлению «Доходов-расходов»: без
         # сброса бюджет проекта до конца TTL считал бы по прежним полям.
         invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
-        return JsonResponse({"status": "success"})
+        return JsonResponse({"status": "success", "config_revision": saved_config.get("config_revision")})
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
     except Exception:

@@ -42,7 +42,8 @@
  * `.vue`, поэтому оставленное в компоненте ревью проверить не может).
  */
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import MappingFieldsCard from '~/components/settings/MappingFieldsCard.vue'
 import {
   FINANCE_APP_SMART_PROCESS_TITLE,
@@ -55,7 +56,9 @@ import {
   applySuggestions,
   buildMappingSteps,
   findFinanceAppSmartProcess,
+  hasUnsavedMappingChanges,
   isFinanceMappingChanged,
+  isStaleSpFieldsResponse,
   planFinanceMappingSave,
   resolveFinanceMappingNotice,
   resolveMappingStepTarget,
@@ -171,6 +174,8 @@ const saveReport = ref<{
   title: string
   text: string
   blockers: Array<{ key: string, label: string, reason: string, block: MappingBlockId }>
+  /** Баг 6: конфликт ревизии — рядом с текстом показывается кнопка «Обновить». */
+  conflict?: boolean
 } | null>(null)
 const saveReportRef = ref<HTMLElement | null>(null)
 const statusRef = ref<HTMLElement | null>(null)
@@ -234,6 +239,20 @@ const financeChanged = computed(() => isFinanceMappingChanged(savedConfig.value,
   mapping: financeMapping.value,
 }))
 
+/**
+ * Несохранённая правка хоть в одном из трёх блоков (Баг 7).
+ *
+ * До этой правки черновик отслеживался только у «Доходов-расходов»
+ * (financeChanged выше) — уход с экрана кнопкой «К настройкам» терял
+ * правки списаний и проектов молча, без единого предупреждения.
+ */
+const hasUnsavedChanges = computed(() => hasUnsavedMappingChanges({
+  saved: savedConfig.value,
+  timesheet: { entityTypeId: selectedSpId.value, mapping: mapping.value },
+  project: { entityTypeId: selectedProjectSpId.value, mapping: projectMapping.value },
+  finance: { entityTypeId: selectedFinanceSpId.value, mapping: financeMapping.value },
+}))
+
 /** Готовый процесс, который заводит установка приложения. */
 const financeAppProcess = computed(() => findFinanceAppSmartProcess(smartProcesses.value))
 
@@ -276,12 +295,25 @@ function showStatus(type: 'success' | 'error' | 'info', text: string) {
   statusMessage.value = { type, text }
 }
 
+/**
+ * Гонка ответов (Баг 8): человек может сменить смарт-процесс списаний ещё
+ * раз до того, как пришёл ответ на предыдущий выбор. Более старый запрос,
+ * придя ПОСЛЕ нового, не должен подменить список полей — isStaleSpFieldsResponse
+ * сравнивает entityTypeId, с которым запрос стартовал, с тем, что выбрано
+ * СЕЙЧАС (selectedSpId.value в момент ответа).
+ */
 async function loadSpFields(entityTypeId: number) {
   isLoadingSpFields.value = true
   try {
     const res = await apiStore.getSpFields(entityTypeId)
+    if (isStaleSpFieldsResponse(entityTypeId, selectedSpId.value)) {
+      return
+    }
     spFields.value = res.fields || []
   } catch (e) {
+    if (isStaleSpFieldsResponse(entityTypeId, selectedSpId.value)) {
+      return
+    }
     spFields.value = []
     showStatus('error', `Не удалось получить поля смарт-процесса списаний. ${describeMappingSaveError(e).text}`)
   } finally {
@@ -293,8 +325,14 @@ async function loadProjectSpFields(entityTypeId: number) {
   isLoadingProjectFields.value = true
   try {
     const res = await apiStore.getSpFields(entityTypeId)
+    if (isStaleSpFieldsResponse(entityTypeId, selectedProjectSpId.value)) {
+      return
+    }
     projectSpFields.value = res.fields || []
   } catch (e) {
+    if (isStaleSpFieldsResponse(entityTypeId, selectedProjectSpId.value)) {
+      return
+    }
     projectSpFields.value = []
     showStatus('error', `Не удалось получить поля смарт-процесса проектов. ${describeMappingSaveError(e).text}`)
   } finally {
@@ -306,8 +344,14 @@ async function loadFinanceSpFields(entityTypeId: number) {
   isLoadingFinanceFields.value = true
   try {
     const res = await apiStore.getSpFields(entityTypeId)
+    if (isStaleSpFieldsResponse(entityTypeId, selectedFinanceSpId.value)) {
+      return
+    }
     financeSpFields.value = res.fields || []
   } catch (e) {
+    if (isStaleSpFieldsResponse(entityTypeId, selectedFinanceSpId.value)) {
+      return
+    }
     financeSpFields.value = []
     showStatus('error', `Не удалось получить поля смарт-процесса «Доходы-расходы». ${describeMappingSaveError(e).text}`)
   } finally {
@@ -800,10 +844,17 @@ async function handleSave() {
       mapping: financeMapping.value,
     })
 
-    const saveResult = await apiStore.saveConfiguration(newConfig)
+    const saveResult = await apiStore.saveConfiguration(newConfig, {
+      baseRevision: savedConfig.value.config_revision,
+    })
 
-    config.value = newConfig
-    savedConfig.value = { ...newConfig }
+    // Ревизия из ОТВЕТА, а не из newConfig: сервер продвинул её вперёд при
+    // записи (см. save_configuration_sync), и следующее сохранение обязано
+    // отправить именно её — иначе своё же успешное сохранение тут же
+    // выглядело бы устаревшим.
+    const savedWithRevision = { ...newConfig, config_revision: saveResult?.config_revision ?? newConfig.config_revision }
+    config.value = savedWithRevision
+    savedConfig.value = { ...savedWithRevision }
     savedProjectSpId.value = Number(plan.projectSpIdToSend || 0)
     applyMappingHealthConfig(newConfig)
 
@@ -865,10 +916,23 @@ async function reportSaveError(e: unknown) {
       })),
     }
   } else {
-    saveReport.value = { title: report.title, text: report.text, blockers: [] }
+    saveReport.value = { title: report.title, text: report.text, blockers: [], conflict: report.conflict }
   }
 
   await focusSaveReport()
+}
+
+/**
+ * «Обновить» на конфликте ревизии (Баг 6).
+ *
+ * Перечитывает конфигурацию с сервера. Несохранённый черновик при этом
+ * действительно пропадает — но не молча: до этой кнопки человек видит
+ * сообщение и решает сам, а не теряет правки на пустом месте, как было бы
+ * при автоматическом обновлении сразу на 409.
+ */
+async function reloadAfterConflict() {
+  saveReport.value = null
+  await loadData()
 }
 
 /**
@@ -902,15 +966,20 @@ async function handleSaveFinance() {
       mapping: financeMapping.value,
     })
 
-    await apiStore.saveConfiguration(next, { scope: FINANCE_CONFIG_SAVE_SCOPE })
+    const saveResult = await apiStore.saveConfiguration(next, {
+      scope: FINANCE_CONFIG_SAVE_SCOPE,
+      baseRevision: savedConfig.value.config_revision,
+    })
 
-    savedConfig.value = next
+    const nextWithRevision = { ...next, config_revision: saveResult?.config_revision ?? next.config_revision }
+    savedConfig.value = nextWithRevision
     config.value = {
       ...config.value,
-      finance_sp_entity_type_id: next.finance_sp_entity_type_id,
-      finance_fields_mapping: next.finance_fields_mapping,
+      finance_sp_entity_type_id: nextWithRevision.finance_sp_entity_type_id,
+      finance_fields_mapping: nextWithRevision.finance_fields_mapping,
+      config_revision: nextWithRevision.config_revision,
     }
-    applyMappingHealthConfig(next)
+    applyMappingHealthConfig(nextWithRevision)
 
     switch (plan.kind) {
       case 'ready':
@@ -928,6 +997,55 @@ async function handleSaveFinance() {
   } finally {
     isSavingFinance.value = false
   }
+}
+
+// endregion
+
+// region Уход с экрана с несохранённым черновиком (Баг 7)
+
+const UNSAVED_CHANGES_CONFIRM_TEXT = 'На экране есть несохранённые изменения сопоставления. Уйти без сохранения?'
+
+/**
+ * «К настройкам» — единственная навигационная кнопка на экране, поэтому обе
+ * (наверху и внизу шаблона) используют один обработчик вместо голого
+ * `router.push('/settings')`: раньше он уводил без всякой проверки черновика.
+ */
+function goToSettings() {
+  if (hasUnsavedChanges.value && typeof window !== 'undefined' && !window.confirm(UNSAVED_CHANGES_CONFIRM_TEXT)) {
+    return
+  }
+
+  router.push('/settings')
+}
+
+/** Переход роутером на другой экран приложения (левое меню, ссылки и т.п.). */
+onBeforeRouteLeave(() => {
+  if (!hasUnsavedChanges.value) {
+    return true
+  }
+
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  return window.confirm(UNSAVED_CHANGES_CONFIRM_TEXT)
+})
+
+/** Закрытие вкладки/перезагрузка страницы — роутер здесь не задействован. */
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!hasUnsavedChanges.value) {
+    return
+  }
+
+  event.preventDefault()
+  // Значение для Chrome — большинство браузеров игнорируют текст и
+  // показывают свой системный, но само присвоение обязательно.
+  event.returnValue = ''
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', handleBeforeUnload)
+  onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
 }
 
 // endregion
@@ -951,7 +1069,7 @@ onMounted(async () => {
       description="Связывает поля приложения с полями смарт-процессов портала. Пока связь не настроена, приложению некуда писать часы, а отчёты, счета и БДДС остаются пустыми."
     >
       <template #links>
-        <B24Button label="К настройкам" color="link" @click="router.push('/settings')" />
+        <B24Button label="К настройкам" color="link" @click="goToSettings" />
         <B24Button
           :label="saveButtonLabel"
           color="success"
@@ -1031,6 +1149,9 @@ onMounted(async () => {
       >
         <p class="text-sm font-semibold">{{ saveReport.title }}</p>
         <p class="mt-1 text-sm">{{ saveReport.text }}</p>
+        <div v-if="saveReport.conflict" class="mt-3">
+          <B24Button label="Обновить" color="default" size="sm" @click="reloadAfterConflict" />
+        </div>
         <ul v-if="saveReport.blockers.length" class="mt-3 space-y-2">
           <li v-for="blocker in saveReport.blockers" :key="`blocker-${blocker.key}`">
             <button
@@ -1524,7 +1645,7 @@ onMounted(async () => {
             :disabled="isSaving"
             @click="handleSave"
           />
-          <B24Button label="К настройкам" color="link" @click="router.push('/settings')" />
+          <B24Button label="К настройкам" color="link" @click="goToSettings" />
         </div>
         <p class="mt-2 text-xs text-slate-500">
           Настройка общая на весь портал: её видят все сотрудники сразу после сохранения.
