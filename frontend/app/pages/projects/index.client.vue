@@ -14,7 +14,6 @@ import { openCrmItemCard } from '~/utils/openCrmItem'
 import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from '~/utils/apiErrors'
 import { CREATE_PROJECT_BUTTON_ENABLED } from '~/utils/featureFlags'
 
-const router = useRouter()
 const route = useRoute()
 const { locales: localesI18n, setLocale } = useI18n()
 const fieldConfigStore = useFieldConfigStore()
@@ -661,10 +660,6 @@ onMounted(async () => {
 <template>
   <div class="ms-page-shell">
     <div class="ms-page-frame">
-      <div class="mb-1">
-        <B24Button label="Назад" color="link" @click="router.push('/')" />
-      </div>
-
       <B24Card v-if="isInit" class="ms-surface">
       <template #header>
         <div class="flex w-full flex-col gap-5">

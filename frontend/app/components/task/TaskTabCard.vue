@@ -74,6 +74,7 @@ function isEditingItem(item: TaskWorkspaceItem) {
                 <div class="task-card__title" :title="node.taskTitle">
                     <span v-if="level > 0" class="task-card__badge">Подзадача</span>
                     {{ node.taskTitle }}
+                    <span class="task-card__id">#{{ node.taskId }}</span>
                 </div>
                 <div class="task-card__totals" :title="totalsText">
                     <span
@@ -82,7 +83,7 @@ function isEditingItem(item: TaskWorkspaceItem) {
                         class="task-card__total"
                         :class="`task-card__total--${segment.tone}`"
                     >
-                        {{ segment.label }} <b>{{ segment.value }}</b>
+                        <template v-if="segment.label">{{ segment.label }} </template><b>{{ segment.value }}</b>
                     </span>
                 </div>
             </div>
@@ -221,6 +222,13 @@ function isEditingItem(item: TaskWorkspaceItem) {
     white-space: nowrap;
 }
 
+/* Номер задачи — как в макете: им ищут задачу в портале и в 1С. */
+.task-card__id {
+    margin-left: 4px;
+    font-weight: 400;
+    color: var(--ui-color-base-2);
+}
+
 .task-card__badge {
     display: inline-block;
     margin-right: 6px;
@@ -251,14 +259,16 @@ function isEditingItem(item: TaskWorkspaceItem) {
     color: var(--ui-color-green-90);
 }
 
-.task-card__total--danger b {
-    color: var(--ui-color-red-80);
-}
-
 .task-card__total--muted b {
     color: var(--ui-color-base-2);
 }
 
+/*
+ * «+» контурный, а не залитый: он стоит у каждой задачи и каждой подзадачи, и
+ * на дереве из десятка узлов сплошная колонка синих плашек перетягивает
+ * внимание с самих часов. Залитой остаётся одна кнопка — «Списать часы» в
+ * шапке вкладки. Так же нарисовано и в макете.
+ */
 .task-card__add {
     display: inline-flex;
     align-items: center;
@@ -266,14 +276,16 @@ function isEditingItem(item: TaskWorkspaceItem) {
     flex-shrink: 0;
     width: 32px;
     height: 32px;
+    border: 1px solid var(--ui-color-base-6);
     border-radius: 8px;
-    background: var(--ui-color-blue-80);
-    color: var(--ui-color-base-white-fixed);
+    background: var(--ui-color-bg-content-primary);
+    color: var(--ui-color-accent-main-link);
     cursor: pointer;
 }
 
 .task-card__add:hover {
-    background: var(--ui-color-blue-90);
+    border-color: var(--ui-color-accent-main-link);
+    background: var(--ui-color-accent-soft-blue-2);
 }
 
 .task-card__empty {

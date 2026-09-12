@@ -79,6 +79,10 @@ export const TASK_TAB_CONTRAST_PAIRS: ContrastPair[] = [
   { name: 'Кнопка удаления записи', foreground: '#c21b16', background: '#ffffff', minRatio: 4.5 },
   { name: 'Кнопка правки записи', foreground: '#0154c8', background: '#ffffff', minRatio: 4.5 },
   { name: 'Метка «Подзадача» и активная быстрая кнопка', foreground: '#0154c8', background: '#e6f4ff', minRatio: 4.5 },
+  { name: 'Плашка «учт.» у записи', foreground: '#056438', background: '#cffde7', minRatio: 4.5 },
+  { name: 'Плашка «не учт.» у записи', foreground: '#525c69', background: '#edeef0', minRatio: 4.5 },
+  { name: 'Номер задачи в шапке карточки', foreground: '#525c69', background: '#f1f4f6', minRatio: 4.5 },
+  { name: 'Контурная кнопка «+» у задачи', foreground: '#0154c8', background: '#ffffff', minRatio: 4.5 },
   { name: 'Ошибка формы на голубой подложке', foreground: '#c21b16', background: '#edf7ff', minRatio: 4.5 },
   { name: 'Баннер ошибки вкладки', foreground: '#c21b16', background: '#fff0f0', minRatio: 4.5 }
 ]

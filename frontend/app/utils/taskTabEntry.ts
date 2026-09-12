@@ -13,6 +13,7 @@
  */
 
 import type { TaskWorkspaceItem } from '~/types/task-workspace'
+import { formatHoursNumber } from './taskTabFormat'
 import { makeNewEntryDraft, type EntryDraft } from './timesheetEntry'
 
 /**
@@ -145,10 +146,29 @@ export function validateSplit(draft: Pick<TaskEntryDraft, 'id' | 'hours' | 'spli
   return null
 }
 
-/** Быстрые кнопки часов: типовые длительности вместо набора с клавиатуры. */
+/**
+ * Быстрые кнопки часов: типовые длительности вместо набора с клавиатуры.
+ *
+ * В макете нарисованы 0,5 / 1 / 2 / 4. Восьмёрка добавлена сверх макета: полный
+ * рабочий день — самое частое списание на длинных задачах, а набирать его
+ * руками при наличии ряда кнопок выглядит как недоработка. Кнопка ставит
+ * значение целиком, а не прибавляет: прибавление («+0,5») на четырёх нажатиях
+ * даёт 2 ч и не даёт способа быстро вернуться к 0,5.
+ */
 export const QUICK_HOURS = [0.5, 1, 2, 4, 8] as const
 
-/** Быстрые кнопки даты. `today` передаётся снаружи ради чистоты функции. */
+/** Те же значения с подписями по-русски: «0,5», а не «0.5». */
+export function quickHourOptions(): Array<{ label: string, value: number }> {
+  return QUICK_HOURS.map(value => ({ value, label: formatHoursNumber(value) }))
+}
+
+/**
+ * Быстрые кнопки даты. `today` передаётся снаружи ради чистоты функции.
+ *
+ * Две кнопки, как в макете: «Сегодня» и «Вчера». Третьей («Позавчера») нет
+ * намеренно — дальше двух дней люди вспоминают конкретное число, а не
+ * «сколько-то дней назад», и для этого рядом стоит обычный выбор дня.
+ */
 export function quickDateOptions(today: Date): Array<{ label: string, value: string }> {
   const yesterday = new Date(today.getTime())
   yesterday.setDate(yesterday.getDate() - 1)

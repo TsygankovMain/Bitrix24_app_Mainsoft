@@ -6,6 +6,7 @@ import {
   makeTaskEntryDraft,
   normalizeDraftDate,
   quickDateOptions,
+  quickHourOptions,
   toDateInputValue,
   validateEntryDraft,
   validateSplit
@@ -121,5 +122,15 @@ test('quickDateOptions: сегодня и вчера', () => {
   assert.deepEqual(options, [
     { label: 'Сегодня', value: '2026-03-01' },
     { label: 'Вчера', value: '2026-02-28' }
+  ])
+})
+
+test('quickHourOptions: подписи по-русски, значения — те, что ставятся целиком', () => {
+  assert.deepEqual(quickHourOptions(), [
+    { value: 0.5, label: '0,5' },
+    { value: 1, label: '1' },
+    { value: 2, label: '2' },
+    { value: 4, label: '4' },
+    { value: 8, label: '8' }
   ])
 })

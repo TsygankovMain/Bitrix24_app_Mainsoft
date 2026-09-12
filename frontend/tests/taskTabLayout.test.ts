@@ -2,10 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  TASK_TAB_LONG_TREE_ROWS,
   TASK_TAB_MEDIUM_FROM,
   TASK_TAB_WIDE_FROM,
   TASK_TAB_XWIDE_FROM,
   resolveTaskTabLayout,
+  shouldMirrorFooterActions,
   taskTabIndent,
   taskTabLayoutClass
 } from '../app/utils/taskTabLayout'
@@ -86,4 +88,18 @@ test('taskTabIndent: на узком фрейме шаг отступа мень
 
   assert.equal(taskTabIndent(1, narrow), 6)
   assert.equal(taskTabIndent(5, narrow), 18)
+})
+
+test('shouldMirrorFooterActions: короткое дерево обходится нижним блоком', () => {
+  assert.equal(shouldMirrorFooterActions(0), false)
+  assert.equal(shouldMirrorFooterActions(TASK_TAB_LONG_TREE_ROWS - 1), false)
+})
+
+test('shouldMirrorFooterActions: с порога выгрузки дублируются наверх', () => {
+  assert.equal(shouldMirrorFooterActions(TASK_TAB_LONG_TREE_ROWS), true)
+  assert.equal(shouldMirrorFooterActions(300), true)
+})
+
+test('shouldMirrorFooterActions: неизмеренное дерево дубля не порождает', () => {
+  assert.equal(shouldMirrorFooterActions(Number.NaN), false)
 })

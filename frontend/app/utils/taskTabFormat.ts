@@ -14,7 +14,7 @@
 
 import type { TaskWorkspaceItem, TaskWorkspaceNode } from '~/types/task-workspace'
 
-export type TaskTotalsTone = 'success' | 'danger' | 'muted'
+export type TaskTotalsTone = 'success' | 'muted'
 
 export interface TaskTotalsSegment {
   key: string
@@ -32,10 +32,26 @@ export interface TaskTreeSummary {
   unconsideredHours: number
 }
 
-/** Часы всегда с двумя знаками: 1 ч и 1.25 ч должны быть видимо разными. */
-export function formatTaskHours(value: number): string {
+/**
+ * Часы числом по-русски: «1», «3,5», «1,25».
+ *
+ * Хвостовые нули срезаются, разделитель — запятая. Так написано в макете
+ * варианта A («15 ч», «3,5 ч»), и так же час выглядит в самом портале.
+ * Прежний `toFixed(2)` давал «1.00 ч» — точка в русском тексте и три лишних
+ * символа в каждой строке дерева, где место и так спорное.
+ *
+ * Округление до сотых — это шаг ввода: в форме `step="0.25"`, мельче четверти
+ * часа никто не списывает, а `0.1 + 0.2` в double даёт «0,30000000000000004».
+ */
+export function formatHoursNumber(value: number): string {
   const normalized = Number.isFinite(value) ? value : 0
-  return `${normalized.toFixed(2)} ч`
+  const fixed = (Math.round(normalized * 100) / 100).toFixed(2)
+  return fixed.replace(/\.?0+$/, '').replace('.', ',')
+}
+
+/** «3,5 ч» — часы с единицей измерения. */
+export function formatTaskHours(value: number): string {
+  return `${formatHoursNumber(value)} ч`
 }
 
 /**
@@ -74,12 +90,58 @@ export function formatEntryMeta(item: Pick<TaskWorkspaceItem, 'employeeName' | '
 }
 
 /**
- * Итоги задачи одной строкой.
+ * Сколько строк дерева реально видно на экране.
+ *
+ * Считаются шапки задач (они видны всегда) и записи только раскрытых задач —
+ * свёрнутая задача с полусотней записей занимает одну строку, а не полсотни.
+ * По этой цифре решается, дублировать ли выгрузки наверх
+ * (`shouldMirrorFooterActions`), поэтому считать надо именно видимое.
+ */
+export function countVisibleRows(tree: TaskWorkspaceNode[], expandedTasks: Set<string>): number {
+  let rows = 0
+
+  for (const node of tree) {
+    rows += 1
+
+    if (!expandedTasks.has(node.taskId)) {
+      continue
+    }
+
+    rows += node.items?.length || 0
+    rows += countVisibleRows(node.children || [], expandedTasks)
+  }
+
+  return rows
+}
+
+/** Записей времени во всей ветке задачи, включая подзадачи. */
+export function countTreeEntries(node: TaskWorkspaceNode): number {
+  let total = node.items?.length || 0
+
+  for (const child of node.children || []) {
+    total += countTreeEntries(child)
+  }
+
+  return total
+}
+
+/**
+ * Итоги задачи одной строкой — то, что в макете варианта A стоит справа от
+ * названия задачи: сколько часов на самой задаче, сколько с подзадачами и
+ * сколько за этим записей.
  *
  * «Учтено» и «Не учтено» — накопительные, то есть вместе с подзадачами: именно
- * эта цифра идёт в отчётность. Собственные часы задачи показываются третьим
+ * эта цифра идёт в отчётность. Собственные часы задачи показываются отдельным
  * сегментом и только когда у задачи есть подзадачи и есть что показывать —
- * иначе строка дублирует сама себя.
+ * иначе строка дублирует сама себя. Число записей — тоже по всей ветке: оно
+ * отвечает на вопрос «раскрывать ли эту задачу», а он про ветку целиком.
+ *
+ * Сумм в рублях здесь нет и не будет: экран сотрудника их не показывает,
+ * стоимость видят руководители в отчётах.
+ *
+ * «Не учтено» подано приглушённо, а не красным: неучтённые часы — это штатный
+ * режим работы (внутренние задачи, переделки), а не ошибка. Красный во вкладке
+ * остаётся за отказами и удалением.
  */
 export function buildTaskTotalsSegments(node: TaskWorkspaceNode): TaskTotalsSegment[] {
   const segments: TaskTotalsSegment[] = [
@@ -93,7 +155,7 @@ export function buildTaskTotalsSegments(node: TaskWorkspaceNode): TaskTotalsSegm
       key: 'unconsidered',
       label: 'Не учтено',
       value: formatTaskHours(node.cumulativeUnconsidered),
-      tone: 'danger'
+      tone: 'muted'
     }
   ]
 
@@ -108,12 +170,22 @@ export function buildTaskTotalsSegments(node: TaskWorkspaceNode): TaskTotalsSegm
     })
   }
 
+  const entries = countTreeEntries(node)
+  segments.push({
+    key: 'entries',
+    label: '',
+    value: `${entries} ${pluralizeEntries(entries)}`,
+    tone: 'muted'
+  })
+
   return segments
 }
 
 /** Та же строка текстом — для `title` и для тестов. */
 export function formatTotalsText(segments: TaskTotalsSegment[]): string {
-  return segments.map(segment => `${segment.label} ${segment.value}`).join(' · ')
+  return segments
+    .map(segment => (segment.label ? `${segment.label} ${segment.value}` : segment.value))
+    .join(' · ')
 }
 
 /** Итоги по всему дереву: шапка вкладки показывает их одной строкой. */
@@ -146,13 +218,50 @@ export function summarizeTaskTree(tree: TaskWorkspaceNode[]): TaskTreeSummary {
   return summary
 }
 
-/** «Учтено 4.50 ч · Не учтено 1.00 ч · 3 записи» — шапка вкладки. */
+/**
+ * «Всего 5,5 ч · учтено 4,5 ч · не учтено 1 ч · 3 записи» — шапка вкладки.
+ *
+ * Порядок и регистр — из макета варианта A: сначала общий объём, потом
+ * разбивка. Сумма идёт первой потому, что на вопрос «сколько всего ушло на эту
+ * задачу» отвечают чаще, чем на вопрос про признак учёта.
+ */
 export function formatTreeSummaryLine(summary: TaskTreeSummary): string {
+  const total = (summary.consideredHours || 0) + (summary.unconsideredHours || 0)
+
   return [
-    `Учтено ${formatTaskHours(summary.consideredHours)}`,
-    `Не учтено ${formatTaskHours(summary.unconsideredHours)}`,
+    `Всего ${formatTaskHours(total)}`,
+    `учтено ${formatTaskHours(summary.consideredHours)}`,
+    `не учтено ${formatTaskHours(summary.unconsideredHours)}`,
     `${summary.entries} ${pluralizeEntries(summary.entries)}`
   ].join(' · ')
+}
+
+/**
+ * Подпись кнопки периода в строке инструментов.
+ *
+ * Пустой фильтр — «Весь период», как в макете. Половинчатый период («только
+ * с» или «только по») тоже должен читаться: иначе человек видит «Весь период»
+ * при включённом ограничении и не понимает, почему часть записей пропала.
+ */
+export function formatPeriodLabel(dateFrom?: string | null, dateTo?: string | null): string {
+  const from = formatEntryDate(dateFrom)
+  const to = formatEntryDate(dateTo)
+  const hasFrom = from !== '—'
+  const hasTo = to !== '—'
+
+  if (hasFrom && hasTo) {
+    return `${from} — ${to}`
+  }
+
+  if (hasFrom) {
+    return `с ${from}`
+  }
+
+  if (hasTo) {
+    return `по ${to}`
+  }
+
+  return 'Весь период'
 }
 
 /** 1 запись / 2 записи / 5 записей. */

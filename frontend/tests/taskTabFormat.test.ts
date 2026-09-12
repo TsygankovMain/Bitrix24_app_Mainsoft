@@ -3,8 +3,12 @@ import assert from 'node:assert/strict'
 
 import {
   buildTaskTotalsSegments,
+  countTreeEntries,
+  countVisibleRows,
   formatEntryDate,
   formatEntryMeta,
+  formatHoursNumber,
+  formatPeriodLabel,
   formatTaskHours,
   formatTotalsText,
   formatTreeSummaryLine,
@@ -69,10 +73,24 @@ const tree: TaskWorkspaceNode[] = [
   })
 ]
 
-test('formatTaskHours: всегда два знака после точки', () => {
-  assert.equal(formatTaskHours(1), '1.00 ч')
-  assert.equal(formatTaskHours(1.25), '1.25 ч')
-  assert.equal(formatTaskHours(Number.NaN), '0.00 ч')
+test('formatHoursNumber: по-русски, без хвостовых нулей', () => {
+  assert.equal(formatHoursNumber(1), '1')
+  assert.equal(formatHoursNumber(0.5), '0,5')
+  assert.equal(formatHoursNumber(1.25), '1,25')
+  assert.equal(formatHoursNumber(3.5), '3,5')
+  assert.equal(formatHoursNumber(0), '0')
+  assert.equal(formatHoursNumber(100), '100')
+  assert.equal(formatHoursNumber(Number.NaN), '0')
+})
+
+test('formatHoursNumber: копеечные хвосты double не вылезают в интерфейс', () => {
+  assert.equal(formatHoursNumber(0.1 + 0.2), '0,3')
+})
+
+test('formatTaskHours: часы с единицей измерения', () => {
+  assert.equal(formatTaskHours(1), '1 ч')
+  assert.equal(formatTaskHours(1.25), '1,25 ч')
+  assert.equal(formatTaskHours(Number.NaN), '0 ч')
 })
 
 test('formatEntryDate: дата приходит и датой, и датой со временем', () => {
@@ -97,24 +115,45 @@ test('formatEntryMeta: сотрудник и дата одной строкой'
 test('buildTaskTotalsSegments: учтено и не учтено — накопительные', () => {
   const segments = buildTaskTotalsSegments(tree[0]!)
 
-  assert.equal(segments[0]!.value, '1.50 ч')
-  assert.equal(segments[1]!.value, '2.00 ч')
+  assert.equal(segments[0]!.value, '1,5 ч')
+  assert.equal(segments[1]!.value, '2 ч')
+})
+
+test('buildTaskTotalsSegments: «Не учтено» подано приглушённо, а не красным', () => {
+  const segments = buildTaskTotalsSegments(tree[0]!)
+
+  assert.equal(segments[0]!.tone, 'success')
+  assert.equal(segments[1]!.tone, 'muted')
 })
 
 test('buildTaskTotalsSegments: свои часы показываются только при наличии подзадач', () => {
   const withChildren = buildTaskTotalsSegments(tree[0]!)
-  assert.equal(withChildren.length, 3)
+  assert.equal(withChildren.length, 4)
   assert.equal(withChildren[2]!.label, 'в т.ч. своих')
-  assert.equal(withChildren[2]!.value, '1.50 ч')
+  assert.equal(withChildren[2]!.value, '1,5 ч')
 
   const leaf = buildTaskTotalsSegments(tree[0]!.children[0]!)
-  assert.equal(leaf.length, 2, 'у листа третий сегмент дублировал бы первые два')
+  assert.equal(leaf.length, 3, 'у листа сегмент своих часов дублировал бы первые два')
+})
+
+test('buildTaskTotalsSegments: последним идёт число записей по всей ветке', () => {
+  const segments = buildTaskTotalsSegments(tree[0]!)
+  const entries = segments[segments.length - 1]!
+
+  assert.equal(entries.key, 'entries')
+  assert.equal(entries.label, '', 'у счётчика записей подписи нет — она в самом значении')
+  assert.equal(entries.value, '2 записи')
+})
+
+test('countTreeEntries: записи считаются вместе с подзадачами', () => {
+  assert.equal(countTreeEntries(tree[0]!), 2)
+  assert.equal(countTreeEntries(tree[0]!.children[0]!), 1)
 })
 
 test('formatTotalsText: итоги задачи одной строкой', () => {
   assert.equal(
     formatTotalsText(buildTaskTotalsSegments(tree[0]!)),
-    'Учтено 1.50 ч · Не учтено 2.00 ч · в т.ч. своих 1.50 ч'
+    'Учтено 1,5 ч · Не учтено 2 ч · в т.ч. своих 1,5 ч · 2 записи'
   )
 })
 
@@ -136,8 +175,29 @@ test('summarizeTaskTree: пустое дерево даёт нули, а не п
 test('formatTreeSummaryLine: итоги вкладки одной строкой', () => {
   assert.equal(
     formatTreeSummaryLine(summarizeTaskTree(tree)),
-    'Учтено 1.50 ч · Не учтено 2.00 ч · 2 записи'
+    'Всего 3,5 ч · учтено 1,5 ч · не учтено 2 ч · 2 записи'
   )
+})
+
+test('formatTreeSummaryLine: пустое дерево не даёт NaN', () => {
+  assert.equal(
+    formatTreeSummaryLine(summarizeTaskTree([])),
+    'Всего 0 ч · учтено 0 ч · не учтено 0 ч · 0 записей'
+  )
+})
+
+test('formatPeriodLabel: пустой период читается как «Весь период»', () => {
+  assert.equal(formatPeriodLabel('', ''), 'Весь период')
+  assert.equal(formatPeriodLabel(null, null), 'Весь период')
+})
+
+test('formatPeriodLabel: половинчатый период всё равно виден', () => {
+  assert.equal(formatPeriodLabel('2026-09-01', ''), 'с 01.09.2026')
+  assert.equal(formatPeriodLabel('', '2026-09-30'), 'по 30.09.2026')
+})
+
+test('formatPeriodLabel: обе границы', () => {
+  assert.equal(formatPeriodLabel('2026-09-01', '2026-09-30'), '01.09.2026 — 30.09.2026')
 })
 
 test('pluralizeEntries: склонение по-русски', () => {
@@ -147,4 +207,14 @@ test('pluralizeEntries: склонение по-русски', () => {
   assert.equal(pluralizeEntries(11), 'записей')
   assert.equal(pluralizeEntries(21), 'запись')
   assert.equal(pluralizeEntries(114), 'записей')
+})
+
+test('countVisibleRows: свёрнутая задача — одна строка, а не все её записи', () => {
+  assert.equal(countVisibleRows(tree, new Set()), 1, 'виден только корень')
+  assert.equal(countVisibleRows(tree, new Set(['1'])), 3, 'корень, его запись и шапка подзадачи')
+  assert.equal(countVisibleRows(tree, new Set(['1', '2'])), 4, 'плюс запись подзадачи')
+})
+
+test('countVisibleRows: пустое дерево — ноль строк', () => {
+  assert.equal(countVisibleRows([], new Set(['1'])), 0)
 })

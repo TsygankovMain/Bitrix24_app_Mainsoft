@@ -28,7 +28,15 @@
  *     кнопки доведён до AA (см. `utils/colorContrast.ts` и его тест).
  *
  *  6. «В отчёт Битрикс24» и «Excel» переехали сюда из `pages/task.vue` —
- *     экрана, на который в проде ничего не вело.
+ *     экрана, на который в проде ничего не вело. В макете они закреплены у
+ *     нижнего края; здесь это блок в конце вкладки, а на длинном дереве та же
+ *     пара дублируется в строке инструментов наверху — почему именно так,
+ *     разобрано в `utils/taskTabLayout.ts` → `shouldMirrorFooterActions`.
+ *
+ *  7. СТРОКА ИНСТРУМЕНТОВ из макета: «Все записи / Мои» и кнопка периода.
+ *     Переключатель — не новое состояние, а тот же фильтр по сотруднику,
+ *     выставленный на себя; выбор конкретного человека остался в
+ *     раскрывающейся панели фильтра, где он и нужен руководителю.
  *
  * Сборка полей списания идёт через `useTimesheetEntry` — тот же путь, что
  * раньше был скопирован в этот файл построчно. Копия удалена: решения о том,
@@ -39,14 +47,15 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import HelpSidePanel from '@/components/HelpSidePanel.vue'
+import TaskExportBar from '@/components/task/TaskExportBar.vue'
 import TaskTabCard from '@/components/task/TaskTabCard.vue'
 import { canOpenNativeApplication, resolveTaskPlacementId, useIframeResizeOnToggle } from '@/composables/useTaskPlacement'
 import { useTaskTreeLoader } from '@/composables/useTaskTreeLoader'
 import { useTimesheetEntry } from '@/composables/useTimesheetEntry'
 import { filterTaskTree, findTaskIdForItem } from '@/utils/taskTree'
 import { requestIframeAutoHeight, requestIframeFullHeight } from '@/utils/iframe-resizer'
-import { resolveTaskTabLayout, taskTabLayoutClass } from '@/utils/taskTabLayout'
-import { formatTreeSummaryLine, summarizeTaskTree } from '@/utils/taskTabFormat'
+import { resolveTaskTabLayout, shouldMirrorFooterActions, taskTabLayoutClass } from '@/utils/taskTabLayout'
+import { countVisibleRows, formatPeriodLabel, formatTreeSummaryLine, summarizeTaskTree } from '@/utils/taskTabFormat'
 import { CSV_BOM, buildCsvFileName, buildElapsedItemBatch, buildTaskTreeCsv } from '@/utils/taskTabExport'
 import { draftFromItem, makeTaskEntryDraft, type TaskEntryDraft, type TaskFormAnchor } from '@/utils/taskTabEntry'
 import type { TaskWorkspaceItem } from '~/types/task-workspace'
@@ -82,7 +91,13 @@ const notice = ref<string | null>(null)
 const isHelpOpen = ref(false)
 const isNativeSidePanelAvailable = ref(false)
 const isFilterOpen = ref(false)
-const isReportConfirmOpen = ref(false)
+/**
+ * Где раскрыто подтверждение переноса: у верхнего дубля кнопок или у нижнего
+ * блока. Не булево, потому что кнопок две пары — подтверждение должно
+ * появляться там, куда нажали, иначе на длинном дереве оно оказывается за
+ * нижним краем экрана.
+ */
+const reportConfirmAt = ref<'top' | 'bottom' | null>(null)
 const isReporting = ref(false)
 
 const filterEmployeeId = ref<string>('')
@@ -109,8 +124,27 @@ const filteredTaskTree = computed(() => filterTaskTree(taskTree.value, {
     dateTo: filterDateTo.value
 }))
 
-const summaryLine = computed(() => formatTreeSummaryLine(summarizeTaskTree(filteredTaskTree.value)))
+const treeSummary = computed(() => summarizeTaskTree(filteredTaskTree.value))
+const summaryLine = computed(() => formatTreeSummaryLine(treeSummary.value))
 const hasTree = computed(() => filteredTaskTree.value.length > 0)
+
+// --- СТРОКА ИНСТРУМЕНТОВ ---
+/**
+ * «Все записи / Мои» — тот же переключатель, что в макете. Он не заводит
+ * второго состояния: «Мои» — это ровно фильтр по сотруднику, выставленный на
+ * себя, поэтому выбор другого человека в панели фильтра просто снимает
+ * подсветку с обеих кнопок, и рассинхрона между ними и фильтром не бывает.
+ */
+const isMineOnly = computed(() =>
+    !!currentUserId.value && String(filterEmployeeId.value) === String(currentUserId.value)
+)
+
+const periodLabel = computed(() => formatPeriodLabel(filterDateFrom.value, filterDateTo.value))
+
+/** На длинном дереве выгрузки дублируются наверх — см. shouldMirrorFooterActions. */
+const showTopExports = computed(() =>
+    hasTree.value && shouldMirrorFooterActions(countVisibleRows(filteredTaskTree.value, expandedTasks.value))
+)
 
 // --- ИНИЦИАЛИЗАЦИЯ ---
 onMounted(async () => {
@@ -184,7 +218,8 @@ watch(
         expandedTasks.value.size,
         anchor.value,
         isFilterOpen.value,
-        isReportConfirmOpen.value,
+        reportConfirmAt.value,
+        showTopExports.value,
         notice.value,
         layout.value.mode
     ],
@@ -227,6 +262,14 @@ function resetFilter() {
     filterEmployeeId.value = ''
     filterDateFrom.value = ''
     filterDateTo.value = ''
+}
+
+function showAllEmployees() {
+    filterEmployeeId.value = ''
+}
+
+function showMineOnly() {
+    filterEmployeeId.value = String(currentUserId.value || '')
 }
 
 // --- ФОРМА ---
@@ -443,7 +486,7 @@ async function transferToReport() {
     const { batch, count } = buildElapsedItemBatch(filteredTaskTree.value)
 
     if (count === 0) {
-        isReportConfirmOpen.value = false
+        reportConfirmAt.value = null
         notice.value = 'Нет учтённых часов для переноса.'
         return
     }
@@ -458,7 +501,7 @@ async function transferToReport() {
         toast.add({ title: message, color: 'air-primary-alert' })
     } finally {
         isReporting.value = false
-        isReportConfirmOpen.value = false
+        reportConfirmAt.value = null
     }
 }
 </script>
@@ -482,17 +525,6 @@ async function transferToReport() {
             <button
                 type="button"
                 class="task-tab__icon-btn"
-                :class="{ 'task-tab__icon-btn--on': isFilterOpen || isFilterActive }"
-                :aria-pressed="isFilterOpen"
-                :title="isFilterActive ? 'Фильтр активен' : 'Фильтр'"
-                aria-label="Фильтр"
-                @click="isFilterOpen = !isFilterOpen"
-            >
-                <span class="material-symbols-outlined text-[20px] leading-none">filter_alt</span>
-            </button>
-            <button
-                type="button"
-                class="task-tab__icon-btn"
                 title="Справочник"
                 aria-label="Справочник"
                 @click="openHelp"
@@ -500,6 +532,71 @@ async function transferToReport() {
                 <span class="material-symbols-outlined text-[20px] leading-none">help</span>
             </button>
         </div>
+    </section>
+
+    <!--
+        Строка инструментов из макета: переключатель «Все записи / Мои» и
+        кнопка периода. Оба всегда на виду — это то, чем пользуются каждый
+        день, в отличие от выбора конкретного сотрудника, который живёт в
+        раскрывающейся панели фильтра.
+    -->
+    <section v-if="!error && !isLoading" class="task-tab__tools">
+        <div class="task-tab__scope" role="group" aria-label="Чьи записи показывать">
+            <button
+                type="button"
+                class="task-tab__scope-btn"
+                :class="{ 'task-tab__scope-btn--on': !filterEmployeeId }"
+                :aria-pressed="!filterEmployeeId"
+                @click="showAllEmployees"
+            >
+                Все записи
+            </button>
+            <button
+                type="button"
+                class="task-tab__scope-btn"
+                :class="{ 'task-tab__scope-btn--on': isMineOnly }"
+                :aria-pressed="isMineOnly"
+                :disabled="!currentUserId"
+                @click="showMineOnly"
+            >
+                Мои
+            </button>
+        </div>
+
+        <button
+            type="button"
+            class="task-tab__tool"
+            :class="{ 'task-tab__tool--on': isFilterOpen || isFilterActive }"
+            :aria-pressed="isFilterOpen"
+            :aria-expanded="isFilterOpen"
+            title="Период и сотрудник"
+            @click="isFilterOpen = !isFilterOpen"
+        >
+            <span class="material-symbols-outlined text-[18px] leading-none">calendar_month</span>
+            {{ periodLabel }}
+        </button>
+
+        <B24Button
+            v-if="isFilterActive"
+            label="Сбросить"
+            color="air-tertiary-no-accent"
+            size="xs"
+            @click="resetFilter"
+        />
+
+        <!-- Дубль выгрузок на длинном дереве: до нижнего блока пришлось бы листать. -->
+        <TaskExportBar
+            v-if="showTopExports"
+            class="task-tab__tools-exports"
+            :confirm-open="reportConfirmAt === 'top'"
+            :reporting="isReporting"
+            :filter-active="isFilterActive"
+            :compact="true"
+            @report="reportConfirmAt = 'top'"
+            @confirm="transferToReport"
+            @cancel="reportConfirmAt = null"
+            @export-csv="exportCsv"
+        />
     </section>
 
     <section v-if="isFilterOpen" class="task-tab__filter" :class="{ 'task-tab__filter--stacked': layout.stackedFilters }">
@@ -518,13 +615,6 @@ async function transferToReport() {
             <span class="task-tab__filter-label">Дата до</span>
             <input v-model="filterDateTo" type="date">
         </label>
-        <B24Button
-            v-if="isFilterActive"
-            label="Сбросить"
-            color="air-secondary-no-accent"
-            size="sm"
-            @click="resetFilter"
-        />
     </section>
 
     <p v-if="notice" class="task-tab__notice" role="alert">{{ notice }}</p>
@@ -581,52 +671,24 @@ async function transferToReport() {
         </section>
 
         <!--
-            Панель выгрузок — обычный блок в конце содержимого, а не
-            закреплённый футер: во фрейме с автовысотой `position: sticky`
-            прилипает к низу содержимого, а не к низу видимой области, и на
-            длинном дереве закреплённая панель всё равно уезжает из вида.
+            Панель выгрузок в конце вкладки. В макете она закреплена у нижнего
+            края; здесь это обычный блок — во фрейме с автовысотой и `sticky`, и
+            `fixed` считаются от области просмотра самого фрейма, которая равна
+            всему содержимому, то есть прилипли бы к низу дерева, а не к низу
+            экрана. Взамен на длинном дереве те же кнопки дублируются в строке
+            инструментов наверху (`shouldMirrorFooterActions`).
         -->
         <section class="task-tab__footer">
-            <div v-if="isReportConfirmOpen" class="task-tab__confirm">
-                <p class="task-tab__confirm-text">
-                    Все записи с признаком «Учитывать» будут добавлены в задачи Битрикс24 как отработанное время.
-                </p>
-                <!-- Переносится то, что видно на экране: молчать про активный фильтр нельзя. -->
-                <p v-if="isFilterActive" class="task-tab__confirm-text task-tab__confirm-text--warn">
-                    Фильтр активен — перенесутся только записи, попавшие под него.
-                </p>
-                <div class="task-tab__confirm-actions">
-                    <B24Button
-                        :label="isReporting ? 'Отправка…' : 'Подтвердить'"
-                        color="air-primary"
-                        size="sm"
-                        :disabled="isReporting"
-                        @click="transferToReport"
-                    />
-                    <B24Button
-                        label="Отмена"
-                        color="air-secondary-no-accent"
-                        size="sm"
-                        :disabled="isReporting"
-                        @click="isReportConfirmOpen = false"
-                    />
-                </div>
-            </div>
-
-            <div v-else class="task-tab__footer-actions">
-                <B24Button
-                    label="В отчёт Битрикс24"
-                    color="air-secondary-no-accent"
-                    size="sm"
-                    @click="isReportConfirmOpen = true"
-                />
-                <B24Button
-                    label="Excel (CSV)"
-                    color="air-secondary-no-accent"
-                    size="sm"
-                    @click="exportCsv"
-                />
-            </div>
+            <TaskExportBar
+                :confirm-open="reportConfirmAt === 'bottom'"
+                :reporting="isReporting"
+                :filter-active="isFilterActive"
+                :compact="false"
+                @report="reportConfirmAt = 'bottom'"
+                @confirm="transferToReport"
+                @cancel="reportConfirmAt = null"
+                @export-csv="exportCsv"
+            />
         </section>
     </template>
 
@@ -718,6 +780,78 @@ async function transferToReport() {
     color: var(--ui-color-accent-main-link);
 }
 
+/*
+ * Строка инструментов — сразу под шапкой, как в макете. На узком фрейме
+ * переносится по элементам, а не складывается в колонку: три коротких
+ * управляющих элемента в столбик съедали бы половину первого экрана.
+ */
+.task-tab__tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.task-tab__scope {
+    display: inline-flex;
+    overflow: hidden;
+    border: 1px solid var(--ui-color-base-6);
+    border-radius: 8px;
+    background: var(--ui-color-bg-content-primary);
+}
+
+.task-tab__scope-btn {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ui-color-base-2);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.task-tab__scope-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.task-tab__scope-btn--on {
+    background: var(--ui-color-accent-soft-blue-2);
+    color: var(--ui-color-accent-main-link);
+}
+
+.task-tab__tool {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--ui-color-base-6);
+    border-radius: 8px;
+    background: var(--ui-color-bg-content-primary);
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ui-color-base-2);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.task-tab__tool:hover {
+    border-color: var(--ui-color-base-5);
+    color: var(--ui-color-base-1);
+}
+
+.task-tab__tool--on {
+    border-color: var(--ui-color-accent-main-link);
+    background: var(--ui-color-accent-soft-blue-2);
+    color: var(--ui-color-accent-main-link);
+}
+
+/* Дубль выгрузок прижимается к правому краю строки, чтобы не путаться с фильтрами. */
+.task-tab__tools-exports {
+    margin-left: auto;
+}
+
 .task-tab__filter {
     display: flex;
     flex-wrap: wrap;
@@ -797,36 +931,16 @@ async function transferToReport() {
     flex-direction: column;
 }
 
+/*
+ * Подвал отбит линией и подложкой — чтобы на длинном дереве было видно, что
+ * список кончился, а не оборвался. Закрепить его у нижнего края нельзя
+ * (см. комментарий в шаблоне), поэтому визуальная граница остаётся
+ * единственным сигналом конца содержимого.
+ */
 .task-tab__footer {
-    padding-top: 2px;
-}
-
-.task-tab__footer-actions,
-.task-tab__confirm-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-
-.task-tab__confirm {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 12px;
-    border: 1px solid var(--ui-color-base-6);
-    border-radius: 12px;
-    background: var(--ui-color-accent-soft-blue-3);
-}
-
-.task-tab__confirm-text {
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--ui-color-base-1);
-}
-
-.task-tab__confirm-text--warn {
-    font-weight: 600;
-    color: var(--ui-color-red-80);
+    margin-top: 2px;
+    padding-top: 12px;
+    border-top: 1px solid var(--ui-color-divider-default);
 }
 
 /* На узком фрейме кнопки шапки уходят на свою строку и растягиваются. */
@@ -839,7 +953,10 @@ async function transferToReport() {
     justify-content: space-between;
 }
 
-.task-tab--narrow .task-tab__footer-actions > * {
-    flex: 1;
+/* На узком и среднем фрейме дубль выгрузок встаёт своей строкой во всю ширину. */
+.task-tab--narrow .task-tab__tools-exports,
+.task-tab--medium .task-tab__tools-exports {
+    flex-basis: 100%;
+    margin-left: 0;
 }
 </style>

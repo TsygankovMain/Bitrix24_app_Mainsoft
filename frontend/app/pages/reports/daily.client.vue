@@ -2,9 +2,7 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
-import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
-import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
-import DataFreshnessIndicator from '../../components/common/DataFreshnessIndicator.vue'
+import ReportShell from '../../components/reports/ReportShell.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import { useProgress } from '~/composables/useProgress'
@@ -121,6 +119,14 @@ async function fetchReport() {
 
 // Кнопка «Обновить» синхронизирует read-model; отчёт перестраиваем только если он уже построен,
 // чтобы не запускать генерацию за пользователя.
+// Пресет меняет фильтр целиком. Перестраиваем отчёт только если он уже на экране:
+// запускать генерацию за человека, который ещё ничего не нажимал, — не наше дело.
+function handleFiltersApplied() {
+    if (hasGenerated.value) {
+        void fetchReport()
+    }
+}
+
 function handleDataRefreshed() {
     void loadFilterOptions(true)
     if (hasGenerated.value) {
@@ -222,156 +228,121 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="ms-page-shell">
-    <div class="ms-page-frame">
-      <div class="mb-4 flex justify-between items-center">
-          <B24Button label="Назад" color="link" @click="$router.push('/')" />
-      </div>
-
-      <div v-if="isInit" class="flex flex-col gap-6">
-         <!-- Filters Header -->
-         <div class="ms-surface flex flex-col gap-4 p-5">
-             <div class="flex flex-row justify-between items-center w-full">
-                 <div>
-                   <h2 class="text-xl font-bold text-slate-900">Ежедневная нагрузка</h2>
-                   <p class="mt-1 text-sm text-slate-500">Распределение часов по сотрудникам и дням периода.</p>
-                 </div>
-                 <div class="flex flex-wrap items-center justify-end gap-3">
-                    <DataFreshnessIndicator @refreshed="handleDataRefreshed" />
-                    <div class="flex gap-2">
-                        <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-                        <B24Button label="Сформировать" loading-auto @click="fetchReport" />
-                    </div>
-                 </div>
-             </div>
-             
-             <div class="ms-filter-wrap flex flex-wrap gap-4 items-end">
-                 <DateRangeFilter 
-                     v-model:date-from="dateFrom" 
-                     v-model:date-to="dateTo" 
-                 />
-                 <MultiSelectFilter 
-                     v-model="selectedEmployees" 
-                     v-model:mode="employeeFilterMode" 
-                     label="Сотрудники" 
-                     :options="filterOptions.employees"
-                 />
-                 <MultiSelectFilter 
-                     v-model="selectedProjects" 
-                     v-model:mode="projectFilterMode" 
-                     label="Проекты" 
-                     :options="filterOptions.projects"
-                 />
-             </div>
-         </div>
-
-         <div v-if="syncWarning" class="ms-panel-warning">
-             {{ syncWarning }}
-         </div>
-
-         <div v-if="!isLoading && hasRenderableReport" class="ms-surface p-4">
-             <div class="ms-table-shell">
-                 <table class="ms-table">
-                     <thead>
-                         <tr>
-                             <th class="shadow-r sticky left-0 z-10 bg-slate-50">
-                                 Сотрудник
-                             </th>
-                             <th
-                                v-for="day in normalizedHeaderDays"
-                                :key="day.date"
-                                class="min-w-[50px] px-2 py-3 text-center text-xs font-medium uppercase tracking-wider"
-                                :class="day.is_weekend ? 'bg-rose-50 text-rose-600' : 'text-slate-500'"
-                             >
-                                 <div>{{ day.day }}</div>
-                                 <div class="text-[10px]">{{ ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'][day.weekday] }}</div>
-                             </th>
-                         </tr>
-                     </thead>
-                     <tbody>
-                         <tr v-for="row in normalizedRows" :key="row.employee.id">
-                             <td class="sticky left-0 z-10 whitespace-nowrap border-r border-slate-200 bg-white text-sm font-medium text-slate-900">
-                                 {{ row.employee.name }}
-                             </td>
-                             <td
-                                v-for="day in normalizedHeaderDays"
-                                :key="day.date"
-                                class="px-1 py-1 text-center"
-                                :class="day.is_weekend ? 'bg-slate-50' : ''"
-                             >
-                                 <div
-                                    class="w-full h-full py-2 rounded text-xs font-bold transition-colors"
-                                    :class="getCellColorClass(getDayCell(row, day.date).status)"
-                                    @click="openDetail(row.employee.name, day.date, getDayCell(row, day.date).items)"
-                                 >
-                                     {{ getDayCell(row, day.date).total > 0 ? getDayCell(row, day.date).total : '-' }}
-                                 </div>
-                             </td>
-                         </tr>
-                     </tbody>
-                 </table>
-             </div>
-         </div>
-         <div v-else class="ms-surface px-5 py-8">
-             <div v-if="isLoading" class="ms-empty-state !py-0">
-                 Загрузка данных...
-             </div>
-             <div v-else-if="!hasGenerated" class="ms-empty-state !py-0">
-                 Выберите фильтры и нажмите «Сформировать»
-             </div>
-             <div v-else class="ms-empty-state !py-0">
-                 Нет данных за выбранный период
-             </div>
-         </div>
-      </div>
-
-      <!-- Modal -->
-      <Teleport to="body">
-          <div v-if="showModal" class="ms-modal-overlay" @click.self="closeModal">
-          <div class="ms-modal-panel flex max-h-[90vh] w-3/4 flex-col">
-              <div class="ms-modal-header flex justify-between items-center">
-                  <h3 class="text-lg font-bold text-slate-900">
-                      {{ modalData.employeeName }} - {{ new Date(modalData.date).toLocaleDateString() }}
-                  </h3>
-                  <button class="text-2xl text-slate-500 transition hover:text-slate-700" @click="closeModal">&times;</button>
+  <ReportShell
+    v-if="isInit"
+    title="Ежедневная нагрузка"
+    description="Распределение часов по сотрудникам и дням периода"
+    :date-from="dateFrom"
+    :date-to="dateTo"
+    :employees="selectedEmployees"
+    :employee-mode="employeeFilterMode"
+    :projects="selectedProjects"
+    :project-mode="projectFilterMode"
+    :employee-options="filterOptions.employees"
+    :project-options="filterOptions.projects"
+    :is-loading="isLoading"
+    :has-generated="hasGenerated"
+    :is-empty="!hasRenderableReport"
+    :warning="syncWarning"
+    @update:date-from="dateFrom = $event"
+    @update:date-to="dateTo = $event"
+    @update:employees="selectedEmployees = $event"
+    @update:employee-mode="employeeFilterMode = $event"
+    @update:projects="selectedProjects = $event"
+    @update:project-mode="projectFilterMode = $event"
+    @refreshed="handleDataRefreshed"
+    @filters-applied="handleFiltersApplied"
+    @generate="fetchReport"
+    @export="handleExportExcel"
+  >
+    <div class="ms-table-shell">
+      <table class="ms-table">
+        <thead>
+          <tr>
+            <th class="shadow-r sticky left-0 z-10 bg-slate-50">
+              Сотрудник
+            </th>
+            <th
+              v-for="day in normalizedHeaderDays"
+              :key="day.date"
+              class="min-w-[50px] px-2 py-3 text-center text-xs font-medium uppercase tracking-wider"
+              :class="day.is_weekend ? 'bg-rose-50 text-rose-600' : 'text-slate-500'"
+            >
+              <div>{{ day.day }}</div>
+              <div class="text-[10px]">{{ ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'][day.weekday] }}</div>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in normalizedRows" :key="row.employee.id">
+            <td class="sticky left-0 z-10 whitespace-nowrap border-r border-slate-200 bg-white text-sm font-medium text-slate-900">
+              {{ row.employee.name }}
+            </td>
+            <td
+              v-for="day in normalizedHeaderDays"
+              :key="day.date"
+              class="px-1 py-1 text-center"
+              :class="day.is_weekend ? 'bg-slate-50' : ''"
+            >
+              <div
+                class="h-full w-full rounded py-2 text-xs font-bold transition-colors"
+                :class="getCellColorClass(getDayCell(row, day.date).status)"
+                @click="openDetail(row.employee.name, day.date, getDayCell(row, day.date).items)"
+              >
+                {{ getDayCell(row, day.date).total > 0 ? getDayCell(row, day.date).total : '-' }}
               </div>
-              <div class="ms-modal-body overflow-y-auto">
-                  <table class="ms-table mb-4 min-w-full">
-                      <thead>
-                          <tr>
-                              <th>Проект</th>
-                              <th>Задача</th>
-                              <th>Описание</th>
-                              <th class="text-right">Часы</th>
-                          </tr>
-                      </thead>
-                      <tbody>
-                          <tr v-for="(item, idx) in modalData.items" :key="idx">
-                              <td class="text-sm text-slate-900">{{ item.project_title || '-' }}</td>
-                              <td class="text-sm text-[#0075ff]">
-                                <span
-                                    v-if="item.task_id"
-                                    class="cursor-pointer hover:text-blue-700 hover:underline"
-                                    @click="openTask(item.task_id)"
-                                >
-                                    {{ item.task_title }}
-                                </span>
-                                <span v-else>{{ item.task_title }}</span>
-                              </td>
-                              <td class="text-sm text-slate-500">{{ item.description }}</td>
-                              <td class="text-right text-sm font-bold text-slate-900">{{ item.hours }}</td>
-                          </tr>
-                      </tbody>
-                  </table>
-              </div>
-              <div class="ms-modal-footer text-right">
-                  <B24Button label="Закрыть" color="default" @click="closeModal" />
-              </div>
-          </div>
-          </div>
-      </Teleport>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
-  </div>
+
+    <!-- Детали дня -->
+    <Teleport to="body">
+      <div v-if="showModal" class="ms-modal-overlay" @click.self="closeModal">
+        <div class="ms-modal-panel flex max-h-[90vh] w-3/4 flex-col">
+          <div class="ms-modal-header flex items-center justify-between">
+            <h3 class="text-lg font-bold text-slate-900">
+              {{ modalData.employeeName }} — {{ new Date(modalData.date).toLocaleDateString() }}
+            </h3>
+            <button class="text-2xl text-slate-500 transition hover:text-slate-700" @click="closeModal">&times;</button>
+          </div>
+          <div class="ms-modal-body overflow-y-auto">
+            <table class="ms-table mb-4 min-w-full">
+              <thead>
+                <tr>
+                  <th>Проект</th>
+                  <th>Задача</th>
+                  <th>Описание</th>
+                  <th class="text-right">Часы</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(item, idx) in modalData.items" :key="idx">
+                  <td class="text-sm text-slate-900">{{ item.project_title || '-' }}</td>
+                  <td class="text-sm text-[#0075ff]">
+                    <span
+                      v-if="item.task_id"
+                      class="cursor-pointer hover:text-blue-700 hover:underline"
+                      @click="openTask(item.task_id)"
+                    >
+                      {{ item.task_title }}
+                    </span>
+                    <span v-else>{{ item.task_title }}</span>
+                  </td>
+                  <td class="text-sm text-slate-500">{{ item.description }}</td>
+                  <td class="text-right text-sm font-bold text-slate-900">{{ item.hours }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="ms-modal-footer text-right">
+            <B24Button label="Закрыть" color="default" @click="closeModal" />
+          </div>
+        </div>
+      </div>
+    </Teleport>
+  </ReportShell>
 </template>
 
 <style scoped>

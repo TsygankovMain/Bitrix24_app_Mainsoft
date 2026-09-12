@@ -18,8 +18,8 @@ import { computed, reactive, ref, watch } from 'vue'
 import type { TaskWorkspaceUser } from '~/types/task-workspace'
 import type { TaskTabLayout } from '~/utils/taskTabLayout'
 import {
-  QUICK_HOURS,
   quickDateOptions,
+  quickHourOptions,
   validateEntryDraft,
   validateSplit,
   type TaskEntryDraft
@@ -52,6 +52,7 @@ watch(() => props.draft, (next) => {
 
 const isEditing = computed(() => Boolean(form.id))
 const dateShortcuts = computed(() => quickDateOptions(new Date()))
+const hourShortcuts = quickHourOptions()
 
 function userLabel(user: TaskWorkspaceUser) {
   const name = `${user.NAME ?? ''} ${user.LAST_NAME ?? ''}`.trim()
@@ -126,6 +127,7 @@ function submitSplit() {
                         type="button"
                         class="entry-form__chip"
                         :class="{ 'entry-form__chip--on': form.date === shortcut.value }"
+                        :aria-label="`Поставить дату: ${shortcut.label.toLowerCase()}`"
                         @click="setDate(shortcut.value)"
                     >
                         {{ shortcut.label }}
@@ -138,14 +140,15 @@ function submitSplit() {
                 <input v-model.number="form.hours" type="number" step="0.25" min="0" class="font-semibold">
                 <div class="entry-form__quick">
                     <button
-                        v-for="hours in QUICK_HOURS"
-                        :key="hours"
+                        v-for="option in hourShortcuts"
+                        :key="option.value"
                         type="button"
                         class="entry-form__chip"
-                        :class="{ 'entry-form__chip--on': form.hours === hours }"
-                        @click="setHours(hours)"
+                        :class="{ 'entry-form__chip--on': form.hours === option.value }"
+                        :aria-label="`Поставить ${option.label} часа`"
+                        @click="setHours(option.value)"
                     >
-                        {{ hours }}
+                        {{ option.label }}
                     </button>
                 </div>
             </div>

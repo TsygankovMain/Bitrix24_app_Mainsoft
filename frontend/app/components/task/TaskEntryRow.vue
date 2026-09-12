@@ -45,10 +45,10 @@ const description = computed(() => String(props.item.description || '').trim() |
         }"
     >
         <span
-            class="entry-row__dot"
-            :class="item.isConsidered ? 'entry-row__dot--on' : 'entry-row__dot--off'"
+            class="entry-row__status"
+            :class="item.isConsidered ? 'entry-row__status--on' : 'entry-row__status--off'"
             :title="item.isConsidered ? 'Учитывается в аналитике' : 'Не учитывается в аналитике'"
-        />
+        >{{ item.isConsidered ? 'учт.' : 'не учт.' }}</span>
 
         <div class="entry-row__main">
             <span class="entry-row__description" :title="description">{{ description }}</span>
@@ -111,18 +111,35 @@ const description = computed(() => String(props.item.description || '').trim() |
     box-shadow: inset 3px 0 0 var(--ui-color-blue-80);
 }
 
-.entry-row__dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
+/*
+ * Признак учёта — плашка с текстом, а не цветная точка.
+ *
+ * Точка кодировала смысл одним цветом: человек с дальтонизмом видел два
+ * одинаковых кружка, а при печати и на скриншоте разница пропадала совсем
+ * (WCAG 1.4.1). Плашка читается без цвета и занимает те же 40–50 px, что
+ * раньше уходили на точку с отступом. Так же подано и в макете.
+ */
+.entry-row__status {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.3;
+    white-space: nowrap;
 }
 
-.entry-row__dot--on {
-    background: var(--ui-color-green-90);
+.entry-row__status--on {
+    background: var(--ui-color-green-15);
+    color: var(--ui-color-green-95);
 }
 
-.entry-row__dot--off {
-    background: var(--ui-color-red-80);
+/*
+ * Неучтённые часы — серые, а не красные: это штатный режим (внутренние
+ * задачи, переделки), и красным вкладка говорит только об отказах.
+ */
+.entry-row__status--off {
+    background: var(--ui-color-base-7);
+    color: var(--ui-color-base-2);
 }
 
 .entry-row__main {
