@@ -530,11 +530,20 @@ async function syncBoard(showToast = true) {
     ])
 
     if (showToast) {
+      // Синк заканчивается автоматической проверкой статусов простоя
+      // (ProjectSyncService.sync вызывает ProjectStageAutomationService.
+      // run_daily_check и подмешивает её счётчики в свой ответ), поэтому её
+      // результат показываем здесь же. До этой правки счётчики приезжали в
+      // ответе, но никуда не выводились — и ровно поэтому в шапке жила
+      // отдельная кнопка «Проверить статусы», дублировавшая уже сделанное.
       const baseMessage = `Синхронизировано ${result.synced || 0} проектов. Новых: ${result.created || 0}, обновлено: ${result.updated || 0}.`
+      const stageMessage = `Статусы простоя: без списаний 30 дней — ${result.moved_to_30_days || 0}, 90 дней — ${result.moved_to_90_days || 0}, возвращено в работу — ${result.returned_to_work || 0}.`
+      const fullMessage = `${baseMessage} ${stageMessage}`
+
       if (result.warning) {
-        showStatus('warning', `${baseMessage} ${result.warning}`)
+        showStatus('warning', `${fullMessage} ${result.warning}`)
       } else {
-        showStatus('success', baseMessage)
+        showStatus('success', fullMessage)
       }
     }
   } catch (error) {
@@ -560,22 +569,6 @@ async function syncBoard(showToast = true) {
   } finally {
     isSyncing.value = false
     progress.end()
-  }
-}
-
-async function runDailyCheck() {
-  isSyncing.value = true
-  try {
-    const result = await apiStore.runProjectBoardDailyCheck()
-    await loadBoard(true)
-    showStatus(
-      'success',
-      `Проверено ${result.checked || 0} проектов. В 30 дней: ${result.moved_to_30_days || 0}, в 90 дней: ${result.moved_to_90_days || 0}, возвращено в работу: ${result.returned_to_work || 0}.`
-    )
-  } catch (error) {
-    processErrorGlobal(error)
-  } finally {
-    isSyncing.value = false
   }
 }
 
@@ -776,11 +769,45 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <div class="flex flex-wrap gap-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <B24Button v-if="CREATE_PROJECT_BUTTON_ENABLED" label="Создать проект" color="primary" @click="createProjectOpen = true" />
-                <B24Button label="Синхронизировать" color="success" :loading="isSyncing" @click="syncBoard()" />
-                <B24Button label="Обновить справочники" color="default" :loading="isRefreshingMeta" @click="refreshReferenceOptions()" />
-                <B24Button label="Проверить статусы" color="default" :loading="isSyncing" @click="runDailyCheck" />
+
+                <!--
+                  Две кнопки обновления — одной группой в рамке.
+
+                  Раньше их было три: «Синхронизировать», «Обновить
+                  справочники» и «Проверить статусы». Третья ушла: она дёргала
+                  /api/project-board/run-daily-check, а ровно этот же
+                  run_daily_check синк вызывает сам в конце своей работы
+                  (ProjectSyncService.sync, backends/python/api/main/
+                  project_sync_service.py) и его счётчики приезжают в том же
+                  ответе — то есть кнопка предлагала нажать вручную то, что
+                  уже сделано. Её числа теперь видно в сообщении синка.
+
+                  Оставшиеся две действительно разные, и рамка с подписью
+                  «Только справочники» показывает, чем: вторая — узкий и
+                  дешёвый кусок первой (одна ручка /project-board/meta вместо
+                  полного обхода проектов, отдельное ведро лимитера
+                  board_meta_refresh, карточки и статусы не трогает). Нужна,
+                  когда в Битрикс24 только что появилась компания или
+                  сотрудник, а полный синк ради этого гонять незачем.
+                -->
+                <div class="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1">
+                  <B24Button
+                    label="Синхронизировать"
+                    color="success"
+                    :loading="isSyncing"
+                    title="Полное обновление доски: проекты из Битрикс24, пересчёт списаний, статусы простоя (30 и 90 дней) и справочники"
+                    @click="syncBoard()"
+                  />
+                  <B24Button
+                    label="Только справочники"
+                    color="default"
+                    :loading="isRefreshingMeta"
+                    title="Быстро перечитывает списки компаний, кураторов и юрлиц для фильтров и карточек. Проекты и статусы не затрагивает"
+                    @click="refreshReferenceOptions()"
+                  />
+                </div>
               </div>
             </div>
 

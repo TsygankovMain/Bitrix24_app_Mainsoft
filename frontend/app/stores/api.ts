@@ -1189,16 +1189,17 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const runProjectBoardDailyCheck = async (): Promise<unknown> => {
-      const result = await $api('/api/project-board/run-daily-check', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
-      clearCache('project-board', 'homepage-portfolio')
-      return result
-    }
+    /*
+      Транспорта для /api/project-board/run-daily-check тут больше нет.
+
+      Ручка на бэкенде осталась (views.run_project_board_daily_check), но
+      фронт её не зовёт: ту же проверку статусов простоя синк делает сам в
+      конце своей работы — ProjectSyncService.sync вызывает
+      ProjectStageAutomationService.run_daily_check и отдаёт её счётчики в
+      составе своего ответа, а доска показывает их в сообщении о синке.
+      Отдельная кнопка «Проверить статусы» в шапке доски предлагала нажать
+      вручную уже сделанное, поэтому убрана вместе с этим методом.
+    */
 
     /**
      * Прогон уведомлений о риске и перерасходе бюджета.
@@ -1645,7 +1646,6 @@ export const useApiStore = defineStore(
       updateProjectCard,
       updateProjectStage,
       archiveProject,
-      runProjectBoardDailyCheck,
       runProjectBudgetNotifier,
       runProjectSpaBackfill,
       getCompaniesForProjectBinding,
