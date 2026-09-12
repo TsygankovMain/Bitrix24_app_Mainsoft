@@ -59,3 +59,12 @@ test('неизвестная ошибка не показывает машинн
   assert.equal(view.title, 'Не удалось получить бюджет проектов.')
   assert.equal(view.hint, '')
 })
+
+test('409 finance_operation_busy — это занятое сохранение, а не ненастроенный смарт-процесс', () => {
+  const view = describeBddsError(httpError(409, {
+    error: 'Кто-то уже сохраняет операцию по этому смарт-процессу. Повторите через несколько секунд.',
+    code: 'finance_operation_busy',
+  }))
+  assert.equal(view.isSmartProcessMissing, false)
+  assert.match(view.title, /уже сохраняет/)
+})
