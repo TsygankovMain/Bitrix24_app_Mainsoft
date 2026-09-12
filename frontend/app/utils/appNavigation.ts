@@ -146,6 +146,28 @@ export function buildAppNavigation(options: AppNavigationOptions): NavSection[] 
       badge: controlBadge,
       groups: [
         {
+          /**
+           * Сопоставление полей стоит ЗДЕСЬ, а не только под шестерёнкой.
+           *
+           * Это единственная настройка, без которой у приложения не работает
+           * ничего — ни запись часов, ни отчёты, ни счета, ни БДДС, — и
+           * искать её человек шёл именно в «Контроль», проверяя, почему
+           * экраны пустые. Второй вход, под шестерёнкой, остаётся (см.
+           * SETTINGS_NAV_GROUPS ниже): дублирование здесь осознанное, цена
+           * ненайденного экрана выше цены лишнего пункта.
+           */
+          id: 'control-setup',
+          label: 'Настройка данных',
+          links: [
+            {
+              id: 'control-mapping',
+              label: 'Сопоставление полей',
+              to: '/settings/mapping',
+              description: 'Связь полей приложения с полями портала',
+            },
+          ],
+        },
+        {
           id: 'control-period',
           label: 'Период',
           links: [
@@ -206,6 +228,76 @@ export const SETTINGS_NAV_LINK: NavLink = {
   id: 'settings',
   label: 'Настройки',
   to: '/settings',
+}
+
+/**
+ * Выпадающий список под шестерёнкой.
+ *
+ * Раньше шестерёнка была простой ссылкой на `/settings`, а сопоставление
+ * полей жило кнопкой в карточке «Конфигурация» — восьмой по счёту на длинной
+ * странице настроек. Человек, который искал настройку сопоставления, её не
+ * нашёл. Теперь самая важная настройка видна сразу при нажатии на
+ * шестерёнку, а «Все настройки» осталось первой ссылкой рядом — прежний
+ * переход одним кликом никуда не делся.
+ *
+ * Порядок: сначала то, без чего приложение не работает, потом служебное.
+ */
+export const SETTINGS_NAV_GROUPS: NavGroup[] = [
+  {
+    id: 'settings-main',
+    label: 'Настройка приложения',
+    links: [
+      {
+        id: 'settings-mapping',
+        label: 'Сопоставление полей',
+        to: '/settings/mapping',
+        description: 'Без него не работают ни отчёты, ни счета, ни БДДС',
+      },
+      {
+        id: 'settings-all',
+        label: 'Все настройки',
+        to: '/settings',
+        description: 'Отчёты, счёт и акт, БДДС',
+      },
+    ],
+  },
+  {
+    id: 'settings-service',
+    label: 'Служебное',
+    links: [
+      { id: 'settings-periods', label: 'Закрытие месяца', to: '/settings/periods' },
+      { id: 'settings-projects-health', label: 'Незаполненные проекты', to: '/settings/projects-health' },
+      { id: 'settings-debug', label: 'Диагностика системы', to: '/settings/debug' },
+    ],
+  },
+]
+
+/**
+ * Элементы B24DropdownMenu для шестерёнки.
+ *
+ * Компонент принимает массив массивов: каждый вложенный массив — отдельная
+ * секция со своим разделителем. Заголовок группы идёт первым элементом с
+ * `type: 'label'` — иначе служебные пункты читались бы как продолжение
+ * настроек приложения.
+ *
+ * Активный пункт ищется ТОЧНЫМ совпадением адреса, а не по префиксу, как в
+ * разделах меню: здесь `/settings` — сосед `/settings/mapping`, а не его
+ * родитель, и по префиксу на экране сопоставления горели бы сразу два пункта.
+ */
+export function buildSettingsMenuItems(
+  path: string | null | undefined
+): Array<Array<Record<string, unknown>>> {
+  const current = normalizeNavPath(path)
+
+  return SETTINGS_NAV_GROUPS.map(group => [
+    { type: 'label', label: group.label },
+    ...group.links.map(link => ({
+      label: link.label,
+      description: link.description,
+      to: link.to,
+      active: normalizeNavPath(link.to) === current,
+    })),
+  ])
 }
 
 /**

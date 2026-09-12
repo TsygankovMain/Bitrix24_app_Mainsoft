@@ -1640,6 +1640,17 @@ export const useApiStore = defineStore(
     // endregion ////
 
     return {
+      /**
+       * Есть ли рабочий токен.
+       *
+       * Нужен компонентам, которые живут в ЛЕЙАУТЕ и рисуются раньше
+       * бутстрапа (предупреждение о ненастроенном сопоставлении полей,
+       * components/common/MappingHealthBanner.vue): свой запрос оттуда ушёл
+       * бы без авторизации, а тащить в лейаут вызов initApp нельзя — он
+       * принадлежит странице. Такой компонент ждёт этот флаг и только потом
+       * спрашивает своё.
+       */
+      hasToken: computed(() => Boolean(tokenJWT.value)),
       init,
       getEnum,
       getList,
