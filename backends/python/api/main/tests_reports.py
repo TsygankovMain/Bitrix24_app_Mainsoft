@@ -533,7 +533,7 @@ class QueryStabilityTest(TestCase):
 
     @patch("main.views.ProjectSyncService.backfill_timesheet_project_items", return_value={"status": "success", "updated": 0, "unresolved": 0})
     @patch("main.views.ProjectSyncService.sync", side_effect=RuntimeError("sync failed"))
-    @patch("main.views.ConfigurationService.save_configuration_sync", return_value=None)
+    @patch("main.views.ConfigurationService.save_configuration_sync", return_value={"config_revision": 1})
     @patch("main.views.ConfigurationService.normalize_configuration_sync", side_effect=lambda cfg: cfg)
     @patch("main.views._build_project_spa_validation_payload", return_value={"is_valid": True})
     def test_save_configuration_returns_success_when_project_sync_fails(
@@ -568,7 +568,7 @@ class QueryStabilityTest(TestCase):
 
     @patch("main.views.ProjectSyncService.backfill_timesheet_project_items", return_value={"status": "success", "updated": 0, "unresolved": 0})
     @patch("main.views.ProjectSyncService.sync", return_value={"status": "success", "synced": 0, "created": 0, "updated": 0})
-    @patch("main.views.ConfigurationService.save_configuration_sync", return_value=None)
+    @patch("main.views.ConfigurationService.save_configuration_sync", return_value={"config_revision": 1})
     @patch("main.views.ConfigurationService.normalize_configuration_sync", side_effect=lambda cfg: cfg)
     @patch("main.views._build_project_spa_validation_payload", side_effect=RuntimeError("validation unavailable"))
     def test_save_configuration_returns_success_when_validation_fails_temporarily(

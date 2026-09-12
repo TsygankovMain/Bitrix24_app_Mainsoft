@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from typing import List, Optional
 
 from django.db import transaction
+from django.db.models import F
 
 from .billing_features import (
     GRACE_DAYS,
@@ -61,8 +62,13 @@ def _portal_by_member_id(member_id: str) -> Optional[Portal]:
     # Portal заводит seed-миграция и не заводит установка: у портала, который
     # поставил приложение позже, строки может не быть. Учётки есть — значит
     # портал существует, заводим его здесь.
+    # is_master_account — nullable BooleanField: на PostgreSQL "-is_master_account"
+    # ставит NULL ПЕРЕД True (NULLS FIRST — умолчание для DESC), поэтому учётка
+    # без флага обгоняла бы настоящего мастера. nulls_last=True кладёт NULL в конец.
     accounts = list(
-        Bitrix24Account.objects.filter(member_id=member_id).order_by("-is_master_account", "b24_user_id")
+        Bitrix24Account.objects.filter(member_id=member_id).order_by(
+            F("is_master_account").desc(nulls_last=True), "b24_user_id"
+        )
     )
     if not accounts:
         return None
@@ -284,7 +290,10 @@ def list_portals(*, include_without_plan: bool = True, status_filter: str = "",
     if include_without_plan:
         orphan = (
             Bitrix24Account.objects.exclude(member_id="").exclude(member_id__in=seen)
-            .order_by("member_id", "-is_master_account").values_list("member_id", "domain_url")
+            # nulls_last=True: см. комментарий у _portal_by_member_id — иначе
+            # NULL в is_master_account обгоняет True на PostgreSQL.
+            .order_by("member_id", F("is_master_account").desc(nulls_last=True))
+            .values_list("member_id", "domain_url")
         )
         for member_id, domain in orphan:
             if member_id in seen:

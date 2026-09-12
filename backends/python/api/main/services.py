@@ -1,5 +1,5 @@
 from .bitrix_data_access import BitrixDataService
-from .configuration_service import ConfigurationService
+from .configuration_service import ConfigurationConflict, ConfigurationService
 from .finance_operation_service import FinanceOperationService
 from .project_budget_notifier import ProjectBudgetNotifier
 from .project_budget_service import ProjectBudgetService
@@ -51,6 +51,7 @@ from .timesheet_sync_service import TimesheetSyncService
 __all__ = [
     "BITRIX_REFERENCE_CACHE_TTL",
     "BitrixDataService",
+    "ConfigurationConflict",
     "ConfigurationService",
     "DEFAULT_FIELDS_MAPPING",
     "DataProcessingService",

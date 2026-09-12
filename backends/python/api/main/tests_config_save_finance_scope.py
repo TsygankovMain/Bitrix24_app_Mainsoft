@@ -113,7 +113,10 @@ class SaveConfigurationFinanceScopeTest(TestCase):
             response = self._post(self._incoming(), scope="finance")
 
         self.assertEqual(response.status_code, HTTPStatus.OK, response.content)
-        self.assertEqual(response.json(), {"status": "success", "scope": "finance"})
+        self.assertEqual(
+            response.json(),
+            {"status": "success", "scope": "finance", "config_revision": 1},
+        )
         validation.assert_not_called()
         sync.assert_not_called()
 

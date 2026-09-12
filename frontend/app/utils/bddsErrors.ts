@@ -79,6 +79,18 @@ export function describeBddsError(error: unknown): BddsErrorView {
     }
   }
 
+  // Занят замок создания операции: второй «Сохранить» пришёл, пока первый
+  // ещё пишет в CRM. Это не «смарт-процесс не настроен», хотя тоже 409.
+  if (code === 'finance_operation_busy') {
+    return {
+      title: serverText || 'Операцию уже сохраняют.',
+      hint: 'Подождите несколько секунд и проверьте список операций — повторять сохранение, скорее всего, не нужно.',
+      isFeatureDisabled: false,
+      isProjectMissing: false,
+      isSmartProcessMissing: false,
+    }
+  }
+
   if (code === 'finance_spa_not_configured' || status === 409) {
     return {
       title: serverText || 'Смарт-процесс «Доходы-расходы» не настроен.',

@@ -75,6 +75,15 @@ class TimesheetSyncService:
     BULK_BATCH_SIZE = 200
     DELETE_SAFETY_RATIO = 0.5
     SCOPED_SAVE_CHUNK = 500
+    # Дефект 5 (fixwave): у ручного синка (_sync_scoped/_fetch_all_pages_batched)
+    # не было предохранителя по числу страниц — в отличие от задач
+    # (task_sync_service.MAX_CHANGED_PAGES/MAX_CHUNKS). На портале с большой
+    # историей за период кнопка ручного досинка тянула весь массив одним
+    # батч-запросом и держала поток gunicorn минутами. MAX_PAGES считает
+    # страницы по 50 записей (первая страница + офсетные), то есть потолок —
+    # MAX_PAGES * 50 записей на один фильтр (A или B) за один вызов
+    # _sync_scoped; тот же порядок величины, что и MAX_CHUNKS у задач.
+    MAX_PAGES = 400
     UPSERT_FIELDS = [
         "task_id",
         "employee_id",
@@ -211,6 +220,13 @@ class TimesheetSyncService:
                 items = self._extract_items(response)
                 if not items:
                     logger.info("No more items to fetch.")
+                    # traversal_complete здесь НАМЕРЕННО не ставится. Пустая
+                    # страница посреди обхода бывает и при сбое портала, а
+                    # traversal_complete=True разрешает удаление в обход
+                    # DELETE_SAFETY_RATIO — сбой стёр бы все записи дальше
+                    # курсора (тест test_midway_empty_page_keeps_data). Цена —
+                    # при числе записей, кратном page_size, удаление решает
+                    # порог DELETE_SAFETY_RATIO: ошибка в безопасную сторону.
                     break
 
                 # Сдвигаем курсор на максимальный id пачки (keyset-пагинация)
@@ -382,7 +398,7 @@ class TimesheetSyncService:
 
         # Выборка A: по полю даты-отражения
         filter_a = {f">={fdate}": date_from, f"<={fdate}": date_to}
-        items_a = self._fetch_all_pages_batched(filter_a)
+        items_a, complete_a = self._fetch_all_pages_batched(filter_a)
         logger.info("Scoped fetch A (%s) returned %s items", fdate, len(items_a))
 
         # Выборка B: по createdTime — БЕЗ верхней границы.
@@ -392,7 +408,7 @@ class TimesheetSyncService:
         # внесённые задним числом за дату старше окна (их не видит фильтр A).
         # Верхняя граница здесь и не нужна: записей из будущего не бывает.
         filter_b = {">=createdTime": date_from}
-        items_b = self._fetch_all_pages_batched(filter_b)
+        items_b, complete_b = self._fetch_all_pages_batched(filter_b)
         logger.info("Scoped fetch B (createdTime) returned %s items", len(items_b))
 
         # Дедупликация по str(id)
@@ -420,20 +436,40 @@ class TimesheetSyncService:
                 new_cards = self._save_batch(chunk)
                 all_new_cards.extend(new_cards)
 
-        # Scoped-сверка удалений: только внутри окна
-        self._delete_scoped_orphans(date_from, date_to, fetched_ids)
+        # Scoped-сверка удалений: только внутри окна. traversal_complete=False,
+        # если хотя бы одна из выборок (A или B) упёрлась в MAX_PAGES — тогда
+        # fetched_ids заведомо неполон, и удаление «пропавших» было бы ложным
+        # (запись просто не попала в усечённую выборку, а не исчезла из
+        # Битрикса). Не удалять в этом случае важнее, чем не удалить лишний
+        # раз: следующий полный ночной синк (_sync_full) всё равно подчистит
+        # настоящих сирот.
+        self._delete_scoped_orphans(
+            date_from, date_to, fetched_ids, traversal_complete=complete_a and complete_b,
+        )
 
         self._autofill_inn(all_new_cards)
 
         logger.info("Scoped sync complete. Total unique items: %s", len(union_items))
         return len(union_items)
 
-    def _fetch_all_pages_batched(self, filter_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Получает ВСЕ страницы crm.item.list для заданного фильтра.
+    def _fetch_all_pages_batched(
+        self, filter_dict: Dict[str, Any]
+    ) -> "tuple[List[Dict[str, Any]], bool]":
+        """Получает страницы crm.item.list для заданного фильтра (до MAX_PAGES).
 
         Первая страница — одиночный _call_with_retry (start=0), затем если
         total > 50 — строит словарь офсетов и вызывает call_batches одним
         запросом. Разбор ответа батча — оборонительный.
+
+        Возвращает (items, traversal_complete). MAX_PAGES — предохранитель
+        (Дефект 5 fixwave): без него ручной синк за период с большой историей
+        портала одним batch-запросом тянул ВСЕ страницы разом и занимал поток
+        gunicorn на минуты. Если total упирается в потолок, офсеты для
+        батч-запроса урезаются до MAX_PAGES страниц (включая уже забранную
+        первую), в лог пишется предупреждение, а traversal_complete=False —
+        вызывающий (_sync_scoped) обязан на это отреагировать пропуском
+        удаления «пропавших» записей: они не пропали, а просто не попали в
+        усечённую выборку.
         """
         base_params: Dict[str, Any] = {
             "entityTypeId": self.entity_type_id,
@@ -458,10 +494,24 @@ class TimesheetSyncService:
         all_items: List[Dict[str, Any]] = list(first_items)
 
         if total <= 50:
-            return all_items
+            return all_items, True
 
         # Батчевые офсеты для оставшихся страниц
         offsets = list(range(50, total, 50))
+
+        traversal_complete = True
+        max_offsets = self.MAX_PAGES - 1  # первая страница уже забрана выше
+        if len(offsets) > max_offsets:
+            logger.warning(
+                "Scoped fetch hit MAX_PAGES (%s) for account %s, filter %s: "
+                "total=%s items (~%s pages), only first %s page(s) fetched; "
+                "orphan deletion for this fetch will be skipped (safety).",
+                self.MAX_PAGES, self.account.pk, list(filter_dict.keys()),
+                total, len(offsets) + 1, self.MAX_PAGES,
+            )
+            offsets = offsets[:max(0, max_offsets)]
+            traversal_complete = False
+
         methods = {
             f"p{off}": (
                 "crm.item.list",
@@ -508,10 +558,10 @@ class TimesheetSyncService:
                 logger.warning("Could not parse batch sub-result for key=%s: %s", key, exc)
                 continue
 
-        return all_items
+        return all_items, traversal_complete
 
     def _delete_scoped_orphans(
-        self, date_from: str, date_to: str, fetched_ids: set
+        self, date_from: str, date_to: str, fetched_ids: set, traversal_complete: bool = True,
     ) -> None:
         """Удаляет записи внутри окна [date_from, date_to], которых нет в fetched_ids.
 
@@ -519,7 +569,21 @@ class TimesheetSyncService:
         получено ни одной записи (пустой fetched_ids) — удаление ПРОПУСКАЕТСЯ
         (защита от потери данных при сбое выборки/парсинга батча; реальная
         очистка пустого периода произойдёт при следующем полном синке).
+
+        traversal_complete=False (Дефект 5 fixwave): выборка (A и/или B в
+        _sync_scoped) упёрлась в MAX_PAGES у _fetch_all_pages_batched —
+        fetched_ids заведомо неполон, удаление тоже ПРОПУСКАЕТСЯ (иначе
+        записи, просто не попавшие в усечённую выборку, удалились бы как
+        «пропавшие»).
         """
+        if not traversal_complete:
+            logger.warning(
+                "Scoped: fetch traversal incomplete for window %s – %s (MAX_PAGES cap); "
+                "skip deletion (safety).",
+                date_from, date_to,
+            )
+            return
+
         if not fetched_ids:
             logger.info(
                 "Scoped: fetched 0 items for window %s – %s; skip deletion (safety).",

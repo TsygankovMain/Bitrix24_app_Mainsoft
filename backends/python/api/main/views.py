@@ -36,6 +36,7 @@ from .services import (
     BitrixDataService,
     ReportService,
     TimesheetSyncService,
+    ConfigurationConflict,
     ConfigurationService,
     ProjectCardService,
     ProjectSyncService,
@@ -2740,7 +2741,8 @@ def _project_spa_part_unchanged(stored: dict, incoming: dict) -> bool:
 
 @rate_limit("config_save_sync", 6, 60, key="account")
 def _save_configuration_with_project_sync(
-    request: AuthorizedRequest, service: ConfigurationService, config: dict
+    request: AuthorizedRequest, service: ConfigurationService, config: dict,
+    base_revision=None,
 ) -> JsonResponse:
     """Ветка save_configuration при заданном (> 0) project_sp_entity_type_id —
 
@@ -2809,11 +2811,14 @@ def _save_configuration_with_project_sync(
             status=400,
         )
 
-    service.save_configuration_sync(config)
+    try:
+        saved_config = service.save_configuration_sync(config, base_revision=base_revision)
+    except ConfigurationConflict as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
     invalidate_project_runtime_caches(request.bitrix24_account)
     invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
 
-    response_payload = {"status": "success"}
+    response_payload = {"status": "success", "config_revision": saved_config.get("config_revision")}
     project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     try:
         with account_sync_lock(request.bitrix24_account, scope="project"):
@@ -2877,6 +2882,11 @@ def save_configuration(request: AuthorizedRequest):
         if not isinstance(config, dict):
             return JsonResponse({"error": "Некорректный формат конфигурации."}, status=400)
 
+        # Ревизия, с которой экран открыли/последний раз сохранили (см.
+        # ConfigurationConflict). Отсутствует — старый клиент или внутренний
+        # вызов; save_configuration_sync тогда пишет без проверки версии.
+        base_revision = body.get('base_revision')
+
         config = service.normalize_configuration_sync(config)
 
         # Живая проверка выбранного шаблона генератора документов — только
@@ -2907,10 +2917,17 @@ def save_configuration(request: AuthorizedRequest):
             and str(body.get("scope") or "").strip().lower() == CONFIG_SAVE_SCOPE_FINANCE
             and _project_spa_part_unchanged(service.get_configuration_sync(), config)
         ):
-            service.save_configuration_sync(config)
+            try:
+                saved_config = service.save_configuration_sync(config, base_revision=base_revision)
+            except ConfigurationConflict as exc:
+                return JsonResponse(exc.as_payload(), status=exc.status)
             invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
             invalidate_project_runtime_caches(request.bitrix24_account)
-            return JsonResponse({"status": "success", "scope": CONFIG_SAVE_SCOPE_FINANCE})
+            return JsonResponse({
+                "status": "success",
+                "scope": CONFIG_SAVE_SCOPE_FINANCE,
+                "config_revision": saved_config.get("config_revision"),
+            })
 
         if should_validate_project_spa:
             # project_sp_entity_type_id > 0 -> эта ветка попытается запустить
@@ -2918,14 +2935,17 @@ def save_configuration(request: AuthorizedRequest):
             # поэтому лимитируется отдельно — см. docstring
             # _save_configuration_with_project_sync. Ветка ниже (без Project
             # SPA в конфигурации) синк не запускает и не лимитируется вовсе.
-            return _save_configuration_with_project_sync(request, service, config)
+            return _save_configuration_with_project_sync(request, service, config, base_revision)
 
-        service.save_configuration_sync(config)
+        try:
+            saved_config = service.save_configuration_sync(config, base_revision=base_revision)
+        except ConfigurationConflict as exc:
+            return JsonResponse(exc.as_payload(), status=exc.status)
         invalidate_project_runtime_caches(request.bitrix24_account)
         # Суммы операций кэшируются по сопоставлению «Доходов-расходов»: без
         # сброса бюджет проекта до конца TTL считал бы по прежним полям.
         invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
-        return JsonResponse({"status": "success"})
+        return JsonResponse({"status": "success", "config_revision": saved_config.get("config_revision")})
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
     except Exception:
@@ -3781,10 +3801,15 @@ def get_finance_operations(request: AuthorizedRequest):
 def create_finance_operation(request: AuthorizedRequest):
     """Создание операции в смарт-процессе портала.
 
-    Идемпотентность — внутри сервиса: ключ SHA-256 от полей операции, и
-    повтор возвращает status=duplicate с уже существующим элементом, а не
-    второй элемент с той же суммой. Двойной клик по «Сохранить» на слабой
-    связи — самый обычный сценарий, и он не должен раздваивать деньги.
+    Идемпотентность проверкой дубля (_find_duplicate) сама по себе не
+    защищает от гонки: два параллельных запроса (двойной клик «Сохранить»
+    или две вкладки) оба читают crm.item.list ДО того, как кто-то из них
+    успел записать crm.item.add, оба не находят дубль и оба создают
+    операцию. Поэтому проверка дубля и создание обёрнуты в тот же приём,
+    что и выставление счёта (_billing_documents_create) — advisory-замок
+    account_sync_lock(scope="finance_operation") с субъектом-ПОРТАЛОМ:
+    сериализует и два клика одного бухгалтера, и двух разных бухгалтеров
+    одного портала.
 
     Права — @bdds_operations_manager_required: администратор портала или
     «Бухгалтерия» из настроек, тот же список, что у выставления счёта (см.
@@ -3794,7 +3819,16 @@ def create_finance_operation(request: AuthorizedRequest):
     """
     service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
     try:
-        payload = service.create_operation(_load_request_json(request))
+        with account_sync_lock(request.bitrix24_account, scope="finance_operation"):
+            payload = service.create_operation(_load_request_json(request))
+    except SyncLockBusy:
+        return JsonResponse(
+            {
+                "error": "Кто-то уже сохраняет операцию по этому смарт-процессу. Повторите через несколько секунд.",
+                "code": "finance_operation_busy",
+            },
+            status=409,
+        )
     except ValueError as exc:
         return JsonResponse({"error": str(exc), "code": "invalid_operation"}, status=400)
     except Exception as exc:  # noqa: BLE001

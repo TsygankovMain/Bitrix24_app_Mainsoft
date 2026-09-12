@@ -6,6 +6,7 @@ import {
   applyDraftTitle,
   buildBillingLinesPayload,
   createBillingLineDrafts,
+  describeZeroAmountBlock,
   hasDraftEdits,
   recalcBillingTotals,
   round2,
@@ -140,6 +141,25 @@ test('recalcBillingTotals: нулевая сумма не даёт выстав�
   const drafts = createBillingLineDrafts([{ project_id: '1', title: 'Без ставки', hours: 4, rate: 0, amount: 0 }])
 
   assert.equal(recalcBillingTotals(drafts).issuable, false)
+})
+
+test('describeZeroAmountBlock: непустой документ с нулевой суммой — причина есть', () => {
+  const drafts = createBillingLineDrafts([{ project_id: '1', title: 'Без ставки', hours: 4, rate: 0, amount: 0 }])
+  const reason = describeZeroAmountBlock(recalcBillingTotals(drafts))
+
+  assert.ok(reason)
+  assert.match(reason as string, /0 ₽/)
+  assert.match(reason as string, /ставку в карточке проекта/)
+})
+
+test('describeZeroAmountBlock: пустой документ (все строки исключены) — не эта причина', () => {
+  const drafts = createBillingLineDrafts(PREVIEW_LINES).map(draft => toggleDraftExcluded(draft, true))
+
+  assert.equal(describeZeroAmountBlock(recalcBillingTotals(drafts)), null)
+})
+
+test('describeZeroAmountBlock: сумма больше нуля — причины нет', () => {
+  assert.equal(describeZeroAmountBlock(recalcBillingTotals(createBillingLineDrafts(PREVIEW_LINES))), null)
 })
 
 test('buildBillingLinesPayload: исключённые строки не уходят на сервер', () => {

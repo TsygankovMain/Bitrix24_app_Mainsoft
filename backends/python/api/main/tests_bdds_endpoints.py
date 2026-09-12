@@ -423,6 +423,48 @@ class FinanceOperationsEndpointTest(BddsEndpointFixture):
         self.assertEqual(second.json()["status"], "duplicate")
         self.assertEqual(len(self.portal.added), 1)
 
+    def test_busy_lock_gives_its_own_409_and_skips_portal_write(self):
+        """Гонка двух «Сохранить»: занятый advisory-замок не должен доходить
+        ни до проверки дубля, ни до crm.item.add. На sqlite (тесты) замок —
+        no-op, поэтому занятость эмулируется патчем самого account_sync_lock,
+        как и для «Счёта и акта» (см. tests_billing_endpoints.ConcurrencyTest).
+        """
+        from .utils.decorators.sync_lock import SyncLockBusy
+
+        payload = {
+            "project_item_id": "500",
+            "operation_type": "expense",
+            "amount": 15000,
+            "operation_date": "2026-09-01",
+            "source": "manual",
+        }
+
+        with patch("main.views.account_sync_lock", side_effect=SyncLockBusy):
+            response = self.post("/api/finance-operations/create", payload)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "finance_operation_busy")
+        self.assertEqual(self.portal.added, [])
+        self.assertEqual(
+            [method for method, _ in self.portal.calls if method == "crm.item.list"],
+            [],
+        )
+
+    def test_create_still_works_when_lock_is_free(self):
+        """Без гонки (лок свободен) создание операции проходит как обычно —
+        обёртка в account_sync_lock не должна ничего сломать."""
+        response = self.post("/api/finance-operations/create", {
+            "project_item_id": "500",
+            "operation_type": "income",
+            "amount": 5000,
+            "operation_date": "2026-09-01",
+            "source": "manual",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "created")
+        self.assertEqual(len(self.portal.added), 1)
+
 
 class FinanceOperationsPagingTest(BddsEndpointFixture):
     """Страницы, период, тип и итоги реестра операций.

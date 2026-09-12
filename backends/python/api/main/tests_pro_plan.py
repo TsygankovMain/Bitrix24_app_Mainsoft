@@ -112,6 +112,23 @@ class SubscriptionRuleTest(SimpleTestCase):
         self.assertEqual(service.add_months(date(2026, 9, 12), 12), date(2027, 9, 12))
 
 
+class PortalByMemberIdOrderingTest(TestCase):
+    """is_master_account — nullable BooleanField: голое "-is_master_account"
+
+    на PostgreSQL кладёт NULL ПЕРЕД True (NULLS FIRST — умолчание для DESC),
+    поэтому _portal_by_member_id заводил бы Portal с доменом случайной учётки
+    с is_master_account=None вместо мастера. nulls_last=True чинит порядок
+    (pro_plan_service.py:65)."""
+
+    def test_domain_taken_from_real_master_not_null_flag_account(self):
+        make_account(member_id="m-new", domain="not-master.bitrix24.ru", user_id=1, is_master_account=None)
+        make_account(member_id="m-new", domain="real-master.bitrix24.ru", user_id=2, is_master_account=True)
+
+        portal = service._portal_by_member_id("m-new")
+
+        self.assertEqual(portal.domain_url, "real-master.bitrix24.ru")
+
+
 class PortalWideSubscriptionTest(TestCase):
     def test_colleague_created_after_enabling_gets_the_plan(self):
         admin = make_account()
@@ -370,6 +387,23 @@ class ProPlanCommandTest(TestCase):
         self.assertIn("нет тарифа", output)
         self.assertNotIn("other.bitrix24.ru", self.run_command("list", "--with-plan"))
         self.assertNotIn("pro.bitrix24.ru", self.run_command("list", "--status", "expired"))
+
+    def test_list_orphan_domain_ignores_null_is_master_account(self):
+        """is_master_account — nullable BooleanField: голое "-is_master_account"
+
+        на PostgreSQL кладёт NULL ПЕРЕД True (NULLS FIRST — умолчание для
+        DESC), поэтому строка «без тарифа» в списке показывала бы домен
+        случайной учётки с is_master_account=None вместо мастера того же
+        member_id. nulls_last=True чинит порядок (pro_plan_service.py:292)."""
+        make_account(
+            member_id="m-other", domain="not-master.bitrix24.ru",
+            user_id=2, is_master_account=None,
+        )
+
+        output = self.run_command("list")
+
+        self.assertIn("other.bitrix24.ru", output)
+        self.assertNotIn("not-master.bitrix24.ru", output)
 
     def test_show_prints_journal(self):
         self.run_command("enable", "--member-id", "m-pro", "--until", "2030-12-31", "--comment", "договор 7")

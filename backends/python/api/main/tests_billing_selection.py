@@ -19,6 +19,7 @@ from .billing_service import (
     BillingFilter,
     BillingService,
     ERROR_LINES_MISMATCH,
+    ERROR_ZERO_AMOUNT,
     WARNING_ALREADY_INVOICED,
     WARNING_MIXED_COMPANIES,
     WARNING_NO_RATE,
@@ -28,6 +29,7 @@ from .models import (
     BillingDocument,
     BillingEntry,
     Bitrix24Account,
+    Portal,
     PortalUser,
     ProjectCard,
     TimesheetItem,
@@ -440,6 +442,46 @@ class ValidationTest(BillingFixture):
 
         self.assertEqual(ctx.exception.code, WARNING_MIXED_COMPANIES)
 
+    def test_zero_amount_blocks_issue(self):
+        """Баг 9: у ВСЕХ записей нет ставки -> счёт на 0 ₽, выставлять нечего.
+
+        Отличие от test_no_rate_warning (WarningsTest выше): там проверяется
+        только warning (не блокирует collect()); здесь — что validate_for_issue
+        ЭТИМ же случаем блокирует именно выставление, отдельным кодом
+        ERROR_ZERO_AMOUNT, а не общим no_rate (тот на выставление не влияет —
+        экран прямо говорит «выставить можно и так», когда ставки нет только у
+        ЧАСТИ строк).
+        """
+        self.card.hourly_rate = 0.0
+        self.card.save(update_fields=["hourly_rate"])
+        self.entry(1, rate=None)
+        self.close_august()
+        service = self.service()
+        filters = self.filters()
+
+        with self.assertRaises(BillingError) as ctx:
+            service.validate_for_issue(service.collect(filters), filters)
+
+        self.assertEqual(ctx.exception.code, ERROR_ZERO_AMOUNT)
+        self.assertEqual(ctx.exception.status, 400)
+
+    def test_partial_no_rate_does_not_block_issue(self):
+        """Ставки нет только у ОДНОЙ из двух записей — сумма больше нуля,
+        zero_amount не срабатывает (это и есть случай плашки no_rate).
+
+        Разные задачи (task_id), чтобы записи не схлопнулись в одну строку
+        группировкой и рублёвая ставка второй записи не потерялась в среднем.
+        """
+        self.card.hourly_rate = 0.0
+        self.card.save(update_fields=["hourly_rate"])
+        self.entry(1, rate=2000.0, task_id="8365")
+        self.entry(2, rate=None, task_id="8366")
+        self.close_august()
+        service = self.service()
+        filters = self.filters()
+
+        service.validate_for_issue(service.collect(filters), filters)  # не бросает
+
 
 class PartialIndexTest(BillingFixture):
     """Двойное выставление держит БАЗА, а не проверка в коде."""
@@ -473,6 +515,58 @@ class PartialIndexTest(BillingFixture):
             )
 
         self.assertEqual(BillingEntry.objects.filter(timesheet_bitrix_id=1).count(), 3)
+
+    def test_two_accounts_of_one_portal_cannot_both_bill_the_same_timesheet(self):
+        """С USE_PORTAL_SCOPING включённым и portal проставленным — второй
+        constraint (portal, timesheet_bitrix_id) ловит гонку ДВУХ РАЗНЫХ
+        учёток одного портала (два бухгалтера), которую account-констрейнт
+        не видит вовсе — у них разные bitrix24_account."""
+        from django.db import IntegrityError, transaction
+
+        portal = Portal.objects.create(member_id="m-billing-portal")
+        other_account = Bitrix24Account.objects.create(
+            b24_user_id=22, is_b24_user_admin=True, member_id="m-billing-2",
+            is_master_account=True, domain_url="billing.bitrix24.ru",
+            status="active", application_version=1, portal=portal,
+        )
+        self.account.portal = portal
+        self.account.save(update_fields=["portal"])
+
+        BillingEntry.objects.create(
+            document=self._document(), bitrix24_account=self.account,
+            portal=portal, timesheet_bitrix_id=1, is_active=True,
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                BillingEntry.objects.create(
+                    document=self._document(), bitrix24_account=other_account,
+                    portal=portal, timesheet_bitrix_id=1, is_active=True,
+                )
+
+    def test_accounts_without_portal_are_unaffected(self):
+        """portal=NULL (сегодняшнее прод-состояние при USE_PORTAL_SCOPING=False)
+        — второй constraint не срабатывает вовсе, поведение не меняется:
+        несколько записей с portal=NULL и одним timesheet_bitrix_id уживаются,
+        пока их не сталкивает первый (account-уровневый) констрейнт."""
+        other_account = Bitrix24Account.objects.create(
+            b24_user_id=23, is_b24_user_admin=True, member_id="m-billing-3",
+            is_master_account=True, domain_url="billing-3.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+        BillingEntry.objects.create(
+            document=self._document(), bitrix24_account=self.account,
+            portal=None, timesheet_bitrix_id=1, is_active=True,
+        )
+        BillingEntry.objects.create(
+            document=self._document(), bitrix24_account=other_account,
+            portal=None, timesheet_bitrix_id=1, is_active=True,
+        )
+
+        self.assertEqual(
+            BillingEntry.objects.filter(timesheet_bitrix_id=1, is_active=True).count(), 2,
+        )
 
 
 class DriftTest(BillingFixture):

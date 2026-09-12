@@ -112,6 +112,13 @@ WARNING_ALREADY_INVOICED = "already_invoiced"
 WARNING_NO_RATE = "no_rate"
 WARNING_MIXED_COMPANIES = "mixed_companies"
 
+# Баг 9: счёт на 0 ₽ бессмысленен в CRM (документ без единой суммы, который
+# нечего сверять с оплатой) — интерфейс гасит кнопку «Выставить» этим же
+# кодом (см. describeZeroAmountBlock в frontend/app/utils/billingPreview.ts),
+# но кнопку можно обойти прямым запросом, и без проверки здесь такой
+# документ всё равно бы создался.
+ERROR_ZERO_AMOUNT = "zero_amount"
+
 # Отказ по утверждённым строкам (поле lines[] в теле выставления).
 ERROR_LINES_MISMATCH = "lines_mismatch"
 
@@ -1347,6 +1354,18 @@ class BillingService:
                 + ". Закройте период или включите настройку «Разрешить выставление за открытый период».",
                 WARNING_PERIOD_OPEN,
                 extra={"periods": selection.open_periods},
+            )
+
+        # Строки есть (иначе выше уже упали бы на empty_selection), но сумма
+        # по ним нулевая — у ВСЕХ записей нет ставки (WARNING_NO_RATE). Счёт
+        # на 0 ₽ в CRM бессмысленен: сверять с оплатой нечего. Плашка no_rate
+        # на экране прямо говорит «выставить можно и так» про частичный
+        # случай (часть строк без ставки) — здесь другой: без ставки ВСЕ
+        # строки, документ целиком ни о чём.
+        if selection.total_amount <= 0:
+            raise BillingError(
+                "Сумма счёта 0 ₽: у всех строк нет ставки — задайте ставку в карточке проекта.",
+                ERROR_ZERO_AMOUNT,
             )
 
     @transaction.atomic
