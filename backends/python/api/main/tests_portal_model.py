@@ -80,3 +80,27 @@ class SeedPortalsMigrationTest(TestCase):
         # Домен Portal m1 взят у мастер-аккаунта.
         p1 = Portal.objects.get(member_id="m1")
         self.assertEqual(p1.domain_url, "m1.bitrix24.ru")
+
+    def test_null_is_master_account_does_not_outrank_real_master(self):
+        """is_master_account — nullable BooleanField. Голое "-is_master_account"
+
+        на PostgreSQL кладёт NULL ПЕРЕД True (NULLS FIRST — умолчание для
+        DESC), поэтому учётка с is_master_account=None обгоняла бы настоящего
+        мастера, и Portal.domain_url доставался бы не тому аккаунту.
+        F("is_master_account").desc(nulls_last=True) чинит порядок."""
+        from .portal_seed import seed_portals_from_accounts
+        Bitrix24Account.objects.create(
+            b24_user_id=1, is_b24_user_admin=True, member_id="m1",
+            is_master_account=None, domain_url="not-master.bitrix24.ru",
+            status="active", application_version=1,
+        )
+        Bitrix24Account.objects.create(
+            b24_user_id=2, is_b24_user_admin=True, member_id="m1",
+            is_master_account=True, domain_url="real-master.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+        seed_portals_from_accounts(Portal, Bitrix24Account)
+
+        portal = Portal.objects.get(member_id="m1")
+        self.assertEqual(portal.domain_url, "real-master.bitrix24.ru")

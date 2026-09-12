@@ -99,15 +99,48 @@ class FullSyncOrphanThresholdTest(TestCase):
         self.assertEqual(remaining, {1, 2, 3, 4, 5, 6})  # ничего не потеряно
 
     def test_incomplete_traversal_below_ratio_skips_deletion(self):
-        # Ключевой кейс порога: обход оборвался НЕ по count<page_size, а по пустой странице
-        # ПОСЛЕ непустой, собрав < 50% от БД. Эмулируем: стр.1 = [1..50] (count==page_size -> цикл
-        # продолжится), стр.2 = [] (обрыв). traversal_complete=False, collected=50 из 200 (25% < 50%).
+        # Ключевой кейс порога: обход оборвался по НЕПРОДВИНУВШЕМУСЯ курсору
+        # (batch_max_id <= last_id), собрав < 50% от БД. Это единственная
+        # ветка, которая после фикса Дефекта 5-довеска (пустая страница ->
+        # traversal_complete=True, см. test_exact_multiple_of_page_size_*
+        # ниже) всё ещё оставляет traversal_complete=False: курсор не
+        # продвинулся — сигнал аномалии (не «дошли до конца», а «застряли»),
+        # доверять такому обходу нельзя. Эмулируем: стр.1 = [1..50]
+        # (count==page_size -> цикл продолжится, last_id=50), стр.2 — ТЕ ЖЕ
+        # id 1..50 (курсор не продвинулся -> break без traversal_complete).
         ids = list(range(1, 201))
         self._seed(*ids)
         first_page = {"result": {"items": [_make_item(i) for i in range(1, 51)]}}  # count==50 -> цикл продолжится
-        empty_page = {"result": {"items": []}}                                      # обрыв на середине
-        service = TimesheetSyncService(_FakeClient([first_page, empty_page]), self.account, self.config)
+        stuck_page = {"result": {"items": [_make_item(i) for i in range(1, 51)]}}  # курсор не продвинулся
+        service = TimesheetSyncService(_FakeClient([first_page, stuck_page]), self.account, self.config)
         service._sync_full()
         remaining_count = TimesheetItem.objects.filter(bitrix24_account=self.account).count()
         # Собрано 50 id из 200 (25% < 50%) и traversal_complete=False -> удаление ПРОПУЩЕНО.
         self.assertEqual(remaining_count, 200)
+
+    def test_exact_multiple_of_page_size_marks_traversal_complete(self):
+        """Дефект 5 (довесок, fixwave): ветка `if not items: break` раньше НЕ
+
+        ставила traversal_complete=True. Это било по датасетам, чей размер —
+        точное кратное page_size (50): последняя страница ровно 50 записей
+        (count == page_size -> цикл продолжается), следующая страница —
+        уже настоящий, легитимный конец (items=[]). Без флага такой обход
+        ошибочно считался НЕЗАВЕРШЁННЫМ, и если к этому моменту в Bitrix
+        реально удалили часть записей (собрано меньше 50% от БД), сирот
+        не подчищали вовсе.
+
+        Эмулируем: в Bitrix реально осталось ровно 50 записей (id 1..50,
+        кратно page_size) — стр.1 отдаёт все 50 (count==page_size, цикл
+        продолжается), стр.2 — пустая (реальный конец). В БД при этом 150
+        записей (100 из них — настоящие сироты, id 51..150, > 50% от 150 —
+        то есть ratio-проверка сама по себе НЕ спасла бы, будь она одна)."""
+        ids = list(range(1, 151))
+        self._seed(*ids)
+        full_page = {"result": {"items": [_make_item(i) for i in range(1, 51)]}}  # ровно page_size
+        empty_page = {"result": {"items": []}}  # легитимный конец обхода
+        service = TimesheetSyncService(_FakeClient([full_page, empty_page]), self.account, self.config)
+        service._sync_full()
+        remaining = set(TimesheetItem.objects.filter(bitrix24_account=self.account).values_list("bitrix_id", flat=True))
+        # traversal_complete=True -> удаление настоящих сирот (51..150) выполняется,
+        # несмотря на то, что collected(50) < 50% от current_count(150).
+        self.assertEqual(remaining, set(range(1, 51)))

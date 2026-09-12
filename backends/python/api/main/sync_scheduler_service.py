@@ -54,7 +54,7 @@ import logging
 from datetime import timedelta
 from typing import List
 
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 
 from b24pysdk.error import (
@@ -170,21 +170,81 @@ def select_portal_accounts() -> List[Bitrix24Account]:
 
     Аккаунты на паузе (sync_disabled_until в будущем — мёртвый портал,
     см. is_permanent_sync_failure/run_scheduled_sync) исключены: планировщик
-    не должен долбиться в заведомо мёртвый портал каждые 20 минут/час/3 часа."""
+    не должен долбиться в заведомо мёртвый портал каждые 20 минут/час/3 часа.
+
+    Дефект 4 (fixwave): раньше представитель выбирался БЕЗ учёта
+    account.portal_id. backfill_portal_links (portal_backfill_service.py)
+    проставляет portal пачками, а не разом всем строкам сразу — если
+    USE_PORTAL_SCOPING включат раньше, чем backfill дойдёт до конца, и
+    представителем окажется учётка без portal_id, tenant_scoping.scope_to_tenant
+    молча откатится на скоуп по ЭТОЙ ОДНОЙ учётке (portal is None -> fallback,
+    см. tenant_scoping.scope_to_tenant): данные запишутся только ей, а
+    остальные учётки того же портала не увидят свежих данных, хотя
+    представитель как бы синкается штатно.
+
+    Фикс — под USE_PORTAL_SCOPING=True представителя выбираем СРЕДИ УЧЁТОК С
+    portal_id (мастер приоритетнее, как и раньше). Если в группе member_id
+    есть учётки и с portal_id, и без — это переходное состояние backfill:
+    пишем предупреждение в лог (member_id + сколько учёток без portal_id) и
+    ДОПОЛНИТЕЛЬНО возвращаем все учётки без portal_id как отдельные
+    "представители" — каждая из них при синке попадёт в
+    scope_to_tenant(account) с portal is None и получит тот же fallback на
+    account-скоуп, что и раньше (до этой правки), поэтому пустыми не
+    останутся. Если portal_id нет вообще ни у одной учётки группы — это ещё
+    не строка, до которой дошёл backfill: ведём себя как раньше (один
+    представитель, без варнинга — предупреждать не о чем, это не
+    рассинхрон, а обычный переходный период до первого прохода backfill).
+
+    Под USE_PORTAL_SCOPING=False эта функция не вызывается вовсе (см.
+    _account_scoped_sync_accounts), поэтому веткой по флагу здесь мы не
+    меняем поведение при выключенном флаге — оно определяется тем, что
+    функцию просто не зовут."""
     now = timezone.now()
     eligible = (
         Bitrix24Account.objects.exclude(refresh_token__isnull=True)
         .exclude(refresh_token="")
         .filter(Q(sync_disabled_until__isnull=True) | Q(sync_disabled_until__lte=now))
-        .order_by("member_id", "-is_master_account")
+        .order_by("member_id", F("is_master_account").desc(nulls_last=True))
     )
-    seen = set()
-    reps: List[Bitrix24Account] = []
+
+    groups: dict = {}
+    order: List[str] = []
     for acc in eligible:
-        if not acc.member_id or acc.member_id in seen:
+        if not acc.member_id:
             continue
-        seen.add(acc.member_id)
-        reps.append(acc)
+        if acc.member_id not in groups:
+            groups[acc.member_id] = []
+            order.append(acc.member_id)
+        groups[acc.member_id].append(acc)
+
+    scoping_on = portal_scoping_enabled()
+    reps: List[Bitrix24Account] = []
+    for member_id in order:
+        accounts = groups[member_id]
+        if not scoping_on:
+            reps.append(accounts[0])
+            continue
+
+        with_portal = [a for a in accounts if a.portal_id]
+        without_portal = [a for a in accounts if not a.portal_id]
+
+        if with_portal and without_portal:
+            logger.warning(
+                "select_portal_accounts: member_id=%s has %d account(s) without "
+                "portal_id alongside %d with portal_id (portal backfill not yet "
+                "complete); excluding them from the representative and syncing "
+                "them individually by their own scope instead.",
+                member_id, len(without_portal), len(with_portal),
+            )
+            reps.append(with_portal[0])
+            reps.extend(without_portal)
+        elif with_portal:
+            reps.append(with_portal[0])
+        else:
+            # Портал ещё не проставлен ни одной учётке группы — обычный
+            # переходный период, не рассинхрон: ведём себя как раньше.
+            reps.append(accounts[0])
+
     return reps
 
 

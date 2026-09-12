@@ -7,6 +7,8 @@
 """
 from typing import Type
 
+from django.db.models import F
+
 
 def seed_portals_from_accounts(portal_model: Type, account_model: Type) -> int:
     """Создаёт по одному Portal на каждый member_id и проставляет
@@ -16,9 +18,15 @@ def seed_portals_from_accounts(portal_model: Type, account_model: Type) -> int:
         portal_model.objects.values_list("member_id", flat=True)
     )
 
-    # Группируем аккаунты по member_id; мастер-аккаунт приоритетен как источник домена.
+    # Группируем аккаунты по member_id; мастер-аккаунт приоритетен как источник
+    # домена. is_master_account — nullable BooleanField: на PostgreSQL
+    # "-is_master_account" ставит NULL ПЕРЕД True (NULLS FIRST — умолчание для
+    # DESC), поэтому учётка с is_master_account=None обгоняла бы настоящего
+    # мастера. F(...).desc(nulls_last=True) кладёт NULL в конец.
     accounts = list(
-        account_model.objects.all().order_by("member_id", "-is_master_account", "b24_user_id")
+        account_model.objects.all().order_by(
+            "member_id", F("is_master_account").desc(nulls_last=True), "b24_user_id"
+        )
     )
     portal_by_member = {}
     for acc in accounts:
