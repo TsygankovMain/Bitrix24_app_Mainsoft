@@ -54,8 +54,15 @@ class FakePortal:
 
     def __init__(self, *, invoice_id=777, account_number="Б-00042",
                  opportunity=None, rows=None, templates=None,
-                 errors=None, act=None):
+                 errors=None, act=None, my_companies=None):
         self.invoice_id = invoice_id
+        # Свои юрлица портала (crm.company.list с IS_MY_COMPANY=Y). Нужны
+        # проверке настройки «наше юрлицо по умолчанию»: перед выставлением
+        # приложение сверяет заданный id с этим списком.
+        self.my_companies = my_companies if my_companies is not None else [
+            {"ID": "7", "TITLE": "ООО Майнсофт"},
+            {"ID": "68", "TITLE": "Мейнсофт"},
+        ]
         self.account_number = account_number
         self.opportunity_override = opportunity
         self.rows_override = rows
@@ -100,6 +107,8 @@ class FakePortal:
         if method == "crm.item.productrow.list":
             rows = self.rows_override if self.rows_override is not None else self.sent_rows
             return {"result": {"productRows": rows}}
+        if method == "crm.company.list":
+            return {"result": list(self.my_companies), "total": len(self.my_companies)}
         if method == "crm.documentgenerator.template.list":
             return {"result": {"templates": self.templates}}
         if method == "crm.documentgenerator.template.add":

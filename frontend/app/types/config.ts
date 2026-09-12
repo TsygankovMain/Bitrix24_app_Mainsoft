@@ -14,6 +14,11 @@ export interface AppConfigurationPayload {
   task_fields?: Record<string, string>
   spa_fields?: Record<string, string>
   clickableLabelsEnabled?: boolean
+  billing_allow_open_period?: boolean | string | number | null
+  billing_accountants?: unknown
+  /** Наше юрлицо для выставления счетов; пусто — из карточки проекта. */
+  billing_our_company_id?: string | number | null
+  billing_our_company_name?: string | null
   [key: string]: unknown
 }
 

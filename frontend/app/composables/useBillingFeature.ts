@@ -37,6 +37,16 @@ export const BILLING_ACCOUNTANTS_STATE_KEY = 'app-billing-accountants'
  * закрытые месяцы», когда сервер всё равно откажет (контракт, правило 3).
  */
 export const BILLING_ALLOW_OPEN_PERIOD_STATE_KEY = 'app-billing-allow-open-period'
+/**
+ * Настройка «наше юрлицо по умолчанию».
+ *
+ * Мастеру она нужна ДО первого предпросмотра: поле «Наше юрлицо» в отборе
+ * при заданной настройке перестаёт быть выбором стороны счёта и остаётся
+ * только фильтром часов, и подписать его надо честно. Само юрлицо счёта
+ * приходит с ответом preview (our_company_source) — решает сервер, а не эта
+ * копия настройки.
+ */
+export const BILLING_OUR_COMPANY_STATE_KEY = 'app-billing-our-company'
 
 /**
  * Запросы «в полёте».
@@ -61,6 +71,11 @@ export const useBillingFeature = () => {
   const accountantIds = useState<string[] | null>(BILLING_ACCOUNTANTS_STATE_KEY, () => null)
   /** Разрешает ли портал выставлять за незакрытый месяц. До ответа — нет. */
   const allowOpenPeriod = useState<boolean>(BILLING_ALLOW_OPEN_PERIOD_STATE_KEY, () => false)
+  /** Наше юрлицо из настроек приложения; пустой id — берётся из карточки. */
+  const ourCompany = useState<{ id: string, name: string }>(
+    BILLING_OUR_COMPANY_STATE_KEY,
+    () => ({ id: '', name: '' })
+  )
 
   /**
    * Состояния платных функций портала.
@@ -118,9 +133,14 @@ export const useBillingFeature = () => {
         const settings = readBillingSettings(config)
         accountantIds.value = settings.accountantIds
         allowOpenPeriod.value = settings.allowOpenPeriod
+        ourCompany.value = { id: settings.ourCompanyId, name: settings.ourCompanyName }
       } catch {
         accountantIds.value = []
         allowOpenPeriod.value = false
+        // Отказ конфигурации — это «настройка неизвестна», и трактуем её как
+        // незаданную: юрлицо счёта всё равно решает сервер, а интерфейс не
+        // должен обещать подмену, которой может не быть.
+        ourCompany.value = { id: '', name: '' }
       }
     })().finally(() => {
       settingsRequest = null
@@ -148,6 +168,7 @@ export const useBillingFeature = () => {
     featuresFailed,
     accountantIds,
     allowOpenPeriod,
+    ourCompany,
     access,
     isManager,
     permissions,

@@ -3562,9 +3562,16 @@ def billing_preview(request: AuthorizedRequest):
     try:
         filters = BillingFilter.from_payload(_load_request_json(request))
         selection = service.collect(filters)
+        # Наше юрлицо разбирается ЗДЕСЬ, а не внутри Selection: ответ обязан
+        # сказать не только «какое», но и «откуда» (настройка приложения или
+        # карточка проекта), а это знает только сервис с настройками портала.
+        # verify_our_company здесь НЕ зовётся: предпросмотр не должен платить
+        # REST-вызовом и не должен отказывать — пусть человек увидит строки,
+        # а на негодное юрлицо упрётся кнопка «Выставить».
+        our_company = service.resolve_our_company(selection, filters)
     except BillingError as exc:
         return JsonResponse(exc.as_payload(), status=exc.status)
-    return JsonResponse(selection.as_payload())
+    return JsonResponse(selection.as_payload(our_company))
 
 
 @billing_manager_required
@@ -3614,12 +3621,21 @@ def _billing_issue_under_lock(request: AuthorizedRequest):
         # должно их обходить. А вот документ и счёт собираются уже по
         # утверждённому: исключённая строка не потребляет списания.
         selection = service.apply_approved_lines(selection, payload.get("lines"))
+        # Наше юрлицо решается и проверяется ДО записи документа: настройка
+        # приложения перекрывает карточку проекта, а негодное юрлицо обязано
+        # остановить выставление понятным our_company_missing, а не оставить
+        # на портале счёт без реквизитов. Проверка — сетевой вызов, поэтому
+        # она снаружи транзакции create_document.
+        our_company = service.verify_our_company(
+            service.resolve_our_company(selection, filters)
+        )
         document = service.create_document(
             selection, filters,
             created_by_id=user_id,
             created_by_name=user_name,
             vat_mode=str(payload.get("vat_mode") or BillingDocument.VAT_INCLUDED),
             vat_rate=payload.get("vat_rate") or 0,
+            our_company=our_company,
         )
     except BillingError as exc:
         return JsonResponse(exc.as_payload(), status=exc.status)
