@@ -5,7 +5,16 @@ ConfigurationService) — параллельный механизм не зав�
 
 - ``billing_allow_open_period`` — разрешить выставление за незакрытый месяц;
 - ``billing_accountants`` — список id пользователей «Бухгалтерия»;
-- ``billing_act_template_id`` — заранее выбранный шаблон акта генератора.
+- ``billing_act_template_id`` — заранее выбранный шаблон акта генератора;
+- ``billing_our_company_id`` / ``billing_our_company_name`` — наше юрлицо, от
+  которого выставляются все счета.
+
+Про «наше юрлицо». До настройки оно бралось из карточки проекта
+(``ProjectCard.our_legal_entity_id``), а карточки приходят с портала
+синхронизацией: поправить их в нашей БД нельзя — следующий обмен вернёт
+прежние значения. На боевом портале там встречаются идентификаторы компаний,
+которые своими юрлицами вообще не являются. Поэтому настройка приложения
+ПЕРЕКРЫВАЕТ карточку, а не дополняет её.
 
 Выключатель ПОДПИСКИ здесь не живёт принципиально: он на нашем сервере
 (PortalFeature), потому что app.option портала пишется токеном приложения,
@@ -33,6 +42,18 @@ from .configuration_service import ConfigurationService
 logger = logging.getLogger(__name__)
 
 
+def _text(value: Optional[Any]) -> str:
+    """Строка настройки: None и строковое 'None' — это пусто.
+
+    str(None) == 'None', и такой «идентификатор» выглядел бы как заданная
+    настройка, уводя счёт к юрлицу, которого нет.
+    """
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in {"none", "null", "undefined"} else text
+
+
 def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, Any]:
     """Разбор настроек счёта из конфигурации приложения.
 
@@ -44,6 +65,8 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
         "allow_open_period": False,
         "accountants": [],
         "act_template_id": 0,
+        "our_company_id": "",
+        "our_company_name": "",
     }
     try:
         service = ConfigurationService(client or account.client, account)
@@ -68,10 +91,17 @@ def load_billing_settings(account, client: Optional[Any] = None) -> Dict[str, An
     except (TypeError, ValueError):
         template_id = 0
 
+    our_company_id = _text(config.get("billing_our_company_id"))
+
     return {
         "allow_open_period": bool(config.get("billing_allow_open_period")),
         "accountants": accountants,
         "act_template_id": template_id,
+        "our_company_id": our_company_id,
+        # Название без идентификатора бессмысленно: выставлять счёт по одному
+        # названию нельзя, а показывать «настройка задана» при пустом id —
+        # врать. Поэтому имя читается только вместе с id.
+        "our_company_name": _text(config.get("billing_our_company_name")) if our_company_id else "",
     }
 
 

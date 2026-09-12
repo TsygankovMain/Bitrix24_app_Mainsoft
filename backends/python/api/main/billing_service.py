@@ -62,6 +62,15 @@ WARNING_MIXED_COMPANIES = "mixed_companies"
 # Отказ по утверждённым строкам (поле lines[] в теле выставления).
 ERROR_LINES_MISMATCH = "lines_mismatch"
 
+# Заданное настройкой наше юрлицо не нашлось среди своих компаний портала.
+ERROR_OUR_COMPANY_MISSING = "our_company_missing"
+
+# Откуда взялось наше юрлицо документа. Ровно два источника, и человек в
+# предпросмотре видит который: подмена настройкой должна быть заметна, иначе
+# счёт уходит не от того юрлица, что нарисовано в карточке проекта.
+OUR_COMPANY_FROM_SETTINGS = "settings"
+OUR_COMPANY_FROM_PROJECT_CARD = "project_card"
+
 # Допуск сравнения строки с отбором. Часы и цена приходят от клиента
 # округлёнными до копейки — «половина копейки» ловит настоящее расхождение и
 # не ловит след округления.
@@ -220,7 +229,20 @@ def parse_approved_lines(raw: Any) -> Optional[List[ApprovedLine]]:
 
 @dataclass
 class BillingFilter:
-    """Разобранный фильтр отбора (тело preview и documents)."""
+    """Разобранный фильтр отбора (тело preview и documents).
+
+    Про ``our_company_id``. Это фильтр ОТБОРА, а не выбор юрлица счёта, и при
+    заданной настройке ``billing_our_company_id`` он продолжает работать
+    по-прежнему: сужает список списаний до проектов, у которых в карточке
+    стоит это юрлицо. Разделение намеренное — «какие часы взять» и «от кого
+    выставить» это два разных вопроса, и настройка отвечает только на второй
+    (см. BillingService.resolve_our_company).
+
+    Почему не «при заданной настройке фильтр игнорировать»: тогда сохранение
+    настройки молча расширяло бы отбор — человек, отобравший часы по одному
+    юрлицу карточек, получил бы в счёт часы всех остальных. Молча менять
+    состав счёта опаснее, чем оставить фильтр с прежним смыслом.
+    """
 
     date_from: Optional[date] = None
     date_to: Optional[date] = None
@@ -284,6 +306,39 @@ class BillingFilter:
 
 
 @dataclass
+class OurCompany:
+    """Наше юрлицо документа и то, откуда оно взято.
+
+    source нужен интерфейсу: предпросмотр обязан показать, что юрлицо счёта
+    подменено настройкой приложения, а не взято из карточки проекта. Молча
+    подменять сторону, от которой уходит счёт, нельзя — это реквизиты в
+    печатной форме и в CRM клиента.
+    """
+
+    id: str = ""
+    name: str = ""
+    source: str = OUR_COMPANY_FROM_PROJECT_CARD
+
+    @property
+    def from_settings(self) -> bool:
+        return self.source == OUR_COMPANY_FROM_SETTINGS
+
+    @property
+    def label(self) -> str:
+        return self.name or self.id
+
+    def as_payload(self) -> Dict[str, Any]:
+        return {
+            "our_company_id": self.id,
+            "our_company_name": self.name,
+            # Пустое юрлицо источника не имеет: показывать «из карточки
+            # проекта» там, где карточка ничего не дала, значит объяснять то,
+            # чего нет.
+            "our_company_source": self.source if self.id else "",
+        }
+
+
+@dataclass
 class Selection:
     """Результат отбора: то, из чего собирается документ и что видит preview."""
 
@@ -307,17 +362,28 @@ class Selection:
     def warning_codes(self) -> List[str]:
         return [item["code"] for item in self.warnings]
 
-    def as_payload(self) -> Dict[str, Any]:
+    def as_payload(self, our_company: Optional[OurCompany] = None) -> Dict[str, Any]:
         """Ответ preview.
 
         Клиент отдаётся и списком (companies), и скаляром (company_id/
         company_name): список нужен, только чтобы показать mixed_companies —
         «вот эти клиенты смешались», — а в нормальном случае клиент ровно
         один, и интерфейсу удобнее скаляр, чем список из одного элемента.
+
+        Наше юрлицо приходит РАЗОБРАННЫМ (our_company), а не выводится здесь
+        из our_companies: решение «настройка или карточка» знает только
+        BillingService, у которого есть настройки портала. Список
+        our_companies остаётся в ответе и при заданной настройке — это
+        юрлица КАРТОЧЕК отбора, и интерфейсу они нужны, чтобы показать
+        расхождение: «в карточках стоит одно, счёт уйдёт от другого».
         """
         company = self.companies[0] if len(self.companies) == 1 else {"id": "", "name": ""}
-        our_company = self.our_companies[0] if len(self.our_companies) == 1 else {"id": "", "name": ""}
-        return {
+        if our_company is None:
+            card = self.our_companies[0] if len(self.our_companies) == 1 else {"id": "", "name": ""}
+            our_company = OurCompany(
+                id=card["id"], name=card["name"], source=OUR_COMPANY_FROM_PROJECT_CARD,
+            )
+        payload = {
             "lines": self.lines,
             "entries_count": len(self.entries),
             "total_hours": self.total_hours,
@@ -327,10 +393,10 @@ class Selection:
             "our_companies": self.our_companies,
             "company_id": company["id"],
             "company_name": company["name"],
-            "our_company_id": our_company["id"],
-            "our_company_name": our_company["name"],
             "currency": "RUB",
         }
+        payload.update(our_company.as_payload())
+        return payload
 
 
 class BillingService:
@@ -797,6 +863,103 @@ class BillingService:
         return pairs
 
     # ------------------------------------------------------------------
+    # Наше юрлицо
+    # ------------------------------------------------------------------
+
+    def resolve_our_company(self, selection: Selection, filters: BillingFilter) -> OurCompany:
+        """Наше юрлицо документа: настройка приложения ИЛИ карточка проекта.
+
+        Настройка ``billing_our_company_id`` перекрывает карточку целиком.
+        Причина не в удобстве: ``ProjectCard.our_legal_entity_id`` приходит с
+        портала синхронизацией, поправить его в нашей БД нельзя (следующий
+        обмен вернёт прежнее), и на боевом портале там лежат идентификаторы
+        компаний, своими юрлицами не являющихся. Пока настройка не задана,
+        поведение прежнее — юрлицо берётся из карточки.
+
+        Фильтр ``our_company_id`` на этот выбор НЕ влияет, когда настройка
+        задана. Он остаётся фильтром отбора (см. докстринг BillingFilter):
+        сужает список часов по юрлицу карточек, но не решает, от кого уйдёт
+        счёт. При незаданной настройке он, как раньше, ещё и указывает, какое
+        из нескольких юрлиц карточек считать юрлицом документа.
+        """
+        settings_id = _clean(self.settings.get("our_company_id"))
+        if settings_id:
+            return OurCompany(
+                id=settings_id,
+                name=_clean(self.settings.get("our_company_name")) or settings_id,
+                source=OUR_COMPANY_FROM_SETTINGS,
+            )
+
+        card = selection.our_companies[0] if selection.our_companies else {"id": "", "name": ""}
+        if filters.our_company_id:
+            for item in selection.our_companies:
+                if item["id"] == filters.our_company_id:
+                    card = item
+                    break
+        return OurCompany(
+            id=card["id"], name=card["name"], source=OUR_COMPANY_FROM_PROJECT_CARD,
+        )
+
+    def verify_our_company(self, our_company: OurCompany) -> OurCompany:
+        """Проверка заданного настройкой юрлица на портале. Зовётся до записи.
+
+        Без неё опечатка в настройке (или удалённая на портале компания)
+        превращалась бы в счёт БЕЗ нашего юрлица: ``mycompanyId`` с чужим
+        идентификатором Битрикс либо отвергает пятисоткой, либо проглатывает
+        молча, оставив реквизиты пустыми, — а счёт уже выставлен, и отозвать
+        его нельзя.
+
+        Проверяется ТОЛЬКО юрлицо из настройки. Юрлицо карточки проекта
+        пришло с портала синхронизацией и отдельной сверки не требует; заодно
+        так сохраняется прежнее поведение при незаданной настройке (лишний
+        REST-вызов на каждое выставление тоже не нужен).
+
+        Портал не ответил (``failed``) — НЕ повод отказать. Список своих
+        компаний кэшируется на шесть часов, и превращать сетевой сбой в
+        «юрлицо не существует» значит запретить выставление из-за чужой
+        недоступности: настройку выбирали из этого же списка, когда он
+        отвечал. Ошибаемся в сторону «пропустить», а не «соврать про
+        отсутствие».
+        """
+        if not our_company.from_settings:
+            return our_company
+
+        from .company_search_service import CompanySearchService
+
+        try:
+            payload = CompanySearchService(self.client, self.account).list_my_companies()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("verify_our_company: не удалось прочитать свои компании: %s", exc)
+            return our_company
+
+        if not isinstance(payload, dict) or payload.get("failed"):
+            logger.warning(
+                "verify_our_company: портал не подтвердил список своих компаний — "
+                "юрлицо %s принято без проверки", our_company.id,
+            )
+            return our_company
+
+        for item in payload.get("companies") or []:
+            if _clean(item.get("id")) != our_company.id:
+                continue
+            # Название берём с портала: в настройке лежит снимок на момент
+            # выбора, а в счёт и в акт должно попасть то, как юрлицо названо
+            # сейчас.
+            return OurCompany(
+                id=our_company.id,
+                name=_clean(item.get("name")) or our_company.name,
+                source=OUR_COMPANY_FROM_SETTINGS,
+            )
+
+        raise BillingError(
+            f"Наше юрлицо из настроек приложения (id {our_company.id}) не найдено среди своих "
+            "компаний портала. Выберите юрлицо заново в настройках приложения или поставьте "
+            "компании признак «Моя компания» в CRM.",
+            ERROR_OUR_COMPANY_MISSING,
+            extra={"our_company_id": our_company.id, "our_company_name": our_company.name},
+        )
+
+    # ------------------------------------------------------------------
     # Выставление
     # ------------------------------------------------------------------
 
@@ -858,19 +1021,22 @@ class BillingService:
         created_by_name: str = "",
         vat_mode: str = BillingDocument.VAT_INCLUDED,
         vat_rate: float = 0.0,
+        our_company: Optional[OurCompany] = None,
     ) -> BillingDocument:
         """Документ, строки и потреблённые списания — одной транзакцией.
 
         IntegrityError частичного индекса превращается в BillingError 409:
         это не сбой, а штатный исход гонки двух «Выставить».
+
+        our_company передаётся ГОТОВЫМ, потому что его проверка на портале
+        (verify_our_company) — сетевой вызов, а этот метод выполняется внутри
+        транзакции: держать транзакцию открытой на время REST-запроса нельзя.
+        Не передали — резолвим без проверки, чтобы вызов из тестов и старого
+        кода остался рабочим.
         """
         company = selection.companies[0] if selection.companies else {"id": "", "name": ""}
-        our_company = selection.our_companies[0] if selection.our_companies else {"id": "", "name": ""}
-        if filters.our_company_id:
-            for item in selection.our_companies:
-                if item["id"] == filters.our_company_id:
-                    our_company = item
-                    break
+        if our_company is None:
+            our_company = self.resolve_our_company(selection, filters)
 
         dates = [
             _parse_date(row["date_reflection"])
@@ -886,8 +1052,8 @@ class BillingService:
             period_to=filters.date_to or (max(dates) if dates else None),
             company_id=company["id"],
             company_name=company["name"],
-            our_company_id=our_company["id"],
-            our_company_name=our_company["name"],
+            our_company_id=our_company.id,
+            our_company_name=our_company.name,
             vat_mode=vat_mode,
             vat_rate=_num(vat_rate),
             total_hours=selection.total_hours,
@@ -946,9 +1112,11 @@ class BillingService:
             ) from exc
 
         audit.info(
-            "Billing document issued: %s, company=%s, hours=%s, amount=%s, entries=%s, by %s (%s)",
-            document.pk, document.company_name, document.total_hours,
-            document.total_amount, len(entry_objects),
+            "Billing document issued: %s, company=%s, our_company=%s (%s), hours=%s, "
+            "amount=%s, entries=%s, by %s (%s)",
+            document.pk, document.company_name,
+            document.our_company_name or document.our_company_id or "—", our_company.source,
+            document.total_hours, document.total_amount, len(entry_objects),
             created_by_name or "—", created_by_id or "—",
         )
         return document

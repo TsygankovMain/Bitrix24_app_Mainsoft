@@ -59,6 +59,7 @@ import {
 } from '~/utils/billingPreview'
 import { splitBillingWarnings } from '~/utils/billingWarnings'
 import { extractMixedCompanies, type BillingCompanyChoice } from '~/utils/billingCompanies'
+import { describeBillingOurCompany } from '~/utils/billingOurCompany'
 import { summarizeBillingNoRate } from '~/utils/billingNoRate'
 import {
   resolveBillingEmptyReason,
@@ -77,7 +78,9 @@ import type { BillingPreviewResponse } from '~/types/billing'
 
 const router = useRouter()
 const apiStore = useApiStore()
-const { access, isManager, permissions, allowOpenPeriod, loadBillingSettings } = useBillingFeature()
+const {
+  access, isManager, permissions, allowOpenPeriod, ourCompany: ourCompanySetting, loadBillingSettings,
+} = useBillingFeature()
 
 useHead({ title: 'Выставить счёт' })
 
@@ -223,6 +226,44 @@ const noRateText = computed(() => {
   }
 
   return parts.join(' ')
+})
+
+/**
+ * От какого нашего юрлица уйдёт счёт и откуда это взято.
+ *
+ * Источник берём ИЗ ОТВЕТА сервера (our_company_source), а не выводим по
+ * наличию настройки на экране: решение принимает сервер
+ * (billing_service.resolve_our_company), и вторая версия того же решения на
+ * клиенте однажды разойдётся с первой.
+ */
+const ourCompanyView = computed(() => describeBillingOurCompany({
+  ourCompanyId: preview.value?.our_company_id,
+  ourCompanyName: preview.value?.our_company_name,
+  source: preview.value?.our_company_source,
+  cardCompanies: preview.value?.our_companies || null,
+}))
+
+/** Задана ли настройка «наше юрлицо по умолчанию» — до первого предпросмотра. */
+const ourCompanyFixed = computed(() => Boolean(String(ourCompanySetting.value?.id || '').trim()))
+
+/**
+ * Подпись поля «Наше юрлицо» в отборе.
+ *
+ * При заданной настройке поле перестаёт быть выбором стороны счёта: счёт всё
+ * равно уйдёт от юрлица настройки. Оставить прежнюю подпись значит обещать
+ * выбор, которого нет, — а поле при этом остаётся полезным, потому что
+ * сужает часы по юрлицу карточек.
+ */
+const ourCompanyFilterHint = computed(() => {
+  if (!ourCompanyFixed.value) {
+    return 'Фильтр по юрлицу из карточек проектов. Пусто — юрлицо не ограничиваем.'
+  }
+
+  const label = String(ourCompanySetting.value?.name || '').trim()
+    || String(ourCompanySetting.value?.id || '').trim()
+
+  return `Это фильтр часов по юрлицу из карточек проектов, а не выбор стороны счёта: счёт уйдёт `
+    + `от «${label}» — так задано в настройках приложения.`
 })
 
 const entriesCount = computed(() => {
@@ -544,14 +585,15 @@ onMounted(async () => {
 
         <div>
           <label class="mb-2 block text-sm font-medium text-slate-700" for="billing-our-company">
-            Наше юрлицо
+            {{ ourCompanyFixed ? 'Наше юрлицо в карточках проектов' : 'Наше юрлицо' }}
           </label>
           <select id="billing-our-company" v-model="form.ourCompanyId" class="w-full">
-            <option value="">Как в настройках портала</option>
+            <option value="">Все юрлица</option>
             <option v-for="company in myCompanies" :key="company.id" :value="company.id">
               {{ company.name }}
             </option>
           </select>
+          <p class="mt-1 text-xs text-slate-500">{{ ourCompanyFilterHint }}</p>
         </div>
 
         <div>
@@ -705,6 +747,35 @@ onMounted(async () => {
       </div>
 
       <section class="ms-surface flex flex-col gap-4 p-5">
+        <!--
+          От какого юрлица уйдёт счёт — отдельной строкой, а не мелким
+          примечанием. Настройка приложения перекрывает карточку проекта
+          молча, и человек, который видит в карточке одно юрлицо, обязан
+          узнать о подмене ДО нажатия «Выставить»: это реквизиты в печатной
+          форме и в CRM клиента.
+        -->
+        <div
+          class="rounded-lg border px-3 py-2 text-sm"
+          :class="ourCompanyView.present
+            ? 'border-slate-200 bg-slate-50 text-slate-600'
+            : 'border-amber-300 bg-amber-50 text-amber-800'"
+        >
+          <p>
+            <span class="text-slate-500">Счёт от:</span>
+            <span v-if="ourCompanyView.present" class="font-medium text-slate-900">
+              {{ ourCompanyView.label }}
+            </span>
+            <span v-else class="font-medium">не определено</span>
+            <span v-if="ourCompanyView.sourceText" class="text-slate-500">
+              · {{ ourCompanyView.sourceText }}
+            </span>
+          </p>
+          <p v-if="ourCompanyView.hint" class="mt-1 text-xs">{{ ourCompanyView.hint }}</p>
+          <p v-if="ourCompanyView.present && !ourCompanyView.named" class="mt-1 text-xs">
+            Название юрлица неизвестно — показан его идентификатор в CRM.
+          </p>
+        </div>
+
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="text-sm text-slate-600">
             <span v-if="preview?.company_name" class="font-medium text-slate-900">

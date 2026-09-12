@@ -119,11 +119,21 @@ export interface BillingPreviewResponse {
    * mixed_companies списком кнопок.
    */
   companies?: BillingCompanyRef[] | null
+  /**
+   * Юрлица КАРТОЧЕК проектов отбора. При заданной настройке «наше юрлицо по
+   * умолчанию» счёт уйдёт не от них — список остаётся, чтобы показать
+   * расхождение (см. utils/billingOurCompany.ts).
+   */
   our_companies?: BillingCompanyRef[] | null
   company_id?: string | number | null
   company_name?: string | null
   our_company_id?: string | number | null
   our_company_name?: string | null
+  /**
+   * Откуда взято наше юрлицо: 'settings' (настройка приложения) либо
+   * 'project_card'. Пусто — юрлицо не определено ни там, ни там.
+   */
+  our_company_source?: string | null
   currency?: string | null
 }
 

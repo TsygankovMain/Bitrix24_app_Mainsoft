@@ -32,12 +32,12 @@
       <!--
         Настройки «Счёта и акта».
 
-        Стоят ЗДЕСЬ, а не на отдельном экране: обе настройки — про то, кому и
-        когда можно выставлять, и искать их человек будет в настройках
-        приложения. Сохраняются существующим механизмом — POST
-        /api/configuration/save, тот же, что у сопоставления полей: обе
-        настройки нужны СЕРВЕРУ (контракт, правила 1 и 3), а app.option
-        портала сервер не читает.
+        Стоят ЗДЕСЬ, а не на отдельном экране: все три настройки — про то, от
+        кого, кому и когда можно выставлять, и искать их человек будет в
+        настройках приложения. Сохраняются существующим механизмом — POST
+        /api/configuration/save, тот же, что у сопоставления полей: все они
+        нужны СЕРВЕРУ (контракт, правила 1 и 3, плюс выбор нашего юрлица), а
+        app.option портала сервер сам не читает.
       -->
       <B24Card>
         <template #header>
@@ -64,6 +64,55 @@
           <p v-if="!userStore.isAdmin" class="text-sm text-slate-500">
             Менять эти настройки может админ портала. Ниже — текущие значения.
           </p>
+
+          <!--
+            Наше юрлицо. Стоит ПЕРВЫМ в блоке: это единственная настройка
+            «Счёта и акта», без которой счёт уходит не от того, от кого надо,
+            — остальные две решают «кому можно» и «когда можно».
+          -->
+          <div>
+            <label class="block text-sm font-medium text-slate-700" for="billing-our-company">
+              Наше юрлицо для счетов
+            </label>
+            <p class="mb-2 mt-1 text-sm text-slate-500">
+              Юрлицо, от которого выставляются все счета и печатаются акты. Оно перекрывает то, что
+              записано в карточке проекта: карточки приходят с портала синхронизацией, и поправить
+              их в приложении нельзя — следующий обмен вернёт прежние значения.
+            </p>
+            <select
+              id="billing-our-company"
+              v-model="billingSettings.ourCompanyId"
+              class="w-full"
+              :disabled="!userStore.isAdmin"
+              @change="onOurCompanyChange"
+            >
+              <option value="">Как в карточке проекта</option>
+              <option v-for="company in myCompanies" :key="company.id" :value="company.id">
+                {{ company.name }}
+              </option>
+              <!--
+                Сохранённое юрлицо, которого нет в списке портала: показать его
+                надо обязательно, иначе select молча покажет «Как в карточке
+                проекта» — то есть соврёт про действующую настройку.
+              -->
+              <option
+                v-if="ourCompanySetting.configured && ourCompanySetting.missing"
+                :value="billingSettings.ourCompanyId"
+              >
+                {{ ourCompanySetting.label }} — не найдено на портале
+              </option>
+            </select>
+            <p
+              class="mt-1 text-xs"
+              :class="ourCompanySetting.missing ? 'font-medium text-red-700' : 'text-slate-500'"
+            >
+              {{ ourCompanySetting.text }}
+            </p>
+            <p v-if="myCompaniesFailed" class="mt-1 text-xs text-amber-700">
+              Список своих юрлиц портал не отдал — в нём может не быть всех компаний. Сохранённое
+              значение при этом не меняется.
+            </p>
+          </div>
 
           <div class="flex items-start justify-between gap-4">
             <div>
@@ -217,6 +266,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import MultiSelectFilter from '~/components/common/MultiSelectFilter.vue'
+import { describeOurCompanySetting } from '~/utils/billingOurCompany'
 import {
   applyBillingSettings,
   billingSettingsChanged,
@@ -225,6 +275,11 @@ import {
 } from '~/utils/billingSettings'
 import type { AppConfigurationPayload } from '~/types/config'
 import type { FilterOption } from '~/types/report'
+
+/** Пустые настройки «Счёта и акта» — самое строгое из состояний. */
+function emptyBillingSettings(): BillingSettings {
+  return { allowOpenPeriod: false, accountantIds: [], ourCompanyId: '', ourCompanyName: '' }
+}
 
 const router = useRouter()
 const userSettings = useUserSettingsStore()
@@ -242,9 +297,36 @@ const billingSaveNotice = ref('')
 const isSavingBilling = ref(false)
 
 const configuration = ref<AppConfigurationPayload>({})
-const billingSettings = ref<BillingSettings>({ allowOpenPeriod: false, accountantIds: [] })
-const savedBillingSettings = ref<BillingSettings>({ allowOpenPeriod: false, accountantIds: [] })
+const billingSettings = ref<BillingSettings>(emptyBillingSettings())
+const savedBillingSettings = ref<BillingSettings>(emptyBillingSettings())
 const employeeOptions = ref<FilterOption[]>([])
+/** Свои юрлица портала (GET /api/project-board/my-companies). */
+const myCompanies = ref<Array<{ id: string, name: string }>>([])
+/** Портал не подтвердил полноту списка — это НЕ «юрлиц нет». */
+const myCompaniesFailed = ref(false)
+
+const ourCompanySetting = computed(() => describeOurCompanySetting({
+  ourCompanyId: billingSettings.value.ourCompanyId,
+  ourCompanyName: billingSettings.value.ourCompanyName,
+  // Неполный список сверять нельзя: пометка «не найдено на портале» из-за
+  // сетевого сбоя врёт про настройку, которая на самом деле рабочая.
+  myCompanies: myCompaniesFailed.value ? null : myCompanies.value,
+}))
+
+/**
+ * Название юрлица запоминается ВМЕСТЕ с идентификатором.
+ *
+ * Сервер в счёт всё равно подставит текущее название с портала
+ * (billing_service.verify_our_company), но экранам приложения нужна подпись
+ * и до этого: одного идентификатора человеку недостаточно, чтобы понять, от
+ * кого он собирается выставлять.
+ */
+function onOurCompanyChange() {
+  const id = String(billingSettings.value.ourCompanyId || '').trim()
+  const found = myCompanies.value.find(item => item.id === id)
+
+  billingSettings.value.ourCompanyName = id ? (found?.name || '') : ''
+}
 
 const billingSettingsDirty = computed(() => billingSettingsChanged(
   billingSettings.value,
@@ -299,9 +381,10 @@ onMounted(async () => {
     return
   }
 
-  const [configResult, employeesResult] = await Promise.allSettled([
+  const [configResult, employeesResult, companiesResult] = await Promise.allSettled([
     apiStore.getConfiguration(),
     apiStore.getFilterEmployees(),
+    apiStore.getMyCompanies(),
   ])
 
   if (configResult.status !== 'fulfilled') {
@@ -313,6 +396,19 @@ onMounted(async () => {
   billingSettings.value = readBillingSettings(configuration.value)
   savedBillingSettings.value = readBillingSettings(configuration.value)
   employeeOptions.value = employeesResult.status === 'fulfilled' ? employeesResult.value : []
+
+  // Отказ справочника юрлиц НЕ закрывает блок: остальные настройки менять
+  // можно, а сохранённое юрлицо мы всё равно покажем — по названию из
+  // конфигурации.
+  if (companiesResult.status === 'fulfilled') {
+    myCompanies.value = (companiesResult.value.companies || [])
+      .map(item => ({ id: String(item.id), name: String(item.name) }))
+    myCompaniesFailed.value = Boolean(companiesResult.value.failed)
+  } else {
+    myCompanies.value = []
+    myCompaniesFailed.value = true
+  }
+
   billingSettingsReady.value = true
 })
 

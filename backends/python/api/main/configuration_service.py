@@ -93,6 +93,15 @@ class ConfigurationService:
         normalized['billing_accountants'] = self._normalize_id_list(
             normalized.get('billing_accountants')
         )
+        # Наше юрлицо для выставления. Идентификатор — строкой, как и все
+        # прочие id портала в конфигурации: app.option возвращает числа
+        # строками, и приведение к int породило бы две формы одного значения.
+        normalized['billing_our_company_id'] = self._normalize_text(
+            normalized.get('billing_our_company_id')
+        )
+        normalized['billing_our_company_name'] = self._normalize_text(
+            normalized.get('billing_our_company_name')
+        )
         try:
             normalized['billing_act_template_id'] = int(normalized.get('billing_act_template_id') or 0)
         except (TypeError, ValueError):
@@ -130,6 +139,20 @@ class ConfigurationService:
             return False
         text = str(value).strip().lower()
         return text in {'1', 'true', 'yes', 'y', 'on'}
+
+    @staticmethod
+    def _normalize_text(value: Any) -> str:
+        """Строковое значение конфигурации: None и 'None' — это пусто.
+
+        str(None) даёт 'None' — идентификатор, которого не существует, но
+        который выглядит как настоящий. Для нашего юрлица это опаснее, чем для
+        списка бухгалтеров: такой id прошёл бы проверку «настройка задана» и
+        увёл счёт в никуда.
+        """
+        if value is None:
+            return ''
+        text = str(value).strip()
+        return '' if text.lower() in {'none', 'null', 'undefined'} else text
 
     @staticmethod
     def _normalize_id_list(value: Any) -> List[str]:
@@ -195,6 +218,13 @@ class ConfigurationService:
             'billing_allow_open_period': False,
             'billing_accountants': [],
             'billing_act_template_id': 0,
+            # Наше юрлицо, от которого выставляются ВСЕ счета. Пусто — берём
+            # из карточки проекта, как было до появления настройки. Название
+            # хранится рядом с id только для показа в интерфейсе: правда о
+            # названии живёт на портале, и перед выставлением оно
+            # перечитывается (billing_service.verify_our_company).
+            'billing_our_company_id': '',
+            'billing_our_company_name': '',
             'legal_entity_directory': {
                 'iblock_type_id': 'lists',
                 'iblock_id': 0,
