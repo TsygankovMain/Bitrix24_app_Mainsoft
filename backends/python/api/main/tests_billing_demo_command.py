@@ -495,7 +495,7 @@ class ReportTest(DemoCommandFixture):
         self.assertIn("ООО Клиент", output)
         self.assertIn("ООО Второй", output)
         self.assertIn("Мейнсофт-2", output)
-        self.assertIn("billing_feature --domain demo.bitrix24.ru --state on", output)
+        self.assertIn("pro_plan trial --domain demo.bitrix24.ru", output)
         self.assertIn("Август 2026", output)
 
     def test_report_warns_when_nothing_was_closed(self):

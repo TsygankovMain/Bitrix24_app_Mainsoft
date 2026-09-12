@@ -115,7 +115,7 @@ test('buildAppNavigation: выключенные финансовые функц
   assert.equal(links.length, 2)
   assert.deepEqual(links.map(link => link.label), ['БДДС по проектам', 'Счёт и акт'])
   assert.ok(links.every(link => link.locked === true))
-  assert.ok(links.every(link => link.badge === 'по подписке'))
+  assert.ok(links.every(link => link.badge === 'Pro'))
 })
 
 test('buildAppNavigation: включённый флаг снимает замок только со своей функции', () => {
@@ -346,7 +346,7 @@ test('buildAppNavigation: выключенная подписка оставля
   const link = billingLink(BASE_OPTIONS)
 
   assert.equal(link?.locked, true)
-  assert.equal(link?.badge, 'по подписке')
+  assert.equal(link?.badge, 'Pro')
   assert.equal(link?.to, '/finance/billing')
 })
 
@@ -378,7 +378,7 @@ test('buildAppNavigation: бейдж «Счёта и акта» не проте�
   const bdds = finance?.groups?.[0].links.find(link => link.paidFeature === 'bdds')
 
   assert.equal(bdds?.locked, true)
-  assert.equal(bdds?.badge, 'по подписке')
+  assert.equal(bdds?.badge, 'Pro')
 })
 
 function bddsLink(options: Parameters<typeof buildAppNavigation>[0]) {
@@ -391,7 +391,7 @@ test('buildAppNavigation: выключенная подписка оставля
   const link = bddsLink(BASE_OPTIONS)
 
   assert.equal(link?.locked, true)
-  assert.equal(link?.badge, 'по подписке')
+  assert.equal(link?.badge, 'Pro')
   assert.equal(link?.to, '/finance/bdds')
 })
 
@@ -423,7 +423,7 @@ test('buildAppNavigation: бейдж БДДС не протекает в «Сч�
   const billing = finance?.groups?.[0].links.find(link => link.paidFeature === 'billing')
 
   assert.equal(billing?.locked, true)
-  assert.equal(billing?.badge, 'по подписке')
+  assert.equal(billing?.badge, 'Pro')
 })
 
 // --- Настройки под шестерёнкой ---

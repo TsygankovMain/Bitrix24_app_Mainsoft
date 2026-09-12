@@ -18,7 +18,8 @@ from django.core.cache import cache
 from django.test import Client, TestCase
 from django.utils import timezone
 
-from .models import Bitrix24Account, PortalFeature, ProjectCard, SystemLog, TimesheetItem
+from .models import Bitrix24Account, PortalSubscription, ProjectCard, SystemLog, TimesheetItem
+from .pro_plan_service import set_account_plan
 
 
 class FakePortal:
@@ -95,10 +96,7 @@ class BddsEndpointFixture(TestCase):
             status="active", application_version=1,
         )
         self.token = self.account.create_jwt_token()
-        self.feature = PortalFeature.objects.create(
-            bitrix24_account=self.account, code=PortalFeature.CODE_BDDS,
-            state=PortalFeature.STATE_ON,
-        )
+        self.feature = set_account_plan(self.account)
         self.card = ProjectCard.objects.create(
             bitrix24_account=self.account, project_id="73", project_item_id="500",
             project_name="Портал для сети автосалонов", stage="В работе",
@@ -159,7 +157,7 @@ class BddsSubscriptionGateTest(BddsEndpointFixture):
         self.assertEqual(data["bdds"]["state"], "on")
 
     def test_reads_are_closed_when_subscription_is_off(self):
-        self.feature.state = PortalFeature.STATE_OFF
+        self.feature.state = PortalSubscription.STATE_OFF
         self.feature.save(update_fields=["state"])
 
         for path in self.READ_PATHS:
@@ -174,7 +172,7 @@ class BddsSubscriptionGateTest(BddsEndpointFixture):
                 self.assertIn("БДДС по проектам", payload["error"])
 
     def test_writes_are_closed_when_subscription_is_off(self):
-        self.feature.state = PortalFeature.STATE_OFF
+        self.feature.state = PortalSubscription.STATE_OFF
         self.feature.save(update_fields=["state"])
 
         self.assertEqual(self.post("/api/project-budget/notify").status_code, 403)
@@ -189,16 +187,51 @@ class BddsSubscriptionGateTest(BddsEndpointFixture):
 
         self.assertEqual(self.get("/api/bdds/projects").status_code, 403)
 
-    def test_expired_trial_closes_the_screen(self):
-        self.feature.state = PortalFeature.STATE_TRIAL
-        self.feature.trial_until = timezone.now() - timezone.timedelta(days=1)
+    def test_expired_trial_keeps_reading_and_closes_writing(self):
+        """Истёкший пробный — «только чтение»: данные клиента остаются его данными."""
+        self.feature.state = PortalSubscription.STATE_TRIAL
+        self.feature.trial_until = timezone.localdate() - timezone.timedelta(days=2)
         self.feature.save(update_fields=["state", "trial_until"])
 
-        self.assertEqual(self.get("/api/bdds/projects").status_code, 403)
+        self.assertEqual(self.get("/api/bdds/projects").status_code, 200)
+        response = self.post("/api/project-budget/notify")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["reason"], "expired")
+
+    def test_unpaid_pro_after_grace_is_read_only(self):
+        """После paid_until и 7 дней грейса: чтение открыто, запись и создание закрыты."""
+        self.feature.paid_until = timezone.localdate() - timezone.timedelta(days=9)
+        self.feature.save(update_fields=["paid_until"])
+
+        for path in self.READ_PATHS:
+            with self.subTest(path=path):
+                self.assertEqual(self.get(path).status_code, 200)
+
+        notify = self.post("/api/project-budget/notify")
+        create = self.post("/api/finance-operations/create", {"project_item_id": "500"})
+        for response in (notify, create):
+            with self.subTest(path=response.wsgi_request.path):
+                self.assertEqual(response.status_code, 403)
+                payload = response.json()
+                self.assertEqual(payload["code"], "feature_disabled")
+                self.assertEqual(payload["reason"], "expired")
+                self.assertEqual(payload["access"], "read_only")
+                self.assertIn("просмотр и выгрузки работают", payload["error"])
+
+        features = self.get("/api/features").json()["bdds"]
+        self.assertEqual(features["access"], "read_only")
+        self.assertFalse(features["enabled"])
+
+    def test_unpaid_pro_inside_grace_still_writes(self):
+        self.feature.paid_until = timezone.localdate() - timezone.timedelta(days=3)
+        self.feature.save(update_fields=["paid_until"])
+
+        self.assertEqual(self.post("/api/project-budget/notify").status_code, 200)
+        self.assertEqual(self.get("/api/features").json()["bdds"]["status"], "grace")
 
     def test_live_trial_opens_the_screen(self):
-        self.feature.state = PortalFeature.STATE_TRIAL
-        self.feature.trial_until = timezone.now() + timezone.timedelta(days=3)
+        self.feature.state = PortalSubscription.STATE_TRIAL
+        self.feature.trial_until = timezone.localdate() + timezone.timedelta(days=3)
         self.feature.save(update_fields=["state", "trial_until"])
 
         self.assertEqual(self.get("/api/bdds/projects").status_code, 200)
@@ -216,7 +249,7 @@ class BddsSubscriptionGateTest(BddsEndpointFixture):
 
     def test_disabled_feature_does_not_break_neighbours(self):
         """Выключенная БДДС не ломает соседние экраны приложения."""
-        self.feature.state = PortalFeature.STATE_OFF
+        self.feature.state = PortalSubscription.STATE_OFF
         self.feature.save(update_fields=["state"])
 
         self.assertEqual(self.get("/api/features").status_code, 200)

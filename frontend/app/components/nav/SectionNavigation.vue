@@ -223,7 +223,8 @@ function linkClasses(link: NavLink) {
                 <span>{{ link.label }}</span>
                 <span
                   v-if="link.badge"
-                  class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+                  class="rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+                  :class="link.locked ? 'bg-[#0075ff] text-white' : 'bg-slate-100 text-slate-500'"
                 >
                   {{ link.badge }}
                 </span>

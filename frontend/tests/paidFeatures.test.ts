@@ -11,14 +11,15 @@ import {
   PAID_FEATURE_HINT,
 } from '../app/utils/paidFeatures'
 
-test('resolvePaidFeatureState: выключенная функция — замок, бейдж и подсказка «к администратору»', () => {
+test('resolvePaidFeatureState: выключенная функция — замок, бейдж Pro и цена', () => {
   const state = resolvePaidFeatureState('bdds', false)
 
   assert.equal(state.enabled, false)
   assert.equal(state.locked, true)
   assert.equal(state.badge, PAID_FEATURE_BADGE)
   assert.equal(state.hint, PAID_FEATURE_HINT)
-  assert.match(state.hint || '', /администратору/)
+  assert.equal(state.badge, 'Pro')
+  assert.match(state.hint || '', /тариф Pro/)
   assert.equal(state.to, '/finance/bdds')
 })
 

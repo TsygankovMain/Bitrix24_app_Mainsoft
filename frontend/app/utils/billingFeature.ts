@@ -1,9 +1,9 @@
 /**
  * Подписка на «Счёт и акт» и права в интерфейсе.
  *
- * Состояние функции приходит с сервера: GET /api/features отдаёт
- * {"billing": {"state": "on"|"trial"|"off", "trial_until": ...}} (контракт,
- * раздел «Эндпоинты»). Фронтовый флаг FINANCE_BILLING_ENABLED остаётся
+ * Состояние функции приходит с сервера: GET /api/features, разбор общий для
+ * всех платных функций — app/utils/featureAccess.ts (тариф Pro, «только
+ * чтение» после окончания). Фронтовый флаг FINANCE_BILLING_ENABLED остаётся
  * АВАРИЙНЫМ ВЫКЛЮЧАТЕЛЕМ: он может закрыть точку входа, но не может её
  * открыть. Иначе выключенный на сервере портал получал бы рабочие кнопки,
  * которые сервер всё равно отвергнет 403 — то есть обещание, за которым
@@ -21,172 +21,42 @@
  * что дала форма «Создать проект», см. featureFlags.ts).
  */
 
-import { PAID_FEATURE_BADGE, PAID_FEATURE_HINT } from './paidFeatures'
-import { formatDaysRu } from './billingFormat'
-import type { BillingFeatureState, PortalFeaturesPayload } from '~/types/billing'
+import {
+  resolveFeatureAccess,
+  type FeatureAccess,
+} from './featureAccess'
 
-/** Код функции в ответе /api/features и в модели PortalFeature. */
+// Разбор ответа /api/features (parsePortalFeatures, readPortalFeature,
+// trialDaysLeft, trialBadgeText) переехал в featureAccess.ts — он общий для
+// всех платных функций. Реэкспорта нет намеренно: Nuxt автоимпортирует utils,
+// и одно имя из двух файлов даёт предупреждение «Duplicated imports».
+
+/** Код функции в ответе /api/features. */
 export const BILLING_FEATURE_CODE = 'billing'
 
-/** Разобранное состояние одной функции портала. */
-export type PortalFeatureInfo = {
-  state: BillingFeatureState
-  /** Дата окончания пробного периода в виде «ГГГГ-ММ-ДД» либо null. */
-  trialUntil: string | null
-}
-
-/**
- * Чужое или отсутствующее значение state — это 'off'.
- *
- * Безопасное значение по умолчанию: на сервере функция по умолчанию выключена
- * (PortalFeature.state, default 'off'), и интерфейс, который при непонятном
- * ответе открывает платный экран, ошибается в сторону ложного обещания.
- */
-export function normalizeFeatureState(raw: unknown): BillingFeatureState {
-  const value = String(raw ?? '').trim().toLowerCase()
-
-  return value === 'on' || value === 'trial' ? value : 'off'
-}
-
-/** Ответ /api/features -> состояния по кодам. Мусор превращается в «выключено». */
-export function parsePortalFeatures(raw: unknown): Record<string, PortalFeatureInfo> {
-  const result: Record<string, PortalFeatureInfo> = {}
-
-  if (!raw || typeof raw !== 'object') {
-    return result
-  }
-
-  for (const [code, value] of Object.entries(raw as PortalFeaturesPayload)) {
-    if (!code) {
-      continue
-    }
-
-    const payload = (value && typeof value === 'object') ? value : {}
-    const trialRaw = String((payload as { trial_until?: unknown }).trial_until ?? '').trim()
-
-    result[code] = {
-      state: normalizeFeatureState((payload as { state?: unknown }).state),
-      trialUntil: trialRaw ? trialRaw.slice(0, 10) : null,
-    }
-  }
-
-  return result
-}
-
-/** Состояние одной функции. Не пришла — считаем выключенной. */
-export function readPortalFeature(
-  features: Record<string, PortalFeatureInfo> | null | undefined,
-  code: string
-): PortalFeatureInfo {
-  return features?.[code] || { state: 'off', trialUntil: null }
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000
-
-/**
- * Сколько полных дней осталось до конца пробного периода.
- *
- * Считаем в КАЛЕНДАРНЫХ днях, а не в часах: человеку важно «осталось 3 дня»,
- * а не «осталось 2,4 дня». Обе даты приводим к местной полуночи, поэтому
- * результат не скачет от времени суток. Сегодняшняя дата окончания — это 0
- * («последний день»), вчерашняя — отрицательное число («истёк»).
- *
- * null означает «срок не задан» (state = on или сервер не прислал дату).
- */
-export function trialDaysLeft(
-  trialUntil: string | null | undefined,
-  now: Date = new Date()
-): number | null {
-  const raw = String(trialUntil || '').trim().slice(0, 10)
-  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-
-  if (!match) {
-    return null
-  }
-
-  const endMs = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
-  const nowMs = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
-
-  return Math.round((endMs - nowMs) / DAY_MS)
-}
-
-/** Бейдж пробного периода. null — бейджа нет (срок не задан). */
-export function trialBadgeText(daysLeft: number | null): string | null {
-  if (daysLeft === null) {
-    return 'пробный период'
-  }
-
-  if (daysLeft < 0) {
-    return 'пробный период истёк'
-  }
-
-  if (daysLeft === 0) {
-    return 'пробный, последний день'
-  }
-
-  return `пробный, осталось ${formatDaysRu(daysLeft)}`
-}
-
-export type BillingAccess = {
-  /** Состояние с сервера. 'off' — в том числе когда сервер не ответил. */
-  state: BillingFeatureState
-  /** Экран открыт: пункт меню ведёт на мастер и реестр, а не на заглушку. */
-  enabled: boolean
-  /** Рисовать замок. */
-  locked: boolean
-  /** Дней до конца пробного периода либо null. */
-  trialDaysLeft: number | null
-  /** Текст бейджа рядом с пунктом меню и в шапке экрана. */
-  badge: string | null
-  /** Что делать человеку, если функция закрыта. */
-  hint: string | null
-  /** Ответ /api/features ещё не получен: состояние — предположение, не факт. */
-  unknown: boolean
-}
+export type BillingAccess = FeatureAccess
 
 /**
  * Доступ к «Счёту и акту».
  *
- * Пока ответ сервера не получен (features = null), считаем функцию
- * ВЫКЛЮЧЕННОЙ, но помечаем unknown: экран в этот момент показывает загрузку,
- * а не заглушку «обратитесь к администратору». Мигание «замок -> экран» хуже,
- * чем полсекунды ожидания.
+ * Пока ответ сервера не получен (features = null), функция считается
+ * закрытой, но помечена unknown: экран показывает загрузку, а не заглушку.
  *
- * Истёкший пробный период НЕ закрывает экран сам: сервер прислал state =
- * trial, значит он и решает, пускать ли (пишущие ручки всё равно закрыты
- * декоратором подписки). Интерфейс только честно пишет «пробный период
- * истёк», а отказ, если он придёт, показывается разобранным текстом.
+ * enabled — экран открыт (в том числе «только чтение» после окончания Pro:
+ * реестр и карточки видны). canWrite — можно выставлять и печатать.
  */
 export function resolveBillingAccess(options: {
-  features: Record<string, PortalFeatureInfo> | null | undefined
+  features: Parameters<typeof resolveFeatureAccess>[0]['features']
   flagEnabled: boolean
   now?: Date
 }): BillingAccess {
-  const unknown = !options.features
-  const feature = readPortalFeature(options.features, BILLING_FEATURE_CODE)
-  const daysLeft = feature.state === 'trial'
-    ? trialDaysLeft(feature.trialUntil, options.now || new Date())
-    : null
-
-  const serverEnabled = feature.state === 'on' || feature.state === 'trial'
-  const enabled = serverEnabled && options.flagEnabled
-
-  let badge: string | null = null
-  if (!enabled) {
-    badge = PAID_FEATURE_BADGE
-  } else if (feature.state === 'trial') {
-    badge = trialBadgeText(daysLeft)
-  }
-
-  return {
-    state: feature.state,
-    enabled,
-    locked: !enabled,
-    trialDaysLeft: daysLeft,
-    badge,
-    hint: enabled ? null : PAID_FEATURE_HINT,
-    unknown,
-  }
+  return resolveFeatureAccess({
+    features: options.features,
+    code: BILLING_FEATURE_CODE,
+    title: 'Счёт и акт',
+    flagEnabled: options.flagEnabled,
+    now: options.now,
+  })
 }
 
 /**
@@ -246,19 +116,21 @@ export type BillingUiPermissions = {
 /**
  * Что показывать в интерфейсе.
  *
- * Отмена НЕ требует включённой подписки — контракт, правило 2: при state =
- * off создание и печать запрещены, а чтение реестра и отмена разрешены.
- * Портал, у которого подписка кончилась, обязан уметь отозвать свой же
- * ошибочный счёт.
+ * Выставление и печать — только при действующем Pro (canWrite). Отмена НЕ
+ * требует тарифа — контракт, правило 2: портал, у которого Pro закончился,
+ * обязан уметь отозвать свой же ошибочный счёт. Старый вызов с одним
+ * enabled (без canWrite) трактуется как прежде.
  */
 export function resolveBillingUiPermissions(
-  access: Pick<BillingAccess, 'enabled'>,
+  access: Pick<BillingAccess, 'enabled'> & Partial<Pick<BillingAccess, 'canWrite'>>,
   isManager: boolean
 ): BillingUiPermissions {
+  const canWrite = access.canWrite ?? access.enabled
+
   return {
     canViewRegistry: true,
-    canIssue: isManager && access.enabled,
-    canPrintAct: isManager && access.enabled,
+    canIssue: isManager && access.enabled && canWrite,
+    canPrintAct: isManager && access.enabled && canWrite,
     canCancel: isManager,
   }
 }

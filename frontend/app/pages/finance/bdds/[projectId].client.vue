@@ -361,12 +361,17 @@ const operationsEmptyText = computed(() => describeBddsOperationsEmpty({
   scope: 'project',
 }))
 
-const canCreateOperation = computed(() => Boolean(isManager.value))
+// Операция — запись: после окончания Pro экран открыт только на чтение.
+const canCreateOperation = computed(() => Boolean(isManager.value) && access.value.canWrite)
 
-const formBlockReason = computed(() => describeBddsOperationFormBlock({
-  projectItemId: projectItemId.value,
-  canCreate: canCreateOperation.value,
-}))
+// Pro закончился: причина — тариф, а не права, и об этом уже говорит плашка
+// над экраном (BddsGate -> ProPlanNotice). Текст «нет прав» здесь был бы неправдой.
+const formBlockReason = computed(() => (access.value.readOnly
+  ? ''
+  : describeBddsOperationFormBlock({
+    projectItemId: projectItemId.value,
+    canCreate: canCreateOperation.value,
+  })))
 
 function openAllOperations() {
   const query = projectItemId.value ? `?project=${encodeURIComponent(projectItemId.value)}` : ''

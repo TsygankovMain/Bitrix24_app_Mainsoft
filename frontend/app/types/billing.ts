@@ -12,7 +12,7 @@
  * поля; интерфейс обязан пережить это молча, а не белым экраном.
  */
 
-/** Состояние платной функции портала (PortalFeature.state). */
+/** Состояние платной функции в прежнем словаре /api/features (state). Тариф — access/status. */
 export type BillingFeatureState = 'on' | 'trial' | 'off'
 
 /** Группировка строк документа (поле grouping фильтра). */
@@ -32,6 +32,18 @@ export type BillingWarningCode =
 export interface PortalFeaturePayload {
   state?: string | null
   trial_until?: string | null
+  enabled?: boolean | null
+  /** Тариф Pro (billing_features.feature_state_payload): full | read_only | none. */
+  access?: string | null
+  /** active | grace | trial | expired | off. */
+  status?: string | null
+  plan?: string | null
+  paid_until?: string | null
+  grace_until?: string | null
+  writable_until?: string | null
+  price_month_rub?: number | string | null
+  /** Только у roles: назначенные ограничения действуют (в том числе после окончания Pro). */
+  restrictions_active?: boolean | null
 }
 
 export type PortalFeaturesPayload = Record<string, PortalFeaturePayload | null | undefined>

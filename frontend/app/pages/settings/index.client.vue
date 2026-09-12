@@ -447,7 +447,7 @@
         Сохраняются тем же POST /api/configuration/save: пороги и адресатов
         читает СЕРВЕР (main/bdds_settings.py), а настройка, которой сервер не
         видит, ничего не меняет. Выключателя подписки здесь нет и быть не
-        может — он на нашем сервере (PortalFeature), иначе платную функцию
+        может — он на нашем сервере (PortalSubscription, команда pro_plan), иначе платную функцию
         включали бы через app.option из консоли браузера.
       -->
       <B24Card>
@@ -997,7 +997,7 @@ const canSaveBddsSettings = computed(() => userStore.isAdmin
   && !isSavingBdds.value)
 
 const canRunBddsNotifier = computed(() => userStore.isAdmin
-  && bddsAccess.value.enabled
+  && bddsAccess.value.canWrite
   && !isRunningBddsNotifier.value)
 
 /**
@@ -1040,8 +1040,8 @@ async function saveBddsSettings() {
  *
  * Нотификатор рассчитан на внешнее расписание, и без этой кнопки убедиться,
  * что уведомления доходят, было бы можно только дождавшись ночного прогона.
- * Кнопка доступна только при включённой подписке: ручка закрыта
- * @feature_required('bdds') и на выключенном портале ответила бы 403.
+ * Кнопка доступна только при действующем Pro (canWrite): ручка пишущая,
+ * закрыта @feature_required('bdds') и после окончания тарифа ответила бы 403.
  *
  * Прогон ничего не меняет в данных — он рассылает уведомления и ставит
  * паузу на отправленные события. Поэтому «Проверить сейчас» не требует

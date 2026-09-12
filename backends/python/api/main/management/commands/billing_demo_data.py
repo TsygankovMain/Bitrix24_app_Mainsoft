@@ -291,7 +291,7 @@ class Command(BaseCommand):
     def _portal_accounts(self, domain: str) -> List[Bitrix24Account]:
         """Все учётки портала. Домен мог быть задан один, а учёток несколько.
 
-        Добор по member_id — тот же приём, что в billing_feature: портал, а не
+        Добор по member_id — тот же приём, что в тарифе Pro: портал, а не
         учётка, иначе демо будет видно одному сотруднику.
         """
         found = list(Bitrix24Account.objects.filter(domain_url=domain))
@@ -819,7 +819,7 @@ class Command(BaseCommand):
 
         self._say("")
         self._say("Что дальше:")
-        self._say(f"  1. Включить функцию: manage.py billing_feature --domain {domain} --state on")
+        self._say(f"  1. Включить тариф Pro: manage.py pro_plan trial --domain {domain} --days 30")
         example = self._example(rows, closed)
         if example:
             self._say(f"  2. В мастере выставления выбрать клиента «{example[0]}» за {example[1]}.")
