@@ -54,6 +54,7 @@ import {
   applyDraftTitle,
   buildBillingLinesPayload,
   createBillingLineDrafts,
+  describeZeroAmountBlock,
   hasDraftEdits,
   recalcBillingTotals,
   toggleDraftExcluded,
@@ -315,6 +316,18 @@ const canIssue = computed(() => permissions.value.canIssue
   && !warnings.value.blockers.length
   && totals.value.issuable
   && !isIssuing.value)
+
+/**
+ * Причина немой погашенной кнопки при нулевой сумме (Баг 9) — показывается,
+ * только когда это ЕДИНСТВЕННАЯ причина отказа: остальные блокеры и нехватка
+ * прав объясняют себя сами (otherBlockers, плашка прав), и дублировать текст
+ * не нужно.
+ */
+const zeroAmountBlockReason = computed(() => (
+  permissions.value.canIssue && !warnings.value.blockers.length
+    ? describeZeroAmountBlock(totals.value)
+    : null
+))
 
 const hasCompany = computed(() => Boolean(String(form.value.companyId || '').trim()))
 
@@ -902,14 +915,24 @@ onMounted(async () => {
             <span v-if="totals.excludedCount"> · исключено строк: {{ totals.excludedCount }}</span>
           </div>
 
-          <div class="flex flex-wrap gap-2">
-            <B24Button label="Назад к отбору" color="link" @click="backToFilter" />
-            <B24Button
-              label="Выставить"
-              :disabled="!canIssue"
-              :loading="isIssuing"
-              @click="issueDocument"
-            />
+          <div class="flex flex-col items-end gap-1">
+            <div class="flex flex-wrap gap-2">
+              <B24Button label="Назад к отбору" color="link" @click="backToFilter" />
+              <B24Button
+                label="Выставить"
+                :disabled="!canIssue"
+                :loading="isIssuing"
+                @click="issueDocument"
+              />
+            </div>
+            <!--
+              Баг 9: кнопка гасла молча при нулевой сумме, хотя рядом плашка
+              no_rate обещала «выставить можно и так». Причина — явным
+              текстом, а не немой disabled.
+            -->
+            <p v-if="zeroAmountBlockReason" class="text-xs font-medium text-red-700">
+              {{ zeroAmountBlockReason }}
+            </p>
           </div>
         </div>
 

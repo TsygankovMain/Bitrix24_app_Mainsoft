@@ -1,4 +1,13 @@
 export interface AppConfigurationPayload {
+  /**
+   * Ревизия конфигурации для оптимистической блокировки при сохранении
+   * (Баг 6, см. ConfigurationConflict в
+   * backends/python/api/main/configuration_service.py). Отправляется назад
+   * сохранением как `baseRevision` — не сама эта правка, а список
+   * несохранённых значений, а служебная метка «с какой версией открыт
+   * экран».
+   */
+  config_revision?: number | string | null
   sp_entity_type_id?: number | string | null
   project_sp_entity_type_id?: number | string | null
   finance_sp_entity_type_id?: number | string | null

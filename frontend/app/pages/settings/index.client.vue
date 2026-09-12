@@ -140,6 +140,9 @@
 
         <div v-if="billingSettingsError" class="ms-note ms-note-danger">
           {{ billingSettingsError }}
+          <div v-if="billingSettingsConflict" class="mt-2">
+            <B24Button label="Обновить" color="default" size="sm" @click="reloadConfigurationAfterConflict" />
+          </div>
         </div>
 
         <div v-else-if="!billingSettingsReady" class="text-sm text-slate-500">
@@ -511,6 +514,9 @@
 
         <div v-if="billingSettingsError" class="ms-note ms-note-danger">
           {{ billingSettingsError }}
+          <div v-if="billingSettingsConflict" class="mt-2">
+            <B24Button label="Обновить" color="default" size="sm" @click="reloadConfigurationAfterConflict" />
+          </div>
         </div>
 
         <div v-else-if="!billingSettingsReady" class="text-sm text-slate-500">
@@ -594,7 +600,12 @@
           </div>
 
           <div v-if="bddsSaveNotice" class="ms-note ms-note-success">{{ bddsSaveNotice }}</div>
-          <div v-if="bddsSaveError" class="ms-note ms-note-danger">{{ bddsSaveError }}</div>
+          <div v-if="bddsSaveError" class="ms-note ms-note-danger">
+            {{ bddsSaveError }}
+            <div v-if="bddsSettingsConflict" class="mt-2">
+              <B24Button label="Обновить" color="default" size="sm" @click="reloadConfigurationAfterConflict" />
+            </div>
+          </div>
           <div v-if="bddsNotifierNotice" class="ms-note ms-note-info">{{ bddsNotifierNotice }}</div>
         </div>
 
@@ -747,7 +758,7 @@ import {
   readBillingSettings,
   type BillingSettings,
 } from '~/utils/billingSettings'
-import { resolveFinanceMappingNotice, resolveMappingHealth } from '~/utils/fieldMapping'
+import { describeMappingSaveError, resolveFinanceMappingNotice, resolveMappingHealth } from '~/utils/fieldMapping'
 import { ROLES_SETTINGS_PATH, rolesModeBadge } from '~/utils/appRoles'
 import type { AppConfigurationPayload } from '~/types/config'
 import type { FilterOption } from '~/types/report'
@@ -790,6 +801,8 @@ const { locales: localesI18n, setLocale } = useI18n()
 
 const billingSettingsReady = ref(false)
 const billingSettingsError = ref('')
+/** Баг 6: отказ 409 config_conflict — рядом с billingSettingsError кнопка «Обновить». */
+const billingSettingsConflict = ref(false)
 const billingSaveNotice = ref('')
 const isSavingBilling = ref(false)
 
@@ -881,6 +894,8 @@ const bddsSettings = ref<BddsSettings>(defaultBddsSettings())
 const savedBddsSettings = ref<BddsSettings>(defaultBddsSettings())
 const bddsSaveNotice = ref('')
 const bddsSaveError = ref('')
+/** Баг 6: отказ 409 config_conflict — рядом с bddsSaveError кнопка «Обновить». */
+const bddsSettingsConflict = ref(false)
 const isSavingBdds = ref(false)
 const bddsNotifierNotice = ref('')
 const isRunningBddsNotifier = ref(false)
@@ -1018,21 +1033,53 @@ async function saveBillingSettings() {
   isSavingBilling.value = true
   billingSaveNotice.value = ''
   billingSettingsError.value = ''
+  billingSettingsConflict.value = false
 
   try {
     const next = applyBillingSettings(configuration.value, billingSettings.value)
-    const result = await apiStore.saveConfiguration(next)
+    const result = await apiStore.saveConfiguration(next, { baseRevision: configuration.value.config_revision })
 
-    configuration.value = result?.config || next
+    configuration.value = result?.config || { ...next, config_revision: result?.config_revision ?? next.config_revision }
     savedBillingSettings.value = readBillingSettings(configuration.value)
     billingSettings.value = readBillingSettings(configuration.value)
     billingSaveNotice.value = 'Настройки «Счёта и акта» сохранены.'
   } catch (e) {
-    billingSettingsError.value = e instanceof Error && e.message
-      ? e.message
-      : 'Не удалось сохранить настройки. Попробуйте ещё раз.'
+    // Баг 6: конфликт ревизии (кто-то сохранил конфигурацию в другой
+    // вкладке) получает своё сообщение и кнопку «Обновить» вместо голого
+    // e.message — у ofetch на 409 это нечитаемая строка вида
+    // `[POST] "/api/…": 409 Conflict`.
+    const report = describeMappingSaveError(e)
+    billingSettingsConflict.value = Boolean(report.conflict)
+    billingSettingsError.value = report.conflict
+      ? report.text
+      : (e instanceof Error && e.message ? e.message : 'Не удалось сохранить настройки. Попробуйте ещё раз.')
   } finally {
     isSavingBilling.value = false
+  }
+}
+
+/**
+ * «Обновить» на конфликте ревизии (Баг 6) — общая для «Счёта и акта» и
+ * «БДДС по проектам»: обе настройки читаются из той же конфигурации.
+ * Черновик экрана при этом действительно теряется, но не молча: это явный
+ * клик по кнопке, показанной вместе с сообщением об отказе, а не
+ * автоматическая перезапись за спиной.
+ */
+async function reloadConfigurationAfterConflict() {
+  try {
+    const fresh = await apiStore.getConfiguration(true)
+    configuration.value = fresh || {}
+    savedBillingSettings.value = readBillingSettings(configuration.value)
+    billingSettings.value = readBillingSettings(configuration.value)
+    savedBddsSettings.value = readBddsSettings(configuration.value)
+    bddsSettings.value = readBddsSettings(configuration.value)
+    billingSettingsError.value = ''
+    billingSettingsConflict.value = false
+    bddsSaveError.value = ''
+    bddsSettingsConflict.value = false
+  } catch {
+    // Обновить не удалось — прежнее сообщение об отказе остаётся, кнопка
+    // никуда не делась, можно повторить попытку.
   }
 }
 
@@ -1069,19 +1116,22 @@ async function saveBddsSettings() {
   isSavingBdds.value = true
   bddsSaveNotice.value = ''
   bddsSaveError.value = ''
+  bddsSettingsConflict.value = false
 
   try {
     const next = applyBddsSettings(configuration.value, bddsSettings.value)
-    const result = await apiStore.saveConfiguration(next)
+    const result = await apiStore.saveConfiguration(next, { baseRevision: configuration.value.config_revision })
 
-    configuration.value = result?.config || next
+    configuration.value = result?.config || { ...next, config_revision: result?.config_revision ?? next.config_revision }
     savedBddsSettings.value = readBddsSettings(configuration.value)
     bddsSettings.value = readBddsSettings(configuration.value)
     bddsSaveNotice.value = 'Настройки «БДДС по проектам» сохранены.'
   } catch (e) {
-    bddsSaveError.value = e instanceof Error && e.message
-      ? e.message
-      : 'Не удалось сохранить настройки. Попробуйте ещё раз.'
+    const report = describeMappingSaveError(e)
+    bddsSettingsConflict.value = Boolean(report.conflict)
+    bddsSaveError.value = report.conflict
+      ? report.text
+      : (e instanceof Error && e.message ? e.message : 'Не удалось сохранить настройки. Попробуйте ещё раз.')
   } finally {
     isSavingBdds.value = false
   }

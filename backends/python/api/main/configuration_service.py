@@ -11,6 +11,33 @@ from .billing_line_template import (
 
 logger = logging.getLogger(__name__)
 
+
+class ConfigurationConflict(Exception):
+    """Конфигурацию нельзя сохранить: её изменили в другом сохранении.
+
+    Оптимистическая блокировка (см. save_configuration_sync): ``base_revision``,
+    присланный клиентом, разошёлся с ревизией, реально лежащей в app.option
+    прямо перед записью. Молча перезаписывать чужую правку нельзя — экран
+    должен перечитать настройки и показать конфликт человеку.
+    """
+
+    def __init__(self, current_revision: int, current_config: Dict[str, Any]):
+        message = "Настройки изменили в другой вкладке или другой пользователь — обновите страницу"
+        super().__init__(message)
+        self.message = message
+        self.code = "config_conflict"
+        self.status = 409
+        self.current_revision = current_revision
+        self.current_config = current_config
+
+    def as_payload(self) -> Dict[str, Any]:
+        return {
+            "error": self.message,
+            "code": self.code,
+            "current_revision": self.current_revision,
+        }
+
+
 class ConfigurationService:
     """
     Service for managing application configuration, including:
@@ -31,18 +58,26 @@ class ConfigurationService:
         if self._config_cache:
             return self._config_cache
 
+        config = self._load_configuration_from_storage()
+        self._config_cache = config
+        return config
+
+    def _load_configuration_from_storage(self) -> Dict[str, Any]:
+        """Свежее чтение app.option, в обход инстанс-кэша ``_config_cache``.
+
+        Нужно save_configuration_sync — она перечитывает актуальную
+        конфигурацию прямо перед записью, чтобы проверить ревизию против
+        того, что реально лежит на портале, а не против значения, которое
+        этот же сервис мог закэшировать раньше в том же запросе.
+        """
         try:
-            # Use client token to call method
             response = self.client._bitrix_token.call_method('app.option.get', {})
             result = response.get('result', {})
 
             if 'timestamp_config' in result and result['timestamp_config']:
                 try:
                     config = json.loads(result['timestamp_config'])
-                    config = self.normalize_configuration_sync(config)
-                    self._config_cache = config
-                    # logger.info(f"Loaded config: {config}")
-                    return config
+                    return self.normalize_configuration_sync(config)
                 except json.JSONDecodeError:
                     logger.error("Failed to decode config JSON")
                     return self._get_default_configuration()
@@ -54,17 +89,49 @@ class ConfigurationService:
             logger.error(f"Error loading configuration: {e}")
             return self._get_default_configuration()
 
-    def save_configuration_sync(self, config: Dict[str, Any]) -> None:
+    @staticmethod
+    def _get_config_revision(config: Optional[Dict[str, Any]]) -> int:
+        """Ревизия конфигурации; конфигурация без поля — ревизия 0."""
+        try:
+            return int((config or {}).get('config_revision') or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def save_configuration_sync(
+        self, config: Dict[str, Any], base_revision: Optional[Any] = None
+    ) -> Dict[str, Any]:
         """
         Synchronously save configuration to app.option.
+
+        Оптимистическая блокировка: перед записью конфигурация перечитывается
+        из app.option заново (см. _load_configuration_from_storage), и если
+        передан ``base_revision`` — он сравнивается с реальной текущей
+        ревизией. Расхождение -> ConfigurationConflict, ничего не пишется.
+        ``base_revision`` не передан (старый клиент или внутренний вызов без
+        проверки) -> сохраняем как раньше, без сравнения. Ревизия при этом
+        всё равно продвигается вперёд от реально прочитанной — так её счётчик
+        не откатывается и остаётся пригодным для последующих проверок.
         """
-        config = self.normalize_configuration_sync(config)
-        json_config = json.dumps(config, ensure_ascii=False)
+        current = self._load_configuration_from_storage()
+        current_revision = self._get_config_revision(current)
+
+        if base_revision is not None:
+            try:
+                requested_revision = int(base_revision)
+            except (TypeError, ValueError):
+                requested_revision = None
+            if requested_revision != current_revision:
+                raise ConfigurationConflict(current_revision, current)
+
+        normalized = self.normalize_configuration_sync(config)
+        normalized['config_revision'] = current_revision + 1
+        json_config = json.dumps(normalized, ensure_ascii=False)
         self.client._bitrix_token.call_method('app.option.set', {
             'options': {'timestamp_config': json_config}
         })
-        self._config_cache = config
-        logger.info("Configuration saved successfully")
+        self._config_cache = normalized
+        logger.info("Configuration saved successfully (revision %s)", normalized['config_revision'])
+        return normalized
 
     def normalize_configuration_sync(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -139,6 +206,8 @@ class ConfigurationService:
             normalized['finance_sp_entity_type_id'] = int(normalized.get('finance_sp_entity_type_id') or 0)
         except (TypeError, ValueError):
             normalized['finance_sp_entity_type_id'] = 0
+
+        normalized['config_revision'] = self._get_config_revision(normalized)
         return normalized
 
     def _merge_with_defaults(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -230,6 +299,10 @@ class ConfigurationService:
         Default configuration if nothing is saved.
         """
         return {
+            # Ревизия для оптимистической блокировки при сохранении (см.
+            # save_configuration_sync / ConfigurationConflict). Конфигурация
+            # без этого поля (сохранена до появления блокировки) — ревизия 0.
+            'config_revision': 0,
             'sp_entity_type_id': 0, # 0 means not configured
             'fields_mapping': {},
             'project_sp_entity_type_id': 0,
