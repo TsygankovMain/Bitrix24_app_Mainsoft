@@ -220,13 +220,13 @@ class TimesheetSyncService:
                 items = self._extract_items(response)
                 if not items:
                     logger.info("No more items to fetch.")
-                    # Пустая страница — обход дошёл до конца так же надёжно,
-                    # как и ветка "count < page_size" ниже; без этого флага
-                    # полный синк, чьё общее число записей кратно page_size
-                    # (последняя страница ровно 50 штук, а следующая уже
-                    # пустая), считал бы обход НЕЗАВЕРШЁННЫМ и мог пропустить
-                    # удаление настоящих сирот.
-                    traversal_complete = True
+                    # traversal_complete здесь НАМЕРЕННО не ставится. Пустая
+                    # страница посреди обхода бывает и при сбое портала, а
+                    # traversal_complete=True разрешает удаление в обход
+                    # DELETE_SAFETY_RATIO — сбой стёр бы все записи дальше
+                    # курсора (тест test_midway_empty_page_keeps_data). Цена —
+                    # при числе записей, кратном page_size, удаление решает
+                    # порог DELETE_SAFETY_RATIO: ошибка в безопасную сторону.
                     break
 
                 # Сдвигаем курсор на максимальный id пачки (keyset-пагинация)

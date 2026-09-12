@@ -149,19 +149,13 @@ class SyncOrphanWithThresholdTest(TestCase):
 
         Шаг 1 (сидирование): 4 страницы по 50 элементов (ids 1-200).
           Каждая страница имеет count=50=page_size → цикл продолжается.
-          Пятый вызов возвращает [] → цикл прерывается, traversal_complete=True
-          (пустая страница — легитимный конец обхода, см. Дефект 5-довесок
-          fixwave: `if not items` теперь тоже ставит traversal_complete=True,
-          как и ветка `count < page_size` рядом). Но current_count=0 в начале
-          → safe_to_delete=True в любом случае (защита «пустая БД» из 2.1).
-          Все 200 записей сохраняются.
+          Пятый вызов возвращает [] → цикл прерывается.
+          traversal_complete=False, но current_count=0 в начале → safe_to_delete=True
+          (защита «пустая БД» из 2.1). Все 200 записей сохраняются.
 
-        Шаг 2 (обрыв): 1 полная страница (ids 1-50), затем ТЕ ЖЕ ids 1-50 —
-          курсор не продвинулся (batch_max_id <= last_id). Это, а не пустая
-          страница, и есть по-настоящему неотличимый от сбоя обрыв: обход
-          прерывается БЕЗ traversal_complete=True. collected=50 из
-          current_count=200 → 25% < 50% → safe_to_delete=False → удаление
-          пропущено → 200 записей целы.
+        Шаг 2 (обрыв): 1 страница с ids 1-50, затем пустая.
+          traversal_complete=False, collected=50 из current_count=200 → 25% < 50%
+          → safe_to_delete=False → удаление пропущено → 200 записей целы.
         """
         # --- Шаг 1: сидирование 200 записей ---
         pages_seed = [
@@ -169,7 +163,7 @@ class SyncOrphanWithThresholdTest(TestCase):
             {"result": {"items": [_item(i) for i in range(51, 101)]}},  # ids 51-100, count=50
             {"result": {"items": [_item(i) for i in range(101, 151)]}}, # ids 101-150, count=50
             {"result": {"items": [_item(i) for i in range(151, 201)]}}, # ids 151-200, count=50
-            {"result": {"items": []}},  # конец — пустая страница (легитимный, traversal_complete=True)
+            {"result": {"items": []}},  # конец — пустая страница
         ]
         TimesheetSyncService(_ScriptedClient(pages_seed), self.account, _Config.make())._sync_full()
 
@@ -178,11 +172,10 @@ class SyncOrphanWithThresholdTest(TestCase):
 
         # --- Шаг 2: оборванный синк ---
         # Первая страница full (50 элементов = page_size → цикл продолжится),
-        # вторая — ТЕ ЖЕ id 1-50 (курсор не продвинулся → обрыв без
-        # traversal_complete). Итого: собрано 50/200 = 25% < порог 50%.
+        # вторая — пустая (обрыв). Итого: собрано 50/200 = 25% < порог 50%.
         broken = [
             {"result": {"items": [_item(i) for i in range(1, 51)]}},  # count=50=page_size → continue
-            {"result": {"items": [_item(i) for i in range(1, 51)]}},  # курсор не продвинулся → обрыв
+            {"result": {"items": []}},                                  # обрыв
         ]
         TimesheetSyncService(_ScriptedClient(broken), self.account, _Config.make())._sync_full()
 
