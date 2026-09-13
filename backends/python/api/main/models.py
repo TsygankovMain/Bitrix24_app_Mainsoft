@@ -1083,6 +1083,9 @@ class ProRequest(models.Model):
     crm_company_id = models.CharField(max_length=50, blank=True, default="")
     crm_deal_id = models.CharField(max_length=50, blank=True, default="")
     crm_invoice_id = models.CharField(max_length=50, blank=True, default="")
+    #: Задача на портале Mainsoft «проконтролировать оплату» (tasks.task.add),
+    #: создаётся один раз после смарт-счёта — см. pro_purchase_crm.py.
+    crm_task_id = models.CharField(max_length=50, blank=True, default="")
     crm_document_id = models.CharField(max_length=50, blank=True, default="")
     #: Ссылка генератора документов. Может содержать токен — наружу не отдаётся,
     #: PDF клиент получает через наш сервер.
