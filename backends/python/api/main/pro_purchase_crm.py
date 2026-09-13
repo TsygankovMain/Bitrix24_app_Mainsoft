@@ -1,8 +1,8 @@
 """Отправка заявки на Pro в CRM портала Mainsoft через входящий вебхук.
 
 Портал Mainsoft — не портал клиента: запись идёт не токеном приложения, а
-отдельным вебхуком с узкими правами (crm, documentgenerator, im). Адрес
-вебхука — секрет, он живёт ТОЛЬКО в окружении сервера:
+отдельным вебхуком с узкими правами (crm, task, im, documentgenerator).
+Адрес вебхука — секрет, он живёт ТОЛЬКО в окружении сервера:
 
     MAINSOFT_BILLING_WEBHOOK   https://<портал>/rest/<user>/<token>/
 
@@ -11,21 +11,47 @@
 готовится вручную. Адрес вебхука не пишется ни в лог, ни в ответ API, ни в
 текст ошибки: всё, что уходит наружу, проходит через _scrub.
 
-Остальная настройка — тоже окружение (всё необязательно, пусто — шаг
-пропускается или данные уходят в комментарий сделки):
+Поток при заданном вебхуке — компания -> (сделка, если настроена воронка) ->
+смарт-счёт -> PDF -> задача на контроль оплаты -> лента и уведомление:
+
+    Сделка необязательна. MAINSOFT_BILLING_DEAL_CATEGORY_ID пуст — сделка не
+    создаётся вовсе, смарт-счёт выставляется напрямую на компанию клиента
+    (`companyId`) от нашего юрлица (`mycompanyId`), без `parentId2`. Категория
+    задана — сделка создаётся, как раньше, и счёт привязывается к ней.
+
+    Смарт-счёт требует продавца: без MAINSOFT_BILLING_MY_COMPANY_ID отправка
+    падает с понятной ошибкой (заявка остаётся «ожидает отправки») — без
+    юрлица Mainsoft счёт выставить нельзя.
+
+    Задача tasks.task.add создаётся один раз после смарт-счёта — «проконтро-
+    лировать оплату», с дедлайном по сроку оплаты счёта и привязкой к CRM
+    через UF_CRM_TASK (коды владельца из crm.enum.ownertype: SI — смарт-счёт,
+    D — сделка, CO — компания). Сбой создания задачи не откатывает счёт:
+    предупреждение сохраняется в заявке, следующий `pro_requests sync`
+    досоздаёт только задачу (счёт и компания уже на месте — идемпотентно).
+
+Остальная настройка — тоже окружение (всё необязательно, кроме
+MAINSOFT_BILLING_MY_COMPANY_ID; пусто — шаг пропускается или данные уходят в
+комментарий):
 
     MAINSOFT_BILLING_PORTAL_URL           https://mainsoft.bitrix24.ru (ссылки в консоли)
-    MAINSOFT_BILLING_DEAL_CATEGORY_ID     воронка «Подписки Pro»
-    MAINSOFT_BILLING_STAGE_NEW            «Заявка из приложения»
-    MAINSOFT_BILLING_STAGE_INVOICED       «Счёт выставлен»
-    MAINSOFT_BILLING_STAGE_PAID           «Pro включён» / «Оплачен»
-    MAINSOFT_BILLING_STAGE_LOST           «Не оплачен»
-    MAINSOFT_BILLING_RESPONSIBLE_ID       ответственный за сделку
-    MAINSOFT_BILLING_MY_COMPANY_ID        наше юрлицо в смарт-счёте
+    MAINSOFT_BILLING_MY_COMPANY_ID        наше юрлицо в смарт-счёте (обязательно)
+    MAINSOFT_BILLING_DEAL_CATEGORY_ID     воронка «Подписки Pro» — пусто, сделки нет
+    MAINSOFT_BILLING_STAGE_NEW            стадия новой сделки («Заявка из приложения»)
+    MAINSOFT_BILLING_STAGE_INVOICED       стадия сделки после счёта («Счёт выставлен»)
+    MAINSOFT_BILLING_STAGE_PAID           стадия сделки после оплаты («Pro включён»)
+    MAINSOFT_BILLING_STAGE_LOST           стадия сделки при отмене («Не оплачен»)
+    MAINSOFT_BILLING_INVOICE_STAGE_PAID   стадия смарт-счёта после оплаты (пример: DT31_3:P)
+    MAINSOFT_BILLING_INVOICE_STAGE_LOST   стадия смарт-счёта при отмене (пример: DT31_3:D)
+    MAINSOFT_BILLING_RESPONSIBLE_ID       ответственный за сделку и счёт
     MAINSOFT_BILLING_INVOICE_TEMPLATE_ID  шаблон «Счёт Pro» генератора документов
     MAINSOFT_BILLING_NOTIFY_USER_ID       кому im.notify о новой заявке
+    MAINSOFT_BILLING_TASK_RESPONSIBLE_ID  ответственный за задачу (иначе RESPONSIBLE_ID, иначе NOTIFY_USER_ID)
+    MAINSOFT_BILLING_TASK_GROUP_ID        группа задачи (необязательно)
+    MAINSOFT_BILLING_TASK_AUDITORS        наблюдатели задачи, id через запятую (необязательно)
     MAINSOFT_BILLING_PRESET_ORG_ID        пресет реквизита организации (1)
-    MAINSOFT_BILLING_PRESET_IP_ID         пресет реквизита ИП (2)
+    MAINSOFT_BILLING_PRESET_IP_ID         пресет реквизита ИП (2 по умолчанию; на портале
+                                          Mainsoft фактический пресет — 3, задайте явно)
     MAINSOFT_BILLING_FIELD_DOMAIN         UF-поля сделки: домен портала,
     MAINSOFT_BILLING_FIELD_MEMBER_ID        member_id,
     MAINSOFT_BILLING_FIELD_PORTAL_CODE      код портала,
@@ -34,10 +60,11 @@
     MAINSOFT_BILLING_FIELD_PAID_UNTIL       «Pro оплачено до»,
     MAINSOFT_BILLING_FIELD_SOURCE           источник
 
-Идемпотентность. Каждый созданный объект (компания, сделка, счёт) сразу
-запоминается в заявке и сохраняется в БД — повторная отправка обновляет его,
-а не создаёт второй. Если процесс упал между созданием сделки и сохранением
-её id, сделку находит поиск по номеру счёта (UF-поле заявки или заголовок).
+Идемпотентность. Каждый созданный объект (компания, сделка, счёт, задача)
+сразу запоминается в заявке и сохраняется в БД — повторная отправка обновляет
+его, а не создаёт второй. Если процесс упал между созданием сделки и
+сохранением её id, сделку находит поиск по номеру счёта (UF-поле заявки или
+заголовок); то же для счёта — поиск по названию.
 
 Ответам REST Битрикс24 на слово не верим: сделка и счёт перечитываются, сумма
 счёта сверяется с заявкой.
@@ -49,17 +76,20 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime, time, timedelta, timezone as dt_timezone
 from decimal import Decimal
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
 
-from .pro_purchase_pricing import VAT_NONE, VAT_ON_TOP, money_str, months_text
+from .pro_purchase_pricing import VAT_NONE, VAT_ON_TOP, money_str, months_text, vat_text
 
 logger = logging.getLogger(__name__)
 
 WEBHOOK_ENV = "MAINSOFT_BILLING_WEBHOOK"
 SMART_INVOICE_ENTITY_TYPE_ID = 31
 DEAL_SOURCE_TEXT = "Кнопка «Купить Pro» в приложении «Учёт трудозатрат»"
+#: Дедлайн задачи — момент, к которому просим проконтролировать оплату.
+_MSK = dt_timezone(timedelta(hours=3))
 
 
 class CrmSyncError(Exception):
@@ -79,10 +109,15 @@ class CrmSettings:
     stage_invoiced: str = ""
     stage_paid: str = ""
     stage_lost: str = ""
+    invoice_stage_paid: str = ""
+    invoice_stage_lost: str = ""
     responsible_id: str = ""
     my_company_id: str = ""
     invoice_template_id: str = ""
     notify_user_id: str = ""
+    task_responsible_id: str = ""
+    task_group_id: str = ""
+    task_auditors: Tuple[str, ...] = ()
     preset_org_id: str = "1"
     preset_ip_id: str = "2"
     fields: Dict[str, str] = field(default_factory=dict)
@@ -94,6 +129,11 @@ class CrmSettings:
         if not (self.portal_url and invoice_id):
             return ""
         return f"{self.portal_url}/crm/type/{SMART_INVOICE_ENTITY_TYPE_ID}/details/{invoice_id}/"
+
+    def task_link(self, task_id: str) -> str:
+        if not (self.portal_url and task_id):
+            return ""
+        return f"{self.portal_url}/company/personal/user/0/tasks/task/view/{task_id}/"
 
 
 FIELD_ENV = {
@@ -122,6 +162,7 @@ def load_crm_settings(env: Optional[Mapping[str, str]] = None) -> Optional[CrmSe
         logger.error("%s задан, но это не https-адрес — отправка в CRM выключена", WEBHOOK_ENV)
         return None
     portal_url = read("MAINSOFT_BILLING_PORTAL_URL", f"https://{parts.netloc}").rstrip("/")
+    auditors_raw = read("MAINSOFT_BILLING_TASK_AUDITORS")
     return CrmSettings(
         webhook=webhook.rstrip("/") + "/",
         portal_url=portal_url,
@@ -130,10 +171,15 @@ def load_crm_settings(env: Optional[Mapping[str, str]] = None) -> Optional[CrmSe
         stage_invoiced=read("MAINSOFT_BILLING_STAGE_INVOICED"),
         stage_paid=read("MAINSOFT_BILLING_STAGE_PAID"),
         stage_lost=read("MAINSOFT_BILLING_STAGE_LOST"),
+        invoice_stage_paid=read("MAINSOFT_BILLING_INVOICE_STAGE_PAID"),
+        invoice_stage_lost=read("MAINSOFT_BILLING_INVOICE_STAGE_LOST"),
         responsible_id=read("MAINSOFT_BILLING_RESPONSIBLE_ID"),
         my_company_id=read("MAINSOFT_BILLING_MY_COMPANY_ID"),
         invoice_template_id=read("MAINSOFT_BILLING_INVOICE_TEMPLATE_ID"),
         notify_user_id=read("MAINSOFT_BILLING_NOTIFY_USER_ID"),
+        task_responsible_id=read("MAINSOFT_BILLING_TASK_RESPONSIBLE_ID"),
+        task_group_id=read("MAINSOFT_BILLING_TASK_GROUP_ID"),
+        task_auditors=tuple(part.strip() for part in auditors_raw.split(",") if part.strip()),
         preset_org_id=read("MAINSOFT_BILLING_PRESET_ORG_ID", "1"),
         preset_ip_id=read("MAINSOFT_BILLING_PRESET_IP_ID", "2"),
         fields={key: read(name) for key, name in FIELD_ENV.items() if read(name)},
@@ -332,7 +378,7 @@ class ProRequestCrmSync:
             logger.warning("Pro %s: реквизит компании не записан: %s", request.invoice_number, exc)
         return company_id
 
-    # -- сделка ------------------------------------------------------------
+    # -- сделка (необязательна: только если задан MAINSOFT_BILLING_DEAL_CATEGORY_ID) --
 
     def _deal_fields(self, request, company_id: str) -> Dict[str, Any]:
         fields: Dict[str, Any] = {
@@ -398,9 +444,12 @@ class ProRequestCrmSync:
         return f"Счёт {request.invoice_number} · Pro «Учёт трудозатрат»"
 
     def _find_invoice(self, request, deal_id: str) -> str:
+        flt: Dict[str, Any] = {"%title": request.invoice_number}
+        if deal_id:
+            flt["parentId2"] = int(deal_id)
         result = self._call("crm.item.list", {
             "entityTypeId": SMART_INVOICE_ENTITY_TYPE_ID,
-            "filter": {"parentId2": int(deal_id), "%title": request.invoice_number},
+            "filter": flt,
             "select": ["id", "title"],
         })
         for row in _rows(result):
@@ -413,7 +462,6 @@ class ProRequestCrmSync:
     def _create_or_update_invoice(self, request, deal_id: str, company_id: str) -> str:
         fields: Dict[str, Any] = {
             "title": self._invoice_title(request),
-            "parentId2": int(deal_id),
             "companyId": int(company_id),
             "currencyId": "RUB",
             "opportunity": float(request.total_amount),
@@ -421,6 +469,8 @@ class ProRequestCrmSync:
             "closedate": request.due_date.isoformat(),
             "comments": request.payment_purpose,
         }
+        if deal_id:
+            fields["parentId2"] = int(deal_id)
         if self.settings.my_company_id:
             fields["mycompanyId"] = int(self.settings.my_company_id)
         if self.settings.responsible_id:
@@ -470,7 +520,7 @@ class ProRequestCrmSync:
             )
         return invoice_id
 
-    # -- документ, лента, уведомление ---------------------------------------
+    # -- документ ------------------------------------------------------------
 
     def _ensure_document(self, request, invoice_id: str) -> Optional[str]:
         """PDF по шаблону «Счёт Pro». Не критично: ошибка не останавливает счёт."""
@@ -493,6 +543,99 @@ class ProRequestCrmSync:
         self._remember(request, crm_document_id=document_id, crm_pdf_url=url)
         return None
 
+    # -- задача на контроль оплаты --------------------------------------------
+
+    def _task_title(self, request) -> str:
+        return (
+            f"Проконтролировать оплату счёта Pro {request.invoice_number}: {request.domain_snapshot}, "
+            f"{months_text(request.months)}, {money_str(request.total_amount)} ₽"
+        )[:250]
+
+    def _task_description(self, request, invoice_id: str) -> str:
+        invoice_link = self.settings.invoice_link(invoice_id)
+        lines = [
+            "Смарт-счёт создан в CRM Mainsoft — нужно проконтролировать оплату.",
+            f"Портал: {request.domain_snapshot}",
+            f"member_id: {request.member_id_snapshot}",
+            f"Код портала: {request.portal_code}",
+            f"Срок: {months_text(request.months)}. К оплате: {money_str(request.total_amount)} ₽ до "
+            f"{request.due_date:%d.%m.%Y}. {vat_text(request.vat_mode, request.vat_rate, request.vat_amount)}.",
+            f"Назначение платежа: {request.payment_purpose}",
+            f"Плательщик: {request.payer_name}, ИНН {request.payer_inn}"
+            + (f", КПП {request.payer_kpp}" if request.payer_kpp else "") + ".",
+            f"Адрес: {request.payer_address}",
+            f"Контакт: {request.contact_name}, {request.contact_email}"
+            + (f", копия {request.contact_cc}" if request.contact_cc else "")
+            + (f", тел. {request.contact_phone}" if request.contact_phone else "") + ".",
+            f"Счёт в CRM: {invoice_link}" if invoice_link else f"Счёт в CRM: id {invoice_id}",
+            "",
+            "Что сделать:",
+            "1. Убедиться, что счёт отправлен клиенту (по e-mail или из CRM).",
+            f"2. После оплаты выполнить: python manage.py pro_requests paid --invoice {request.invoice_number}",
+        ]
+        return "\n".join(lines)
+
+    def _task_deadline(self, request) -> str:
+        return datetime.combine(request.due_date, time(18, 0), tzinfo=_MSK).isoformat()
+
+    def _ensure_task(self, request, *, invoice_id: str, company_id: str, deal_id: str) -> Optional[str]:
+        if request.crm_task_id:
+            return None
+        responsible = (self.settings.task_responsible_id or self.settings.responsible_id
+                       or self.settings.notify_user_id)
+        if not responsible:
+            message = (
+                "Задача не создана: не задан ответственный — заполните "
+                "MAINSOFT_BILLING_TASK_RESPONSIBLE_ID, MAINSOFT_BILLING_RESPONSIBLE_ID "
+                "или MAINSOFT_BILLING_NOTIFY_USER_ID."
+            )
+            logger.warning("Pro %s: %s", request.invoice_number, message)
+            return message
+
+        uf_crm_task = [f"SI_{invoice_id}"]
+        if company_id:
+            uf_crm_task.append(f"CO_{company_id}")
+        if deal_id:
+            uf_crm_task.append(f"D_{deal_id}")
+        fields: Dict[str, Any] = {
+            "TITLE": self._task_title(request),
+            "DESCRIPTION": self._task_description(request, invoice_id),
+            "RESPONSIBLE_ID": responsible,
+            "DEADLINE": self._task_deadline(request),
+            "UF_CRM_TASK": uf_crm_task,
+        }
+        if self.settings.task_group_id:
+            fields["GROUP_ID"] = self.settings.task_group_id
+        if self.settings.task_auditors:
+            fields["AUDITORS"] = list(self.settings.task_auditors)
+        try:
+            result = self._call("tasks.task.add", {"fields": fields})
+        except CrmSyncError as exc:
+            logger.warning("Pro %s: задача не создана: %s", request.invoice_number, exc)
+            return f"Задача не создана: {exc}"
+        task = (result or {}).get("task") if isinstance(result, dict) else None
+        task_id = _id(task)
+        if not task_id:
+            return "Задача не создана: tasks.task.add не вернул id"
+        self._remember(request, crm_task_id=task_id)
+        return None
+
+    def _notify(self, request, *, invoice_id: str, task_id: str) -> None:
+        if not self.settings.notify_user_id:
+            return
+        invoice_link = self.settings.invoice_link(invoice_id)
+        message = (
+            f"Новая заявка на Pro: {request.domain_snapshot}, {months_text(request.months)}, "
+            f"{money_str(request.total_amount)} ₽. Счёт {request.invoice_number}"
+            + (f": {invoice_link}" if invoice_link else "") + "."
+        )
+        if task_id:
+            task_link = self.settings.task_link(task_id)
+            message += f" Задача: {task_link}" if task_link else f" Задача: {task_id}."
+        self._best_effort(request, "im.notify.system.add", {
+            "USER_ID": int(self.settings.notify_user_id), "MESSAGE": message.strip(),
+        })
+
     def _best_effort(self, request, method: str, params: Dict[str, Any]) -> None:
         try:
             self._call(method, params)
@@ -502,63 +645,90 @@ class ProRequestCrmSync:
     # -- публичные операции --------------------------------------------------
 
     def send(self, request) -> Optional[str]:
-        """Компания -> сделка -> смарт-счёт -> PDF -> лента и уведомление.
+        """Компания -> (сделка) -> смарт-счёт -> PDF -> задача -> лента и уведомление.
 
-        Возвращает текст нефатального предупреждения (например, PDF не
-        сформирован) либо None. Фатальная ошибка — CrmSyncError.
+        Возвращает текст нефатального предупреждения (например, PDF или
+        задача не созданы) либо None. Фатальная ошибка — CrmSyncError, заявка
+        остаётся «ожидает отправки».
         """
         first_time = not request.crm_sent_at
+        if not self.settings.my_company_id:
+            raise CrmSyncError(
+                "Без MAINSOFT_BILLING_MY_COMPANY_ID выставить счёт от Mainsoft нельзя — "
+                "заполните переменную окружения.",
+                method="crm.item.add",
+            )
         company_id = self._ensure_company(request)
-        deal_id = self._ensure_deal(request, company_id)
+        deal_id = request.crm_deal_id
+        if self.settings.deal_category_id:
+            deal_id = self._ensure_deal(request, company_id)
         invoice_id = self._create_or_update_invoice(request, deal_id, company_id)
-        if self.settings.stage_invoiced:
+        if deal_id and self.settings.stage_invoiced:
             self._best_effort(request, "crm.deal.update", {
                 "id": deal_id, "fields": {"STAGE_ID": self.settings.stage_invoiced},
             })
         warning = self._ensure_document(request, invoice_id)
         if first_time:
+            entity_type = "deal" if deal_id else "SI"
+            entity_id = deal_id or invoice_id
             self._best_effort(request, "crm.timeline.comment.add", {"fields": {
-                "ENTITY_ID": int(deal_id), "ENTITY_TYPE": "deal", "COMMENT": self._summary(request),
+                "ENTITY_ID": int(entity_id), "ENTITY_TYPE": entity_type, "COMMENT": self._summary(request),
             }})
-            if self.settings.notify_user_id:
-                self._best_effort(request, "im.notify.system.add", {
-                    "USER_ID": int(self.settings.notify_user_id),
-                    "MESSAGE": (
-                        f"Новая заявка на Pro: {request.domain_snapshot}, {months_text(request.months)}, "
-                        f"{money_str(request.total_amount)} ₽. Счёт {request.invoice_number}. "
-                        f"{self.settings.deal_link(deal_id)}"
-                    ).strip(),
-                })
+        task_warning = self._ensure_task(request, invoice_id=invoice_id, company_id=company_id, deal_id=deal_id)
+        if task_warning:
+            warning = f"{warning}; {task_warning}" if warning else task_warning
+        if first_time:
+            self._notify(request, invoice_id=invoice_id, task_id=request.crm_task_id)
         return warning
 
     def cancel(self, request) -> None:
-        if not request.crm_deal_id:
-            return
-        fields: Dict[str, Any] = {}
-        if self.settings.stage_lost:
-            fields["STAGE_ID"] = self.settings.stage_lost
-        if fields:
-            self._call("crm.deal.update", {"id": request.crm_deal_id, "fields": fields})
-        self._best_effort(request, "crm.timeline.comment.add", {"fields": {
-            "ENTITY_ID": int(request.crm_deal_id), "ENTITY_TYPE": "deal",
-            "COMMENT": f"Заявка {request.invoice_number} отменена: {request.cancel_reason or 'без причины'}"
-                       f" ({request.cancelled_by or 'приложение'}).",
-        }})
+        if request.crm_invoice_id and self.settings.invoice_stage_lost:
+            self._best_effort(request, "crm.item.update", {
+                "entityTypeId": SMART_INVOICE_ENTITY_TYPE_ID, "id": int(request.crm_invoice_id),
+                "fields": {"stageId": self.settings.invoice_stage_lost},
+            })
+        if request.crm_deal_id:
+            fields: Dict[str, Any] = {}
+            if self.settings.stage_lost:
+                fields["STAGE_ID"] = self.settings.stage_lost
+            if fields:
+                self._call("crm.deal.update", {"id": request.crm_deal_id, "fields": fields})
+            self._best_effort(request, "crm.timeline.comment.add", {"fields": {
+                "ENTITY_ID": int(request.crm_deal_id), "ENTITY_TYPE": "deal",
+                "COMMENT": f"Заявка {request.invoice_number} отменена: {request.cancel_reason or 'без причины'}"
+                           f" ({request.cancelled_by or 'приложение'}).",
+            }})
+        if request.crm_task_id:
+            self._best_effort(request, "task.commentitem.add", {
+                "TASKID": int(request.crm_task_id),
+                "fields": {"POST_MESSAGE": f"Заявка отменена: {request.cancel_reason or 'без причины'}"
+                                           f" ({request.cancelled_by or 'приложение'})."},
+            })
 
     def mark_paid(self, request) -> None:
-        if not request.crm_deal_id:
-            return
-        fields: Dict[str, Any] = {}
-        if self.settings.stage_paid:
-            fields["STAGE_ID"] = self.settings.stage_paid
-        code = self.settings.fields.get("paid_until")
-        if code and request.pro_paid_until:
-            fields[code] = request.pro_paid_until.isoformat()
-        if fields:
-            self._best_effort(request, "crm.deal.update", {"id": request.crm_deal_id, "fields": fields})
+        if request.crm_invoice_id and self.settings.invoice_stage_paid:
+            self._best_effort(request, "crm.item.update", {
+                "entityTypeId": SMART_INVOICE_ENTITY_TYPE_ID, "id": int(request.crm_invoice_id),
+                "fields": {"stageId": self.settings.invoice_stage_paid},
+            })
         until = f" до {request.pro_paid_until:%d.%m.%Y}" if request.pro_paid_until else ""
-        self._best_effort(request, "crm.timeline.comment.add", {"fields": {
-            "ENTITY_ID": int(request.crm_deal_id), "ENTITY_TYPE": "deal",
-            "COMMENT": f"Оплата по счёту {request.invoice_number} подтверждена ({request.paid_by}), Pro включён{until}.",
-        }})
-
+        if request.crm_deal_id:
+            fields: Dict[str, Any] = {}
+            if self.settings.stage_paid:
+                fields["STAGE_ID"] = self.settings.stage_paid
+            code = self.settings.fields.get("paid_until")
+            if code and request.pro_paid_until:
+                fields[code] = request.pro_paid_until.isoformat()
+            if fields:
+                self._best_effort(request, "crm.deal.update", {"id": request.crm_deal_id, "fields": fields})
+            self._best_effort(request, "crm.timeline.comment.add", {"fields": {
+                "ENTITY_ID": int(request.crm_deal_id), "ENTITY_TYPE": "deal",
+                "COMMENT": f"Оплата по счёту {request.invoice_number} подтверждена ({request.paid_by}), "
+                           f"Pro включён{until}.",
+            }})
+        if request.crm_task_id:
+            self._best_effort(request, "task.commentitem.add", {
+                "TASKID": int(request.crm_task_id),
+                "fields": {"POST_MESSAGE": f"Оплата отмечена, Pro включён{until}."},
+            })
+            self._best_effort(request, "tasks.task.complete", {"taskId": int(request.crm_task_id)})

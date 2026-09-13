@@ -17,8 +17,10 @@
 истёкший или пробный — с сегодняшнего дня). Повторно оплату по той же заявке
 отметить нельзя.
 
-`sync` повторяет отправку в CRM Mainsoft заявок «ожидает отправки» и доносит
-отмены. Без MAINSOFT_BILLING_WEBHOOK ничего не отправляет.
+`sync` повторяет отправку в CRM Mainsoft заявок «ожидает отправки», досоздаёт
+задачу на контроль оплаты у уже отправленных заявок (если она не создалась
+с первого раза) и доносит отмены. Без MAINSOFT_BILLING_WEBHOOK ничего не
+отправляет.
 """
 
 import getpass
@@ -160,11 +162,13 @@ class Command(BaseCommand):
         write(f"  назначение:  {request.payment_purpose} ({len(request.payment_purpose)} симв.)")
         write(f"  CRM:         сделка {request.crm_deal_id or '—'}, счёт {request.crm_invoice_id or '—'}, "
               f"компания {request.crm_company_id or '—'}, документ {request.crm_document_id or '—'}, "
-              f"попыток {request.crm_attempts}")
+              f"задача {request.crm_task_id or '—'}, попыток {request.crm_attempts}")
         if crm is not None and request.crm_deal_id:
             write(f"               {crm.deal_link(request.crm_deal_id)}")
         if crm is not None and request.crm_invoice_id:
             write(f"               {crm.invoice_link(request.crm_invoice_id)}")
+        if crm is not None and request.crm_task_id:
+            write(f"               {crm.task_link(request.crm_task_id)}")
         if crm is None:
             write("               вебхук MAINSOFT_BILLING_WEBHOOK не задан — счёт выставляется вручную")
         if request.crm_error:
@@ -213,9 +217,19 @@ class Command(BaseCommand):
         if options.get("invoice"):
             queryset = queryset.filter(pk=service.find_request(invoice=options["invoice"]).pk)
         pending = list(queryset.filter(status__in=(ProRequest.STATUS_DRAFT, ProRequest.STATUS_PENDING)))
-        cancels = list(queryset.filter(status=ProRequest.STATUS_CANCELLED, crm_cancel_synced_at__isnull=True)
-                       .exclude(crm_deal_id=""))
-        if not pending and not cancels:
+        # Счёт уже отправлен, но задача на контроль оплаты не создалась (сбой
+        # tasks.task.add) — dispatch() идемпотентен: компанию, сделку и счёт
+        # не пересоздаст, попытается только задачу.
+        needs_task = [
+            request for request in queryset.filter(status=ProRequest.STATUS_SENT, crm_task_id="")
+            if request.crm_invoice_id
+        ]
+        cancels = [
+            request for request in queryset.filter(status=ProRequest.STATUS_CANCELLED,
+                                                    crm_cancel_synced_at__isnull=True)
+            if request.crm_deal_id or request.crm_task_id
+        ]
+        if not pending and not needs_task and not cancels:
             if not options.get("quiet"):
                 self.stdout.write("Отправлять нечего.")
             return
@@ -224,6 +238,11 @@ class Command(BaseCommand):
             label = STATUS_LABELS.get(request.status, request.status)
             suffix = f" — {request.crm_error}" if request.crm_error else ""
             self.stdout.write(f"{request.invoice_number}: {label}{suffix}")
+        for request in needs_task:
+            service.dispatch(request, crm_settings=crm)
+            outcome = "задача досоздана" if request.crm_task_id else "задача не создана"
+            suffix = f" — {request.crm_error}" if request.crm_error else ""
+            self.stdout.write(f"{request.invoice_number}: {outcome}{suffix}")
         for request in cancels:
             done = service.sync_cancellation(request, crm_settings=crm)
             self.stdout.write(f"{request.invoice_number}: отмена {'донесена' if done else 'не дошла'} до CRM")

@@ -62,7 +62,7 @@ class PricingTest(SimpleTestCase):
     def test_defaults_are_the_agreed_decision(self):
         settings = load_purchase_settings({})
         self.assertEqual(settings.price_month_rub, 3000)
-        self.assertEqual(settings.vat_mode, VAT_INCLUDED)
+        self.assertEqual(settings.vat_mode, VAT_NONE)
         self.assertEqual(settings.vat_rate, Decimal("22"))
         self.assertEqual([term.months for term in settings.terms], [1, 3, 6, 12])
         self.assertEqual(settings.default_months, 12)
@@ -110,6 +110,7 @@ class PricingTest(SimpleTestCase):
     def test_rate_and_terms_are_settings(self):
         settings = load_purchase_settings({
             "PRO_PRICE_MONTH_RUB": "4000",
+            "PRO_VAT_MODE": VAT_INCLUDED,
             "PRO_VAT_RATE": "20",
             "PRO_TERMS": json.dumps([{"months": 2}, {"months": 24, "discount_percent": 10}]),
             "PRO_DEFAULT_MONTHS": "24",
@@ -125,7 +126,7 @@ class PricingTest(SimpleTestCase):
             settings = load_purchase_settings({
                 "PRO_VAT_MODE": "halfway", "PRO_TERMS": "[{\"months\": -1}]", "PRO_PRICE_MONTH_RUB": "дорого",
             })
-        self.assertEqual(settings.vat_mode, VAT_INCLUDED)
+        self.assertEqual(settings.vat_mode, VAT_NONE)
         self.assertEqual([term.months for term in settings.terms], [1, 3, 6, 12])
         self.assertEqual(settings.price_month_rub, 3000)
 
@@ -313,6 +314,10 @@ class FakeMainsoft:
             return {"result": {"document": {"id": 55, "pdfUrl": "https://mainsoft-test.invalid/pdf?token=x"}}}
         if method in ("crm.timeline.comment.add", "im.notify.system.add"):
             return {"result": 1}
+        if method == "tasks.task.add":
+            return {"result": {"task": {"id": self._new_id()}}}
+        if method in ("task.commentitem.add", "tasks.task.complete"):
+            return {"result": True}
         raise AssertionError(f"FakeMainsoft: неожиданный метод {method}")
 
 
@@ -362,6 +367,7 @@ class ProPurchaseFixture(TestCase):
         os.environ["MAINSOFT_BILLING_WEBHOOK"] = FAKE_WEBHOOK
         os.environ["MAINSOFT_BILLING_INVOICE_TEMPLATE_ID"] = "9"
         os.environ["MAINSOFT_BILLING_NOTIFY_USER_ID"] = "1"
+        os.environ["MAINSOFT_BILLING_MY_COMPANY_ID"] = "77"
         os.environ.update(extra)
 
     def post(self, path, body=None, token=None):
@@ -418,7 +424,7 @@ class OfferEndpointTest(ProPurchaseFixture):
         self.assertEqual(data["price_month_rub"], 3000)
         self.assertEqual([term["months"] for term in data["terms"]], [1, 3, 6, 12])
         self.assertEqual(data["terms"][-1]["total"], "30000.00")
-        self.assertEqual(data["vat"], {"mode": "included", "rate": "22"})
+        self.assertEqual(data["vat"], {"mode": "none", "rate": "22"})
         self.assertEqual(data["default_months"], 12)
         self.assertEqual(data["contact"], {"name": "Ирина Ковалёва", "email": "i.kovaleva@kvarc-int.ru"})
         self.assertEqual(data["crm_mode"], "manual")
@@ -475,7 +481,8 @@ class CreateRequestSafeModeTest(ProPurchaseFixture):
         self.assertEqual(request["crm_state"], "manual")
         self.assertEqual(request["invoice_number"], "УТ-0001")
         self.assertEqual(request["total"], "30000.00")
-        self.assertEqual(request["amounts"]["vat"], "5409.84")
+        self.assertEqual(request["amounts"]["vat"], "0.00")
+        self.assertEqual(request["amounts"]["vat_text"], "Без НДС")
         self.assertLessEqual(len(request["payment_purpose"]), 210)
         self.assertIn("УТ-0001", request["payment_purpose"])
         self.assertIn(request["portal"]["code"], request["payment_purpose"])
@@ -686,7 +693,7 @@ class CrmDispatchTest(ProPurchaseFixture):
             self.assertNotIn("pdf?token", text)
 
     def test_repeat_dispatch_does_not_create_second_deal(self):
-        self.enable_webhook()
+        self.enable_webhook(MAINSOFT_BILLING_DEAL_CATEGORY_ID="7")
         self.create()
         request = ProRequest.objects.get()
 
@@ -698,9 +705,10 @@ class CrmDispatchTest(ProPurchaseFixture):
         self.assertEqual(self.mainsoft.methods("crm.company.add"), ["crm.company.add"])
         self.assertEqual(len(self.mainsoft.methods("crm.deal.update")), 2)
         self.assertEqual(self.mainsoft.methods("im.notify.system.add"), ["im.notify.system.add"])
+        self.assertEqual(self.mainsoft.methods("tasks.task.add"), ["tasks.task.add"])
 
     def test_failure_after_deal_keeps_ids_and_retry_reuses_them(self):
-        self.enable_webhook()
+        self.enable_webhook(MAINSOFT_BILLING_DEAL_CATEGORY_ID="7")
         self.mainsoft.fail = {"crm.item.add": 1}
 
         data = self.create().json()["request"]
@@ -721,7 +729,7 @@ class CrmDispatchTest(ProPurchaseFixture):
         self.assertEqual(request.crm_attempts, 2)
 
     def test_lost_deal_id_is_found_by_invoice_number(self):
-        self.enable_webhook()
+        self.enable_webhook(MAINSOFT_BILLING_DEAL_CATEGORY_ID="7")
         self.mainsoft.existing_deal_title = "Pro · kvarc-int.bitrix24.ru · 12 месяцев · УТ-0001"
         self.create()
         self.assertEqual(self.mainsoft.methods("crm.deal.add"), [])
@@ -735,12 +743,160 @@ class CrmDispatchTest(ProPurchaseFixture):
         self.assertIn("не совпала", ProRequest.objects.get().crm_error)
 
     def test_cancel_moves_deal_to_lost_stage(self):
-        self.enable_webhook(MAINSOFT_BILLING_STAGE_LOST="C7:LOSE")
+        self.enable_webhook(MAINSOFT_BILLING_DEAL_CATEGORY_ID="7", MAINSOFT_BILLING_STAGE_LOST="C7:LOSE")
         request_id = self.create().json()["request"]["id"]
         self.post(f"/api/pro/requests/{request_id}/cancel", {"reason": "передумали"})
         updates = [params for method, params in self.mainsoft.calls if method == "crm.deal.update"]
         self.assertEqual(updates[-1]["fields"], {"STAGE_ID": "C7:LOSE"})
         self.assertIsNotNone(ProRequest.objects.get().crm_cancel_synced_at)
+        comments = [params for method, params in self.mainsoft.calls if method == "task.commentitem.add"]
+        self.assertIn("отменена", comments[-1]["fields"]["POST_MESSAGE"])
+
+    def test_cancel_without_deal_comments_only_the_task(self):
+        """Без воронки (MAINSOFT_BILLING_DEAL_CATEGORY_ID пуст) сделки нет —
+        отмена комментирует только задачу, крашей и обращений к сделке нет."""
+        self.enable_webhook()
+        request_id = self.create().json()["request"]["id"]
+        response = self.post(f"/api/pro/requests/{request_id}/cancel", {"reason": "передумали"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.mainsoft.methods("crm.deal.update"), [])
+        comments = [params for method, params in self.mainsoft.calls if method == "task.commentitem.add"]
+        self.assertIn("отменена", comments[-1]["fields"]["POST_MESSAGE"])
+        self.assertIsNotNone(ProRequest.objects.get().crm_cancel_synced_at)
+
+
+class ProRequestTaskTest(ProPurchaseFixture):
+    """Задача tasks.task.add на контроль оплаты: создаётся вместе со
+    смарт-счётом (со сделкой или без), привязывается к CRM через
+    UF_CRM_TASK, попадает в комментарии при отмене и оплате. Настоящих
+    вызовов к порталу Mainsoft нет — только FakeMainsoft."""
+
+    def _task_fields(self):
+        return [params["fields"] for method, params in self.mainsoft.calls if method == "tasks.task.add"]
+
+    def test_invoice_without_deal_creates_task_with_uf_crm_task(self):
+        self.enable_webhook(MAINSOFT_BILLING_TASK_RESPONSIBLE_ID="5")
+        data = self.create().json()["request"]
+
+        self.assertEqual(data["status"], "sent")
+        request = ProRequest.objects.get()
+        self.assertTrue(request.crm_task_id)
+        self.assertFalse(request.crm_deal_id)
+        task_calls = self._task_fields()
+        self.assertEqual(len(task_calls), 1)
+        fields = task_calls[0]
+        self.assertEqual(fields["RESPONSIBLE_ID"], "5")
+        self.assertEqual(fields["UF_CRM_TASK"], [f"SI_{request.crm_invoice_id}", f"CO_{request.crm_company_id}"])
+        self.assertIn(request.invoice_number, fields["TITLE"])
+        self.assertTrue(fields["DEADLINE"].startswith(request.due_date.isoformat()))
+        self.assertIn("18:00:00", fields["DEADLINE"])
+        self.assertIn("+03:00", fields["DEADLINE"])
+        self.assertIn(request.payment_purpose, fields["DESCRIPTION"])
+        notify = [params for method, params in self.mainsoft.calls if method == "im.notify.system.add"]
+        self.assertIn("Задача:", notify[-1]["MESSAGE"])
+
+    def test_invoice_with_deal_task_points_to_deal_too(self):
+        self.enable_webhook(MAINSOFT_BILLING_DEAL_CATEGORY_ID="7")
+        self.create()
+        request = ProRequest.objects.get()
+        fields = self._task_fields()[0]
+        self.assertEqual(
+            fields["UF_CRM_TASK"],
+            [f"SI_{request.crm_invoice_id}", f"CO_{request.crm_company_id}", f"D_{request.crm_deal_id}"],
+        )
+
+    def test_task_responsible_prefers_task_specific_id(self):
+        self.enable_webhook(MAINSOFT_BILLING_TASK_RESPONSIBLE_ID="5", MAINSOFT_BILLING_RESPONSIBLE_ID="9")
+        self.create()
+        self.assertEqual(self._task_fields()[0]["RESPONSIBLE_ID"], "5")
+
+    def test_task_responsible_falls_back_to_deal_responsible(self):
+        self.enable_webhook(MAINSOFT_BILLING_RESPONSIBLE_ID="9")
+        self.create()
+        self.assertEqual(self._task_fields()[0]["RESPONSIBLE_ID"], "9")
+
+    def test_task_responsible_falls_back_to_notify_user(self):
+        self.enable_webhook()  # NOTIFY_USER_ID="1" по умолчанию фикстуры
+        self.create()
+        self.assertEqual(self._task_fields()[0]["RESPONSIBLE_ID"], "1")
+
+    def test_missing_task_responsible_is_a_soft_failure(self):
+        self.enable_webhook()
+        del os.environ["MAINSOFT_BILLING_NOTIFY_USER_ID"]
+        data = self.create().json()["request"]
+        self.assertEqual(data["status"], "sent")  # счёт уже создан — не откатываем
+        request = ProRequest.objects.get()
+        self.assertFalse(request.crm_task_id)
+        self.assertTrue(request.crm_invoice_id)
+        self.assertIn("ответственный", request.crm_error)
+
+    def test_task_failure_does_not_roll_back_invoice_and_sync_recreates_only_the_task(self):
+        self.enable_webhook()
+        self.mainsoft.fail = {"tasks.task.add": 1}
+        data = self.create().json()["request"]
+
+        self.assertEqual(data["status"], "sent")
+        request = ProRequest.objects.get()
+        self.assertTrue(request.crm_invoice_id)
+        self.assertFalse(request.crm_task_id)
+        self.assertIn("Задача не создана", request.crm_error)
+
+        call_command("pro_requests", "sync", stdout=io.StringIO())
+
+        request.refresh_from_db()
+        self.assertTrue(request.crm_task_id)
+        self.assertEqual(request.crm_error, "")
+        self.assertEqual(self.mainsoft.methods("crm.item.add"), ["crm.item.add"])
+        self.assertEqual(self.mainsoft.methods("crm.company.add"), ["crm.company.add"])
+        self.assertEqual(len(self.mainsoft.methods("tasks.task.add")), 2)
+
+    def test_missing_my_company_id_fails_clearly_and_keeps_request_pending(self):
+        self.enable_webhook()
+        del os.environ["MAINSOFT_BILLING_MY_COMPANY_ID"]
+        data = self.create().json()["request"]
+        self.assertEqual(data["status"], "pending")
+        self.assertIn("MAINSOFT_BILLING_MY_COMPANY_ID", ProRequest.objects.get().crm_error)
+        self.assertEqual(self.mainsoft.calls, [])
+
+    def test_paid_comments_and_completes_the_task(self):
+        self.enable_webhook()
+        self.create()
+
+        call_command("pro_requests", "paid", "--invoice", "УТ-0001", stdout=io.StringIO())
+
+        request = ProRequest.objects.get()
+        comments = [params for method, params in self.mainsoft.calls if method == "task.commentitem.add"]
+        self.assertIn("Оплата отмечена", comments[-1]["fields"]["POST_MESSAGE"])
+        self.assertIn(f"{request.pro_paid_until:%d.%m.%Y}", comments[-1]["fields"]["POST_MESSAGE"])
+        complete = [params for method, params in self.mainsoft.calls if method == "tasks.task.complete"]
+        self.assertEqual(complete, [{"taskId": int(request.crm_task_id)}])
+
+    def test_invoice_stage_changes_on_cancellation(self):
+        self.enable_webhook(MAINSOFT_BILLING_INVOICE_STAGE_LOST="DT31_3:D")
+        request_id = self.create().json()["request"]["id"]
+        invoice_id = ProRequest.objects.get().crm_invoice_id
+
+        self.post(f"/api/pro/requests/{request_id}/cancel", {"reason": "передумали"})
+
+        updates = [params for method, params in self.mainsoft.calls
+                  if method == "crm.item.update" and params.get("id") == int(invoice_id)]
+        self.assertEqual(updates[-1]["fields"], {"stageId": "DT31_3:D"})
+
+    def test_invoice_stage_changes_on_payment(self):
+        self.enable_webhook(MAINSOFT_BILLING_INVOICE_STAGE_PAID="DT31_3:P")
+        self.create()
+        invoice_id = ProRequest.objects.get().crm_invoice_id
+
+        call_command("pro_requests", "paid", "--invoice", "УТ-0001", stdout=io.StringIO())
+
+        updates = [params for method, params in self.mainsoft.calls
+                  if method == "crm.item.update" and params.get("id") == int(invoice_id)]
+        self.assertEqual(updates[-1]["fields"], {"stageId": "DT31_3:P"})
+
+    def test_safe_mode_without_webhook_creates_no_task(self):
+        self.create()
+        self.assertEqual(self.mainsoft.calls, [])
+        self.assertEqual(ProRequest.objects.get().crm_task_id, "")
 
 
 class InvoicePdfTest(ProPurchaseFixture):
