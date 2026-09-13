@@ -81,7 +81,7 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
 
-from .pro_purchase_pricing import VAT_NONE, VAT_ON_TOP, money_str, months_text, vat_text
+from .pro_purchase_pricing import VAT_NONE, VAT_ON_TOP, money_human, money_str, months_text, vat_text
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +306,7 @@ class ProRequestCrmSync:
             + (f", тел. {request.contact_phone}" if request.contact_phone else ""),
             f"Запросил: {request.requested_by_name or request.requested_by_id}"
             + (" (администратор портала)" if request.requested_by_admin else ""),
-            f"Срок: {months_text(request.months)}. К оплате: {money_str(request.total_amount)} ₽ до {request.due_date:%d.%m.%Y}.",
+            f"Срок: {months_text(request.months)}. К оплате: {money_human(request.total_amount)} ₽ до {request.due_date:%d.%m.%Y}.",
             f"Назначение платежа: {request.payment_purpose}",
         ]
         return "\n".join(lines)
@@ -548,7 +548,7 @@ class ProRequestCrmSync:
     def _task_title(self, request) -> str:
         return (
             f"Проконтролировать оплату счёта Pro {request.invoice_number}: {request.domain_snapshot}, "
-            f"{months_text(request.months)}, {money_str(request.total_amount)} ₽"
+            f"{months_text(request.months)}, {money_human(request.total_amount)} ₽"
         )[:250]
 
     def _task_description(self, request, invoice_id: str) -> str:
@@ -558,7 +558,7 @@ class ProRequestCrmSync:
             f"Портал: {request.domain_snapshot}",
             f"member_id: {request.member_id_snapshot}",
             f"Код портала: {request.portal_code}",
-            f"Срок: {months_text(request.months)}. К оплате: {money_str(request.total_amount)} ₽ до "
+            f"Срок: {months_text(request.months)}. К оплате: {money_human(request.total_amount)} ₽ до "
             f"{request.due_date:%d.%m.%Y}. {vat_text(request.vat_mode, request.vat_rate, request.vat_amount)}.",
             f"Назначение платежа: {request.payment_purpose}",
             f"Плательщик: {request.payer_name}, ИНН {request.payer_inn}"
@@ -626,7 +626,7 @@ class ProRequestCrmSync:
         invoice_link = self.settings.invoice_link(invoice_id)
         message = (
             f"Новая заявка на Pro: {request.domain_snapshot}, {months_text(request.months)}, "
-            f"{money_str(request.total_amount)} ₽. Счёт {request.invoice_number}"
+            f"{money_human(request.total_amount)} ₽. Счёт {request.invoice_number}"
             + (f": {invoice_link}" if invoice_link else "") + "."
         )
         if task_id:
@@ -701,7 +701,7 @@ class ProRequestCrmSync:
         if request.crm_task_id:
             self._best_effort(request, "task.commentitem.add", {
                 "TASKID": int(request.crm_task_id),
-                "fields": {"POST_MESSAGE": f"Заявка отменена: {request.cancel_reason or 'без причины'}"
+                "FIELDS": {"POST_MESSAGE": f"Заявка отменена: {request.cancel_reason or 'без причины'}"
                                            f" ({request.cancelled_by or 'приложение'})."},
             })
 
@@ -729,6 +729,6 @@ class ProRequestCrmSync:
         if request.crm_task_id:
             self._best_effort(request, "task.commentitem.add", {
                 "TASKID": int(request.crm_task_id),
-                "fields": {"POST_MESSAGE": f"Оплата отмечена, Pro включён{until}."},
+                "FIELDS": {"POST_MESSAGE": f"Оплата отмечена, Pro включён{until}."},
             })
             self._best_effort(request, "tasks.task.complete", {"taskId": int(request.crm_task_id)})

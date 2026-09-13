@@ -750,7 +750,7 @@ class CrmDispatchTest(ProPurchaseFixture):
         self.assertEqual(updates[-1]["fields"], {"STAGE_ID": "C7:LOSE"})
         self.assertIsNotNone(ProRequest.objects.get().crm_cancel_synced_at)
         comments = [params for method, params in self.mainsoft.calls if method == "task.commentitem.add"]
-        self.assertIn("отменена", comments[-1]["fields"]["POST_MESSAGE"])
+        self.assertIn("отменена", comments[-1]["FIELDS"]["POST_MESSAGE"])
 
     def test_cancel_without_deal_comments_only_the_task(self):
         """Без воронки (MAINSOFT_BILLING_DEAL_CATEGORY_ID пуст) сделки нет —
@@ -761,7 +761,7 @@ class CrmDispatchTest(ProPurchaseFixture):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.mainsoft.methods("crm.deal.update"), [])
         comments = [params for method, params in self.mainsoft.calls if method == "task.commentitem.add"]
-        self.assertIn("отменена", comments[-1]["fields"]["POST_MESSAGE"])
+        self.assertIn("отменена", comments[-1]["FIELDS"]["POST_MESSAGE"])
         self.assertIsNotNone(ProRequest.objects.get().crm_cancel_synced_at)
 
 
@@ -866,8 +866,8 @@ class ProRequestTaskTest(ProPurchaseFixture):
 
         request = ProRequest.objects.get()
         comments = [params for method, params in self.mainsoft.calls if method == "task.commentitem.add"]
-        self.assertIn("Оплата отмечена", comments[-1]["fields"]["POST_MESSAGE"])
-        self.assertIn(f"{request.pro_paid_until:%d.%m.%Y}", comments[-1]["fields"]["POST_MESSAGE"])
+        self.assertIn("Оплата отмечена", comments[-1]["FIELDS"]["POST_MESSAGE"])
+        self.assertIn(f"{request.pro_paid_until:%d.%m.%Y}", comments[-1]["FIELDS"]["POST_MESSAGE"])
         complete = [params for method, params in self.mainsoft.calls if method == "tasks.task.complete"]
         self.assertEqual(complete, [{"taskId": int(request.crm_task_id)}])
 
@@ -1034,3 +1034,13 @@ class LoggingDoesNotLeakTest(ProPurchaseFixture):
             self.create()
         self.assertNotIn("SECRET-TOKEN", "".join(logs.output))
 
+
+
+class MoneyHumanTest(SimpleTestCase):
+    def test_groups_thousands_and_hides_zero_kopecks(self):
+        from decimal import Decimal
+        from .pro_purchase_pricing import money_human
+        self.assertEqual(money_human(Decimal("3000")), "3 000")
+        self.assertEqual(money_human(Decimal("36000.00")), "36 000")
+        self.assertEqual(money_human(Decimal("5409.84")), "5 409,84")
+        self.assertEqual(money_human(Decimal("999")), "999")

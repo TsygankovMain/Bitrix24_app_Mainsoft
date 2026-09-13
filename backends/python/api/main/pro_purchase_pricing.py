@@ -148,6 +148,18 @@ def money_str(value: Decimal) -> str:
     return format(Decimal(value).quantize(_KOPECK, ROUND_HALF_UP), "f")
 
 
+def money_human(value: Decimal) -> str:
+    """«3 000» или «5 409,84» — для текстов людям: пробел-разделитель тысяч,
+    копейки только если они есть. Обычный пробел, не NBSP: текст уходит в
+    задачи и уведомления Битрикс24, где NBSP ломает поиск."""
+    amount = Decimal(value).quantize(_KOPECK, ROUND_HALF_UP)
+    rubles, _, kopecks = format(amount, "f").partition(".")
+    sign = "-" if rubles.startswith("-") else ""
+    rubles = rubles.lstrip("-")
+    grouped = " ".join(rubles[max(0, i - 3):i] for i in range(len(rubles), 0, -3)[::-1])
+    return f"{sign}{grouped}" + (f",{kopecks}" if kopecks and kopecks != "00" else "")
+
+
 def money_ru(value: Decimal) -> str:
     """«5409,84» — как в платёжке: запятая, без пробелов-разделителей."""
     return money_str(value).replace(".", ",")
