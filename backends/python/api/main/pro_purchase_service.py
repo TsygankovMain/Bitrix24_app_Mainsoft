@@ -366,8 +366,12 @@ def lookup_requisites_by_inn(account: Bitrix24Account, inn: str) -> Dict[str, An
 
 
 def crm_state(request: ProRequest, crm_settings: Optional[CrmSettings]) -> str:
-    """sent — в CRM; retry — ждёт повтора; manual — вебхук не настроен; none — не нужно."""
-    if request.crm_deal_id and request.crm_invoice_id:
+    """sent — в CRM; retry — ждёт повтора; manual — вебхук не настроен; none — не нужно.
+
+    Сделка теперь необязательна (MAINSOFT_BILLING_DEAL_CATEGORY_ID может быть
+    пуст) — «отправлено» определяется наличием смарт-счёта, а не сделки.
+    """
+    if request.crm_invoice_id:
         return "sent"
     if request.status in (ProRequest.STATUS_PAID, ProRequest.STATUS_CANCELLED):
         return "none"
@@ -666,8 +670,14 @@ def dispatch(request: ProRequest, *, crm_settings: Optional[CrmSettings] = None,
 
 
 def sync_cancellation(request: ProRequest, *, crm_settings: Optional[CrmSettings] = None, transport=None) -> bool:
-    """Донести отмену до CRM. True — дошла или нечего доносить."""
-    if request.status != ProRequest.STATUS_CANCELLED or not request.crm_deal_id or request.crm_cancel_synced_at:
+    """Донести отмену до CRM. True — дошла или нечего доносить.
+
+    «Донести» может значить и сделку (если она есть), и задачу на контроль
+    оплаты — сделка теперь необязательна.
+    """
+    if request.status != ProRequest.STATUS_CANCELLED or request.crm_cancel_synced_at:
+        return True
+    if not (request.crm_deal_id or request.crm_task_id):
         return True
     crm_settings = crm_settings or load_crm_settings()
     if crm_settings is None:
@@ -730,7 +740,7 @@ def mark_paid(request: ProRequest, *, actor: str, paid_on: Optional[date] = None
         locked.save()
     request.refresh_from_db()
     settings = crm_settings or load_crm_settings()
-    if settings is not None and request.crm_deal_id:
+    if settings is not None and (request.crm_invoice_id or request.crm_deal_id or request.crm_task_id):
         try:
             _crm_sync(settings, transport).mark_paid(request)
         except CrmSyncError as exc:  # pragma: no cover — mark_paid сам глотает ошибки

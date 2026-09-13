@@ -10,7 +10,7 @@ proPurchase.ts): сумму для счёта считает ТОЛЬКО сер
 вопросы 1 и 2):
 
     PRO_PRICE_MONTH_RUB            цена за месяц, ₽ (3000)
-    PRO_VAT_MODE                   none | included | on_top (included)
+    PRO_VAT_MODE                   none | included | on_top (none — Mainsoft работает без НДС)
     PRO_VAT_RATE                   ставка, % (22)
     PRO_TERMS                      JSON-список сроков, см. DEFAULT_TERMS
     PRO_DEFAULT_MONTHS             срок, выбранный в форме (12)
@@ -43,7 +43,9 @@ VAT_ON_TOP = "on_top"
 VAT_MODES = (VAT_NONE, VAT_INCLUDED, VAT_ON_TOP)
 
 DEFAULT_PRICE_MONTH_RUB = 3000
-DEFAULT_VAT_MODE = VAT_INCLUDED
+#: Mainsoft работает без НДС (счёт-фактуры не выставляет). Ставка PRO_VAT_RATE
+#: остаётся настройкой на случай, если PRO_VAT_MODE переключат обратно.
+DEFAULT_VAT_MODE = VAT_NONE
 DEFAULT_VAT_RATE = Decimal("22")
 #: 1 и 3 месяца без скидки, 6 месяцев −5 %, 12 месяцев по цене 10 (записка,
 #: вопрос 2, рекомендация «б»).
@@ -144,6 +146,18 @@ def _plain_number(value: Decimal) -> str:
 def money_str(value: Decimal) -> str:
     """Сумма строкой с копейками через точку: JSON без потери точности."""
     return format(Decimal(value).quantize(_KOPECK, ROUND_HALF_UP), "f")
+
+
+def money_human(value: Decimal) -> str:
+    """«3 000» или «5 409,84» — для текстов людям: пробел-разделитель тысяч,
+    копейки только если они есть. Обычный пробел, не NBSP: текст уходит в
+    задачи и уведомления Битрикс24, где NBSP ломает поиск."""
+    amount = Decimal(value).quantize(_KOPECK, ROUND_HALF_UP)
+    rubles, _, kopecks = format(amount, "f").partition(".")
+    sign = "-" if rubles.startswith("-") else ""
+    rubles = rubles.lstrip("-")
+    grouped = " ".join(rubles[max(0, i - 3):i] for i in range(len(rubles), 0, -3)[::-1])
+    return f"{sign}{grouped}" + (f",{kopecks}" if kopecks and kopecks != "00" else "")
 
 
 def money_ru(value: Decimal) -> str:
