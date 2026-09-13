@@ -79,6 +79,16 @@ def build_filtered_timesheet_queryset(account: Bitrix24Account, params: Mapping[
     return queryset
 
 
+def build_project_match_q(account: Bitrix24Account, project_ids: Sequence[str]) -> Q:
+    """Публичное имя _build_project_match_q.
+
+    Отбор списаний для счёта (billing_service) обязан понимать выбранный
+    проект ровно так же, как отчёты: иначе счёт и отчёт по тому же фильтру
+    разойдутся по составу. Поэтому не копия, а тот же код под именем без
+    подчёркивания."""
+    return _build_project_match_q(account, project_ids)
+
+
 def _build_project_match_q(account: Bitrix24Account, project_ids: Sequence[str]) -> Q:
     """Разворачивает выбранную опцию в полный набор ключей её карточки.
 

@@ -1,0 +1,313 @@
+/**
+ * Типы функции «Счёт и акт».
+ *
+ * Источник правды — docs/superpowers/specs/2026-09-12-billing-mvp-contract.md.
+ * Ничего сверх контракта здесь не выдумано: поля названы так же, как в теле
+ * запроса и в ответе сервера (snake_case), а внутренние формы экранов —
+ * отдельными типами с camelCase, чтобы было видно, где данные сервера, а где
+ * состояние интерфейса.
+ *
+ * Поля ответов помечены необязательными намеренно. Бэкенд пишется параллельно
+ * по тому же контракту, и первая версия ответа может не содержать какого-то
+ * поля; интерфейс обязан пережить это молча, а не белым экраном.
+ */
+
+/** Состояние платной функции в прежнем словаре /api/features (state). Тариф — access/status. */
+export type BillingFeatureState = 'on' | 'trial' | 'off'
+
+/** Группировка строк документа (поле grouping фильтра). */
+export type BillingGrouping = 'project' | 'task' | 'employee' | 'single'
+
+/** Статус выставленного документа (BillingDocument.status). */
+export type BillingDocumentStatus = 'issued' | 'cancelled'
+
+/** Коды предупреждений preview из контракта. Чужой код интерфейс тоже переживёт. */
+export type BillingWarningCode =
+  | 'period_open'
+  | 'already_invoiced'
+  | 'no_rate'
+  | 'mixed_companies'
+
+/** Ответ GET /api/features: по одной записи на код функции. */
+export interface PortalFeaturePayload {
+  state?: string | null
+  trial_until?: string | null
+  enabled?: boolean | null
+  /** Тариф Pro (billing_features.feature_state_payload): full | read_only | none. */
+  access?: string | null
+  /** active | grace | trial | expired | off. */
+  status?: string | null
+  plan?: string | null
+  paid_until?: string | null
+  grace_until?: string | null
+  writable_until?: string | null
+  price_month_rub?: number | string | null
+  /** Только у roles: назначенные ограничения действуют (в том числе после окончания Pro). */
+  restrictions_active?: boolean | null
+}
+
+export type PortalFeaturesPayload = Record<string, PortalFeaturePayload | null | undefined>
+
+/** Состояние экрана-фильтра мастера «Выставить». */
+export interface BillingFilterForm {
+  dateFrom: string
+  dateTo: string
+  companyId: string
+  ourCompanyId: string
+  projectIds: string[]
+  taskIds: string[]
+  employeeIds: string[]
+  billableOnly: boolean
+  onlyClosedPeriods: boolean
+  excludeInvoiced: boolean
+  /**
+   * Выбранный вариант наполнения. ПУСТО — «как в настройках приложения»:
+   * тогда тело запроса поля grouping не несёт, и вариант подставляет сервер
+   * из настройки портала billing_line_variant.
+   */
+  grouping: BillingGrouping | ''
+}
+
+/** Тело POST /api/billing/preview и POST /api/billing/documents. */
+export interface BillingFilterBody {
+  date_from: string
+  date_to: string
+  company_id?: string
+  our_company_id?: string
+  project_ids?: string[]
+  task_ids?: string[]
+  employee_ids?: string[]
+  billable_only: boolean
+  only_closed_periods: boolean
+  exclude_invoiced: boolean
+  /**
+   * Вариант наполнения. Поля НЕТ, когда вариант не выбран: сервер подставит
+   * его из настройки портала и вернёт в ответе вместе с grouping_source.
+   */
+  grouping?: BillingGrouping
+}
+
+/** Уровень задачи в строке счёта (настройка billing_line_task_level). */
+export type BillingTaskLevelId = 'task' | 'root'
+
+/** Строка документа в ответе preview и в карточке. */
+export interface BillingLinePayload {
+  id?: number | string | null
+  project_id?: string | number | null
+  project_name?: string | null
+  title?: string | null
+  /**
+   * Предмет строки: название задачи, проекта или сотрудника БЕЗ шаблона
+   * формулировки. Приходит только из preview и нужен, чтобы показать, по
+   * какому признаку строка собрана, даже после правки текста человеком.
+   */
+  subject?: string | null
+  hours?: number | string | null
+  rate?: number | string | null
+  amount?: number | string | null
+  sort?: number | null
+}
+
+/** Клиент отбора: пара «идентификатор — название». */
+export interface BillingCompanyRef {
+  id?: string | number | null
+  name?: string | null
+}
+
+/** Предупреждение preview. Код обязателен, остальное — по желанию сервера. */
+export interface BillingWarningPayload {
+  code?: string | null
+  message?: string | null
+  count?: number | null
+  details?: string[] | null
+  /** Сервер сам сказал, блокирует ли предупреждение выставление. */
+  blocking?: boolean | null
+  /** Документы, в которых уже лежат эти списания (already_invoiced). */
+  document_ids?: Array<string | number> | null
+  /**
+   * Клиенты отбора (mixed_companies).
+   *
+   * Сервер кладёт сюда пары id/name, причём name равен идентификатору, когда в
+   * карточке проекта названия нет. Из этого списка мастер делает кнопки выбора
+   * клиента — иначе блокирующее предупреждение оставляет человека без выхода.
+   */
+  companies?: BillingCompanyRef[] | null
+  /** Незакрытые месяцы «2026-09» (period_open). */
+  periods?: string[] | null
+}
+
+/** Ответ POST /api/billing/preview. */
+export interface BillingPreviewResponse {
+  lines?: BillingLinePayload[] | null
+  /**
+   * По какому признаку сервер собрал строки и на каком уровне задачи. Экран
+   * берёт признак из ОТВЕТА, а не из своей формы: между запросом и ответом
+   * форму могли поправить, и подпись таблицы разошлась бы со строками.
+   */
+  grouping?: string | null
+  /**
+   * Откуда взялся вариант: `settings` — настройка портала, `request` — выбор
+   * в этом мастере. Показывается рядом с вариантом: без источника непонятно,
+   * где менять вариант навсегда.
+   */
+  grouping_source?: string | null
+  task_level?: string | null
+  entries_count?: number | null
+  total_hours?: number | string | null
+  total_amount?: number | string | null
+  warnings?: BillingWarningPayload[] | null
+  /**
+   * Все клиенты отбора. В нормальном случае их ровно один, и тогда интерфейсу
+   * удобнее скаляр company_id/company_name; список нужен, чтобы показать
+   * mixed_companies списком кнопок.
+   */
+  companies?: BillingCompanyRef[] | null
+  /**
+   * Юрлица КАРТОЧЕК проектов отбора. При заданной настройке «наше юрлицо по
+   * умолчанию» счёт уйдёт не от них — список остаётся, чтобы показать
+   * расхождение (см. utils/billingOurCompany.ts).
+   */
+  our_companies?: BillingCompanyRef[] | null
+  company_id?: string | number | null
+  company_name?: string | null
+  our_company_id?: string | number | null
+  our_company_name?: string | null
+  /**
+   * Откуда взято наше юрлицо: 'settings' (настройка приложения) либо
+   * 'project_card'. Пусто — юрлицо не определено ни там, ни там.
+   */
+  our_company_source?: string | null
+  currency?: string | null
+}
+
+/** Документ реестра и шапка карточки. */
+export interface BillingDocumentPayload {
+  id?: number | string | null
+  status?: string | null
+  period_from?: string | null
+  period_to?: string | null
+  company_id?: string | number | null
+  company_name?: string | null
+  our_company_id?: string | number | null
+  our_company_name?: string | null
+  currency?: string | null
+  vat_mode?: string | null
+  vat_rate?: number | string | null
+  total_hours?: number | string | null
+  total_amount?: number | string | null
+  /**
+   * Вариант наполнения, по которому документ собран, и уровень задачи на
+   * момент выставления. Нужны карточке, чтобы подписать таблицу строк:
+   * короткий счёт из одной строки без подписи читается как потерянная
+   * детализация. `task_level` может отсутствовать у документов, выставленных
+   * до появления настройки.
+   */
+  grouping?: string | null
+  task_level?: string | null
+  crm_entity_id?: number | string | null
+  crm_account_number?: string | null
+  act_document_id?: number | string | null
+  act_number?: string | null
+  /** Ссылки на напечатанный акт, если генератор документов их отдал. */
+  act_download_url?: string | null
+  act_public_url?: string | null
+  act_pdf_url?: string | null
+  act_error?: string | null
+  /**
+   * Печатная форма самого счёта — отдельный документ генератора со своим
+   * шаблоном (на портале это «Счет (Россия)», код BILL_RU). Не путать с
+   * crm_entity_id: тот — сам смарт-счёт в CRM.
+   */
+  invoice_document_id?: number | string | null
+  invoice_document_number?: string | null
+  invoice_download_url?: string | null
+  invoice_public_url?: string | null
+  invoice_pdf_url?: string | null
+  invoice_print_error?: string | null
+  created_by_id?: number | string | null
+  created_at?: string | null
+  cancelled_at?: string | null
+  cancel_reason?: string | null
+}
+
+/** Потреблённое списание (снимок BillingEntry). */
+export interface BillingEntryPayload {
+  id?: number | string | null
+  timesheet_bitrix_id?: number | string | null
+  employee_id?: string | number | null
+  employee_name?: string | null
+  date_reflection?: string | null
+  hours?: number | string | null
+  rate_snapshot?: number | string | null
+  amount?: number | string | null
+  project_id?: string | number | null
+  project_name?: string | null
+  task_id?: string | number | null
+  description?: string | null
+}
+
+/** Расхождение снимка с текущими данными (drift[] карточки). */
+export interface BillingDriftPayload {
+  kind?: string | null
+  timesheet_bitrix_id?: number | string | null
+  employee_name?: string | null
+  date_reflection?: string | null
+  hours?: number | string | null
+  current_hours?: number | string | null
+  rate_snapshot?: number | string | null
+  current_rate?: number | string | null
+  description?: string | null
+}
+
+/** Ответ GET /api/billing/documents/<id>. */
+export interface BillingDocumentDetail {
+  document?: BillingDocumentPayload | null
+  lines?: BillingLinePayload[] | null
+  entries?: BillingEntryPayload[] | null
+  drift?: BillingDriftPayload[] | null
+}
+
+/** Ответ GET /api/billing/documents. */
+export interface BillingDocumentsResponse {
+  documents?: BillingDocumentPayload[] | null
+  items?: BillingDocumentPayload[] | null
+  total?: number | null
+}
+
+/** Параметры реестра (query-строка GET /api/billing/documents). */
+export interface BillingRegistryFilter {
+  companyId: string
+  dateFrom: string
+  dateTo: string
+  status: BillingDocumentStatus | ''
+}
+
+/**
+ * Шаблон генератора документов портала (GET /api/billing/templates).
+ *
+ * Поля — ровно то, что портал отдаёт на crm.documentgenerator.template.list
+ * (проверено на nfr-mainsoft 12.09.2026), приведённое сервером к нормальным
+ * типам: флаги булевыми, а не строками "Y"/"N". Привязки к сущности в списке
+ * НЕТ — портал её в этом методе не отдаёт вовсе.
+ */
+export interface BillingTemplatePayload {
+  id?: number | string | null
+  name?: string | null
+  /** Код штатного шаблона портала: ACT_RU, BILL_RU, UPD_RU… Может быть пуст. */
+  code?: string | null
+  region?: string | null
+  active?: boolean | string | null
+  /**
+   * Признак штатного шаблона своего вида, а НЕ «шаблон по умолчанию для
+   * счёта»: на стенде он стоит у 17 шаблонов из 21. Поэтому только подпись.
+   */
+  is_default?: boolean | string | null
+  numerator_id?: number | string | null
+  products_table_variant?: string | null
+}
+
+/** Ответ GET /api/billing/templates. */
+export interface BillingTemplatesResponse {
+  templates?: BillingTemplatePayload[] | null
+  total?: number | null
+}

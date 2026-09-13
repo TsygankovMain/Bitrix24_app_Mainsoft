@@ -1,0 +1,384 @@
+/**
+ * Варианты наполнения счёта и формулировка строки — сторона интерфейса.
+ *
+ * Текст строк счёта собирает СЕРВЕР (billing_line_template.py). Здесь та же
+ * подстановка повторена ровно для одного дела: показать в настройках живой
+ * пример — «так будет читаться строка». Без примера человек правит шаблон
+ * наугад и проверяет его на настоящем счёте, а счёт уходит клиенту.
+ *
+ * Вариантов ЧЕТЫРЕ, и у каждого своя формулировка со своим ключом настройки.
+ * Один общий шаблон на все четыре не годится: «{задача}, {месяц}» в счёте на
+ * одну строку читается как «Услуги по договору, август 2026».
+ *
+ * Поэтому правила подстановки продублированы намеренно, и они обязаны
+ * совпадать с серверными:
+ *
+ * 1. неизвестная подстановка остаётся видимой (`{задание}` так и печатается) —
+ *    опечатку в настройке надо замечать в примере, а не у клиента;
+ * 2. известная подстановка без значения убирается вместе с прилипшим к ней
+ *    разделителем: «Задача, » и «Задача ()» выглядят как потеря данных;
+ * 3. если не осталось ничего — берётся предмет строки, потому что пустое
+ *    наименование работ не имеет права уйти в счёт.
+ *
+ * Ключи настроек — строками-константами, как и остальные настройки «Счёта и
+ * акта»: их читает сервер, и опечатка в одном из двух мест проявится только
+ * в бою.
+ */
+
+/**
+ * Ключ формулировки варианта «по задачам».
+ *
+ * Без суффикса `_task` намеренно: под этим именем формулировка уже лежит в
+ * конфигурации порталов, и ключ с суффиксом стёр бы настроенный текст.
+ */
+export const BILLING_LINE_TEMPLATE_KEY = 'billing_line_template'
+/** Ключ уровня задачи в строке. */
+export const BILLING_LINE_TASK_LEVEL_KEY = 'billing_line_task_level'
+/** Ключ варианта наполнения, который мастер подставляет при открытии. */
+export const BILLING_LINE_VARIANT_KEY = 'billing_line_variant'
+/** Ключ текста услуги для подстановки `{услуга}`. */
+export const BILLING_SERVICE_NAME_KEY = 'billing_service_name'
+
+/**
+ * Текст услуги по умолчанию.
+ *
+ * Отдельная настройка, а не слово внутри шаблонов: услуга повторяется в
+ * формулировках («Разработка по проекту…», «Услуги по разработке…»), и
+ * менять её правкой четырёх полей человек забудет.
+ */
+export const DEFAULT_BILLING_SERVICE_NAME = 'Разработка'
+
+/**
+ * Значение по умолчанию варианта «по задачам»: «<Название задачи>, август 2026».
+ *
+ * Оно и есть ответ на исходную жалобу: в наименовании работ название задачи
+ * и месяц, а не имя карточки проекта (у клиента НУОЛАБ карточка названа по
+ * клиенту, и в счёт ушло «НУОЛАБ»).
+ */
+export const DEFAULT_BILLING_LINE_TEMPLATE = '{задача}, {месяц}'
+
+/** Вариант наполнения счёта. Он же значение поля `grouping` фильтра. */
+export type BillingLineVariant = 'task' | 'project' | 'employee' | 'single'
+
+/** Вариант по умолчанию, когда настройки портала нет. */
+export const DEFAULT_BILLING_LINE_VARIANT: BillingLineVariant = 'task'
+
+/**
+ * Формулировки по умолчанию — по одной на вариант.
+ *
+ * Каждая написана так, чтобы строка читалась в печатной форме без правки:
+ * «Разработка по проекту „Личный кабинет“, август 2026», «Работы Цыганкова
+ * Егора, август 2026», «Услуги по разработке и сопровождению за август 2026».
+ * Значения обязаны совпадать с серверными
+ * (billing_line_template.DEFAULT_LINE_TEMPLATES) — иначе пример в настройках
+ * покажет одно, а в счёт уйдёт другое.
+ */
+export const DEFAULT_BILLING_LINE_TEMPLATES: Record<BillingLineVariant, string> = {
+  task: DEFAULT_BILLING_LINE_TEMPLATE,
+  project: '{услуга} по проекту „{проект}“, {месяц}',
+  employee: 'Работы {сотрудник}, {месяц}',
+  single: 'Услуги по разработке и сопровождению за {месяц}',
+}
+
+/**
+ * Варианты наполнения для экрана настроек и для примера.
+ *
+ * `settingKey` — ключ формулировки в конфигурации. `sample` — вымышленные
+ * данные, на которых строится пример «так будет выглядеть строка»: они
+ * повторяют поведение сервера, включая ПУСТЫЕ слоты. В строке на сотрудника
+ * проекта нет (человек работал в нескольких), в строке на проект нет
+ * сотрудника (проект вели несколько), и подставлять туда правдоподобное
+ * значение значило бы обещать в примере то, чего в счёте не будет.
+ */
+export const BILLING_LINE_VARIANTS: Array<{
+  id: BillingLineVariant
+  label: string
+  settingKey: string
+  defaultTemplate: string
+  /** Одна строка про состав документа. */
+  summary: string
+  /** Вымышленные данные для примера. */
+  sample: BillingLineTemplateValues
+}> = [
+  {
+    id: 'task',
+    label: 'Строка на задачу',
+    settingKey: BILLING_LINE_TEMPLATE_KEY,
+    defaultTemplate: DEFAULT_BILLING_LINE_TEMPLATES.task,
+    summary: 'одна строка на задачу — в наименовании работ название задачи',
+    sample: {
+      задача: 'Настройка отчётов',
+      проект: 'Личный кабинет',
+      сотрудник: 'Цыганков Егор',
+      клиент: 'ООО НУОЛАБ',
+      месяц: 'август 2026',
+      период: '01.08.2026—31.08.2026',
+    },
+  },
+  {
+    id: 'project',
+    label: 'Строка на проект',
+    settingKey: 'billing_line_template_project',
+    defaultTemplate: DEFAULT_BILLING_LINE_TEMPLATES.project,
+    summary: 'одна строка на проект',
+    sample: {
+      задача: 'Личный кабинет',
+      проект: 'Личный кабинет',
+      сотрудник: '',
+      клиент: 'ООО НУОЛАБ',
+      месяц: 'август 2026',
+      период: '01.08.2026—31.08.2026',
+    },
+  },
+  {
+    id: 'employee',
+    label: 'Строка на сотрудника',
+    settingKey: 'billing_line_template_employee',
+    defaultTemplate: DEFAULT_BILLING_LINE_TEMPLATES.employee,
+    summary: 'одна строка на человека',
+    sample: {
+      задача: 'Цыганков Егор',
+      проект: '',
+      сотрудник: 'Цыганков Егор',
+      клиент: 'ООО НУОЛАБ',
+      месяц: 'август 2026',
+      период: '01.08.2026—31.08.2026',
+    },
+  },
+  {
+    id: 'single',
+    label: 'Одна строка на счёт',
+    settingKey: 'billing_line_template_single',
+    defaultTemplate: DEFAULT_BILLING_LINE_TEMPLATES.single,
+    summary: 'весь период одной строкой, количество в часах',
+    sample: {
+      задача: 'Услуги по договору',
+      проект: '',
+      сотрудник: '',
+      клиент: 'ООО НУОЛАБ',
+      месяц: 'август 2026',
+      период: '01.08.2026—31.08.2026',
+    },
+  },
+]
+
+const VARIANT_IDS = BILLING_LINE_VARIANTS.map(item => item.id)
+
+/**
+ * Вариант из настройки или из ответа сервера.
+ *
+ * Чужое значение читается как «по задачам»: опечатка в настройке не имеет
+ * права свернуть счёт в одну строку «Услуги по договору».
+ */
+export function normalizeBillingLineVariant(raw: unknown): BillingLineVariant {
+  const value = String(raw ?? '').trim().toLowerCase() as BillingLineVariant
+
+  return VARIANT_IDS.includes(value) ? value : DEFAULT_BILLING_LINE_VARIANT
+}
+
+/** Формулировка по умолчанию для варианта. */
+export function defaultBillingLineTemplate(variant: unknown): string {
+  return DEFAULT_BILLING_LINE_TEMPLATES[normalizeBillingLineVariant(variant)]
+}
+
+/** Ключ настройки с формулировкой варианта. */
+export function billingLineTemplateKey(variant: unknown): string {
+  const id = normalizeBillingLineVariant(variant)
+
+  return BILLING_LINE_VARIANTS.find(item => item.id === id)?.settingKey
+    || BILLING_LINE_TEMPLATE_KEY
+}
+
+/** Текст услуги из настройки. Пусто — «Разработка». */
+export function normalizeBillingServiceName(raw: unknown): string {
+  return String(raw ?? '').trim() || DEFAULT_BILLING_SERVICE_NAME
+}
+
+/** Уровень задачи в строке. */
+export type BillingTaskLevel = 'task' | 'root'
+
+export const BILLING_TASK_LEVEL_OPTIONS: Array<{
+  id: BillingTaskLevel
+  label: string
+  hint: string
+}> = [
+  {
+    id: 'task',
+    label: 'По задаче',
+    hint: 'Строка на каждую задачу, в которой отражены часы. Подробнее всего, '
+      + 'но при россыпи подзадач счёт получается длинным',
+  },
+  {
+    id: 'root',
+    label: 'По родительской задаче',
+    hint: 'Подзадачи собираются в строку родителя верхнего уровня. Короче, '
+      + 'но в наименовании работ окажется общее название родителя',
+  },
+]
+
+const TASK_LEVEL_IDS = BILLING_TASK_LEVEL_OPTIONS.map(option => option.id)
+
+/**
+ * Уровень задачи из настройки.
+ *
+ * Чужое значение читается как «по задаче»: укрупнять строки счёта из-за
+ * опечатки в настройке нельзя, а «по задаче» — то, чего просили.
+ */
+export function normalizeBillingTaskLevel(raw: unknown): BillingTaskLevel {
+  const value = String(raw ?? '').trim().toLowerCase() as BillingTaskLevel
+
+  return TASK_LEVEL_IDS.includes(value) ? value : 'task'
+}
+
+/** Подстановки шаблона с объяснением каждой — подсказка под полями настройки. */
+export const BILLING_LINE_PLACEHOLDERS: Array<{ token: string, hint: string }> = [
+  { token: '{задача}', hint: 'предмет строки: название задачи, а при другом варианте — проект, сотрудник или «Услуги по договору»' },
+  { token: '{проект}', hint: 'название проекта строки; пусто, если в строке часы нескольких проектов' },
+  { token: '{сотрудник}', hint: 'фамилия и имя, если часы строки списал один человек' },
+  { token: '{услуга}', hint: 'текст услуги из настройки ниже («Разработка»)' },
+  { token: '{клиент}', hint: 'название клиента счёта' },
+  { token: '{месяц}', hint: 'август 2026' },
+  { token: '{период}', hint: '01.08.2026—31.08.2026' },
+]
+
+const PLACEHOLDER_NAMES = BILLING_LINE_PLACEHOLDERS.map(
+  item => item.token.slice(1, -1)
+)
+
+/**
+ * Шаблон из настройки. Пусто — значение по умолчанию ЭТОГО варианта.
+ *
+ * Вариант по умолчанию — «по задачам»: у вызовов, которым вариант неважен
+ * (сравнение настроек, например), поведение остаётся прежним.
+ */
+export function normalizeBillingLineTemplate(
+  raw: unknown,
+  variant: unknown = DEFAULT_BILLING_LINE_VARIANT
+): string {
+  const text = String(raw ?? '').trim()
+
+  return text || defaultBillingLineTemplate(variant)
+}
+
+const EMPTY = ' '
+const PLACEHOLDER_RE = /\{([^{}]*)\}/g
+/**
+ * Разделители, которые уходят вместе с опустевшей подстановкой. Обычной
+ * строкой, а класс регулярки собирается из неё с экранированием — иначе
+ * обратная косая попала бы в набор символов обрезки.
+ */
+const SEPARATOR_CHARS = ',;:·|/-–—'
+/**
+ * Экранированный набор для класса регулярки.
+ *
+ * Дефис внутри класса ОБЯЗАН быть экранирован: «/-–» иначе читается как
+ * диапазон от U+002F до U+2013 — то есть почти вся латиница и кириллица, и
+ * обрезка съедала бы весь текст строки.
+ */
+const SEPARATOR_ESCAPED = SEPARATOR_CHARS.replace(/[-\\^\]]/g, '\\$&')
+const SEPARATOR_CLASS = `[${SEPARATOR_ESCAPED}]`
+const BEFORE_EMPTY_RE = new RegExp(`[ \t]*${SEPARATOR_CLASS}[ \t]*${EMPTY}`, 'g')
+const AFTER_EMPTY_RE = new RegExp(`${EMPTY}[ \t]*${SEPARATOR_CLASS}[ \t]*`, 'g')
+const EMPTY_BRACKETS_RE = new RegExp(`[ \t]*\\([ \t]*${EMPTY}[ \t]*\\)`, 'g')
+const TRIM_RE = new RegExp(`^[ \t${SEPARATOR_ESCAPED}]+|[ \t${SEPARATOR_ESCAPED}]+$`, 'g')
+
+export type BillingLineTemplateValues = {
+  задача?: string
+  проект?: string
+  сотрудник?: string
+  услуга?: string
+  клиент?: string
+  месяц?: string
+  период?: string
+}
+
+/**
+ * Текст строки по шаблону. Двойник серверного render_line_template.
+ *
+ * `fallback` — предмет строки: он подставляется, когда от шаблона не осталось
+ * ничего.
+ */
+export function renderBillingLineTemplate(
+  template: unknown,
+  values: BillingLineTemplateValues,
+  fallback = '',
+  variant: unknown = DEFAULT_BILLING_LINE_VARIANT
+): string {
+  const resolved = new Map<string, string>()
+  for (const name of PLACEHOLDER_NAMES) {
+    resolved.set(name, String((values as Record<string, unknown>)[name] ?? '').trim())
+  }
+
+  let text = normalizeBillingLineTemplate(template, variant).replace(
+    PLACEHOLDER_RE,
+    (match, raw: string) => {
+      const name = String(raw).trim().toLowerCase()
+      if (!resolved.has(name)) {
+        return match
+      }
+
+      return resolved.get(name) || EMPTY
+    }
+  )
+
+  if (text.includes(EMPTY)) {
+    text = text
+      .replace(EMPTY_BRACKETS_RE, '')
+      .replace(BEFORE_EMPTY_RE, '')
+      .replace(AFTER_EMPTY_RE, '')
+      .split(EMPTY)
+      .join('')
+  }
+
+  text = text.replace(/[ \t]{2,}/g, ' ').trim().replace(TRIM_RE, '')
+
+  return text || String(fallback || '').trim()
+}
+
+/**
+ * Пример под полем настройки: как прочитается строка при этом шаблоне.
+ *
+ * Данные вымышленные и свои У КАЖДОГО варианта (см. `sample` в
+ * BILLING_LINE_VARIANTS), включая пустые слоты: в строке на сотрудника
+ * проекта нет, в строке на проект нет сотрудника. Пример, где заполнено
+ * всё, обещал бы формулировку, которой в счёте не будет.
+ *
+ * `serviceName` — текст услуги из настройки: он же подставляется в счёте, и
+ * пример должен меняться вместе с ним.
+ */
+export function previewBillingLineTemplate(
+  template: unknown,
+  variant: unknown = DEFAULT_BILLING_LINE_VARIANT,
+  serviceName: unknown = DEFAULT_BILLING_SERVICE_NAME
+): string {
+  const id = normalizeBillingLineVariant(variant)
+  const sample = BILLING_LINE_VARIANTS.find(item => item.id === id)?.sample || {}
+
+  return renderBillingLineTemplate(
+    template,
+    { ...sample, услуга: normalizeBillingServiceName(serviceName) },
+    String(sample.задача || '').trim(),
+    id
+  )
+}
+
+/**
+ * Неизвестные подстановки шаблона — чтобы настройки сказали о них вслух.
+ *
+ * Молча они не исчезают (правило 1), но ждать, пока человек заметит фигурные
+ * скобки в примере, незачем: он их и написал.
+ */
+export function unknownBillingPlaceholders(template: unknown): string[] {
+  const found: string[] = []
+  const matches = normalizeBillingLineTemplate(template).matchAll(PLACEHOLDER_RE)
+
+  for (const match of matches) {
+    const name = String(match[1] ?? '').trim().toLowerCase()
+    const token = `{${String(match[1] ?? '').trim()}}`
+    if (!PLACEHOLDER_NAMES.includes(name) && !found.includes(token)) {
+      found.push(token)
+    }
+  }
+
+  return found
+}

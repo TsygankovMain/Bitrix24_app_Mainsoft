@@ -66,6 +66,75 @@ class SelectPortalAccountsTest(TestCase):
         reps = select_portal_accounts()
         self.assertEqual(len(reps), 0)
 
+    @override_settings(USE_PORTAL_SCOPING=True)
+    def test_prefers_master_via_nulls_last_ordering(self):
+        """Сортировка order_by("member_id", F("is_master_account").desc(nulls_last=True)):
+
+        is_master_account — nullable BooleanField. На PostgreSQL голое
+        "-is_master_account" кладёт NULL ПЕРЕД True (NULLS FIRST — умолчание
+        для DESC), поэтому учётка с is_master_account=None обгоняла бы
+        настоящего мастера этой же member_id-группы. nulls_last=True чинит
+        порядок: мастер (True) всегда первый, даже рядом с None."""
+        portal = Portal.objects.create(member_id="m1", domain_url="m1.bitrix24.ru", status="active")
+        _account("m1", master=None, b24_user_id=1, portal=portal)
+        master = _account("m1", master=True, b24_user_id=2, portal=portal)
+
+        reps = select_portal_accounts()
+
+        self.assertEqual([a.pk for a in reps], [master.pk])
+
+
+class SelectPortalAccountsPortalLinkageTest(TestCase):
+    """Дефект 4 (fixwave): backfill_portal_links (portal_backfill_service.py)
+
+    проставляет Bitrix24Account.portal ПАЧКАМИ, а не разом всем строкам. Если
+    USE_PORTAL_SCOPING включат раньше, чем backfill дойдёт до конца, и
+    представителем на member_id окажется учётка без portal_id,
+    tenant_scoping.scope_to_tenant молча откатится на скоуп по ЭТОЙ ОДНОЙ
+    учётке (portal is None -> fallback): данные запишутся только ей, а
+    остальные учётки портала не увидят свежих данных, хотя представитель как
+    бы синкается штатно.
+
+    Под USE_PORTAL_SCOPING=False select_portal_accounts() не вызывается вовсе
+    (см. _account_scoped_sync_accounts) — поведение при выключенном флаге эти
+    тесты не меняют и не проверяют."""
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    def test_mixed_group_picks_portal_account_as_representative_and_warns(self):
+        portal = Portal.objects.create(member_id="m1", domain_url="m1.bitrix24.ru", status="active")
+        with_portal = _account("m1", master=False, b24_user_id=1, portal=portal)
+        without_portal = _account("m1", master=True, b24_user_id=2, portal=None)
+
+        with self.assertLogs("main.sync_scheduler_service", level="WARNING") as cm:
+            reps = select_portal_accounts()
+
+        rep_ids = {a.pk for a in reps}
+        # Представитель для портального скоупа — учётка С portal_id, даже
+        # если она не мастер: мастер без portal_id откатил бы данные всего
+        # портала на себя одного (см. докстринг класса).
+        self.assertIn(with_portal.pk, rep_ids)
+        # Учётка без portal_id НЕ потеряна: возвращается отдельно и
+        # синкается по своему (fallback-)скоупу, чтобы не остаться пустой.
+        self.assertIn(without_portal.pk, rep_ids)
+        self.assertEqual(len(reps), 2)
+        self.assertTrue(
+            any("m1" in msg and "1" in msg for msg in cm.output),
+            cm.output,
+        )
+
+    @override_settings(USE_PORTAL_SCOPING=True)
+    def test_group_without_any_portal_falls_back_to_single_representative(self):
+        """Портал ещё не проставлен НИ ОДНОЙ учётке группы — обычный
+
+        переходный период до первого прохода backfill, не рассинхрон:
+        поведение как раньше (один представитель, без предупреждения)."""
+        _account("m1", master=False, b24_user_id=1, portal=None)
+        master = _account("m1", master=True, b24_user_id=2, portal=None)
+
+        reps = select_portal_accounts()
+
+        self.assertEqual([a.pk for a in reps], [master.pk])
+
 
 class SelectPortalAccountsStatusFilterTest(TestCase):
     """Дефект 1 (боевой инцидент, найден на прод-БД): Bitrix24Account.status

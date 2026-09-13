@@ -4,7 +4,7 @@
 Точные имена функций/методов и строки сверяйте с актуальным кодом — карта обновляется по мере развития (см. конвенцию в [../README.md](../README.md)).
 
 ## 1. Учёт времени в задаче (placement)
-- **Фронт:** `pages/task.vue` — placement в карточке задачи; `composables/useTaskPlacement.ts`, `composables/useTaskTreeLoader.ts`; компоненты `components/TaskGroupComponent.vue`, `TaskNode.vue`, `TaskItemRow.vue`.
+- **Фронт:** `pages/embedded.vue` — placement в карточке задачи (экран `task.vue` и компоненты `TaskGroupComponent.vue`/`TaskNode.vue`/`TaskItemRow.vue` удалены в редизайне, вариант A); `composables/useTaskPlacement.ts`, `composables/useTaskTreeLoader.ts`; компоненты `components/task/TaskTabCard.vue`, `TaskExportBar.vue`, `TaskEntryForm.vue`, `TaskEntryRow.vue`.
 - **Синхронизация:** `stores/api.ts::syncTimesheets()` → `POST /api/sync-timesheets`.
 - **Бэк:** `views.py::timesheet_sync` → `timesheet_sync_service.py::TimesheetSyncService`; модель `models.py::TimesheetItem`.
 

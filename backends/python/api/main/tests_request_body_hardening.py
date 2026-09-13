@@ -276,7 +276,7 @@ class SaveConfigurationMalformedBodyTest(TestCase):
                 )
                 _assert_no_exception_leak(self, resp)
 
-    @patch("main.views.ConfigurationService.save_configuration_sync", return_value=None)
+    @patch("main.views.ConfigurationService.save_configuration_sync", return_value={"config_revision": 1})
     @patch("main.views.ConfigurationService.normalize_configuration_sync", side_effect=lambda cfg: cfg)
     def test_control_empty_object_still_succeeds(self, _normalize_mock, _save_mock):
         """Контроль: {} — валидный (пустой) объект, уже сегодня успешно

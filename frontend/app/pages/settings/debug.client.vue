@@ -52,7 +52,7 @@
                 <tr class="text-sm">
                   <td class="whitespace-nowrap text-slate-500">{{ formatDate(log.timestamp) }}</td>
                   <td class="font-mono font-bold" :class="getMethodColor(log.method)">{{ log.method }}</td>
-                  <td class="max-w-xs truncate font-mono text-xs" :title="log.path">{{ log.path }}</td>
+                  <td class="max-w-[20rem] truncate font-mono text-xs" :title="log.path">{{ log.path }}</td>
                   <td class="font-mono" :class="getStatusColor(log.status_code)">{{ log.status_code }}</td>
                   <td class="text-slate-500">{{ log.duration_ms?.toFixed(0) }}ms</td>
                   <td>
@@ -108,7 +108,7 @@
                   <td class="whitespace-nowrap text-slate-500">{{ formatDate(log.timestamp) }}</td>
                   <td class="font-bold" :class="getLevelColor(log.level)">{{ log.level }}</td>
                   <td class="text-xs text-slate-500">{{ log.module }}</td>
-                  <td class="max-w-md truncate" :title="log.message">{{ log.message }}</td>
+                  <td class="max-w-[28rem] truncate" :title="log.message">{{ log.message }}</td>
                   <td>
                     <button v-if="log.traceback" class="text-xs font-medium text-rose-600 hover:text-rose-700" @click="toggleSystemDetails(log.id)">
                       {{ expandedSystemId === log.id ? 'Скрыть' : 'Стек' }}

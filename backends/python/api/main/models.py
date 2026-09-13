@@ -508,3 +508,627 @@ class SyncRun(models.Model):
         indexes = [
             models.Index(fields=["started_at"], name="sync_run_started_idx"),
         ]
+
+
+class PortalSubscription(models.Model):
+    """Тариф портала: единственный источник правды о платных функциях.
+
+    Ключ — ПОРТАЛ (Portal, уникален по member_id), а не учётка. Прежняя
+    модель PortalFeature висела на Bitrix24Account — записи на сотрудника, —
+    и команда включения писала строку каждой учётке: сотрудник, впервые
+    открывший приложение после включения, оставался без функции. Домен ключом
+    тоже не годится: у порталов он меняется, member_id — нет.
+
+    Хранится ТОЛЬКО на нашем сервере. Писать по REST нельзя ни при каких
+    условиях (app.option пишется токеном приложения из консоли браузера) —
+    только командой pro_plan (main/management/commands/pro_plan.py).
+
+    Поле state — решение оператора, а не итог. Итог (действует, грейс,
+    истёк) вычисляется при каждом чтении по датам — billing_features.
+    resolve_subscription — поэтому неоплаченный портал закрывается сам, без
+    ночной задачи и без ручного действия:
+
+    - active: оплачено по paid_until включительно (None — бессрочно, так
+      перенесены прежние state=on без срока), затем GRACE_DAYS дней грейса,
+      затем «только чтение»;
+    - trial: пробный до trial_until включительно (None — бессрочный тест),
+      затем «только чтение» сразу, без грейса;
+    - expired: «только чтение» сразу, без ожидания дат (оператор закрыл
+      запись сам);
+    - off: функций нет совсем.
+
+    Какие функции входят в тариф — billing_features.PLAN_FEATURES.
+    """
+
+    PLAN_PRO = "pro"
+    PLANS = (PLAN_PRO,)
+
+    STATE_ACTIVE = "active"
+    STATE_TRIAL = "trial"
+    STATE_EXPIRED = "expired"
+    STATE_OFF = "off"
+    STATES = (STATE_ACTIVE, STATE_TRIAL, STATE_EXPIRED, STATE_OFF)
+
+    DEFAULT_PRICE_MONTH_RUB = 3000
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    portal = models.OneToOneField(
+        Portal, on_delete=models.CASCADE, related_name="subscription",
+    )
+    plan = models.CharField(max_length=32, default=PLAN_PRO)
+    state = models.CharField(max_length=16, default=STATE_OFF)
+    # Даты, а не моменты: «оплачено по 31.10» — это весь день 31.10 по
+    # Москве (billing_features.subscription_today), а не полночь UTC.
+    paid_until = models.DateField(null=True, blank=True)
+    trial_until = models.DateField(null=True, blank=True)
+    price_month_rub = models.PositiveIntegerField(default=DEFAULT_PRICE_MONTH_RUB)
+    comment = models.TextField(blank=True, default="")
+    updated_by = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_subscription"
+        indexes = [
+            models.Index(fields=["state", "paid_until"], name="portal_subscription_state_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.plan}={self.state}"
+
+
+class PortalSubscriptionEvent(models.Model):
+    """Журнал изменений тарифа: кто, когда и что поменял.
+
+    Нужен не для красоты: спор «мы платили до ноября» решается только
+    историей, а поле updated_by помнит лишь последнего.
+    changes — {поле: [было, стало]} строками.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subscription = models.ForeignKey(
+        PortalSubscription, on_delete=models.CASCADE, related_name="events",
+    )
+    action = models.CharField(max_length=32)
+    changes = models.JSONField(default=dict, blank=True)
+    actor = models.CharField(max_length=255, blank=True, default="")
+    comment = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_subscription_event"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.action}@{self.created_at:%Y-%m-%d}"
+
+
+class PortalRole(models.Model):
+    """Роль сотрудника портала в приложении (ролевая модель, функция ``roles``).
+
+    Почему в НАШЕЙ БД, а не в app.option портала. app.option пишется токеном
+    приложения, а этот токен есть у фронта в каждой вкладке: из консоли
+    браузера любой сотрудник мог бы дописать себя в «Бухгалтерию» — ровно так
+    сегодня и устроен прежний список billing_accountants. Серверная проверка
+    прав, опирающаяся на значение, которое клиент сам же и пишет, ничего не
+    проверяет. Здесь роль пишет только сервер, и только по запросу того, у кого
+    уже есть право назначать роли (см. main/roles.py).
+
+    Ключ — member_id портала, а не Bitrix24Account: учётка в приложении — запись
+    НА СОТРУДНИКА (тот же довод, что у тарифа портала), а роль назначает один
+    человек другому. Строка «на учётку» появлялась бы только после того, как
+    сотрудник сам открыл приложение, и назначить роль заранее было бы нельзя.
+    Тот же ключ у тарифа портала (PortalSubscription через Portal.member_id).
+
+    Одна роль на человека. Отсутствие строки = «Сотрудник». Администратор
+    портала — всегда «Администратор», строка ему не нужна и не пишется.
+    """
+
+    ROLE_ADMIN = "admin"
+    ROLE_ACCOUNTANT = "accountant"
+    ROLE_PROJECT_MANAGER = "project_manager"
+    ROLE_EMPLOYEE = "employee"
+    ROLES = (ROLE_ADMIN, ROLE_ACCOUNTANT, ROLE_PROJECT_MANAGER, ROLE_EMPLOYEE)
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member_id = models.CharField(max_length=255, db_index=True)
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="portal_roles", db_index=True,
+    )
+    b24_user_id = models.CharField(max_length=50)
+    role = models.CharField(max_length=32)
+    assigned_by_id = models.CharField(max_length=50, blank=True, default="")
+    assigned_by_name = models.CharField(max_length=255, blank=True, default="")
+    #: Откуда взялась строка: manual — назначена на экране ролей,
+    #: billing_accountants — перенесена из прежнего списка «Бухгалтерия».
+    source = models.CharField(max_length=32, blank=True, default="manual")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_role"
+        unique_together = ("member_id", "b24_user_id")
+
+    def __str__(self) -> str:
+        return f"{self.member_id}:{self.b24_user_id}={self.role}"
+
+
+class PortalRoleState(models.Model):
+    """Состояние ролевой модели портала: перенос прежнего списка «Бухгалтерия».
+
+    Список billing_accountants живёт в app.option КАЖДОГО портала, а не в нашей
+    БД, поэтому миграция Django прочитать его не может — перенос ленивый: при
+    первой проверке прав на портале (roles.ensure_accountants_imported).
+    Отметка ``accountants_imported_at`` ставится только после УСПЕШНОГО чтения
+    конфигурации: недоступный портал не должен превратиться в «бухгалтеров не
+    было» и молча лишить людей прав.
+
+    Действует ли ролевая модель, здесь НЕ хранится: это решает тариф портала
+    (billing_features.feature_restrictions_active) — ограничения действуют при
+    Pro и после его окончания, закрывается только изменение ролей.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member_id = models.CharField(max_length=255, unique=True)
+    accountants_imported_at = models.DateTimeField(null=True, blank=True)
+    imported_user_ids = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_role_state"
+
+
+class PortalPermissionMatrix(models.Model):
+    """Права ролей портала, изменённые на экране «Роли и права».
+
+    Хранятся ОТЛИЧИЯ от матрицы по умолчанию (roles.ROLE_PERMISSIONS), а не
+    матрица целиком: ``overrides = {"accountant": {"period_close": false}}``.
+    Нет строки или пустой словарь = матрица по умолчанию, поэтому после
+    миграции у действующих порталов не меняется ничего. Право, которого
+    портал не трогал, следует значению по умолчанию из кода.
+
+    Почему в нашей БД, а не в app.option, — тот же довод, что у PortalRole:
+    app.option пишется токеном из браузера. Матрицу пишет только сервер
+    (roles.save_permission_matrix) по запросу человека с правом roles_manage и
+    при живом Pro; неизменяемые ограничения и зависимости прав проверяются
+    там же. ``revision`` растёт на каждое сохранение — два администратора,
+    правящих матрицу одновременно, не затрут друг друга молча.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member_id = models.CharField(max_length=255, unique=True)
+    overrides = models.JSONField(default=dict, blank=True)
+    revision = models.PositiveIntegerField(default=0)
+    updated_by_id = models.CharField(max_length=50, blank=True, default="")
+    updated_by_name = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_permission_matrix"
+
+    def __str__(self) -> str:
+        return f"{self.member_id}@{self.revision}"
+
+
+class PortalPermissionChange(models.Model):
+    """Журнал изменений прав ролей: кто, когда и что поменял.
+
+    ``changes`` — список ячеек ``{"role", "permission", "granted"}``,
+    ``matrix`` — действующая матрица после сохранения (для разбора «что было
+    на момент»). Пишется только при реальном изменении.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    member_id = models.CharField(max_length=255, db_index=True)
+    revision = models.PositiveIntegerField(default=0)
+    changes = models.JSONField(default=list, blank=True)
+    matrix = models.JSONField(default=dict, blank=True)
+    changed_by_id = models.CharField(max_length=50, blank=True, default="")
+    changed_by_name = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_permission_change"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.member_id}@{self.revision}"
+
+
+class BillingDocument(models.Model):
+    """Выставленный документ: счёт в CRM + его снимок у нас.
+
+    Почему снимок, а не ссылка на списания: списание уникально по паре
+    «учётка + bitrix_id» (при USE_PORTAL_SCOPING=False у каждого сотрудника
+    своя копия строки), а синхронизация физически удаляет записи, пропавшие
+    в Битриксе (timesheet_sync_service). Ссылаться на TimesheetItem.pk
+    нельзя — документ хранит собственные часы, ставку и сумму и помнит
+    списание только по bitrix_id.
+
+    Черновиков нет: статусы ровно два — issued и cancelled. Документ ничего
+    не пересчитывает после выставления; расхождения с текущими списаниями
+    показываются как drift на карточке.
+    """
+
+    STATUS_ISSUED = "issued"
+    STATUS_CANCELLED = "cancelled"
+
+    VAT_INCLUDED = "included"
+    VAT_NONE = "none"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bitrix24_account = models.ForeignKey(
+        Bitrix24Account, on_delete=models.CASCADE, related_name="billing_documents",
+    )
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="billing_documents", db_index=True,
+    )
+
+    status = models.CharField(max_length=16, default=STATUS_ISSUED, db_index=True)
+    period_from = models.DateField(null=True, blank=True)
+    period_to = models.DateField(null=True, blank=True)
+
+    company_id = models.CharField(max_length=50, blank=True, default="")
+    company_name = models.CharField(max_length=255, blank=True, default="")
+    our_company_id = models.CharField(max_length=50, blank=True, default="")
+    our_company_name = models.CharField(max_length=255, blank=True, default="")
+
+    currency = models.CharField(max_length=10, default="RUB")
+    vat_mode = models.CharField(max_length=16, default=VAT_INCLUDED)
+    vat_rate = models.FloatField(default=0.0)
+
+    total_hours = models.FloatField(default=0.0)
+    total_amount = models.FloatField(default=0.0)
+
+    # Снимок параметров отбора: чем документ собран. Нужен карточке и
+    # переоформлению («отменить и выставить тем же фильтром»), пересчётом
+    # документа он не управляет никогда.
+    grouping = models.CharField(max_length=16, default="project")
+    filter_snapshot = models.JSONField(default=dict, blank=True)
+
+    crm_entity_id = models.CharField(max_length=50, blank=True, default="")
+    crm_account_number = models.CharField(max_length=100, blank=True, default="")
+
+    act_document_id = models.CharField(max_length=50, blank=True, default="")
+    act_number = models.CharField(max_length=100, blank=True, default="")
+    # Ссылки генератора документов: без них напечатанный акт некуда отдать.
+    # В контракте их нет, но контракт перечисляет модель, а не запрещает
+    # хранить результат вызова, который сам же предписывает делать.
+    act_download_url = models.TextField(blank=True, default="")
+    act_public_url = models.TextField(blank=True, default="")
+    act_pdf_url = models.TextField(blank=True, default="")
+    act_error = models.TextField(blank=True, default="")
+
+    # Печатная форма САМОГО счёта (шаблон «Счет (Россия)» и подобные) —
+    # отдельный документ генератора, не путать с crm_entity_id (это сам
+    # смарт-счёт в CRM) и не путать с актом. Бухгалтер отправляет клиенту
+    # пару «счёт + акт», и обе половины должны быть доступны из карточки
+    # документа приложения, а не из двух разных мест.
+    invoice_document_id = models.CharField(max_length=50, blank=True, default="")
+    invoice_document_number = models.CharField(max_length=100, blank=True, default="")
+    invoice_download_url = models.TextField(blank=True, default="")
+    invoice_public_url = models.TextField(blank=True, default="")
+    invoice_pdf_url = models.TextField(blank=True, default="")
+    invoice_print_error = models.TextField(blank=True, default="")
+
+    created_by_id = models.CharField(max_length=50, blank=True, default="")
+    created_by_name = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by_id = models.CharField(max_length=50, blank=True, default="")
+    cancelled_by_name = models.CharField(max_length=255, blank=True, default="")
+    cancel_reason = models.TextField(blank=True, default="")
+
+    class Meta:
+        managed = True
+        db_table = "billing_document"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["bitrix24_account", "status"], name="billing_doc_acc_status_idx"),
+            models.Index(fields=["bitrix24_account", "company_id"], name="billing_doc_acc_comp_idx"),
+            models.Index(fields=["bitrix24_account", "period_from"], name="billing_doc_acc_period_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"BillingDocument<{self.crm_account_number or self.pk}>"
+
+    @property
+    def is_issued(self) -> bool:
+        return self.status == self.STATUS_ISSUED
+
+
+class BillingLine(models.Model):
+    """Строка документа: то, что уходит товарной строкой в счёт CRM.
+
+    По умолчанию одна строка на проект, количество — в часах. Сумма строки
+    считается как сумма сумм её списаний, а не как round(часы × ставка):
+    ставка внутри строки может быть разной (ставку помнит каждое списание),
+    и пересчёт от общего количества часов разошёлся бы с детализацией.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        BillingDocument, on_delete=models.CASCADE, related_name="lines",
+    )
+    project_id = models.CharField(max_length=50, blank=True, default="")
+    project_name = models.CharField(max_length=255, blank=True, default="")
+    title = models.CharField(max_length=500, blank=True, default="")
+    hours = models.FloatField(default=0.0)
+    rate = models.FloatField(default=0.0)
+    amount = models.FloatField(default=0.0)
+    sort = models.IntegerField(default=0)
+
+    class Meta:
+        managed = True
+        db_table = "billing_line"
+        ordering = ["sort", "id"]
+
+
+class BillingEntry(models.Model):
+    """Потреблённое списание: снимок часов, ставки и суммы на момент выставления.
+
+    ЗАЧЕМ is_active — денормализация статуса документа.
+
+    Контракт требует частичный уникальный индекс
+    (bitrix24_account, timesheet_bitrix_id) с условием «документ действует»:
+    одно списание не может попасть в два действующих документа, и защищать
+    это должна БАЗА, а не проверка в коде — два бухгалтера, нажавшие
+    «Выставить» одновременно, проверку в коде обходят.
+
+    В Django частичный уникальный индекс — это UniqueConstraint(condition=Q(...)),
+    но условие Q может ссылаться только на поля САМОЙ модели: выразить
+    document__status='issued' в condition нельзя (Django отвергает join в
+    условии индекса, да и СУБД такого индекса не построит — индекс строится
+    по одной таблице). Поэтому статус документа продублирован здесь полем
+    is_active, а индекс строится по нему.
+
+    Поле поддерживает СЕРВИС (billing_service): выставление создаёт записи с
+    is_active=True, отмена документа переводит все его записи в False одним
+    UPDATE в той же транзакции. Ручная правка статуса документа мимо сервиса
+    рассинхронизирует пару — этого делать нельзя.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        BillingDocument, on_delete=models.CASCADE, related_name="entries",
+    )
+    line = models.ForeignKey(
+        BillingLine, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="entries",
+    )
+    bitrix24_account = models.ForeignKey(
+        Bitrix24Account, on_delete=models.CASCADE, related_name="billing_entries",
+    )
+    portal = models.ForeignKey(
+        "Portal", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="billing_entries", db_index=True,
+    )
+
+    timesheet_bitrix_id = models.IntegerField()
+    is_active = models.BooleanField(default=True)
+
+    employee_id = models.CharField(max_length=50, blank=True, default="")
+    employee_name = models.CharField(max_length=255, blank=True, default="")
+    date_reflection = models.DateTimeField(null=True, blank=True)
+    hours = models.FloatField(default=0.0)
+    rate_snapshot = models.FloatField(default=0.0)
+    amount = models.FloatField(default=0.0)
+    project_id = models.CharField(max_length=50, blank=True, default="")
+    project_name = models.CharField(max_length=255, blank=True, default="")
+    task_id = models.CharField(max_length=50, blank=True, default="")
+    task_title = models.CharField(max_length=500, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+
+    class Meta:
+        managed = True
+        db_table = "billing_entry"
+        indexes = [
+            models.Index(fields=["bitrix24_account", "timesheet_bitrix_id"], name="billing_entry_acc_ts_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["bitrix24_account", "timesheet_bitrix_id"],
+                condition=models.Q(is_active=True),
+                name="billing_entry_one_active_per_timesheet",
+            ),
+            # Второй, portal-уровневый констрейнт. Под USE_PORTAL_SCOPING=False
+            # (текущее прод-значение) portal у новых записей не проставляется
+            # (см. scope_to_tenant), поэтому constraint из-за condition с
+            # portal__isnull=False на этих записях не срабатывает — они
+            # по-прежнему защищены только account-констрейнтом выше. Когда
+            # флаг включат и portal начнёт заполняться, этот индекс не даст
+            # двум РАЗНЫМ учёткам (двум бухгалтерам) одного портала активно
+            # выставить один и тот же timesheet_bitrix_id — сценарий, который
+            # верхний констрейнт (он per-account) не ловит.
+            models.UniqueConstraint(
+                fields=["portal", "timesheet_bitrix_id"],
+                condition=models.Q(is_active=True, portal__isnull=False),
+                name="billing_entry_one_active_per_timesheet_per_portal",
+            ),
+        ]
+
+
+class PortalBillingCode(models.Model):
+    """Код портала для платежа: 6 цифр, выдаётся один раз и не меняется.
+
+    Второй ключ сопоставления платежа с порталом после номера счёта
+    (записка к макету покупки Pro): бухгалтер клиента может переписать
+    назначение платежа или заплатить по старому счёту, а код в платёжке
+    всё равно укажет на портал. Висит на Portal (ключ member_id), поэтому
+    смена домена его не трогает. Только цифры: в выписке их не перепутать
+    с похожими кириллицей и латиницей.
+
+    Отдельная модель, а не поле Portal: код нужен только покупке, и выдаётся
+    лениво — при первом открытии формы (pro_purchase_service.portal_code).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    portal = models.OneToOneField(Portal, on_delete=models.CASCADE, related_name="billing_code")
+    code = models.CharField(max_length=6, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = True
+        db_table = "portal_billing_code"
+
+    def __str__(self) -> str:
+        return f"PortalBillingCode<{self.code}>"
+
+
+class ProInvoiceSequence(models.Model):
+    """Сквозной нумератор счетов на Pro: УТ-0001, УТ-0002…
+
+    Номер выдаёт наш сервер, а не CRM: это первый ключ сопоставления
+    платежа, и он должен быть известен в момент заявки, даже если портал
+    Mainsoft недоступен. Одна строка на префикс; значение увеличивается
+    UPDATE … SET value = value + 1 внутри транзакции заявки — строка
+    блокируется, и два одновременных запроса одного номера не получат.
+    """
+
+    prefix = models.CharField(max_length=16, primary_key=True)
+    value = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        managed = True
+        db_table = "pro_invoice_sequence"
+
+
+class ProRequest(models.Model):
+    """Заявка на Pro: счёт на оплату подписки от портала клиента.
+
+    Портал берётся ТОЛЬКО из авторизации (JWT -> учётка -> member_id), в
+    теле запроса его нет: запросить счёт на чужой портал нельзя. Домен и
+    member_id хранятся снимком — по ним менеджер сверяет платёж, даже если
+    портал потом сменит домен.
+
+    Суммы — Decimal с копейками: это деньги в счёте, а не аналитика.
+
+    Статусы:
+    - draft     — сохранена, отправка в CRM Mainsoft ещё не пробовалась;
+    - pending   — ожидает отправки: вебхук не настроен или портал Mainsoft
+                  не ответил; повтор — `pro_requests sync`;
+    - sent      — сделка и смарт-счёт созданы в CRM Mainsoft;
+    - paid      — оплата подтверждена менеджером, Pro включён (`pro_requests paid`);
+    - cancelled — отменена клиентом, менеджером или заменена новой заявкой.
+
+    Открытая заявка (draft/pending/sent) у портала одна — частичный
+    уникальный индекс. Pro до оплаты не включается.
+    """
+
+    STATUS_DRAFT = "draft"
+    STATUS_PENDING = "pending"
+    STATUS_SENT = "sent"
+    STATUS_PAID = "paid"
+    STATUS_CANCELLED = "cancelled"
+    STATUSES = (STATUS_DRAFT, STATUS_PENDING, STATUS_SENT, STATUS_PAID, STATUS_CANCELLED)
+    OPEN_STATUSES = (STATUS_DRAFT, STATUS_PENDING, STATUS_SENT)
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    portal = models.ForeignKey(Portal, on_delete=models.PROTECT, related_name="pro_requests")
+    requested_by_account = models.ForeignKey(
+        Bitrix24Account, null=True, blank=True, on_delete=models.SET_NULL, related_name="pro_requests",
+    )
+    requested_by_id = models.CharField(max_length=50, blank=True, default="")
+    requested_by_name = models.CharField(max_length=255, blank=True, default="")
+    requested_by_admin = models.BooleanField(default=False)
+
+    domain_snapshot = models.CharField(max_length=255, blank=True, default="")
+    member_id_snapshot = models.CharField(max_length=255, blank=True, default="")
+    portal_code = models.CharField(max_length=6)
+
+    contact_name = models.CharField(max_length=255, blank=True, default="")
+    contact_email = models.CharField(max_length=254, blank=True, default="")
+    contact_cc = models.CharField(max_length=254, blank=True, default="")
+    contact_phone = models.CharField(max_length=32, blank=True, default="")
+
+    payer_type = models.CharField(max_length=8, default="org")
+    payer_inn = models.CharField(max_length=12)
+    payer_kpp = models.CharField(max_length=9, blank=True, default="")
+    payer_name = models.CharField(max_length=500)
+    payer_address = models.CharField(max_length=500, blank=True, default="")
+    #: id компании в CRM портала клиента, если реквизиты подставлены оттуда.
+    payer_company_id = models.CharField(max_length=50, blank=True, default="")
+
+    months = models.PositiveSmallIntegerField()
+    price_month = models.DecimalField(max_digits=12, decimal_places=2)
+    base_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    subtotal_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    vat_mode = models.CharField(max_length=16)
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    vat_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    sequence_number = models.PositiveIntegerField()
+    invoice_number = models.CharField(max_length=32, unique=True)
+    invoice_date = models.DateField()
+    due_date = models.DateField()
+    payment_purpose = models.CharField(max_length=210)
+    offer_accepted_at = models.DateTimeField()
+
+    status = models.CharField(max_length=16, default=STATUS_DRAFT, db_index=True)
+
+    crm_company_id = models.CharField(max_length=50, blank=True, default="")
+    crm_deal_id = models.CharField(max_length=50, blank=True, default="")
+    crm_invoice_id = models.CharField(max_length=50, blank=True, default="")
+    crm_document_id = models.CharField(max_length=50, blank=True, default="")
+    #: Ссылка генератора документов. Может содержать токен — наружу не отдаётся,
+    #: PDF клиент получает через наш сервер.
+    crm_pdf_url = models.TextField(blank=True, default="")
+    crm_error = models.TextField(blank=True, default="")
+    crm_attempts = models.PositiveIntegerField(default=0)
+    crm_last_attempt_at = models.DateTimeField(null=True, blank=True)
+    crm_sent_at = models.DateTimeField(null=True, blank=True)
+    #: Отмена дошла до CRM (сделка переведена в «Не оплачен»).
+    crm_cancel_synced_at = models.DateTimeField(null=True, blank=True)
+
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_on = models.DateField(null=True, blank=True)
+    paid_by = models.CharField(max_length=255, blank=True, default="")
+    pro_paid_until = models.DateField(null=True, blank=True)
+
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.CharField(max_length=255, blank=True, default="")
+    cancel_reason = models.TextField(blank=True, default="")
+    replaced_by = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="replaces",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "pro_request"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["portal", "status"], name="pro_request_portal_status_idx"),
+            models.Index(fields=["portal_code"], name="pro_request_code_idx"),
+            models.Index(fields=["payer_inn"], name="pro_request_inn_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["portal"],
+                condition=models.Q(status__in=["draft", "pending", "sent"]),
+                name="pro_request_one_open_per_portal",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"ProRequest<{self.invoice_number}>"
+
+    @property
+    def is_open(self) -> bool:
+        return self.status in self.OPEN_STATUSES

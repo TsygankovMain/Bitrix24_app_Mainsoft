@@ -39,6 +39,14 @@ class FinanceOperationService:
     SOURCE_DEAL_EMBED = "deal_embed"
     SOURCE_MANUAL = "manual"
 
+    #: Предел одного полного прохода по смарт-процессу.
+    #:
+    #: Тот же, что у ``get_sums_by_project_item_id``: дальше растёт не польза,
+    #: а время ответа. Когда предел достигнут, ответ помечается
+    #: ``truncated`` — реестр обязан сказать, что показывает не всё, а не
+    #: молча выдать неполные итоги за полные.
+    MAX_SCAN_ITEMS = 2000
+
     def __init__(self, client: Client, account: Bitrix24Account):
         self.client = client
         self.account = account
@@ -63,13 +71,36 @@ class FinanceOperationService:
         project_item_id: Optional[str] = None,
         deal_id: Optional[str] = None,
         limit: int = 20,
+        offset: int = 0,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        operation_type: Optional[str] = None,
+        with_totals: bool = False,
     ) -> Dict[str, Any]:
+        """Страница операций смарт-процесса.
+
+        Что здесь фильтрует ПОРТАЛ, а что мы, и почему именно так:
+
+        - проект, сделка и период — фильтром ``crm.item.list``. Это поля с
+          известным кодом и предсказуемым значением, сервер отбирает их
+          дешевле и точнее нас;
+        - тип операции — в Python, уже после нормализации. В портале он
+          хранится по-разному (строка ``expense``, русское «Расход», стадия
+          смарт-процесса), ``_normalize_operation_type`` это сводит, а
+          серверный фильтр по одному написанию молча потерял бы остальные.
+
+        Итоги (``with_totals``) считаются по ВСЕЙ отобранной выборке, а не по
+        видимой странице: итог по странице — это не итог, и в реестре денег
+        такая цифра хуже отсутствующей.
+        """
         self._ensure_configured()
-        limit = max(1, min(int(limit or 20), 100))
+        limit = max(1, min(self._to_int(limit, 20), 100))
+        offset = max(0, self._to_int(offset, 0))
 
         filter_payload: Dict[str, Any] = {}
         project_item_field = self._mapping.get("project_item_id")
         deal_id_field = self._mapping.get("deal_id")
+        operation_date_field = self._mapping.get("operation_date")
 
         normalized_project_item_id = self._clean_str(project_item_id)
         normalized_deal_id = self._clean_str(deal_id)
@@ -77,6 +108,23 @@ class FinanceOperationService:
             filter_payload[project_item_field] = self._to_bitrix_scalar(normalized_project_item_id)
         if normalized_deal_id and deal_id_field:
             filter_payload[deal_id_field] = self._to_bitrix_scalar(normalized_deal_id)
+
+        normalized_date_from = self._normalize_filter_date(date_from)
+        normalized_date_to = self._normalize_filter_date(date_to)
+        if operation_date_field and normalized_date_from:
+            filter_payload[f">={operation_date_field}"] = normalized_date_from
+        if operation_date_field and normalized_date_to:
+            filter_payload[f"<={operation_date_field}"] = normalized_date_to
+
+        wanted_type = self._normalize_operation_type(operation_type)
+
+        # Полный проход нужен там, где ответ зависит от НЕВИДИМЫХ строк:
+        # итоги по выборке, вторая и следующие страницы, отбор по типу
+        # (его мы делаем сами). В самом частом случае — первая страница
+        # операций одного проекта — тянем ровно страницу плюс одну строку,
+        # чтобы честно ответить на вопрос «есть ли ещё».
+        needs_full_scan = bool(wanted_type) or bool(with_totals) or offset > 0
+        max_items = self.MAX_SCAN_ITEMS if needs_full_scan else limit + 1
 
         select_fields = ["id", "title", "createdTime", "updatedTime", "*", "UF_*"]
         rows = self._fetch_paginated(
@@ -87,9 +135,11 @@ class FinanceOperationService:
                 "order": {"id": "DESC"},
                 "filter": filter_payload,
             },
-            max_items=limit,
+            max_items=max_items,
         )
         operations = [self._normalize_operation(row) for row in rows]
+        if wanted_type:
+            operations = [row for row in operations if row.get("operation_type") == wanted_type]
         operations.sort(
             key=lambda row: (
                 str(row.get("operation_date") or ""),
@@ -97,11 +147,41 @@ class FinanceOperationService:
             ),
             reverse=True,
         )
-        return {
-            "operations": operations[:limit],
-            "count": len(operations[:limit]),
+
+        page = operations[offset:offset + limit]
+        payload: Dict[str, Any] = {
+            "operations": page,
+            "count": len(page),
             "entity_type_id": self.entity_type_id,
+            "offset": offset,
+            "limit": limit,
+            # total — только когда он ПОСЧИТАН по всей выборке. На коротком
+            # пути (страница + 1) мы знаем лишь «есть ещё», и отдать здесь
+            # длину окна значило бы выдать 21 операцию за все операции.
+            "total": len(operations) if needs_full_scan else None,
+            "has_more": (offset + limit) < len(operations),
+            "truncated": needs_full_scan and len(rows) >= self.MAX_SCAN_ITEMS,
         }
+
+        if with_totals:
+            income = 0.0
+            expense = 0.0
+            for row in operations:
+                amount = self._to_float(row.get("amount"))
+                if amount <= 0:
+                    continue
+                if str(row.get("operation_type") or "").strip().lower().startswith("exp"):
+                    expense += amount
+                else:
+                    income += amount
+            payload["totals"] = {
+                "income": round(income, 2),
+                "expense": round(expense, 2),
+                "net": round(income - expense, 2),
+                "count": len(operations),
+            }
+
+        return payload
 
     def create_operation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self._ensure_configured()
@@ -221,6 +301,10 @@ class FinanceOperationService:
     def _build_create_fields(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         fields: Dict[str, Any] = {}
         assign = self._assign_mapped
+        # title — штатное поле элемента СП, не из сопоставления: его код не
+        # настраивается, поэтому пишется напрямую и только когда задан.
+        if payload.get("title"):
+            fields["title"] = payload["title"]
         assign(fields, "project_item_id", self._to_bitrix_scalar(payload["project_item_id"]))
         assign(fields, "operation_type", payload["operation_type"])
         assign(fields, "amount", payload["amount"])
@@ -244,6 +328,19 @@ class FinanceOperationService:
         deal_id = self._clean_str(payload.get("deal_id"))
         comment = self._clean_str(payload.get("comment"))
         responsible_user_id = self._clean_str(payload.get("responsible_user_id"))
+        # Назначение платежа. Это ЗАГОЛОВОК элемента смарт-процесса (title),
+        # а не отдельное пользовательское поле: своего поля под назначение в
+        # СП нет, а заголовок — то, чем операция подписана в списке CRM. Без
+        # него портал подставляет автозаголовок вида «Без названия», и в
+        # карточке CRM непонятно, за что платили.
+        #
+        # В ключ идемпотентности назначение НЕ входит намеренно: элементы,
+        # заведённые руками в CRM или прежней вкладкой сделки, имеют чужие
+        # заголовки, и учёт заголовка в ключе перестал бы узнавать в них
+        # дубль — то есть развёл бы деньги вдвое. Цена решения обратная и
+        # безопасная: две операции, различающиеся ТОЛЬКО назначением,
+        # считаются повтором, и интерфейс объясняет это человеку.
+        title = self._clean_str(payload.get("title"))
 
         if not project_item_id:
             raise ValueError("project_item_id is required")
@@ -264,6 +361,7 @@ class FinanceOperationService:
             "deal_id": deal_id,
             "comment": comment,
             "responsible_user_id": responsible_user_id,
+            "title": title,
             "idempotency_key": self._build_idempotency_key(
                 project_item_id=project_item_id,
                 deal_id=deal_id,
@@ -393,6 +491,37 @@ class FinanceOperationService:
             return None
         value_str = str(value).strip()
         return value_str or None
+
+    @staticmethod
+    def _normalize_filter_date(value: Any) -> Optional[str]:
+        """Граница периода — ТОЛЬКО настоящая дата ISO (ГГГГ-ММ-ДД).
+
+        Отдельно от ``_normalize_date``, который просто обрезает строку до
+        десяти знаков: для записи операции этого хватает, а для фильтра нет.
+        «01.08.2026» так превратилось бы в границу «01.08.2026», портал сравнил
+        бы её со своими датами как строку и молча вернул не ту выборку. В
+        реестре денег неверный отбор хуже пустого: пустой видно.
+        """
+        if value in (None, ""):
+            return None
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+
+        raw = str(value).strip()[:10]
+        try:
+            return date.fromisoformat(raw).isoformat()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _to_int(value: Any, default: int = 0) -> int:
+        """Целое из запроса. Мусор — это значение по умолчанию, а не 500."""
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _to_float(value: Any, default: float = 0.0) -> float:

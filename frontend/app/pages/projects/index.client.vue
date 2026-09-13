@@ -1,23 +1,41 @@
 <script setup lang="ts">
 import type { B24Frame } from '@bitrix24/b24jssdk'
-import { computed, onMounted, ref } from 'vue'
-import SearchableSelect from '~/components/common/SearchableSelect.vue'
+import { useB24Helper } from '@bitrix24/b24jssdk'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useProgress } from '~/composables/useProgress'
 import CreateProjectDrawer from '~/components/projects/CreateProjectDrawer.vue'
 import ProjectBoardColumn from '~/components/projects/ProjectBoardColumn.vue'
 import ProjectBoardDrawer from '~/components/projects/ProjectBoardDrawer.vue'
+import ProjectBoardToolbar from '~/components/projects/ProjectBoardToolbar.vue'
 import ProjectTimelineLane from '~/components/projects/ProjectTimelineLane.vue'
 import type { ProjectBoardCardRecord, ProjectBoardDirectoryOption, ProjectBoardResponse } from '~/utils/projectBoard'
 import { upsertProjectBoardCard, buildProjectBoardSummary, formatProjectDate, getTimelineAnchor, parseProjectDateValue } from '~/utils/projectBoard'
+import type { ProjectBoardFilterState, ProjectBoardView } from '~/utils/projectBoardView'
+import {
+  DEFAULT_PROJECT_BOARD_FILTERS,
+  buildBoardColumns,
+  buildBoardEmptyState,
+  buildBoardViewStorageKey,
+  countActiveBoardFilters,
+  filterBoardCards,
+  isBoardCardAtRisk,
+  isBoardCardMine,
+  parseBoardViewState,
+  serializeBoardViewState,
+  sortBoardCards,
+} from '~/utils/projectBoardView'
 import { openProjectGroup } from '~/utils/openProjectGroup'
 import { openCrmItemCard } from '~/utils/openCrmItem'
+import { buildReportRouteLocation } from '~/utils/reportNavigation'
 import { isRateLimitError, RATE_LIMIT_NOTICE_TEXT } from '~/utils/apiErrors'
 import { CREATE_PROJECT_BUTTON_ENABLED } from '~/utils/featureFlags'
 
-const router = useRouter()
 const route = useRoute()
+const router = useRouter()
 const { locales: localesI18n, setLocale } = useI18n()
 const fieldConfigStore = useFieldConfigStore()
+const userStore = useUserStore()
+const { getB24Helper } = useB24Helper()
 
 useHead({
   title: 'Управление проектами',
@@ -49,18 +67,89 @@ const curatorFilters = ref<ProjectBoardDirectoryOption[]>([])
 const companyFilters = ref<ProjectBoardDirectoryOption[]>([])
 const legalEntityFilters = ref<ProjectBoardDirectoryOption[]>([])
 
-const activeView = ref<'board' | 'timeline' | 'archive'>('board')
-const searchQuery = ref(typeof route.query.search === 'string' ? route.query.search : '')
-const supportFilter = ref<'all' | 'support' | 'delivery'>('all')
-const curatorFilter = ref('')
-const companyFilter = ref('')
-const legalEntityFilter = ref('')
+const activeView = ref<ProjectBoardView>('board')
+const filters = ref<ProjectBoardFilterState>({
+  ...DEFAULT_PROJECT_BOARD_FILTERS,
+  search: typeof route.query.search === 'string' ? route.query.search : '',
+})
 
 const selectedCard = ref<ProjectBoardCardRecord | null>(null)
 const isDrawerOpen = ref(false)
 const createProjectOpen = ref(false)
 const draggedProjectId = ref<string | null>(null)
-const statusMessage = ref<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null)
+const statusMessage = ref<{ type: 'success' | 'warning' | 'error', text: string } | null>(null)
+
+/**
+ * Выбранные фильтры и вид переживают уход со страницы.
+ *
+ * Руководитель отбирает своё («Мои», «Под риском», куратор) один раз, уходит
+ * в отчёт по проекту и возвращается на доску — и до этой правки возвращался
+ * к полному списку всех проектов портала, каждый раз собирая отбор заново.
+ * Хранилище — localStorage браузера, ключ включает портал и пользователя;
+ * почему так, а не на сервере, расписано в utils/projectBoardView.ts.
+ *
+ * Флаг нужен, чтобы наблюдатель ниже не записал состояние по умолчанию
+ * ПОВЕРХ сохранённого до того, как оно прочитано.
+ */
+const isViewStateReady = ref(false)
+
+function viewStateStorageKey() {
+  let portal = ''
+
+  try {
+    portal = getB24Helper()?.hostName || ''
+  } catch {
+    // Помощник Битрикса ещё не поднялся — это штатное состояние первых кадров.
+    portal = ''
+  }
+
+  return buildBoardViewStorageKey({ portal, userId: userStore.id })
+}
+
+function restoreViewState() {
+  if (typeof window === 'undefined') {
+    isViewStateReady.value = true
+    return
+  }
+
+  try {
+    const stored = parseBoardViewState(window.localStorage.getItem(viewStateStorageKey()))
+    activeView.value = stored.view
+    filters.value = {
+      ...stored.filters,
+      // Адрес сильнее хранилища: если на доску пришли со строкой поиска в
+      // query (например, из другого экрана), показать надо именно её.
+      search: typeof route.query.search === 'string' && route.query.search
+        ? route.query.search
+        : stored.filters.search,
+    }
+  } catch {
+    // Приватный режим или запрещённое хранилище: живём с фильтрами по умолчанию.
+  } finally {
+    isViewStateReady.value = true
+  }
+}
+
+function persistViewState() {
+  if (typeof window === 'undefined' || !isViewStateReady.value) {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      viewStateStorageKey(),
+      serializeBoardViewState({ view: activeView.value, filters: filters.value })
+    )
+  } catch {
+    // Квота или приватный режим: отбор проживёт до перезагрузки страницы.
+  }
+}
+
+watch([filters, activeView], persistViewState, { deep: true })
+
+function resetFilters() {
+  filters.value = { ...DEFAULT_PROJECT_BOARD_FILTERS }
+}
 
 const messageClass = computed(() => {
   if (!statusMessage.value) {
@@ -202,65 +291,46 @@ const legalEntityFilterOptions = computed(() =>
   )
 )
 
-const filteredCards = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase()
-
-  return allCards.value.filter((card) => {
-    if (supportFilter.value === 'support' && !card.is_support) {
-      return false
-    }
-
-    if (supportFilter.value === 'delivery' && card.is_support) {
-      return false
-    }
-
-    if (curatorFilter.value && String(card.curator_user_id || '') !== curatorFilter.value) {
-      return false
-    }
-
-    if (companyFilter.value && String(card.company_id || '') !== companyFilter.value) {
-      return false
-    }
-
-    if (legalEntityFilter.value && String(card.our_legal_entity_id || '') !== legalEntityFilter.value) {
-      return false
-    }
-
-    if (!query) {
-      return true
-    }
-
-    return [
-      card.project_name,
-      card.project_id,
-      card.curator_name,
-      card.company_name,
-      card.our_legal_entity_name,
-      card.stage
-    ].some(value => String(value || '').toLowerCase().includes(query))
-  })
-})
-
-const activeCards = computed(() =>
-  filteredCards.value
-    .filter(card => !card.is_archived)
-    .slice()
-    .sort((left, right) => left.project_name.localeCompare(right.project_name, 'ru'))
+const filteredCards = computed(() =>
+  filterBoardCards(allCards.value, filters.value, { currentUserId: userStore.id })
 )
 
-const archivedCards = computed(() =>
-  filteredCards.value
-    .filter(card => card.is_archived)
-    .slice()
-    .sort((left, right) => left.project_name.localeCompare(right.project_name, 'ru'))
+const activeCards = computed(() => filteredCards.value.filter(card => !card.is_archived))
+
+const archivedCards = computed(() => sortBoardCards(filteredCards.value.filter(card => card.is_archived), 'name'))
+
+/** Все неархивные карточки — база для счётчиков на чипах: они не должны обнуляться сами о себя. */
+const activeCardsUnfiltered = computed(() => allCards.value.filter(card => !card.is_archived))
+
+const mineCount = computed(() =>
+  activeCardsUnfiltered.value.filter(card => isBoardCardMine(card, userStore.id)).length
 )
 
-const stageColumns = computed(() =>
-  (boardData.value?.stages || []).map(stage => ({
-    ...stage,
-    cards: activeCards.value.filter(card => card.stage === stage.title || card.stage === stage.id)
-  }))
+const riskCount = computed(() => activeCardsUnfiltered.value.filter(isBoardCardAtRisk).length)
+
+const boardColumns = computed(() =>
+  buildBoardColumns(boardData.value?.stages || [], activeCards.value, filters.value.sort)
 )
+
+const scopeCount = computed(() =>
+  activeView.value === 'archive'
+    ? allCards.value.filter(card => card.is_archived).length
+    : activeCardsUnfiltered.value.length
+)
+
+const visibleCount = computed(() =>
+  activeView.value === 'archive' ? archivedCards.value.length : activeCards.value.length
+)
+
+const emptyState = computed(() => buildBoardEmptyState({
+  view: activeView.value,
+  totalCards: allCards.value.length,
+  visibleCount: visibleCount.value,
+  scopeCount: scopeCount.value,
+  activeFilters: countActiveBoardFilters(filters.value),
+}))
+
+const canOpenSpa = computed(() => Boolean(fieldConfigStore.entityTypeId))
 
 const timelineCards = computed(() =>
   activeCards.value
@@ -371,14 +441,14 @@ async function onProjectCreated() {
 async function loadMeta(forceRefresh = false) {
   const meta = await apiStore.getProjectBoardMeta(forceRefresh)
   const directories = meta.directories || {}
-  const filters = meta.filters || {}
+  const filterDirectories = meta.filters || {}
 
   employeeDirectory.value = directories.employees || meta.employees || []
   companyDirectory.value = directories.companies || meta.companies || []
   legalEntityDirectory.value = directories.legal_entities || meta.legal_entities || []
-  curatorFilters.value = filters.curators || directories.employees || meta.employees || []
-  companyFilters.value = filters.companies || directories.companies || meta.companies || []
-  legalEntityFilters.value = filters.legal_entities || directories.legal_entities || meta.legal_entities || []
+  curatorFilters.value = filterDirectories.curators || directories.employees || meta.employees || []
+  companyFilters.value = filterDirectories.companies || directories.companies || meta.companies || []
+  legalEntityFilters.value = filterDirectories.legal_entities || directories.legal_entities || meta.legal_entities || []
   return meta
 }
 
@@ -426,9 +496,9 @@ async function refreshReferenceOptions(showToast = true) {
     //     совместимости), и processErrorGlobal об этом параметре знать не
     //     может — показал бы тост безусловно, даже если бы такой вызов
     //     появился вновь.
-    //  2. Текст и место контекстные — тот же showStatus-баннер (~строка 327),
-    //     что и у success/warning этой же кнопки «Обновить справочники»,
-    //     а не общий плавающий тост в отрыве от места клика.
+    //  2. Текст и место контекстные — тот же showStatus-баннер, что и у
+    //     success/warning этой же кнопки «Обновить справочники», а не общий
+    //     плавающий тост в отрыве от места клика.
     //  3. Без этой ветки else-путь ниже показал бы вводящее в заблуждение
     //     showStatus('error', 'Не удалось обновить...') ПЕРЕД тем, как
     //     processErrorGlobal(error) покажет верный текст отдельным тостом —
@@ -460,11 +530,20 @@ async function syncBoard(showToast = true) {
     ])
 
     if (showToast) {
+      // Синк заканчивается автоматической проверкой статусов простоя
+      // (ProjectSyncService.sync вызывает ProjectStageAutomationService.
+      // run_daily_check и подмешивает её счётчики в свой ответ), поэтому её
+      // результат показываем здесь же. До этой правки счётчики приезжали в
+      // ответе, но никуда не выводились — и ровно поэтому в шапке жила
+      // отдельная кнопка «Проверить статусы», дублировавшая уже сделанное.
       const baseMessage = `Синхронизировано ${result.synced || 0} проектов. Новых: ${result.created || 0}, обновлено: ${result.updated || 0}.`
+      const stageMessage = `Статусы простоя: без списаний 30 дней — ${result.moved_to_30_days || 0}, 90 дней — ${result.moved_to_90_days || 0}, возвращено в работу — ${result.returned_to_work || 0}.`
+      const fullMessage = `${baseMessage} ${stageMessage}`
+
       if (result.warning) {
-        showStatus('warning', `${baseMessage} ${result.warning}`)
+        showStatus('warning', `${fullMessage} ${result.warning}`)
       } else {
-        showStatus('success', baseMessage)
+        showStatus('success', fullMessage)
       }
     }
   } catch (error) {
@@ -490,22 +569,6 @@ async function syncBoard(showToast = true) {
   } finally {
     isSyncing.value = false
     progress.end()
-  }
-}
-
-async function runDailyCheck() {
-  isSyncing.value = true
-  try {
-    const result = await apiStore.runProjectBoardDailyCheck()
-    await loadBoard(true)
-    showStatus(
-      'success',
-      `Проверено ${result.checked || 0} проектов. В 30 дней: ${result.moved_to_30_days || 0}, в 90 дней: ${result.moved_to_90_days || 0}, возвращено в работу: ${result.returned_to_work || 0}.`
-    )
-  } catch (error) {
-    processErrorGlobal(error)
-  } finally {
-    isSyncing.value = false
   }
 }
 
@@ -550,11 +613,30 @@ function openSpa(card?: ProjectBoardCardRecord | null) {
   }
 }
 
+/**
+ * «Отчёт» на карточке — тот же отчёт по проекту, что и в меню раздела, но уже
+ * отобранный по этому проекту и сразу построенный (autogenerate). Раньше путь
+ * от доски к цифрам проекта был: открыть дровер, запомнить название, уйти в
+ * отчёт, найти проект в списке фильтра, нажать «Построить».
+ */
+function openProjectReport(card: ProjectBoardCardRecord) {
+  router.push(buildReportRouteLocation({
+    report: 'project',
+    projectId: card.project_id,
+    projectName: card.project_name,
+    autogenerate: true,
+  }))
+}
+
 function handleDragStart(projectId: string) {
   draggedProjectId.value = projectId
 }
 
-async function handleDropCard(payload: { projectId: string; stage: string }) {
+function handleDragEnd() {
+  draggedProjectId.value = null
+}
+
+async function handleDropCard(payload: { projectId: string, stage: string }) {
   if (!payload.projectId || !payload.stage) {
     return
   }
@@ -630,6 +712,10 @@ onMounted(async () => {
     await $b24.parent.setTitle('Управление проектами')
     isInit.value = true
 
+    // Фильтры читаем после initApp: до него неизвестны ни портал, ни
+    // пользователь, а они оба входят в ключ хранилища.
+    restoreViewState()
+
     // Раньше здесь при скудном справочнике (isMetaSparse) автоматически
     // запускался refreshReferenceOptions(false) — тихий форс-рефреш без ведома
     // человека. Убрано намеренно: на портале, где в CRM действительно мало
@@ -661,215 +747,219 @@ onMounted(async () => {
 <template>
   <div class="ms-page-shell">
     <div class="ms-page-frame">
-      <div class="mb-1">
-        <B24Button label="Назад" color="link" @click="router.push('/')" />
-      </div>
-
       <B24Card v-if="isInit" class="ms-surface">
-      <template #header>
-        <div class="flex w-full flex-col gap-5">
-          <div class="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-            <div>
-              <ProseH2 class="!text-slate-900">Управление проектами</ProseH2>
-              <p class="mt-1 text-xs text-slate-500">
-                Доска стадий, архив проектов, локальные поля и контроль нетиповых статусов по списаниям
-              </p>
+        <template #header>
+          <div class="flex w-full flex-col gap-3">
+            <div class="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
+              <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                <ProseH2 class="!text-slate-900">Проекты</ProseH2>
+                <!--
+                  Сводка раньше занимала пять карточек-плиток во всю ширину
+                  над доской. Это те же числа бэкенда (boardData.summary),
+                  собранные в одну строку: на доске важнее видеть саму доску.
+                -->
+                <div v-if="boardData" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                  <span><b class="text-sm font-semibold text-slate-900">{{ boardData.summary.active_count }}</b> активных</span>
+                  <span><b class="text-sm font-semibold text-slate-900">{{ boardData.summary.support_count }}</b> поддержка</span>
+                  <span
+                    :class="riskCount > 0 ? 'text-amber-700' : ''"
+                    title="Нет списаний 30+ дней или перерасход бюджета"
+                  ><b class="text-sm font-semibold" :class="riskCount > 0 ? 'text-amber-700' : 'text-slate-900'">{{ riskCount }}</b> под риском</span>
+                  <span><b class="text-sm font-semibold text-slate-900">{{ boardData.summary.archived_count }}</b> в архиве</span>
+                </div>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <B24Button v-if="CREATE_PROJECT_BUTTON_ENABLED" label="Создать проект" color="primary" @click="createProjectOpen = true" />
+
+                <!--
+                  Две кнопки обновления — одной группой в рамке.
+
+                  Раньше их было три: «Синхронизировать», «Обновить
+                  справочники» и «Проверить статусы». Третья ушла: она дёргала
+                  /api/project-board/run-daily-check, а ровно этот же
+                  run_daily_check синк вызывает сам в конце своей работы
+                  (ProjectSyncService.sync, backends/python/api/main/
+                  project_sync_service.py) и его счётчики приезжают в том же
+                  ответе — то есть кнопка предлагала нажать вручную то, что
+                  уже сделано. Её числа теперь видно в сообщении синка.
+
+                  Оставшиеся две действительно разные, и рамка с подписью
+                  «Только справочники» показывает, чем: вторая — узкий и
+                  дешёвый кусок первой (одна ручка /project-board/meta вместо
+                  полного обхода проектов, отдельное ведро лимитера
+                  board_meta_refresh, карточки и статусы не трогает). Нужна,
+                  когда в Битрикс24 только что появилась компания или
+                  сотрудник, а полный синк ради этого гонять незачем.
+                -->
+                <div class="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1">
+                  <B24Button
+                    label="Синхронизировать"
+                    color="success"
+                    :loading="isSyncing"
+                    title="Полное обновление доски: проекты из Битрикс24, пересчёт списаний, статусы простоя (30 и 90 дней) и справочники"
+                    @click="syncBoard()"
+                  />
+                  <B24Button
+                    label="Только справочники"
+                    color="default"
+                    :loading="isRefreshingMeta"
+                    title="Быстро перечитывает списки компаний, кураторов и юрлиц для фильтров и карточек. Проекты и статусы не затрагивает"
+                    @click="refreshReferenceOptions()"
+                  />
+                </div>
+              </div>
             </div>
 
-            <div class="flex flex-wrap gap-2">
-              <B24Button v-if="CREATE_PROJECT_BUTTON_ENABLED" label="Создать проект" color="primary" @click="createProjectOpen = true" />
-              <B24Button label="Синхронизировать проекты" color="success" :loading="isSyncing" @click="syncBoard()" />
-              <B24Button label="Обновить справочники" color="default" :loading="isRefreshingMeta" @click="refreshReferenceOptions()" />
-              <B24Button label="Проверить статусы" color="default" :loading="isSyncing" @click="runDailyCheck" />
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 gap-3 xl:grid-cols-5">
-            <div class="ms-stat-card">
-              <div class="text-xs text-slate-400">Активные</div>
-              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.active_count || 0 }}</div>
-            </div>
-            <div class="ms-stat-card">
-              <div class="text-xs text-slate-400">В архиве</div>
-              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.archived_count || 0 }}</div>
-            </div>
-            <div class="ms-stat-card">
-              <div class="text-xs text-slate-400">Поддержка</div>
-              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.support_count || 0 }}</div>
-            </div>
-            <div class="ms-stat-card">
-              <div class="text-xs text-slate-400">Нет списаний 1 месяц</div>
-              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.inactive_30_count || 0 }}</div>
-            </div>
-            <div class="ms-stat-card">
-              <div class="text-xs text-slate-400">Нет списаний 3 месяца</div>
-              <div class="mt-1 text-2xl font-semibold text-slate-900">{{ boardData?.summary.inactive_90_count || 0 }}</div>
-            </div>
-          </div>
-
-          <div class="ms-segmented flex flex-wrap gap-2">
-            <button
-              type="button"
-              :class="[
-                'ms-segmented-btn',
-                activeView === 'board' ? 'ms-segmented-btn-active-dark' : ''
-              ]"
-              @click="activeView = 'board'"
-            >
-              Канбан
-            </button>
-            <button
-              type="button"
-              :class="[
-                'ms-segmented-btn',
-                activeView === 'timeline' ? 'ms-segmented-btn-active-dark' : ''
-              ]"
-              @click="activeView = 'timeline'"
-            >
-              Хронология
-            </button>
-            <button
-              type="button"
-              :class="[
-                'ms-segmented-btn',
-                activeView === 'archive' ? 'ms-segmented-btn-active-dark' : ''
-              ]"
-              @click="activeView = 'archive'"
-            >
-              Архив
-            </button>
-          </div>
-
-          <div class="grid gap-3 xl:grid-cols-[1.2fr_repeat(4,minmax(0,1fr))]">
-            <label class="grid gap-1 text-sm">
-              <span class="font-medium text-slate-700">Поиск</span>
-              <input
-                v-model="searchQuery"
-                type="text"
-                placeholder="Название проекта, компания, юрлицо, куратор"
+            <div class="ms-segmented flex flex-wrap gap-2 self-start">
+              <button
+                type="button"
+                :class="['ms-segmented-btn', activeView === 'board' ? 'ms-segmented-btn-active-dark' : '']"
+                @click="activeView = 'board'"
               >
-            </label>
-
-            <label class="grid gap-1 text-sm">
-              <span class="font-medium text-slate-700">Тип проекта</span>
-              <select
-                v-model="supportFilter"
+                Канбан
+              </button>
+              <button
+                type="button"
+                :class="['ms-segmented-btn', activeView === 'timeline' ? 'ms-segmented-btn-active-dark' : '']"
+                @click="activeView = 'timeline'"
               >
-                <option value="all">Все</option>
-                <option value="support">Только поддержка</option>
-                <option value="delivery">Только проектная работа</option>
-              </select>
-            </label>
+                Хронология
+              </button>
+              <button
+                type="button"
+                :class="['ms-segmented-btn', activeView === 'archive' ? 'ms-segmented-btn-active-dark' : '']"
+                @click="activeView = 'archive'"
+              >
+                Архив
+              </button>
+            </div>
 
-            <SearchableSelect
-              v-model="curatorFilter"
-              label="Куратор"
-              empty-label="Все"
-              search-placeholder="Поиск куратора"
-              :options="curatorFilterOptions"
+            <ProjectBoardToolbar
+              v-model="filters"
+              :curator-options="curatorFilterOptions"
+              :company-options="companyFilterOptions"
+              :legal-entity-options="legalEntityFilterOptions"
+              :company-search-fn="searchCompanyOptions"
+              :shown-count="visibleCount"
+              :total-count="scopeCount"
+              :mine-count="mineCount"
+              :risk-count="riskCount"
+              :is-user-known="Boolean(userStore.id)"
+              @reset="resetFilters"
             />
 
-            <SearchableSelect
-              v-model="companyFilter"
-              label="Компания"
-              empty-label="Все"
-              search-placeholder="Поиск по названию или ИНН"
-              :options="companyFilterOptions"
-              :search-fn="searchCompanyOptions"
-            />
-
-            <SearchableSelect
-              v-model="legalEntityFilter"
-              label="Наше юрлицо"
-              empty-label="Все"
-              search-placeholder="Поиск по названию или ИНН"
-              :options="legalEntityFilterOptions"
-            />
+            <div
+              v-if="statusMessage"
+              :class="['rounded-2xl border px-4 py-3 text-sm', messageClass]"
+            >
+              {{ statusMessage.text }}
+            </div>
           </div>
+        </template>
 
-          <div
-            v-if="statusMessage"
-            :class="['rounded-2xl border px-4 py-3 text-sm', messageClass]"
-          >
-            {{ statusMessage.text }}
+        <!--
+          Загрузка — скелет доски, а не строка «Загружаем проекты...»: человек
+          сразу видит, что придёт доска и сколько примерно места она займёт.
+        -->
+        <div v-if="isLoading" class="flex gap-3 overflow-hidden" aria-busy="true">
+          <div v-for="skeleton in 4" :key="skeleton" class="w-[264px] shrink-0 rounded-2xl border border-slate-200 bg-slate-50 p-2">
+            <div class="mb-3 h-4 w-2/3 animate-pulse rounded bg-slate-200" />
+            <div v-for="row in 3" :key="row" class="mb-2 h-[88px] animate-pulse rounded-xl bg-white" />
           </div>
         </div>
-      </template>
 
-      <div v-if="isLoading" class="ms-empty-state">
-        Загружаем проекты...
-      </div>
+        <div
+          v-else-if="emptyState"
+          class="space-y-3 rounded-2xl border border-dashed border-slate-200 py-10 text-center"
+        >
+          <div class="text-sm font-medium text-slate-700">{{ emptyState.title }}</div>
+          <!-- Ширина явным значением, не max-w-md: см. предупреждение в app/assets/css/main.css. -->
+          <p class="mx-auto max-w-[28rem] text-xs text-slate-500">{{ emptyState.hint }}</p>
+          <B24Button
+            v-if="emptyState.showSync"
+            label="Синхронизировать сейчас"
+            color="success"
+            :loading="isSyncing"
+            @click="syncBoard()"
+          />
+          <B24Button
+            v-if="emptyState.showReset"
+            label="Сбросить фильтры"
+            color="default"
+            @click="resetFilters"
+          />
+        </div>
 
-      <div v-else-if="!boardData?.cards?.length" class="space-y-3 py-10 text-center">
-        <div class="text-slate-500">Проекты еще не синхронизированы.</div>
-        <B24Button label="Синхронизировать сейчас" color="success" :loading="isSyncing" @click="syncBoard()" />
-      </div>
-
-      <div v-else-if="activeView === 'board'" class="overflow-x-auto pb-2">
-        <div class="grid min-w-max grid-flow-col gap-4">
+        <!--
+          Доска прокручивается по горизонтали своим контейнером: у фрейма
+          приложения собственной прокрутки нет, его высота подгоняется под
+          контент (requestIframeAutoHeight в layouts/default.vue). Поэтому
+          длинные колонки сворачиваются внутри ProjectBoardColumn, а не
+          растягивают фрейм на тысячи пикселей.
+        -->
+        <div
+          v-else-if="activeView === 'board'"
+          class="-mx-1 flex gap-3 overflow-x-auto px-1 pb-2"
+          @dragend="handleDragEnd"
+        >
           <ProjectBoardColumn
-            v-for="stage in stageColumns"
-            :key="stage.id"
-            :title="stage.title"
-            :stage="String(stage.id)"
-            :cards="stage.cards"
-            :can-drop="stage.can_drop"
+            v-for="column in boardColumns"
+            :key="column.id"
+            :column="column"
+            :can-open-spa="canOpenSpa"
+            :is-dragging="Boolean(draggedProjectId)"
             @edit="openCard"
             @dragstart="handleDragStart"
             @drop-card="handleDropCard"
+            @open-spa="openSpa"
+            @open-report="openProjectReport"
+            @open-group="openProject"
           />
         </div>
-      </div>
 
-      <div v-else-if="activeView === 'timeline'" class="space-y-4">
-        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          Диапазон: {{ formatProjectDate(timelineRange.start) }} - {{ formatProjectDate(timelineRange.end) }}
+        <div v-else-if="activeView === 'timeline'" class="space-y-4">
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            Диапазон: {{ formatProjectDate(timelineRange.start) }} - {{ formatProjectDate(timelineRange.end) }}
+          </div>
+
+          <ProjectTimelineLane
+            v-for="card in timelineCards"
+            :key="card.project_id"
+            :card="card"
+            :range-start="timelineRange.start"
+            :range-end="timelineRange.end"
+            @open="openCard"
+          />
         </div>
 
-        <ProjectTimelineLane
-          v-for="card in timelineCards"
-          :key="card.project_id"
-          :card="card"
-          :range-start="timelineRange.start"
-          :range-end="timelineRange.end"
-          @open="openCard"
-        />
-      </div>
-
-      <div v-else class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <button
-          v-for="card in archivedCards"
-          :key="card.project_id"
-          type="button"
-          class="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
-          @click="openCard(card)"
-        >
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
-              <div class="truncate text-sm font-semibold text-slate-900">{{ card.project_name }}</div>
-              <div class="mt-1 text-xs text-slate-500">
-                {{ card.company_name || 'Без компании' }} · {{ card.curator_name || 'Без куратора' }}
+        <div v-else class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <button
+            v-for="card in archivedCards"
+            :key="card.project_id"
+            type="button"
+            class="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+            @click="openCard(card)"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="truncate text-sm font-semibold text-slate-900">{{ card.project_name }}</div>
+                <div class="mt-1 text-xs text-slate-500">
+                  {{ card.company_name || 'Без компании' }} · {{ card.curator_name || 'Без куратора' }}
+                </div>
+                <div class="mt-1 text-xs text-slate-400">
+                  {{ card.our_legal_entity_name || 'Юрлицо не выбрано' }}
+                </div>
               </div>
-              <div class="mt-1 text-xs text-slate-400">
-                {{ card.our_legal_entity_name || 'Юрлицо не выбрано' }}
-              </div>
+              <span class="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                Архив
+              </span>
             </div>
-            <span class="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-              Архив
-            </span>
-          </div>
-          <div class="mt-4 text-xs text-slate-500">
-            Перенесен в архив: {{ card.archived_at ? formatProjectDate(card.archived_at) : 'локально' }}
-          </div>
-        </button>
-
-        <div
-          v-if="archivedCards.length === 0"
-          class="col-span-full rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center text-slate-400"
-        >
-          Архивных проектов по текущим фильтрам нет.
+            <div class="mt-4 text-xs text-slate-500">
+              Перенесен в архив: {{ card.archived_at ? formatProjectDate(card.archived_at) : 'локально' }}
+            </div>
+          </button>
         </div>
-      </div>
       </B24Card>
 
       <ProjectBoardDrawer

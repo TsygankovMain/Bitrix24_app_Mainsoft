@@ -5,7 +5,7 @@
 ## Слои
 
 ### Frontend — Nuxt 3 / Vue 3 + Bitrix24 UI Kit (`frontend/app`)
-- **Страницы** `pages/` — отчёты (`reports/*.client.vue`), доска проектов (`projects/`), задача (`task.vue`), настройки, placement-виджеты (`handler/`).
+- **Страницы** `pages/` — отчёты (`reports/*.client.vue`), доска проектов (`projects/`), задача (`embedded.vue`), настройки, placement-виджеты (`handler/`).
 - **Доступ к API** — `stores/api.ts` (Pinia): все вызовы бэка с JWT (`Authorization: Bearer`).
 - **Состояние/фильтры** — `composables/` (`useReportFilters`, `useReportGenerator`, `useAppInit` и др.).
 - **Компоненты** — `components/reports/` (таблицы, KPI-карточки), `components/common/` (фильтры).

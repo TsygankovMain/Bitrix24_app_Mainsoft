@@ -2,10 +2,8 @@
 import type { B24Frame } from '@bitrix24/b24jssdk'
 import { computed, onMounted, ref } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
-import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
-import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
-import DataFreshnessIndicator from '../../components/common/DataFreshnessIndicator.vue'
-import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
+import ReportShell from '../../components/reports/ReportShell.vue'
+import ReportTotalsStrip from '../../components/reports/ReportTotalsStrip.vue'
 import { useReportFilters } from '~/composables/useReportFilters'
 import { useReportGenerator } from '~/composables/useReportGenerator'
 import { useProgress } from '~/composables/useProgress'
@@ -104,6 +102,37 @@ async function fetchReport() {
 
 // Кнопка «Обновить» синхронизирует read-model; отчёт перестраиваем только если он уже построен,
 // чтобы не запускать генерацию за пользователя.
+/**
+ * Итоги для строки шапки.
+ *
+ * Те же шесть чисел, что раньше лежали карточками `ms-kpi-grid` над отчётом:
+ * значения берутся из того же `reportData.summary` и ничем не пересчитаны.
+ */
+const totals = computed(() => {
+  const summary = reportData.value?.summary
+
+  if (!summary) {
+    return []
+  }
+
+  return [
+    { id: 'entries', label: 'Всего записей', value: summary.total_entries },
+    { id: 'same-day', label: 'День-в-день', value: formatPercent(summary.same_day_share), tone: 'success' as const },
+    { id: 'next-day', label: '+1 день', value: formatPercent(summary.next_day_share), tone: 'info' as const },
+    { id: 'two-plus', label: '2+ дней', value: formatPercent(summary.two_plus_share), tone: 'warning' as const },
+    { id: 'avg-lag', label: 'Средний лаг', value: formatLag(summary.avg_lag_days), tone: 'danger' as const },
+    { id: 'risk', label: 'Красная зона', value: summary.high_risk_employee_count, caption: 'сотрудников' },
+  ]
+})
+
+// Пресет меняет фильтр целиком. Перестраиваем отчёт только если он уже на экране:
+// запускать генерацию за человека, который ещё ничего не нажимал, — не наше дело.
+function handleFiltersApplied() {
+  if (hasGenerated.value) {
+    void fetchReport()
+  }
+}
+
 function handleDataRefreshed() {
   void loadFilterOptions(true)
   if (hasGenerated.value) {
@@ -165,133 +194,92 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="ms-page-shell">
-    <div class="ms-page-frame">
-      <div class="mb-4">
-        <B24Button label="Назад" color="link" @click="$router.push('/')" />
+  <ReportShell
+    v-if="isInit"
+    title="Дисциплина внесения времени"
+    description="Сравнение даты отражения и реального времени создания записи в Битрикс24"
+    :date-from="dateFrom"
+    :date-to="dateTo"
+    :employees="selectedEmployees"
+    :employee-mode="employeeFilterMode"
+    :projects="selectedProjects"
+    :project-mode="projectFilterMode"
+    :employee-options="filterOptions.employees"
+    :project-options="filterOptions.projects"
+    :is-loading="isLoading"
+    :has-generated="hasGenerated"
+    :is-empty="!reportData"
+    :warning="syncWarning"
+    :surface="false"
+    @update:date-from="dateFrom = $event"
+    @update:date-to="dateTo = $event"
+    @update:employees="selectedEmployees = $event"
+    @update:employee-mode="employeeFilterMode = $event"
+    @update:projects="selectedProjects = $event"
+    @update:project-mode="projectFilterMode = $event"
+    @refreshed="handleDataRefreshed"
+    @filters-applied="handleFiltersApplied"
+    @generate="fetchReport"
+    @export="handleExportExcel"
+  >
+    <template #totals>
+      <ReportTotalsStrip v-if="hasGenerated && reportData" :items="totals" />
+    </template>
+
+    <template v-if="reportData">
+      <div v-if="reportData.summary.fallback_entries > 0" class="ms-panel-warning">
+        Для {{ reportData.summary.fallback_entries }} записей использовано локальное время первой синхронизации, потому что `createdTime` ещё не заполнен. После полной синхронизации отчёт станет точнее.
       </div>
 
-      <B24Card v-if="isInit" class="ms-surface ms-report-surface">
-      <template #header>
-        <div class="flex flex-col gap-4 w-full">
-          <div class="flex flex-row justify-between items-center w-full gap-4">
-            <div>
-              <ProseH2 class="!text-slate-900">Дисциплина внесения времени</ProseH2>
-              <p class="mt-1 text-xs text-slate-500">Сравнение даты отражения и реального времени создания записи в Bitrix24</p>
+      <div class="ms-panel">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-base font-semibold text-slate-900">Распределение по задержке</h3>
+          <span class="text-xs text-slate-500">по дням задержки</span>
+        </div>
+
+        <div class="space-y-4">
+          <div v-for="bucket in reportData.lag_buckets" :key="bucket.label" class="flex items-center gap-4">
+            <div class="w-12 text-sm font-medium text-slate-700">{{ bucket.label }}</div>
+            <div class="flex-1 h-4 overflow-hidden rounded-full bg-slate-100">
+              <div class="h-full rounded-full bg-blue-500" :style="{ width: bucketWidth(bucket.count) }" />
             </div>
-            <div class="flex flex-wrap items-center justify-end gap-3">
-              <DataFreshnessIndicator @refreshed="handleDataRefreshed" />
-              <div class="flex gap-2">
-                <B24Button label="Скачать Excel" color="success" @click="handleExportExcel" />
-                <B24Button label="Сформировать" loading-auto @click="fetchReport" />
-              </div>
-            </div>
-          </div>
-
-          <div class="ms-filter-wrap flex flex-wrap gap-4 items-end">
-            <DateRangeFilter
-              v-model:date-from="dateFrom"
-              v-model:date-to="dateTo"
-            />
-
-            <MultiSelectFilter
-              v-model="selectedEmployees"
-              v-model:mode="employeeFilterMode"
-              label="Сотрудники"
-              :options="filterOptions.employees"
-            />
-
-            <MultiSelectFilter
-              v-model="selectedProjects"
-              v-model:mode="projectFilterMode"
-              label="Проекты"
-              :options="filterOptions.projects"
-            />
+            <div class="w-12 text-right text-sm text-slate-500">{{ bucket.count }}</div>
           </div>
         </div>
-      </template>
-
-      <div v-if="syncWarning" class="ms-panel-warning">
-        {{ syncWarning }}
       </div>
 
-      <div v-if="isLoading" class="flex justify-center py-8">
-        <span class="text-slate-500">Загрузка...</span>
+      <div class="ms-table-shell">
+        <table class="ms-table">
+          <thead>
+            <tr>
+              <th>Сотрудник</th>
+              <th class="text-right">Записей</th>
+              <th class="text-right">День-в-день</th>
+              <th class="text-right">Ср. лаг</th>
+              <th class="text-right">Late 2+</th>
+              <th class="text-right">Макс.</th>
+              <th>Последняя поздняя запись</th>
+              <th class="text-right">Риск</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in reportData.employee_rows" :key="row.employee_id">
+              <td class="text-slate-900">{{ row.employee_name }}</td>
+              <td class="text-right font-medium text-slate-900">{{ row.entry_count }}</td>
+              <td class="text-right text-emerald-700">{{ formatPercent(row.same_day_share) }}</td>
+              <td class="text-right">{{ formatLag(row.avg_lag_days) }}</td>
+              <td class="text-right text-amber-700">{{ row.late_entries }}</td>
+              <td class="text-right">{{ row.max_lag_days }}д</td>
+              <td>{{ row.last_late_entry_date || '—' }}</td>
+              <td class="text-right">
+                <span :class="['inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold', riskBadgeClass(row.risk_level)]">
+                  {{ row.risk_level }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-
-      <div v-else-if="!hasGenerated" class="ms-empty-state">
-        Выберите фильтры и нажмите «Сформировать»
-      </div>
-
-      <div v-else-if="reportData" class="space-y-6">
-        <div v-if="reportData.summary.fallback_entries > 0" class="ms-panel-warning">
-          Для {{ reportData.summary.fallback_entries }} записей использовано локальное время первой синхронизации, потому что `createdTime` еще не заполнен. После полной синхронизации отчет станет точнее.
-        </div>
-
-        <div class="ms-kpi-grid">
-          <ReportMetricCard label="Всего записей" :value="reportData.summary.total_entries" />
-          <ReportMetricCard label="День-в-день" :value="formatPercent(reportData.summary.same_day_share)" tone="success" />
-          <ReportMetricCard label="+1 день" :value="formatPercent(reportData.summary.next_day_share)" tone="info" />
-          <ReportMetricCard label="2+ дней" :value="formatPercent(reportData.summary.two_plus_share)" tone="warning" />
-          <ReportMetricCard label="Средний лаг" :value="formatLag(reportData.summary.avg_lag_days)" tone="danger" />
-          <ReportMetricCard label="Красная зона" :value="reportData.summary.high_risk_employee_count" caption="сотрудников" />
-        </div>
-
-        <div class="ms-panel">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="text-base font-semibold text-slate-900">Распределение по задержке</h3>
-            <span class="text-xs text-slate-500">по дням задержки</span>
-          </div>
-
-          <div class="space-y-4">
-            <div v-for="bucket in reportData.lag_buckets" :key="bucket.label" class="flex items-center gap-4">
-              <div class="w-12 text-sm font-medium text-slate-700">{{ bucket.label }}</div>
-              <div class="flex-1 h-4 overflow-hidden rounded-full bg-slate-100">
-                <div class="h-full rounded-full bg-blue-500" :style="{ width: bucketWidth(bucket.count) }" />
-              </div>
-              <div class="w-12 text-right text-sm text-slate-500">{{ bucket.count }}</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="ms-table-shell">
-          <table class="ms-table">
-            <thead>
-              <tr>
-                <th>Сотрудник</th>
-                <th class="text-right">Записей</th>
-                <th class="text-right">День-в-день</th>
-                <th class="text-right">Ср. лаг</th>
-                <th class="text-right">Late 2+</th>
-                <th class="text-right">Макс.</th>
-                <th>Последняя поздняя запись</th>
-                <th class="text-right">Риск</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in reportData.employee_rows" :key="row.employee_id">
-                <td class="text-slate-900">{{ row.employee_name }}</td>
-                <td class="text-right font-medium text-slate-900">{{ row.entry_count }}</td>
-                <td class="text-right text-emerald-700">{{ formatPercent(row.same_day_share) }}</td>
-                <td class="text-right">{{ formatLag(row.avg_lag_days) }}</td>
-                <td class="text-right text-amber-700">{{ row.late_entries }}</td>
-                <td class="text-right">{{ row.max_lag_days }}д</td>
-                <td>{{ row.last_late_entry_date || '—' }}</td>
-                <td class="text-right">
-                  <span :class="['inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold', riskBadgeClass(row.risk_level)]">
-                    {{ row.risk_level }}
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div v-else class="ms-empty-state">
-        Нет данных
-      </div>
-      </B24Card>
-    </div>
-  </div>
+    </template>
+  </ReportShell>
 </template>

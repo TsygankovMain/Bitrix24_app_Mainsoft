@@ -1,4 +1,13 @@
 export interface AppConfigurationPayload {
+  /**
+   * Ревизия конфигурации для оптимистической блокировки при сохранении
+   * (Баг 6, см. ConfigurationConflict в
+   * backends/python/api/main/configuration_service.py). Отправляется назад
+   * сохранением как `baseRevision` — не сама эта правка, а список
+   * несохранённых значений, а служебная метка «с какой версией открыт
+   * экран».
+   */
+  config_revision?: number | string | null
   sp_entity_type_id?: number | string | null
   project_sp_entity_type_id?: number | string | null
   finance_sp_entity_type_id?: number | string | null
@@ -14,6 +23,19 @@ export interface AppConfigurationPayload {
   task_fields?: Record<string, string>
   spa_fields?: Record<string, string>
   clickableLabelsEnabled?: boolean
+  billing_allow_open_period?: boolean | string | number | null
+  billing_accountants?: unknown
+  /** Наше юрлицо для выставления счетов; пусто — из карточки проекта. */
+  billing_our_company_id?: string | number | null
+  billing_our_company_name?: string | null
+  /**
+   * Шаблоны генератора документов портала: акт и печатная форма счёта.
+   * 0 или пусто — шаблон не выбран. Хранятся числами: сервер приводит их к
+   * int при нормализации конфигурации, и строка из <select> стала бы второй
+   * формой того же значения.
+   */
+  billing_act_template_id?: number | string | null
+  billing_invoice_template_id?: number | string | null
   [key: string]: unknown
 }
 

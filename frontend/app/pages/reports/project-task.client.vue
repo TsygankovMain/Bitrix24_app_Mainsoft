@@ -3,10 +3,8 @@ import type { B24Frame } from '@bitrix24/b24jssdk'
 import { onMounted, ref, computed, watch, provide } from 'vue'
 import { useDashboard } from '@bitrix24/b24ui-nuxt/utils/dashboard'
 import ProjectTaskReportTable from '../../components/reports/ProjectTaskReportTable.vue'
-import ReportMetricCard from '../../components/reports/ReportMetricCard.vue'
-import MultiSelectFilter from '../../components/common/MultiSelectFilter.vue'
-import DateRangeFilter from '../../components/common/DateRangeFilter.vue'
-import DataFreshnessIndicator from '../../components/common/DataFreshnessIndicator.vue'
+import ReportShell from '../../components/reports/ReportShell.vue'
+import ReportTotalsStrip from '../../components/reports/ReportTotalsStrip.vue'
 import { readProjectReportPreset } from '~/utils/reportNavigation'
 import { openCrmItemCard } from '~/utils/openCrmItem'
 import { PROJECT_TASK_LABEL_KEY } from '~/composables/useProjectTaskLabel'
@@ -100,6 +98,27 @@ const kpiMetrics = computed(() => {
         billabilityPercent: formatPercent(billableHours, totalHours)
     }
 })
+
+/**
+ * Итоги для строки шапки.
+ *
+ * Цифры те же, что раньше лежали в карточках `ms-kpi-grid`, — считает их
+ * kpiMetrics, здесь только раскладка по строке.
+ */
+const totals = computed(() => [
+    { id: 'total', label: 'Всего', value: kpiMetrics.value.totalHours },
+    { id: 'billable', label: 'Учтено', value: kpiMetrics.value.billableHours, tone: 'success' as const },
+    { id: 'non-billable', label: 'Не учтено', value: kpiMetrics.value.nonBillableHours, tone: 'danger' as const },
+    { id: 'billability', label: 'Учтённость', value: kpiMetrics.value.billabilityPercent + '%', tone: 'info' as const },
+])
+
+// Пресет меняет фильтр целиком. Перестраиваем отчёт только если он уже на экране:
+// запускать генерацию за человека, который ещё ничего не нажимал, — не наше дело.
+function handleFiltersApplied() {
+    if (hasGenerated.value) {
+        void fetchReport()
+    }
+}
 
 function applyProjectPresetFromRoute() {
     return applyRouteProjectPreset(route.query as Record<string, unknown>)
@@ -227,103 +246,38 @@ watch(
 </script>
 
 <template>
-  <div class="ms-page-shell">
-    <div class="ms-page-frame">
-      <div class="mb-4">
-        <B24Button label="Назад" color="link" @click="$router.push('/')" />
-      </div>
+  <ReportShell
+    v-if="isInit"
+    title="Учёт по проектам и задачам"
+    description="Проект → задача → подзадача → сотрудник → метки времени"
+    :date-from="dateFrom"
+    :date-to="dateTo"
+    :employees="selectedEmployees"
+    :employee-mode="employeeFilterMode"
+    :projects="selectedProjects"
+    :project-mode="projectFilterMode"
+    :employee-options="filterOptions.employees"
+    :project-options="filterOptions.projects"
+    :is-loading="isLoading"
+    :has-generated="hasGenerated"
+    :is-empty="reportData.length === 0"
+    :export-disabled="!hasGenerated || reportData.length === 0"
+    :warning="syncWarning"
+    @update:date-from="dateFrom = $event"
+    @update:date-to="dateTo = $event"
+    @update:employees="selectedEmployees = $event"
+    @update:employee-mode="employeeFilterMode = $event"
+    @update:projects="selectedProjects = $event"
+    @update:project-mode="projectFilterMode = $event"
+    @refreshed="handleDataRefreshed"
+    @filters-applied="handleFiltersApplied"
+    @generate="fetchReport"
+    @export="handleExportExcel"
+  >
+    <template #totals>
+      <ReportTotalsStrip v-if="hasGenerated && reportData.length > 0" :items="totals" />
+    </template>
 
-      <B24Card v-if="isInit" class="ms-surface ms-report-surface">
-        <template #header>
-          <div class="flex flex-col gap-4 w-full">
-            <!-- Title and Actions -->
-            <div class="flex flex-row justify-between items-center w-full">
-              <div>
-                <ProseH2 class="!text-slate-900">Учет по проектам/задачам</ProseH2>
-                <p class="mt-1 text-xs text-slate-500">Группировка: Проект → Задача → Подзадача → Сотрудник → Метки времени</p>
-              </div>
-              <div class="flex flex-wrap items-center justify-end gap-3">
-                <DataFreshnessIndicator @refreshed="handleDataRefreshed" />
-                <div class="flex gap-2">
-                  <B24Button label="Скачать Excel" color="success" :disabled="!hasGenerated || reportData.length === 0" loading-auto @click="handleExportExcel" />
-                  <B24Button label="Сформировать" loading-auto @click="fetchReport" />
-                </div>
-              </div>
-            </div>
-
-            <!-- Filters -->
-            <div class="ms-filter-wrap flex flex-wrap items-end gap-4">
-              <DateRangeFilter
-                v-model:date-from="dateFrom"
-                v-model:date-to="dateTo"
-              />
-
-              <MultiSelectFilter
-                v-model="selectedEmployees"
-                v-model:mode="employeeFilterMode"
-                label="Сотрудники"
-                :options="filterOptions.employees"
-              />
-
-              <MultiSelectFilter
-                v-model="selectedProjects"
-                v-model:mode="projectFilterMode"
-                label="Проекты"
-                :options="filterOptions.projects"
-              />
-            </div>
-          </div>
-        </template>
-
-        <div v-if="syncWarning" class="ms-panel-warning">
-          {{ syncWarning }}
-        </div>
-
-        <!-- Loading State -->
-        <div v-if="isLoading" class="flex justify-center py-8">
-          <span class="text-slate-500">Загрузка...</span>
-        </div>
-
-        <!-- Main Content -->
-        <div v-else-if="hasGenerated && reportData.length > 0" class="flex flex-col gap-6">
-          <!-- KPI Metrics -->
-          <div class="ms-kpi-grid">
-            <ReportMetricCard
-              label="Всего часов"
-              :value="kpiMetrics.totalHours"
-              tone="default"
-            />
-            <ReportMetricCard
-              label="Учтено"
-              :value="kpiMetrics.billableHours"
-              tone="success"
-            />
-            <ReportMetricCard
-              label="Не учтено"
-              :value="kpiMetrics.nonBillableHours"
-              tone="danger"
-            />
-            <ReportMetricCard
-              label="% Учтённости"
-              :value="kpiMetrics.billabilityPercent + '%'"
-              tone="info"
-            />
-          </div>
-
-          <!-- Report Table -->
-          <ProjectTaskReportTable :rows="reportData" />
-        </div>
-
-        <!-- No Data State -->
-        <div v-else-if="hasGenerated" class="ms-empty-state">
-          Нет данных
-        </div>
-
-        <!-- Initial State -->
-        <div v-else class="ms-empty-state">
-          Выберите фильтры и нажмите «Сформировать»
-        </div>
-      </B24Card>
-    </div>
-  </div>
+    <ProjectTaskReportTable :rows="reportData" />
+  </ReportShell>
 </template>

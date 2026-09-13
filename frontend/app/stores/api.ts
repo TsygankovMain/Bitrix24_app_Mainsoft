@@ -22,13 +22,36 @@ import type {
   SmartProcessOption,
 } from '~/types/config'
 import type { CompanySearchResult, MyCompaniesResult, ProjectBoardMetaPayload, ProjectBoardResponse } from '~/types/project-board'
+import type {
+  BddsNotifierRunResult,
+  BddsProjectResponse,
+  BddsProjectsResponse,
+} from '~/types/bdds'
 import type { InnScanResult, InnApplyItem, InnApplyResult, InnProjectItemsResult, ProjectsHealthResult } from '~/types/inn'
 import type { ProjectCreationForm, ProjectCreationResult } from '~/types/project-creation'
 import type { PeriodBulkPlan, PeriodCheckResult, PeriodEntryRow, PeriodFixResult, PeriodRow } from '~/types/period'
+import type {
+  BillingDocumentDetail,
+  BillingDocumentsResponse,
+  BillingFilterBody,
+  BillingLinePayload,
+  BillingPreviewResponse,
+  BillingTemplatesResponse,
+  PortalFeaturesPayload,
+} from '~/types/billing'
 
 type SaveConfigurationResponse = {
   status?: string
+  /** Сервер сохранил по отдельной ветке (сейчас только 'finance'). */
+  scope?: string
   config?: AppConfigurationPayload
+  /**
+   * Новая ревизия конфигурации после сохранения (Баг 6, оптимистическая
+   * блокировка). Экран запоминает её и шлёт следующим сохранением как
+   * `baseRevision` — так сервер отличает «сохраняю то, что видел» от
+   * «кто-то сохранил конфигурацию, пока я редактировал».
+   */
+  config_revision?: number
   project_sync?: Record<string, unknown>
   timesheet_backfill?: Record<string, unknown>
   validation?: ProjectSpaValidationPayload
@@ -73,6 +96,32 @@ type FinanceOperationsResponse = {
   operations: FinanceOperationRecord[]
   count: number
   entity_type_id?: number
+  offset?: number
+  limit?: number
+  /** null — сервер не считал: он видел окно страницы, а не всю выборку. */
+  total?: number | null
+  has_more?: boolean
+  truncated?: boolean
+  totals?: { income: number, expense: number, net: number, count: number } | null
+}
+
+/** Что можно спросить у GET /api/finance-operations. */
+type FinanceOperationsQuery = {
+  project_item_id?: string | null
+  deal_id?: string | null
+  limit?: number
+  offset?: number
+  /** Границы периода — ТОЛЬКО ISO (ГГГГ-ММ-ДД): прочее сервер отбросит. */
+  date_from?: string | null
+  date_to?: string | null
+  operation_type?: string | null
+  /**
+   * Итоги по всей выборке.
+   *
+   * Просить только там, где они нужны: на сервере это полный проход по
+   * смарт-процессу. Карточке проекта незачем — там итоги считает бюджет.
+   */
+  totals?: boolean
 }
 
 type FinanceOperationCreatePayload = {
@@ -82,6 +131,8 @@ type FinanceOperationCreatePayload = {
   amount: number
   currency?: string | null
   operation_date: string
+  /** Назначение платежа — заголовок элемента смарт-процесса. */
+  title?: string | null
   source?: string | null
   comment?: string | null
   responsible_user_id?: string | null
@@ -875,12 +926,15 @@ export const useApiStore = defineStore(
     const getUsers = async (
       page: number = 1,
       limit: number = 50,
-      activeOnly: boolean = false
+      activeOnly: boolean = false,
+      search: string = ''
     ): Promise<{ items: Array<{ id: string, name: string, last_name: string, active: boolean, updated_at: string }>, total: number, page: number, pages: number, has_next: boolean, has_previous: boolean }> => {
       const params = new URLSearchParams()
       params.append('page', page.toString())
       params.append('limit', limit.toString())
       if (activeOnly) params.append('active_only', '1')
+      // Поиск по имени и фамилии — экран ролей (backend: get_users, ?search=).
+      if (search.trim()) params.append('search', search.trim())
 
       return await $api(`/api/users?${params.toString()}`, {
         headers: {
@@ -986,26 +1040,51 @@ export const useApiStore = defineStore(
       })
     }
 
-    // --- Финансовый функционал (в планах) изолирован ---
-    // Бэкенд-endpoint `/api/finance-operations` отключён (см. backends/python/api/main/urls.py).
-    // Заглушка не выполняет сетевой вызов, чтобы не было битых запросов.
-    // Для восстановления: удалить throw и раскомментировать оригинальное тело ниже.
-    const getFinanceOperations = async (_params: {
-      project_item_id?: string | null
-      deal_id?: string | null
-      limit?: number
-    }): Promise<FinanceOperationsResponse> => {
-      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-operations отключён.')
-      /*
+    // region БДДС по проектам ////
+    //
+    // Ручки включены (этап 1). Все закрыты подпиской портала на сервере —
+    // @feature_required('bdds'), в том числе на чтении: при выключенной
+    // подписке они отвечают 403 с кодом feature_disabled, и экран показывает
+    // ту же заглушку с замком, что и до появления функции.
+    //
+    // Кэша у этих ручек нет намеренно, как и у «Счёта и акта»: БДДС — про
+    // деньги, и показать вчерашний остаток бюджета из localStorage хуже, чем
+    // подождать запрос.
+
+    /**
+     * Операции «поступление/списание» смарт-процесса портала, страницей.
+     *
+     * Постраничность серверная (offset), а не «загрузить всё и нарезать на
+     * клиенте»: операций у портала могут быть тысячи, и тянуть их целиком в
+     * браузер ради двадцати видимых строк незачем.
+     */
+    const getFinanceOperations = async (
+      params: FinanceOperationsQuery
+    ): Promise<FinanceOperationsResponse> => {
       const search = new URLSearchParams()
-      if (_params.project_item_id) {
-        search.set('project_item_id', String(_params.project_item_id))
+      if (params.project_item_id) {
+        search.set('project_item_id', String(params.project_item_id))
       }
-      if (_params.deal_id) {
-        search.set('deal_id', String(_params.deal_id))
+      if (params.deal_id) {
+        search.set('deal_id', String(params.deal_id))
       }
-      if (_params.limit && Number(_params.limit) > 0) {
-        search.set('limit', String(_params.limit))
+      if (params.limit && Number(params.limit) > 0) {
+        search.set('limit', String(params.limit))
+      }
+      if (params.offset && Number(params.offset) > 0) {
+        search.set('offset', String(params.offset))
+      }
+      if (params.date_from) {
+        search.set('date_from', String(params.date_from))
+      }
+      if (params.date_to) {
+        search.set('date_to', String(params.date_to))
+      }
+      if (params.operation_type) {
+        search.set('operation_type', String(params.operation_type))
+      }
+      if (params.totals) {
+        search.set('totals', '1')
       }
 
       const query = search.toString()
@@ -1014,25 +1093,27 @@ export const useApiStore = defineStore(
           Authorization: `Bearer ${tokenJWT.value}`
         }
       })
-      */
     }
 
-    // --- Финансовый функционал (в планах) изолирован ---
-    // Бэкенд-endpoint `/api/finance-operations/create` отключён (см. backends/python/api/main/urls.py).
-    // Для восстановления: удалить throw и раскомментировать оригинальное тело ниже.
-    const createFinanceOperation = async (_payload: FinanceOperationCreatePayload): Promise<{
+    /**
+     * Создание операции. Идемпотентность — на сервере (SHA-256 от полей),
+     * повтор возвращает status=duplicate, а не вторую операцию.
+     *
+     * Сбрасываем кэш доски и главной: финансовый результат проекта считается
+     * из этих же операций, и оставить там прежнее число значило бы показать
+     * две разные цифры на двух экранах одного приложения.
+     */
+    const createFinanceOperation = async (payload: FinanceOperationCreatePayload): Promise<{
       status: string
       operation?: FinanceOperationRecord
       idempotency_key?: string
     }> => {
-      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-operations/create отключён.')
-      /*
       const result = await $api('/api/finance-operations/create', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         },
-        body: JSON.stringify(_payload)
+        body: JSON.stringify(payload)
       })
       clearCache('project-board', 'homepage-portfolio', 'filter-projects')
       return result as {
@@ -1040,7 +1121,21 @@ export const useApiStore = defineStore(
         operation?: FinanceOperationRecord
         idempotency_key?: string
       }
-      */
+    }
+
+    /** Реестр проектов с бюджетами: строки, итог по портфелю, пороги. */
+    const getBddsProjects = async (includeArchived = false): Promise<BddsProjectsResponse> => {
+      const query = includeArchived ? '?archived=1' : ''
+      return await $api<BddsProjectsResponse>(`/api/bdds/projects${query}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Бюджет одного проекта: показатели, прогноз, последние операции. */
+    const getBddsProject = async (projectId: string): Promise<BddsProjectResponse> => {
+      return await $api<BddsProjectResponse>(`/api/bdds/projects/${encodeURIComponent(projectId)}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
     }
 
     const getHomepagePortfolio = async (forceRefresh = false): Promise<unknown> => {
@@ -1153,35 +1248,38 @@ export const useApiStore = defineStore(
       return result
     }
 
-    const runProjectBoardDailyCheck = async (): Promise<unknown> => {
-      const result = await $api('/api/project-board/run-daily-check', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${tokenJWT.value}`
-        }
-      })
-      clearCache('project-board', 'homepage-portfolio')
-      return result
-    }
+    /*
+      Транспорта для /api/project-board/run-daily-check тут больше нет.
 
-    // --- Финансовый функционал (в планах) изолирован ---
-    // Бэкенд-endpoint `/api/project-budget/notify` отключён (см. backends/python/api/main/urls.py).
-    // В фронте больше не вызывается; заглушка оставлена для лёгкого восстановления.
-    const runProjectBudgetNotifier = async (_payload?: {
+      Ручка на бэкенде осталась (views.run_project_board_daily_check), но
+      фронт её не зовёт: ту же проверку статусов простоя синк делает сам в
+      конце своей работы — ProjectSyncService.sync вызывает
+      ProjectStageAutomationService.run_daily_check и отдаёт её счётчики в
+      составе своего ответа, а доска показывает их в сообщении о синке.
+      Отдельная кнопка «Проверить статусы» в шапке доски предлагала нажать
+      вручную уже сделанное, поэтому убрана вместе с этим методом.
+    */
+
+    /**
+     * Прогон уведомлений о риске и перерасходе бюджета.
+     *
+     * Ручка ПИШУЩАЯ: рассылает уведомления в портал. Без параметров — по
+     * всему портфелю; project_ids сужают прогон до нужных проектов.
+     * Выключатель — настройка портала «Уведомления о бюджете»: при ней
+     * ответ приходит со status=disabled и ничего не отправляется.
+     */
+    const runProjectBudgetNotifier = async (payload?: {
       project_ids?: string[]
       project_item_ids?: string[]
-    }): Promise<unknown> => {
-      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/project-budget/notify отключён.')
-      /*
-      return await $api('/api/project-budget/notify', {
+    }): Promise<BddsNotifierRunResult> => {
+      return await $api<BddsNotifierRunResult>('/api/project-budget/notify', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(_payload || {})
+        body: JSON.stringify(payload || {})
       })
-      */
     }
 
     const runProjectSpaBackfill = async (): Promise<unknown> => {
@@ -1297,11 +1395,36 @@ export const useApiStore = defineStore(
       }, forceRefresh)
     }
 
-    const saveConfiguration = async (config: AppConfigurationPayload): Promise<SaveConfigurationResponse> => {
+    /**
+     * Сохранение конфигурации. Тело — ВСЯ конфигурация под ключом `config`:
+     * сервер пишет её в app.option одной строкой, и частичный объект затёр
+     * бы остальные настройки.
+     *
+     * `scope: 'finance'` — отдельное сохранение «Доходов-расходов» с экрана
+     * сопоставления: сервер не запускает для него проверку и синхронизацию
+     * проектов, если проектная часть не менялась (см.
+     * FINANCE_CONFIG_SAVE_SCOPE в utils/fieldMapping.ts).
+     */
+    const saveConfiguration = async (
+      config: AppConfigurationPayload,
+      options: { scope?: 'finance', baseRevision?: number | string | null } = {}
+    ): Promise<SaveConfigurationResponse> => {
+      const body: Record<string, unknown> = { config }
+      if (options.scope) {
+        body.scope = options.scope
+      }
+      // Оптимистическая блокировка (Баг 6): ревизия, с которой экран открыл
+      // или последний раз сохранил конфигурацию. Не передана (undefined/null)
+      // — сервер сохраняет как раньше, без сравнения (совместимость со
+      // старым клиентом и внутренними сохранениями без отслеживания ревизии).
+      if (options.baseRevision !== undefined && options.baseRevision !== null) {
+        body.base_revision = options.baseRevision
+      }
+
       const result = await $api<SaveConfigurationResponse>('/api/configuration/save', {
         method: 'POST',
         headers: { Authorization: `Bearer ${tokenJWT.value}` },
-        body: JSON.stringify({ config })
+        body: JSON.stringify(body)
       })
       clearCache('app-configuration', 'project-board-meta', 'homepage-portfolio', 'bitrix-lists:lists', 'bitrix-lists:lists_socnet')
       return result
@@ -1325,11 +1448,14 @@ export const useApiStore = defineStore(
       })
     }
 
-    // --- Финансовый функционал (в планах) изолирован ---
-    // Бэкенд-endpoint `/api/finance-spa/validation` отключён (см. backends/python/api/main/urls.py).
-    // В фронте больше не вызывается; заглушка оставлена для лёгкого восстановления.
+    // Валидация смарт-процесса «Доходы-расходы (App)» остаётся выключенной, и
+    // это не забытая заглушка: её смысл появится на ЭТАПЕ 2, когда у операции
+    // добавится десятое поле «статья ДДС» и проверять станет что. Сегодня
+    // операции читаются и пишутся (getFinanceOperations выше), а неполное
+    // сопоставление полей приходит кодом finance_spa_not_configured прямо
+    // оттуда. Из интерфейса эта функция не вызывается.
     const getFinanceSpaValidation = async (): Promise<FinanceSpaValidationPayload> => {
-      throw new Error('Финансовый функционал в разработке (в планах): endpoint /api/finance-spa/validation отключён.')
+      throw new Error('Валидация смарт-процесса «Доходы-расходы» появится на этапе 2 (статьи ДДС): endpoint /api/finance-spa/validation выключен.')
       /*
       return await $api('/api/finance-spa/validation', {
         headers: { Authorization: `Bearer ${tokenJWT.value}` }
@@ -1418,7 +1544,240 @@ export const useApiStore = defineStore(
       })
     }
 
+
+    // region Счёт и акт ////
+    // Контракт: docs/superpowers/specs/2026-09-12-billing-mvp-contract.md.
+    // Ни одной ручки сверх контракта здесь нет и быть не должно: бэкенд пишется
+    // по тому же документу, и «удобный» лишний адрес с фронта просто получит 404.
+    //
+    // Кэша у этих ручек нет намеренно (кроме /api/features, см. ниже): реестр и
+    // карточка документа — про деньги, и показать вчерашнюю сумму из
+    // localStorage хуже, чем подождать запрос.
+
+    /**
+     * Состояния платных функций портала.
+     *
+     * Единственная ручка «Счёта и акта», которую зовёт бутстрап приложения
+     * (useBillingFeature -> initApp), поэтому запрос кэшируется в браузере на
+     * несколько минут: подписка меняется management-командой, а не по ходу
+     * работы, и дёргать её на каждой навигации незачем.
+     */
+    const getFeatures = async (forceRefresh = false): Promise<PortalFeaturesPayload> => {
+      return await withBrowserCache('portal-features', browserCacheTtl.config, async () => {
+        return await $api<PortalFeaturesPayload>('/api/features', {
+          headers: { Authorization: `Bearer ${tokenJWT.value}` }
+        })
+      }, forceRefresh)
+    }
+
+    /**
+     * Роли и права (main/roles.py). Кэша нет ни у одной ручки: права
+     * меняются назначением на соседнем экране, и вчерашняя роль из
+     * localStorage показала бы кнопку, которую сервер уже не пропустит.
+     */
+    const getRolesMe = async (): Promise<unknown> => {
+      return await $api('/api/roles/me', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const getRoles = async (): Promise<Record<string, unknown>> => {
+      return await $api('/api/roles', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const assignRole = async (userId: string, role: string): Promise<Record<string, unknown>> => {
+      return await $api('/api/roles/assign', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { user_id: userId, role },
+      })
+    }
+
+    /**
+     * Сохранить права ролей портала. revision — версия таблицы, которую видел
+     * человек: сервер отвечает 409 matrix_conflict, если её уже поменяли.
+     */
+    const saveRolesMatrix = async (matrix: Record<string, string[]>, revision: number): Promise<Record<string, unknown>> => {
+      return await $api('/api/roles/matrix', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { matrix, revision },
+      })
+    }
+
+    /** Собрать строки и предупреждения по фильтру. Ничего не пишет. */
+    const previewBillingDocument = async (filter: BillingFilterBody): Promise<BillingPreviewResponse> => {
+      return await $api('/api/billing/preview', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: filter,
+      })
+    }
+
+    /**
+     * Выставить: смарт-счёт в CRM и документ у нас.
+     *
+     * lines[] отправляются рядом с фильтром — это строки, которые человек
+     * утвердил в предпросмотре (исключённые убраны, цены и текст могли быть
+     * поправлены). Без них правки предпросмотра до сервера не доедут.
+     *
+     * 409 здесь ШТАТНЫЙ ответ (контракт, правило 8): повторный запрос с тем же
+     * набором списаний упирается в частичный уникальный индекс и возвращает
+     * ссылку на существующий документ. Ошибку не глотаем — её разбирает
+     * describeBillingError и показывает ссылкой, а не «ошибкой сервера».
+     */
+    const createBillingDocument = async (
+      filter: BillingFilterBody,
+      lines: BillingLinePayload[]
+    ): Promise<BillingDocumentDetail> => {
+      return await $api('/api/billing/documents', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { ...filter, lines },
+      })
+    }
+
+    /** Реестр документов: фильтр по клиенту, периоду и статусу. */
+    const getBillingDocuments = async (params: URLSearchParams): Promise<BillingDocumentsResponse> => {
+      const query = params.toString()
+
+      return await $api(`/api/billing/documents${query ? `?${query}` : ''}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Карточка: документ, строки, потреблённые списания и расхождения. */
+    const getBillingDocument = async (id: string | number): Promise<BillingDocumentDetail> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Отменить документ и освободить списания. Причина обязательна. */
+    const cancelBillingDocument = async (
+      id: string | number,
+      reason: string
+    ): Promise<BillingDocumentDetail> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { reason },
+      })
+    }
+
+    /** Напечатать акт по счёту (номер и дата акта равны номеру и дате счёта). */
+    const printBillingAct = async (id: string | number): Promise<BillingDocumentDetail> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}/act`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+      })
+    }
+
+    /**
+     * Напечатать печатную форму САМОГО счёта (не акт).
+     *
+     * Отдельная ручка, а не параметр у печати акта: шаблоны разные, отказы
+     * разные, и отказ одного не должен отменять уже напечатанное другое.
+     * Шаблон берётся из настроек приложения; не выбран — сервер отвечает
+     * кодом invoice_template_missing, и это разбирает describeBillingError.
+     */
+    const printBillingInvoiceForm = async (id: string | number): Promise<BillingDocumentDetail> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}/invoice-print`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+      })
+    }
+
+    /**
+     * Шаблоны генератора документов портала — для выбора в настройках.
+     *
+     * НЕ кэшируется в браузере, в отличие от /api/features: список открывают
+     * ровно тогда, когда собираются менять настройку, и показать при этом
+     * шаблон, удалённый на портале десять минут назад, — значит дать
+     * сохранить мёртвый идентификатор.
+     */
+    const getBillingTemplates = async (): Promise<BillingTemplatesResponse> => {
+      return await $api('/api/billing/templates', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** XLSX-детализация к акту. */
+    const exportBillingDetail = async (id: string | number): Promise<Blob> => {
+      return await $api(`/api/billing/documents/${encodeURIComponent(String(id))}/detail.xlsx`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        responseType: 'blob',
+      })
+    }
+    // endregion ////
+
+    // region Покупка Pro ////
+    // Сервер — backends/python/api/main/pro_purchase_service.py. Портал заявки
+    // сервер берёт из авторизации: ни домена, ни member_id в запросах нет.
+    // Кэша нет: суммы и статус счёта показываем только свежими.
+
+    /** Цены по срокам, НДС, портал и код, контакт, текущая заявка, можно ли запрашивать. */
+    const getProOffer = async (): Promise<unknown> => {
+      return await $api('/api/pro/offer', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Реквизиты из CRM портала: без ИНН — свои юрлица, с ИНН — поиск. */
+    const getProRequisites = async (inn?: string): Promise<unknown> => {
+      const query = inn ? `?inn=${encodeURIComponent(inn)}` : ''
+
+      return await $api(`/api/pro/requisites${query}`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    /** Создать заявку на счёт. 400 — ошибки полей в errors. */
+    const createProRequest = async (body: Record<string, unknown>): Promise<unknown> => {
+      return await $api('/api/pro/requests', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body,
+      })
+    }
+
+    const getProCurrentRequest = async (): Promise<unknown> => {
+      return await $api('/api/pro/requests/current', {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` }
+      })
+    }
+
+    const cancelProRequest = async (id: string, reason = ''): Promise<unknown> => {
+      return await $api(`/api/pro/requests/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        body: { reason },
+      })
+    }
+
+    /** PDF счёта через наш сервер. */
+    const downloadProInvoice = async (id: string): Promise<Blob> => {
+      return await $api(`/api/pro/requests/${encodeURIComponent(id)}/invoice.pdf`, {
+        headers: { Authorization: `Bearer ${tokenJWT.value}` },
+        responseType: 'blob',
+      })
+    }
+    // endregion ////
+
     return {
+      /**
+       * Есть ли рабочий токен.
+       *
+       * Нужен компонентам, которые живут в ЛЕЙАУТЕ и рисуются раньше
+       * бутстрапа (предупреждение о ненастроенном сопоставлении полей,
+       * components/common/MappingHealthBanner.vue): свой запрос оттуда ушёл
+       * бы без авторизации, а тащить в лейаут вызов initApp нельзя — он
+       * принадлежит странице. Такой компонент ждёт этот флаг и только потом
+       * спрашивает своё.
+       */
+      hasToken: computed(() => Boolean(tokenJWT.value)),
       init,
       getEnum,
       getList,
@@ -1455,6 +1814,10 @@ export const useApiStore = defineStore(
       getTimesheetSyncStatus,
       getTimesheetsList,
       getUsers,
+      getRolesMe,
+      getRoles,
+      saveRolesMatrix,
+      assignRole,
       getProjectBoard,
       getProjectBoardMeta,
       getProjectBoardCard,
@@ -1463,6 +1826,8 @@ export const useApiStore = defineStore(
       createProject,
       getFinanceOperations,
       createFinanceOperation,
+      getBddsProjects,
+      getBddsProject,
       getHomepagePortfolio,
       getSupportStatus,
       connectSupportLine,
@@ -1470,7 +1835,6 @@ export const useApiStore = defineStore(
       updateProjectCard,
       updateProjectStage,
       archiveProject,
-      runProjectBoardDailyCheck,
       runProjectBudgetNotifier,
       runProjectSpaBackfill,
       getCompaniesForProjectBinding,
@@ -1490,7 +1854,25 @@ export const useApiStore = defineStore(
       getSystemLogs,
       createSmartProcess,
       createFields,
-      createMappedField
+      createMappedField,
+
+      getFeatures,
+      previewBillingDocument,
+      createBillingDocument,
+      getBillingDocuments,
+      getBillingDocument,
+      cancelBillingDocument,
+      printBillingAct,
+      printBillingInvoiceForm,
+      getBillingTemplates,
+      exportBillingDetail,
+
+      getProOffer,
+      getProRequisites,
+      createProRequest,
+      getProCurrentRequest,
+      cancelProRequest,
+      downloadProInvoice
     }
   }
 )

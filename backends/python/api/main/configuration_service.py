@@ -3,7 +3,40 @@ import json
 import logging
 from typing import Dict, Any, Optional, List
 
+from .billing_line_template import (
+    DEFAULT_LINE_TEMPLATE,
+    TASK_LEVEL_TASK,
+    TASK_LEVELS,
+)
+
 logger = logging.getLogger(__name__)
+
+
+class ConfigurationConflict(Exception):
+    """Конфигурацию нельзя сохранить: её изменили в другом сохранении.
+
+    Оптимистическая блокировка (см. save_configuration_sync): ``base_revision``,
+    присланный клиентом, разошёлся с ревизией, реально лежащей в app.option
+    прямо перед записью. Молча перезаписывать чужую правку нельзя — экран
+    должен перечитать настройки и показать конфликт человеку.
+    """
+
+    def __init__(self, current_revision: int, current_config: Dict[str, Any]):
+        message = "Настройки изменили в другой вкладке или другой пользователь — обновите страницу"
+        super().__init__(message)
+        self.message = message
+        self.code = "config_conflict"
+        self.status = 409
+        self.current_revision = current_revision
+        self.current_config = current_config
+
+    def as_payload(self) -> Dict[str, Any]:
+        return {
+            "error": self.message,
+            "code": self.code,
+            "current_revision": self.current_revision,
+        }
+
 
 class ConfigurationService:
     """
@@ -25,18 +58,26 @@ class ConfigurationService:
         if self._config_cache:
             return self._config_cache
 
+        config = self._load_configuration_from_storage()
+        self._config_cache = config
+        return config
+
+    def _load_configuration_from_storage(self) -> Dict[str, Any]:
+        """Свежее чтение app.option, в обход инстанс-кэша ``_config_cache``.
+
+        Нужно save_configuration_sync — она перечитывает актуальную
+        конфигурацию прямо перед записью, чтобы проверить ревизию против
+        того, что реально лежит на портале, а не против значения, которое
+        этот же сервис мог закэшировать раньше в том же запросе.
+        """
         try:
-            # Use client token to call method
             response = self.client._bitrix_token.call_method('app.option.get', {})
             result = response.get('result', {})
 
             if 'timestamp_config' in result and result['timestamp_config']:
                 try:
                     config = json.loads(result['timestamp_config'])
-                    config = self.normalize_configuration_sync(config)
-                    self._config_cache = config
-                    # logger.info(f"Loaded config: {config}")
-                    return config
+                    return self.normalize_configuration_sync(config)
                 except json.JSONDecodeError:
                     logger.error("Failed to decode config JSON")
                     return self._get_default_configuration()
@@ -48,17 +89,49 @@ class ConfigurationService:
             logger.error(f"Error loading configuration: {e}")
             return self._get_default_configuration()
 
-    def save_configuration_sync(self, config: Dict[str, Any]) -> None:
+    @staticmethod
+    def _get_config_revision(config: Optional[Dict[str, Any]]) -> int:
+        """Ревизия конфигурации; конфигурация без поля — ревизия 0."""
+        try:
+            return int((config or {}).get('config_revision') or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def save_configuration_sync(
+        self, config: Dict[str, Any], base_revision: Optional[Any] = None
+    ) -> Dict[str, Any]:
         """
         Synchronously save configuration to app.option.
+
+        Оптимистическая блокировка: перед записью конфигурация перечитывается
+        из app.option заново (см. _load_configuration_from_storage), и если
+        передан ``base_revision`` — он сравнивается с реальной текущей
+        ревизией. Расхождение -> ConfigurationConflict, ничего не пишется.
+        ``base_revision`` не передан (старый клиент или внутренний вызов без
+        проверки) -> сохраняем как раньше, без сравнения. Ревизия при этом
+        всё равно продвигается вперёд от реально прочитанной — так её счётчик
+        не откатывается и остаётся пригодным для последующих проверок.
         """
-        config = self.normalize_configuration_sync(config)
-        json_config = json.dumps(config, ensure_ascii=False)
+        current = self._load_configuration_from_storage()
+        current_revision = self._get_config_revision(current)
+
+        if base_revision is not None:
+            try:
+                requested_revision = int(base_revision)
+            except (TypeError, ValueError):
+                requested_revision = None
+            if requested_revision != current_revision:
+                raise ConfigurationConflict(current_revision, current)
+
+        normalized = self.normalize_configuration_sync(config)
+        normalized['config_revision'] = current_revision + 1
+        json_config = json.dumps(normalized, ensure_ascii=False)
         self.client._bitrix_token.call_method('app.option.set', {
             'options': {'timestamp_config': json_config}
         })
-        self._config_cache = config
-        logger.info("Configuration saved successfully")
+        self._config_cache = normalized
+        logger.info("Configuration saved successfully (revision %s)", normalized['config_revision'])
+        return normalized
 
     def normalize_configuration_sync(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -87,10 +160,54 @@ class ConfigurationService:
         if not isinstance(normalized.get('finance_fields_mapping'), dict):
             normalized['finance_fields_mapping'] = {}
 
+        normalized['billing_allow_open_period'] = self._normalize_bool(
+            normalized.get('billing_allow_open_period')
+        )
+        normalized['billing_accountants'] = self._normalize_id_list(
+            normalized.get('billing_accountants')
+        )
+        # Наше юрлицо для выставления. Идентификатор — строкой, как и все
+        # прочие id портала в конфигурации: app.option возвращает числа
+        # строками, и приведение к int породило бы две формы одного значения.
+        normalized['billing_our_company_id'] = self._normalize_text(
+            normalized.get('billing_our_company_id')
+        )
+        normalized['billing_our_company_name'] = self._normalize_text(
+            normalized.get('billing_our_company_name')
+        )
+        # Формулировка строки счёта. Пустое значение НЕ сохраняется как пустое:
+        # оно оставило бы каждую строку счёта без наименования работ, поэтому
+        # «ничего не задано» приводится к значению по умолчанию.
+        normalized['billing_line_template'] = (
+            self._normalize_text(normalized.get('billing_line_template'))
+            or DEFAULT_LINE_TEMPLATE
+        )
+        # Уровень задачи в строке: только два допустимых значения. Чужое
+        # значение читается как «по задаче» — укрупнять строки счёта из-за
+        # опечатки в настройке нельзя.
+        task_level = self._normalize_text(normalized.get('billing_line_task_level')).lower()
+        normalized['billing_line_task_level'] = (
+            task_level if task_level in TASK_LEVELS else TASK_LEVEL_TASK
+        )
+        # Шаблоны генератора документов: целыми числами, 0 — «не выбран».
+        # Строка из select'а («4») и число (4) обязаны стать одним значением,
+        # иначе сравнение «настройка изменилась» срабатывало бы на каждом
+        # сохранении, а живая проверка шаблона — на каждом сохранении чего
+        # угодно.
+        for key in ('billing_act_template_id', 'billing_invoice_template_id'):
+            try:
+                normalized[key] = int(normalized.get(key) or 0)
+            except (TypeError, ValueError):
+                normalized[key] = 0
+            if normalized[key] < 0:
+                normalized[key] = 0
+
         try:
             normalized['finance_sp_entity_type_id'] = int(normalized.get('finance_sp_entity_type_id') or 0)
         except (TypeError, ValueError):
             normalized['finance_sp_entity_type_id'] = 0
+
+        normalized['config_revision'] = self._get_config_revision(normalized)
         return normalized
 
     def _merge_with_defaults(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -104,6 +221,56 @@ class ConfigurationService:
         merged['legal_entity_directory'] = merged_directory
 
         return merged
+
+    @staticmethod
+    def _normalize_bool(value: Any) -> bool:
+        """app.option отдаёт всё строками: 'false'/'0'/'' — это ложь.
+
+        bool('false') в Python истинно, поэтому голого приведения типа здесь
+        мало: настройка «разрешить открытый период» включилась бы сама от
+        любого сохранения конфигурации порталом.
+        """
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        text = str(value).strip().lower()
+        return text in {'1', 'true', 'yes', 'y', 'on'}
+
+    @staticmethod
+    def _normalize_text(value: Any) -> str:
+        """Строковое значение конфигурации: None и 'None' — это пусто.
+
+        str(None) даёт 'None' — идентификатор, которого не существует, но
+        который выглядит как настоящий. Для нашего юрлица это опаснее, чем для
+        списка бухгалтеров: такой id прошёл бы проверку «настройка задана» и
+        увёл счёт в никуда.
+        """
+        if value is None:
+            return ''
+        text = str(value).strip()
+        return '' if text.lower() in {'none', 'null', 'undefined'} else text
+
+    @staticmethod
+    def _normalize_id_list(value: Any) -> List[str]:
+        """Список идентификаторов пользователей: строками, без пустых и дублей."""
+        if value is None:
+            return []
+        if isinstance(value, (str, int)):
+            value = [value]
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        result: List[str] = []
+        for item in value:
+            # None пропускаем ДО str(): иначе в списке бухгалтеров оседает
+            # строка "None" — id, которого не существует, но который выглядит
+            # как настоящий и молча ничего не даёт.
+            if item is None:
+                continue
+            text = str(item).strip()
+            if text and text not in result:
+                result.append(text)
+        return result
 
     @staticmethod
     def _normalize_project_fields_mapping(mapping: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -132,6 +299,10 @@ class ConfigurationService:
         Default configuration if nothing is saved.
         """
         return {
+            # Ревизия для оптимистической блокировки при сохранении (см.
+            # save_configuration_sync / ConfigurationConflict). Конфигурация
+            # без этого поля (сохранена до появления блокировки) — ревизия 0.
+            'config_revision': 0,
             'sp_entity_type_id': 0, # 0 means not configured
             'fields_mapping': {},
             'project_sp_entity_type_id': 0,
@@ -140,6 +311,26 @@ class ConfigurationService:
             'finance_fields_mapping': {},
             'is_configured': False,
             'hourly_rate': 0,
+            # Счёт и акт (billing). Настройки живут в том же app.option, что и
+            # остальная конфигурация приложения, — отдельного механизма не
+            # заводим. Выключатель ПОДПИСКИ сюда не кладётся принципиально:
+            # он на нашем сервере (модель PortalSubscription), иначе его можно было
+            # бы включить из консоли браузера через app.option.set.
+            'billing_allow_open_period': False,
+            'billing_accountants': [],
+            'billing_act_template_id': 0,
+            # Наше юрлицо, от которого выставляются ВСЕ счета. Пусто — берём
+            # из карточки проекта, как было до появления настройки. Название
+            # хранится рядом с id только для показа в интерфейсе: правда о
+            # названии живёт на портале, и перед выставлением оно
+            # перечитывается (billing_service.verify_our_company).
+            'billing_our_company_id': '',
+            'billing_our_company_name': '',
+            # Формулировка строки счёта и уровень задачи в ней. По умолчанию
+            # «{задача}, {месяц}» и «по задаче» — то есть в наименовании работ
+            # название задачи и месяц, а не название карточки проекта.
+            'billing_line_template': DEFAULT_LINE_TEMPLATE,
+            'billing_line_task_level': TASK_LEVEL_TASK,
             'legal_entity_directory': {
                 'iblock_type_id': 'lists',
                 'iblock_id': 0,
@@ -223,6 +414,10 @@ class ConfigurationService:
                 'id': type_id,
                 'entityTypeId': int(entity_type_id),
                 'title': str(title),
+                # Код типа (finance_app, project_app, ...). По нему экран
+                # сопоставления узнаёт процессы, заведённые установкой, даже
+                # если на портале их переименовали.
+                'code': str(raw_type.get('code') or raw_type.get('CODE') or ''),
             })
 
         logger.info("get_smart_processes_sync: loaded %s smart processes", len(result))

@@ -8,16 +8,26 @@ from django.http import JsonResponse, HttpResponse
 from django.conf import settings
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 from django.views.decorators.clickjacking import xframe_options_exempt
 
 from .utils.decorators import auth_required, log_errors, rate_limit
 from .utils.decorators.sync_lock import sync_lock, account_sync_lock, SyncLockBusy
 from .utils import AuthorizedRequest
-from .models import ApplicationInstallation, TimesheetItem, RequestLog, SystemLog, ProjectCard, PortalUser
+from .models import (
+    ApplicationInstallation,
+    BillingDocument,
+    TimesheetItem,
+    RequestLog,
+    SystemLog,
+    ProjectCard,
+    PortalUser,
+)
 
 import logging
 import json
+import re
+from urllib.parse import quote
 import openpyxl
 from openpyxl.styles import Font, Alignment
 
@@ -26,6 +36,7 @@ from .services import (
     BitrixDataService,
     ReportService,
     TimesheetSyncService,
+    ConfigurationConflict,
     ConfigurationService,
     ProjectCardService,
     ProjectSyncService,
@@ -33,8 +44,8 @@ from .services import (
     invalidate_project_runtime_caches,
 )
 from .installation_service import InstallationService, InstallationError
+from .project_board_shared import invalidate_account_cache
 from .app_version import get_app_version, is_version_acceptable
-from .utils.decorators.admin_required import admin_required
 from .task_sync_service import TaskSyncService
 from .timesheet_write_service import TimesheetWriteError, TimesheetWriteService
 from .timesheet_sync_service import resolve_sync_mode
@@ -51,6 +62,10 @@ from .report_queries import (
     materialize_rows,
     resolve_project_name_for_row,
 )
+from .billing_detail_report import (
+    build_billing_detail_workbook,
+    detail_export_filename,
+)
 from .report_excel import (
     build_project_task_workbook,
     build_hierarchy_workbook,
@@ -62,6 +77,42 @@ from .report_excel import (
 from .inn_backfill_service import InnBackfillService
 from .company_search_service import CompanySearchService
 from .project_creation_service import ProjectCreationService
+from .billing_crm_service import BillingCrmService
+from .bdds_service import BddsService
+from .bdds_settings import bdds_operations_manager_required, load_bdds_settings
+from .billing_features import FEATURE_BDDS, FEATURE_BILLING, FEATURE_ROLES, feature_required, feature_states
+from .finance_operation_service import FinanceOperationService
+from .roles import (
+    PERM_MONEY_VIEW,
+    PERM_PERIOD_CLOSE,
+    PERM_RATES_EDIT,
+    PERM_ROLES_MANAGE,
+    PERM_SETTINGS_MANAGE,
+    PermissionMatrixError,
+    RoleAssignmentError,
+    assign_role,
+    assignable_roles,
+    denial_response,
+    ensure_accountants_imported,
+    has_permission,
+    list_assignments,
+    matrix_log,
+    normalize_role,
+    permission_required,
+    resolve_access,
+    roles_catalog,
+    roles_feature_state,
+    save_permission_matrix,
+)
+from .project_budget_notifier import ProjectBudgetNotifier
+from .billing_service import BillingError, BillingService
+from .billing_settings import (
+    billing_cancel_required,
+    billing_manager_required,
+    billing_money_view_required,
+    has_selected_templates,
+    validate_template_settings,
+)
 
 __all__ = [
     "root",
@@ -126,6 +177,25 @@ __all__ = [
     "create_fields",
     "create_mapped_field",
     "export_raw_data",
+    # БДДС по проектам
+    "get_bdds_projects",
+    "get_bdds_project",
+    "get_finance_operations",
+    "create_finance_operation",
+    "run_project_budget_notifier",
+    # Счёт и акт
+    "get_features",
+    "billing_templates",
+    "billing_preview",
+    "billing_documents",
+    "billing_document_detail",
+    "billing_document_cancel",
+    "billing_document_act",
+    "billing_document_invoice_print",
+    "billing_document_detail_export",
+    "roles_me",
+    "roles_list",
+    "roles_assign",
 ]
 
 config = load_config()
@@ -171,7 +241,17 @@ def _parse_refresh_flag(request) -> bool:
     парсился по-разному в разных местах. Один разбор на все три места, а не
     копия в каждом, — чтобы не завести третий такой дефект.
     """
-    return str(request.GET.get("refresh", "")).strip().lower() in {"1", "true", "y", "yes"}
+    return _parse_bool_param(request, "refresh")
+
+
+def _parse_bool_param(request, name: str) -> bool:
+    """Любой булев флаг из query string. Тот же разбор, что у ?refresh.
+
+    Вынесено из _parse_refresh_flag, когда у БДДС появился ?archived: два
+    флага, разобранные по-разному, — это ровно тот класс дефекта, ради
+    которого разбор ?refresh в своё время и собрали в одно место.
+    """
+    return str(request.GET.get(name, "")).strip().lower() in {"1", "true", "y", "yes"}
 
 
 def _get_filtered_timesheet_queryset(request: AuthorizedRequest):
@@ -1145,6 +1225,19 @@ def create_project_board(request: AuthorizedRequest):
     return JsonResponse(result)
 
 
+def _rate_changed(current, incoming) -> bool:
+    """Отличается ли присланная ставка от сохранённой. Мусор — не изменение.
+
+    ProjectCardService на нечисловую ставку оставляет прежнюю, значит и
+    отказывать за неё незачем.
+    """
+    try:
+        incoming_value = float(str(incoming).replace(",", ".").replace(" ", ""))
+    except (TypeError, ValueError):
+        return False
+    return abs(float(current or 0.0) - incoming_value) > 1e-6
+
+
 @xframe_options_exempt
 @csrf_exempt
 @require_POST
@@ -1157,6 +1250,20 @@ def update_project_board(request: AuthorizedRequest):
         return JsonResponse({"error": "project_id is required"}, status=400)
 
     service = ProjectCardService(request.bitrix24_account.client, request.bitrix24_account)
+
+    # Ставка проекта — деньги (право rates_edit). Карточку отправляют целиком,
+    # вместе с неизменённой ставкой, поэтому отказ — только когда ставку
+    # действительно пытаются ПОМЕНЯТЬ: иначе без права нельзя было бы
+    # поправить даже название проекта.
+    if "hourly_rate" in payload and not has_permission(request.bitrix24_account, PERM_RATES_EDIT):
+        card = ProjectCard.objects.filter(
+            **scope_to_tenant(request.bitrix24_account), project_id=str(project_id),
+        ).first()
+        if card is not None and _rate_changed(card.hourly_rate, payload.get("hourly_rate")):
+            return denial_response(
+                request.bitrix24_account, PERM_RATES_EDIT,
+                code="rates_forbidden", action="Менять ставку проекта",
+            )
 
     try:
         result = service.update_project_card(str(project_id), payload)
@@ -1931,7 +2038,7 @@ def period_check(request: AuthorizedRequest):
 @log_errors("period_close")
 @auth_required
 @rate_limit("period_close", 10, 60, key="account")
-@admin_required
+@permission_required(PERM_PERIOD_CLOSE, code="period_forbidden", legacy_code="admin_required")
 def period_close(request: AuthorizedRequest):
     """Закрытие месяца. Блокеры проверяются НА СЕРВЕРЕ, а не только на экране.
 
@@ -1940,10 +2047,10 @@ def period_close(request: AuthorizedRequest):
     данными — необратимая операция, и защищать её только в браузере
     несерьёзно.
 
-    @admin_required — точечное исключение из решения от 11.06.2026, снявшего
-    серверный гейт по роли со всех эндпоинтов. Возвращено заказчиком
-    31.08.2026 только для закрытия и переоткрытия: операции необратимые и
-    влияют на то, что уходит клиенту в счёт. См. докстринг декоратора.
+    Право ``period_close`` ролевой модели (main/roles.py). Пока ограничения
+    ролей не действуют (тарифа Pro нет) — прежнее точечное исключение от
+    31.08.2026: только администратор портала, с тем же кодом отказа
+    admin_required. При действующих — «Администратор» и «Бухгалтерия».
     """
     from .period_check_service import PeriodCheckService
     from .period_service import PeriodService
@@ -2010,7 +2117,7 @@ def period_close(request: AuthorizedRequest):
 @log_errors("period_reopen")
 @auth_required
 @rate_limit("period_close", 10, 60, key="account")
-@admin_required
+@permission_required(PERM_PERIOD_CLOSE, code="period_forbidden", legacy_code="admin_required")
 def period_reopen(request: AuthorizedRequest):
     """Переоткрытие месяца. Причина обязательна.
 
@@ -2018,7 +2125,7 @@ def period_reopen(request: AuthorizedRequest):
     после того, как лёг в основу счёта. Причина попадает в журнал, чтобы через
     полгода было понятно, почему цифры разошлись с актом.
 
-    @admin_required — то же точечное исключение, что у period_close.
+    Право ``period_close`` — то же, что у period_close.
     """
     from .period_service import PeriodService
 
@@ -2056,7 +2163,7 @@ def period_reopen(request: AuthorizedRequest):
 @log_errors("period_close_bulk")
 @auth_required
 @rate_limit("period_close", 10, 60, key="account")
-@admin_required
+@permission_required(PERM_PERIOD_CLOSE, code="period_forbidden", legacy_code="admin_required")
 def period_close_bulk(request: AuthorizedRequest):
     """Закрыть все открытые периоды ДО указанного включительно, одной операцией.
 
@@ -2188,7 +2295,7 @@ def period_late_arrivals(request: AuthorizedRequest):
 @log_errors("period_fix")
 @auth_required
 @rate_limit("period_fix", 20, 60, key="account")
-@admin_required
+@permission_required(PERM_PERIOD_CLOSE, code="period_forbidden", legacy_code="admin_required")
 def period_fix(request: AuthorizedRequest):
     """Исправление находки проверки одним нажатием.
 
@@ -2538,6 +2645,20 @@ def get_users(request: AuthorizedRequest):
     if active_only:
         queryset = queryset.filter(active=True)
 
+    # Поиск по имени и фамилии — для экрана ролей: на портале сотни людей, и
+    # листать справочник страницами, чтобы назначить роль одному, нельзя.
+    # Каждое слово ищется отдельно, поэтому «Цыганков Егор» и «Егор Цыг»
+    # находят одного и того же человека.
+    search = str(request.GET.get("search", "") or "").strip()
+    if search:
+        from django.db.models import Q
+
+        for word in search.split()[:4]:
+            condition = Q(name__icontains=word) | Q(last_name__icontains=word)
+            if word.isdigit():
+                condition |= Q(bitrix_id=word)
+            queryset = queryset.filter(condition)
+
     page_number = request.GET.get("page", 1)
     # Клэмп сверху (200) не даёт ?limit=100000 сериализовать весь справочник
     # сотрудников в один ответ. См. ревью Задачи 5, Important #1.
@@ -2576,9 +2697,52 @@ def get_configuration(request: AuthorizedRequest):
     return JsonResponse(service.get_configuration_sync())
 
 
+#: Значение ``scope`` в теле save_configuration для сохранения одних
+#: «Доходов-расходов» (FINANCE_CONFIG_SAVE_SCOPE во frontend/app/utils/fieldMapping.ts).
+CONFIG_SAVE_SCOPE_FINANCE = "finance"
+
+#: Кэш сумм операций по проектам (FinanceOperationService.get_sums_by_project_item_id).
+FINANCE_SUMS_CACHE_SUFFIX = "finance-sums-by-project-item"
+
+
+def _project_spa_mapping_signature(config: dict) -> tuple:
+    """Проектная часть конфигурации в сравнимом виде.
+
+    Обе стороны уже прошли normalize_configuration_sync, поэтому стадия
+    разложена по всем пяти ключам одинаково. Пустые значения выкидываются,
+    значения приводятся к строкам: app.option возвращает числа строками, и
+    «1032» с 1032 не должны считаться изменением.
+    """
+    try:
+        entity_type_id = int(config.get("project_sp_entity_type_id") or 0)
+    except (TypeError, ValueError):
+        entity_type_id = 0
+    mapping = config.get("project_fields_mapping") or {}
+    if not isinstance(mapping, dict):
+        mapping = {}
+    normalized_mapping = tuple(sorted(
+        (str(key), str(value).strip())
+        for key, value in mapping.items()
+        if value is not None and str(value).strip()
+    ))
+    return entity_type_id, normalized_mapping
+
+
+def _project_spa_part_unchanged(stored: dict, incoming: dict) -> bool:
+    """Совпадает ли проектная часть присланной конфигурации с сохранённой.
+
+    Если чтение сохранённой не удалось, ConfigurationService отдаёт значения
+    по умолчанию (project_sp_entity_type_id = 0) — сравнение с присланным
+    процессом тогда не сходится, и сохранение идёт обычным путём с
+    проверкой. То есть сбой чтения делает ветку строже, а не мягче.
+    """
+    return _project_spa_mapping_signature(stored or {}) == _project_spa_mapping_signature(incoming or {})
+
+
 @rate_limit("config_save_sync", 6, 60, key="account")
 def _save_configuration_with_project_sync(
-    request: AuthorizedRequest, service: ConfigurationService, config: dict
+    request: AuthorizedRequest, service: ConfigurationService, config: dict,
+    base_revision=None,
 ) -> JsonResponse:
     """Ветка save_configuration при заданном (> 0) project_sp_entity_type_id —
 
@@ -2647,10 +2811,14 @@ def _save_configuration_with_project_sync(
             status=400,
         )
 
-    service.save_configuration_sync(config)
+    try:
+        saved_config = service.save_configuration_sync(config, base_revision=base_revision)
+    except ConfigurationConflict as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
     invalidate_project_runtime_caches(request.bitrix24_account)
+    invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
 
-    response_payload = {"status": "success"}
+    response_payload = {"status": "success", "config_revision": saved_config.get("config_revision")}
     project_sync_service = ProjectSyncService(request.bitrix24_account.client, request.bitrix24_account)
     try:
         with account_sync_lock(request.bitrix24_account, scope="project"):
@@ -2698,6 +2866,7 @@ def _save_configuration_with_project_sync(
 @require_POST
 @log_errors("save_configuration")
 @auth_required
+@permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")
 def save_configuration(request: AuthorizedRequest):
     service = ConfigurationService(request.bitrix24_account.client, request.bitrix24_account)
     try:
@@ -2713,12 +2882,52 @@ def save_configuration(request: AuthorizedRequest):
         if not isinstance(config, dict):
             return JsonResponse({"error": "Некорректный формат конфигурации."}, status=400)
 
+        # Ревизия, с которой экран открыли/последний раз сохранили (см.
+        # ConfigurationConflict). Отсутствует — старый клиент или внутренний
+        # вызов; save_configuration_sync тогда пишет без проверки версии.
+        base_revision = body.get('base_revision')
+
         config = service.normalize_configuration_sync(config)
+
+        # Живая проверка выбранного шаблона генератора документов — только
+        # когда шаблон в сохраняемой конфигурации есть И отличается от
+        # прежнего. Иначе сохранение сопоставления полей смарт-процесса
+        # платило бы двумя REST-вызовами (app.option.get + template.get) за
+        # проверку настройки, которой в нём нет.
+        if has_selected_templates(config):
+            template_error = validate_template_settings(
+                request.bitrix24_account, config, service.get_configuration_sync()
+            )
+            if template_error is not None:
+                return JsonResponse(template_error.as_payload(), status=400)
 
         try:
             should_validate_project_spa = int(config.get("project_sp_entity_type_id") or 0) > 0
         except (TypeError, ValueError):
             should_validate_project_spa = False
+
+        # Отдельное сохранение «Доходов-расходов» с экрана сопоставления.
+        # Проверка и синхронизация проектов ему не нужны, а без этой ветки он
+        # ждал бы полную синхронизацию, тратил её лимит 6/60 и упирался в 400,
+        # когда на портале поломано сопоставление ПРОЕКТОВ. Ветка срабатывает,
+        # только если проектная часть конфигурации совпадает с сохранённой:
+        # иначе — обычный путь с проверкой, и обойти её этим признаком нельзя.
+        if (
+            should_validate_project_spa
+            and str(body.get("scope") or "").strip().lower() == CONFIG_SAVE_SCOPE_FINANCE
+            and _project_spa_part_unchanged(service.get_configuration_sync(), config)
+        ):
+            try:
+                saved_config = service.save_configuration_sync(config, base_revision=base_revision)
+            except ConfigurationConflict as exc:
+                return JsonResponse(exc.as_payload(), status=exc.status)
+            invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
+            invalidate_project_runtime_caches(request.bitrix24_account)
+            return JsonResponse({
+                "status": "success",
+                "scope": CONFIG_SAVE_SCOPE_FINANCE,
+                "config_revision": saved_config.get("config_revision"),
+            })
 
         if should_validate_project_spa:
             # project_sp_entity_type_id > 0 -> эта ветка попытается запустить
@@ -2726,11 +2935,17 @@ def save_configuration(request: AuthorizedRequest):
             # поэтому лимитируется отдельно — см. docstring
             # _save_configuration_with_project_sync. Ветка ниже (без Project
             # SPA в конфигурации) синк не запускает и не лимитируется вовсе.
-            return _save_configuration_with_project_sync(request, service, config)
+            return _save_configuration_with_project_sync(request, service, config, base_revision)
 
-        service.save_configuration_sync(config)
+        try:
+            saved_config = service.save_configuration_sync(config, base_revision=base_revision)
+        except ConfigurationConflict as exc:
+            return JsonResponse(exc.as_payload(), status=exc.status)
         invalidate_project_runtime_caches(request.bitrix24_account)
-        return JsonResponse({"status": "success"})
+        # Суммы операций кэшируются по сопоставлению «Доходов-расходов»: без
+        # сброса бюджет проекта до конца TTL считал бы по прежним полям.
+        invalidate_account_cache(request.bitrix24_account, [FINANCE_SUMS_CACHE_SUFFIX])
+        return JsonResponse({"status": "success", "config_revision": saved_config.get("config_revision")})
     except json.JSONDecodeError:
         return JsonResponse({"error": "Некорректное JSON тело запроса."}, status=400)
     except Exception:
@@ -2811,6 +3026,7 @@ def get_project_spa_stages(request: AuthorizedRequest):
 @require_POST
 @log_errors("create_smart_process")
 @auth_required
+@permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")
 def create_smart_process(request: AuthorizedRequest):
     """Create a new Smart Process from settings page."""
     try:
@@ -2829,6 +3045,7 @@ def create_smart_process(request: AuthorizedRequest):
 @require_POST
 @log_errors("create_fields")
 @auth_required
+@permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")
 def create_fields(request: AuthorizedRequest):
     """Create all required fields in the selected Smart Process."""
     import json as json_module
@@ -2859,6 +3076,7 @@ def create_fields(request: AuthorizedRequest):
 @require_POST
 @log_errors("create_mapped_field")
 @auth_required
+@permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")
 def create_mapped_field(request: AuthorizedRequest):
     import json as json_module
     try:
@@ -3457,3 +3675,1047 @@ def serve_spa(request):
             "Please ensure 'npm run generate' ran successfully during build.",
             status=404
         )
+
+
+# ---------------------------------------------------------------------------
+# БДДС по проектам (bdds)
+# ---------------------------------------------------------------------------
+#
+# Макет и модель: docs/design-options/2026-09-12-bdds-mockup.html и .md
+# (ветка claude/bdds-mockup). Здесь реализован ЭТАП 1: включение готовой
+# расчётной части и бюджет проекта одним числом. Статей ДДС, плана по
+# месяцам и корректировок с согласованием тут нет — это этапы 2 и 3.
+#
+# Подписка. На ВСЕХ ручках БДДС стоит @feature_required(FEATURE_BDDS), в том
+# числе на чтении: без тарифа Pro (или при выключенном) закрыто всё. При
+# ИСТЁКШЕМ тарифе декоратор пропускает чтение (GET) и закрывает запись —
+# правило «при неоплате клиент не теряет доступ к своим данным», см.
+# billing_features. У «Счёта и акта» чтение реестра открыто и без тарифа:
+# там клиент уже выставил документы и обязан их видеть.
+#
+# Права — ролевая модель (main/roles.py). Чтение закрыто правом money_view
+# («видеть суммы»), запись операций — operations_create. Порядок гейтов:
+# сначала подписка на БДДС, потом право — человеку без подписки нечего
+# объяснять про роли. Пока ограничения ролей не действуют
+# (тарифа нет или он выключен), money_view есть у всех.
+
+
+def _bdds_service(request: AuthorizedRequest) -> BddsService:
+    account = request.bitrix24_account
+    return BddsService(account, settings=load_bdds_settings(account))
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_bdds_projects")
+@auth_required
+@feature_required(FEATURE_BDDS)
+@permission_required(PERM_MONEY_VIEW, code="money_forbidden")
+def get_bdds_projects(request: AuthorizedRequest):
+    """Реестр проектов с бюджетами: строки, итог по портфелю, пороги.
+
+    Архив по умолчанию не отдаётся: бюджет закрытого проекта — история, а
+    реестр открывают, чтобы увидеть, где горит сейчас. ?archived=1 его
+    возвращает, потому что сверить закрытый проект с итогом года всё-таки
+    иногда нужно.
+    """
+    include_archived = _parse_bool_param(request, "archived")
+    payload = _bdds_service(request).list_projects(include_archived=include_archived)
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_bdds_project")
+@auth_required
+@feature_required(FEATURE_BDDS)
+@permission_required(PERM_MONEY_VIEW, code="money_forbidden")
+def get_bdds_project(request: AuthorizedRequest, project_id: str):
+    """Бюджет одного проекта: показатели, прогноз, последние операции.
+
+    Ответ 404 при несуществующем проекте, а не пустые метрики: пустые
+    метрики читались бы как «проект есть, денег нет», и человек искал бы
+    ошибку в данных вместо опечатки в адресе.
+    """
+    payload = _bdds_service(request).get_project(project_id)
+    if payload is None:
+        return JsonResponse(
+            {"error": "Проект не найден в карточках проектов.", "code": "project_not_found"},
+            status=404,
+        )
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_finance_operations")
+@auth_required
+@feature_required(FEATURE_BDDS)
+@permission_required(PERM_MONEY_VIEW, code="money_forbidden")
+def get_finance_operations(request: AuthorizedRequest):
+    """Операции «доход/расход» из смарт-процесса портала.
+
+    Ненастроенный смарт-процесс — это 409, а не 500: приложение работает
+    (часы, отчёты, проекты), не настроена именно эта функция, и текст отказа
+    обязан вести в настройки, а не в поддержку.
+    """
+    def _int_param(name: str, default: int) -> int:
+        try:
+            return int(request.GET.get(name) or default)
+        except (TypeError, ValueError):
+            return default
+
+    # totals=1 просит ИТОГИ ПО ВЫБОРКЕ, а не по странице, и это отдельный
+    # параметр, потому что стоит полного прохода по смарт-процессу: карточке
+    # проекта итоги не нужны (там их считает бюджет), реестру — нужны.
+    with_totals = str(request.GET.get("totals") or "").strip().lower() in {"1", "true", "yes", "y"}
+
+    service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        payload = service.list_operations(
+            project_item_id=request.GET.get("project_item_id"),
+            deal_id=request.GET.get("deal_id"),
+            limit=_int_param("limit", 20),
+            offset=_int_param("offset", 0),
+            date_from=request.GET.get("date_from"),
+            date_to=request.GET.get("date_to"),
+            operation_type=request.GET.get("operation_type"),
+            with_totals=with_totals,
+        )
+    except ValueError as exc:
+        return JsonResponse(
+            {"error": str(exc), "code": "finance_spa_not_configured"},
+            status=409,
+        )
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("create_finance_operation")
+@auth_required
+@feature_required(FEATURE_BDDS)
+@bdds_operations_manager_required
+@rate_limit("finance_operation_create", 20, 60, key="account")
+def create_finance_operation(request: AuthorizedRequest):
+    """Создание операции в смарт-процессе портала.
+
+    Идемпотентность проверкой дубля (_find_duplicate) сама по себе не
+    защищает от гонки: два параллельных запроса (двойной клик «Сохранить»
+    или две вкладки) оба читают crm.item.list ДО того, как кто-то из них
+    успел записать crm.item.add, оба не находят дубль и оба создают
+    операцию. Поэтому проверка дубля и создание обёрнуты в тот же приём,
+    что и выставление счёта (_billing_documents_create) — advisory-замок
+    account_sync_lock(scope="finance_operation") с субъектом-ПОРТАЛОМ:
+    сериализует и два клика одного бухгалтера, и двух разных бухгалтеров
+    одного портала.
+
+    Права — @bdds_operations_manager_required: администратор портала или
+    «Бухгалтерия» из настроек, тот же список, что у выставления счёта (см.
+    bdds_settings). ЧТЕНИЕ операций открыто всем, у кого есть подписка:
+    реестр не показывает ничего, чего человек не увидел бы в самом
+    смарт-процессе на портале.
+    """
+    service = FinanceOperationService(request.bitrix24_account.client, request.bitrix24_account)
+    try:
+        with account_sync_lock(request.bitrix24_account, scope="finance_operation"):
+            payload = service.create_operation(_load_request_json(request))
+    except SyncLockBusy:
+        return JsonResponse(
+            {
+                "error": "Кто-то уже сохраняет операцию по этому смарт-процессу. Повторите через несколько секунд.",
+                "code": "finance_operation_busy",
+            },
+            status=409,
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc), "code": "invalid_operation"}, status=400)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("create_finance_operation: сбой записи операции")
+        return JsonResponse(
+            {"error": f"Не удалось создать операцию в смарт-процессе: {exc}", "code": "portal_write_failed"},
+            status=502,
+        )
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("run_project_budget_notifier")
+@auth_required
+@feature_required(FEATURE_BDDS)
+@permission_required(PERM_MONEY_VIEW, code="money_forbidden")
+@rate_limit("project_budget_notify", 6, 60, key="account")
+def run_project_budget_notifier(request: AuthorizedRequest):
+    """Прогон уведомлений о риске и перерасходе.
+
+    Ручка пишущая (рассылает уведомления в портал), поэтому и POST, и
+    ограничение частоты: прогон по всему портфелю — это N уведомлений и
+    чтение смарт-процесса, и дёргать его в цикле нельзя.
+
+    Выключатель — настройка bdds_notifications_enabled: при ней прогон
+    отвечает status=disabled и ничего не отправляет.
+    """
+    payload = _load_request_json(request)
+    account = request.bitrix24_account
+    notifier = ProjectBudgetNotifier(account.client, account, settings=load_bdds_settings(account))
+
+    project_ids = payload.get("project_ids")
+    project_item_ids = payload.get("project_item_ids")
+    if isinstance(project_ids, list) and project_ids:
+        result = notifier.evaluate_project_ids(project_ids, source="manual")
+    elif isinstance(project_item_ids, list) and project_item_ids:
+        result = notifier.evaluate_project_item_ids(project_item_ids, source="manual")
+    else:
+        result = notifier.evaluate_all(source="manual")
+
+    return JsonResponse(result)
+
+
+# ---------------------------------------------------------------------------
+# Счёт и акт (billing)
+# ---------------------------------------------------------------------------
+#
+# Контракт: docs/superpowers/specs/2026-09-12-billing-mvp-contract.md.
+# Ядро — billing_service (отбор, суммы, транзакция), канал CRM —
+# billing_crm_service (смарт-счёт, товарные строки, печать акта).
+#
+# Два гейта на пишущих эндпоинтах, и они РАЗНЫЕ по смыслу:
+# - права — ролевая модель (main/roles.py): @billing_manager_required
+#   (выставить, напечатать), @billing_cancel_required (отменить),
+#   @billing_money_view_required (реестр, карточка, детализация). Пока
+#   ролевая модель на портале не действует, реестр читают все, а выставляют
+#   и отменяют админ портала и «Бухгалтерия» — как до ролей;
+# - @feature_required("billing") — подписка. Без действующего тарифа Pro
+#   (выключен или истёк после грейса) нельзя создавать и печатать, но ЧИТАТЬ
+#   реестр, ВЫГРУЖАТЬ детализацию и ОТМЕНЯТЬ можно: эти ручки декоратор не
+#   носят — отключение подписки не лишает клиента выставленных документов.
+#
+# Порядок декораторов на POST /api/billing/documents: сначала права и
+# подписка, затем rate_limit, и только потом advisory-замок портала —
+# захватывать замок ради запроса, который всё равно будет отклонён, незачем.
+
+
+def _billing_service(request: AuthorizedRequest) -> BillingService:
+    return BillingService(request.bitrix24_account)
+
+
+def _billing_actor(request: AuthorizedRequest):
+    account = request.bitrix24_account
+    return str(account.b24_user_id or ""), _current_user_display_name(request)
+
+
+def _billing_card_response(service: BillingService, document) -> JsonResponse:
+    """Карточка документа одним ответом.
+
+    Строки, потреблённые списания и расхождения лежат И внутри document, И
+    на верхнем уровне. Контракт («документ, строки, потреблённые списания и
+    drift[]») не фиксирует вложенность, а читает этот ответ параллельно
+    написанный интерфейс, который ждёт их наверху. Дублирование дешевле
+    рассогласования: одно и то же значение, собранное один раз.
+    """
+    payload = service.serialize_document(document, with_details=True)
+    return JsonResponse({
+        "document": payload,
+        "lines": payload["lines"],
+        "entries": payload["entries"],
+        "drift": payload["drift"],
+    })
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("get_features")
+@auth_required
+def get_features(request: AuthorizedRequest):
+    """Состояния платных функций портала — для меню и экранов фронта.
+
+    Только чтение: писать состояние по REST нельзя ни при каких условиях,
+    иначе подписку включил бы токен приложения из консоли браузера. Менять —
+    management-командой pro_plan (тариф портала, billing_features).
+    """
+    return JsonResponse(feature_states(request.bitrix24_account))
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("billing_templates")
+@auth_required
+@billing_manager_required
+@rate_limit("billing_templates", 30, 60, key="account")
+def billing_templates(request: AuthorizedRequest):
+    """Шаблоны генератора документов портала — для выбора в настройках.
+
+    Права те же, что у выставления (@billing_manager_required): список
+    шаблонов сам по себе не секрет, но выбирать их некому, кроме админа
+    портала и «Бухгалтерии», а лишняя ручка без гейта — лишняя поверхность.
+
+    Подписки (@feature_required) здесь НЕТ намеренно: выключенная подписка
+    запрещает выставлять и печатать, а не настраивать. Настроить шаблоны до
+    включения подписки — нормальный порядок действий.
+
+    Отказ портала отдаётся кодом, а не пустым списком: интерфейс обязан
+    отличать «шаблонов нет — создайте в CRM» от «генератор документов
+    недоступен», иначе настройщик будет искать шаблоны там, где дело в
+    модуле (код documentgenerator_unavailable).
+    """
+    crm_service = BillingCrmService(request.bitrix24_account, service=_billing_service(request))
+    try:
+        templates = crm_service.list_templates()
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("billing_templates: сбой чтения шаблонов")
+        return JsonResponse(
+            {
+                "error": f"Не удалось получить список шаблонов генератора документов: {exc}",
+                "code": "documentgenerator_unavailable",
+            },
+            status=502,
+        )
+
+    return JsonResponse({"templates": templates, "total": len(templates)})
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("billing_preview")
+@auth_required
+@billing_manager_required
+@rate_limit("billing_preview", 30, 60, key="account")
+def billing_preview(request: AuthorizedRequest):
+    """Предпросмотр отбора: строки, итоги и предупреждения. Ничего не пишет.
+
+    @feature_required здесь НЕ стоит: предпросмотр — чтение, и запрет на него
+    ничего не защищает (те же цифры видны в отчётах), а вот показать
+    подписчику-новичку, что именно он получит, полезно. Запрещено ровно то,
+    что предписывает контракт: создание и печать.
+    """
+    service = _billing_service(request)
+    try:
+        filters = service.build_filter(_load_request_json(request))
+        selection = service.collect(filters)
+        # Наше юрлицо разбирается ЗДЕСЬ, а не внутри Selection: ответ обязан
+        # сказать не только «какое», но и «откуда» (настройка приложения или
+        # карточка проекта), а это знает только сервис с настройками портала.
+        # verify_our_company здесь НЕ зовётся: предпросмотр не должен платить
+        # REST-вызовом и не должен отказывать — пусть человек увидит строки,
+        # а на негодное юрлицо упрётся кнопка «Выставить».
+        our_company = service.resolve_our_company(selection, filters)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    return JsonResponse(selection.as_payload(our_company))
+
+
+@billing_manager_required
+@feature_required(FEATURE_BILLING)
+@rate_limit("billing_issue", 10, 60, key="account")
+def _billing_documents_create(request: AuthorizedRequest):
+    """Выставление: наша БД -> счёт в CRM -> сверка перечитанного счёта.
+
+    Порядок «сначала БД» намеренный (см. докстринг billing_service): конфликт
+    частичного индекса обязан всплыть раньше, чем на портале появится счёт,
+    удалить который приложение не сможет. Если CRM-шаг падает, документ
+    снимается discard_failed — списания освобождаются.
+
+    Замок — account_sync_lock со своим scope="billing" и субъектом-ПОРТАЛОМ,
+    тем же приёмом, что и кнопка «Создать проект» (project_creation_service):
+    «Выставить» могут нажать два разных бухгалтера одного портала, и
+    сериализовать нужно обоих. Декоратор @sync_lock здесь не годится — он
+    отвечает про синхронизацию («Синхронизация уже выполняется»), а человек
+    жмёт «Выставить»; текст отказа обязан говорить о том, что он делал.
+    """
+    try:
+        with account_sync_lock(request.bitrix24_account, scope="billing"):
+            return _billing_issue_under_lock(request)
+    except SyncLockBusy:
+        return JsonResponse(
+            {
+                "error": "Кто-то уже выставляет счёт на этом портале. Повторите через несколько секунд.",
+                "code": "billing_busy",
+            },
+            status=409,
+        )
+
+
+def _billing_issue_under_lock(request: AuthorizedRequest):
+    """Тело выставления под замком портала. Вынесено только ради читаемости."""
+    payload = _load_request_json(request)
+    service = _billing_service(request)
+    user_id, user_name = _billing_actor(request)
+
+    try:
+        filters = service.build_filter(payload)
+        selection = service.collect(filters)
+        service.validate_for_issue(selection, filters)
+        # Утверждённые строки применяются ПОСЛЕ проверок отбора: блокеры
+        # (несколько клиентов, открытый период, «уже выставлено» с его 409)
+        # относятся к отбору целиком, и исключение строки в мастере не
+        # должно их обходить. А вот документ и счёт собираются уже по
+        # утверждённому: исключённая строка не потребляет списания.
+        selection = service.apply_approved_lines(selection, payload.get("lines"))
+        # Наше юрлицо решается и проверяется ДО записи документа: настройка
+        # приложения перекрывает карточку проекта, а негодное юрлицо обязано
+        # остановить выставление понятным our_company_missing, а не оставить
+        # на портале счёт без реквизитов. Проверка — сетевой вызов, поэтому
+        # она снаружи транзакции create_document.
+        our_company = service.verify_our_company(
+            service.resolve_our_company(selection, filters)
+        )
+        document = service.create_document(
+            selection, filters,
+            created_by_id=user_id,
+            created_by_name=user_name,
+            vat_mode=str(payload.get("vat_mode") or BillingDocument.VAT_INCLUDED),
+            vat_rate=payload.get("vat_rate") or 0,
+            our_company=our_company,
+        )
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+
+    crm_service = BillingCrmService(request.bitrix24_account, service=service)
+    try:
+        crm_service.issue(document)
+    except BillingError as exc:
+        service.discard_failed(document, exc.message)
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("billing_documents_create: сбой канала CRM")
+        service.discard_failed(document, str(exc))
+        return JsonResponse(
+            {"error": f"Не удалось выставить счёт: {exc}", "code": "crm_invoice_failed"},
+            status=502,
+        )
+
+    response = _billing_card_response(service, document)
+    response.status_code = 201
+    return response
+
+
+@billing_money_view_required
+def _billing_documents_list(request: AuthorizedRequest):
+    """Реестр документов: фильтр по клиенту, периоду и статусу."""
+    service = _billing_service(request)
+    queryset = service.documents_queryset()
+
+    company_id = (request.GET.get("company_id") or "").strip()
+    if company_id:
+        queryset = queryset.filter(company_id=company_id)
+    status_value = (request.GET.get("status") or "").strip()
+    if status_value:
+        queryset = queryset.filter(status=status_value)
+
+    date_from = (request.GET.get("date_from") or "").strip()
+    date_to = (request.GET.get("date_to") or "").strip()
+    # Пересечение с периодом, а не попадание внутрь: счёт за 01-31.08
+    # обязан находиться и по запросу «август», и по запросу «с 15.08».
+    if date_from:
+        queryset = queryset.filter(period_to__gte=date_from)
+    if date_to:
+        queryset = queryset.filter(period_from__lte=date_to)
+
+    page_size = _parse_page_size(request, default=50, max_value=200)
+    paginator = Paginator(queryset, page_size)
+    page = paginator.get_page(request.GET.get("page") or 1)
+
+    return JsonResponse({
+        "documents": [service.serialize_document(row) for row in page.object_list],
+        "total": paginator.count,
+        "page": page.number,
+        "pages": paginator.num_pages,
+        "page_size": page_size,
+    })
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+@log_errors("billing_documents")
+@auth_required
+def billing_documents(request: AuthorizedRequest):
+    """Один адрес, два метода: GET — реестр (без гейтов), POST — выставление.
+
+    Гейты навешены не здесь, а на _billing_documents_create: чтение реестра
+    обязано работать и у сотрудника без прав выставления, и при выключенной
+    подписке.
+    """
+    if request.method == "POST":
+        return _billing_documents_create(request)
+    return _billing_documents_list(request)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("billing_document_detail")
+@auth_required
+@billing_money_view_required
+def billing_document_detail(request: AuthorizedRequest, document_id: str):
+    """Карточка: документ, строки, потреблённые списания и расхождения."""
+    service = _billing_service(request)
+    try:
+        document = service.get_document(document_id)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    return _billing_card_response(service, document)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("billing_document_cancel")
+@auth_required
+@billing_cancel_required
+@rate_limit("billing_cancel", 20, 60, key="account")
+def billing_document_cancel(request: AuthorizedRequest, document_id: str):
+    """Отмена: освобождает списания. Причина обязательна.
+
+    @feature_required намеренно НЕТ (контракт, п. 2): при выключенной
+    подписке отмена остаётся разрешена — иначе клиент, у которого кончилась
+    подписка, не смог бы исправить ошибочно выставленный счёт.
+    """
+    service = _billing_service(request)
+    payload = _load_request_json(request)
+    user_id, user_name = _billing_actor(request)
+    try:
+        document = service.get_document(document_id)
+        service.cancel(
+            document,
+            payload.get("reason") or payload.get("cancel_reason") or "",
+            user_id=user_id, user_name=user_name,
+        )
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    return _billing_card_response(service, document)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("billing_document_act")
+@auth_required
+@billing_manager_required
+@feature_required(FEATURE_BILLING)
+@rate_limit("billing_act", 10, 60, key="account")
+def billing_document_act(request: AuthorizedRequest, document_id: str):
+    """Печать акта по счёту генератором документов портала.
+
+    Живьём не проверено (см. докстринг billing_crm_service). Любой отказ
+    портала — понятный код в теле ответа и в act_error документа, а не 500:
+    act_template_missing, documentgenerator_unavailable, act_generation_failed.
+    Текст последней ошибки остаётся на документе, чтобы настройщик видел
+    причину, не поднимая логи.
+    """
+    service = _billing_service(request)
+    payload = _load_request_json(request)
+    try:
+        document = service.get_document(document_id)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+
+    crm_service = BillingCrmService(request.bitrix24_account, service=service)
+    try:
+        result = crm_service.print_act(
+            document,
+            template_id=int(payload.get("template_id") or 0),
+            template_docx_base64=str(payload.get("template_docx_base64") or ""),
+        )
+    except BillingError as exc:
+        document.act_error = exc.message[:4000]
+        document.save(update_fields=["act_error", "updated_at"])
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    except (TypeError, ValueError) as exc:
+        document.act_error = f"Негодные параметры печати акта: {exc}"[:4000]
+        document.save(update_fields=["act_error", "updated_at"])
+        return JsonResponse(
+            {"error": document.act_error, "code": "act_bad_request"}, status=400
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("billing_document_act: сбой печати акта")
+        document.act_error = f"Сбой печати акта: {exc}"[:4000]
+        document.save(update_fields=["act_error", "updated_at"])
+        return JsonResponse(
+            {"error": document.act_error, "code": "act_generation_failed"}, status=502
+        )
+
+    result["document"] = service.serialize_document(document, with_details=False)
+    return JsonResponse(result)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("billing_document_invoice_print")
+@auth_required
+@billing_manager_required
+@feature_required(FEATURE_BILLING)
+@rate_limit("billing_invoice_print", 10, 60, key="account")
+def billing_document_invoice_print(request: AuthorizedRequest, document_id: str):
+    """Печатная форма самого счёта по шаблону из настроек.
+
+    Отдельно от акта, а не «печатать всё одной кнопкой»: шаблоны разные,
+    отказы разные, и отказ одного не должен отменять уже напечатанное
+    другое. Коды: invoice_template_missing (шаблон не выбран в настройках),
+    billing_template_not_found (выбранный удалён на портале),
+    documentgenerator_unavailable, invoice_generation_failed.
+    """
+    service = _billing_service(request)
+    payload = _load_request_json(request)
+    try:
+        document = service.get_document(document_id)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+
+    crm_service = BillingCrmService(request.bitrix24_account, service=service)
+    try:
+        result = crm_service.print_invoice_document(
+            document, template_id=int(payload.get("template_id") or 0)
+        )
+    except BillingError as exc:
+        document.invoice_print_error = exc.message[:4000]
+        document.save(update_fields=["invoice_print_error", "updated_at"])
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    except (TypeError, ValueError) as exc:
+        document.invoice_print_error = f"Негодные параметры печати счёта: {exc}"[:4000]
+        document.save(update_fields=["invoice_print_error", "updated_at"])
+        return JsonResponse(
+            {"error": document.invoice_print_error, "code": "invoice_bad_request"}, status=400
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("billing_document_invoice_print: сбой печати счёта")
+        document.invoice_print_error = f"Сбой печати счёта: {exc}"[:4000]
+        document.save(update_fields=["invoice_print_error", "updated_at"])
+        return JsonResponse(
+            {"error": document.invoice_print_error, "code": "invoice_generation_failed"},
+            status=502,
+        )
+
+    result["document"] = service.serialize_document(document, with_details=False)
+    return JsonResponse(result)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("billing_document_detail_export")
+@auth_required
+@billing_money_view_required
+@rate_limit("export", 12, 60, key="account")
+def billing_document_detail_export(request: AuthorizedRequest, document_id: str):
+    """XLSX-детализация к акту по снимку документа."""
+    service = _billing_service(request)
+    try:
+        document = service.get_document(document_id)
+    except BillingError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+
+    entries = list(document.entries.all().order_by("date_reflection", "timesheet_bitrix_id"))
+    try:
+        output = build_billing_detail_workbook(
+            document, entries, account=request.bitrix24_account
+        )
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    # Имя файла русское («Детализация к счёту № … (период).xlsx»), поэтому
+    # уходит через filename* (RFC 5987). ASCII-фолбэк обязателен: клиенты,
+    # не понимающие filename*, иначе сохранят файл под именем из URL.
+    human_name = detail_export_filename(document)
+    ascii_suffix = re.sub(
+        r"[^A-Za-z0-9._-]+", "_", document.crm_account_number or str(document.pk)
+    ).strip("_-.") or "document"
+    ascii_name = f"billing_detail_{ascii_suffix}.xlsx"
+    response["Content-Disposition"] = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8\'\'{quote(human_name)}"
+    )
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Роли и права (функция «roles» тарифа Pro)
+# ---------------------------------------------------------------------------
+#
+# Модель, матрица и довод «почему в нашей БД» — в докстринге main/roles.py.
+# Здесь четыре ручки: свои права (для кнопок интерфейса), каталог с
+# назначениями и матрицей портала (для экрана настроек), назначение роли и
+# сохранение прав ролей.
+#
+# Тариф закрывает ИЗМЕНЕНИЕ ролей, а не их действие. Проверка прав по
+# назначенным ролям идёт по billing_features.feature_restrictions_active: она
+# действует и при живом Pro, и после его окончания («только чтение») — иначе
+# в этот день все сотрудники разом увидели бы ставки и суммы. Назначение и
+# правка ролей закрыты @feature_required(FEATURE_ROLES).
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("roles_me")
+@auth_required
+def roles_me(request: AuthorizedRequest):
+    """Права текущего человека. Интерфейс по ним прячет кнопки, сервер — отказывает."""
+    access = resolve_access(request.bitrix24_account)
+    payload = access.as_payload()
+    payload["feature"] = roles_feature_state(request.bitrix24_account)
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("roles_list")
+@auth_required
+def roles_list(request: AuthorizedRequest):
+    """Каталог ролей, матрица прав и текущие назначения портала.
+
+    Открыт всем: таблица «роль → что может» и список «кто в какой роли»
+    отвечают на вопрос «к кому идти», который возникает как раз у того, кому
+    отказали. Менять что-либо — только /api/roles/assign.
+
+    Перенос прежнего списка «Бухгалтерия» запускается и отсюда: администратор
+    портала при проверке прав его не запускает (ему не нужно), а экран ролей
+    он откроет первым делом — и должен увидеть перенесённых бухгалтеров.
+    """
+    account = request.bitrix24_account
+    imported = ensure_accountants_imported(account)
+    access = resolve_access(account)
+    return JsonResponse({
+        "me": access.as_payload(),
+        "feature": roles_feature_state(account),
+        "roles_enabled": access.roles_enabled,
+        "subscription_active": access.subscription_active,
+        "assignable_roles": assignable_roles(access),
+        "can_manage": access.has(PERM_ROLES_MANAGE),
+        # Менять права ролей — то же условие, что назначать роли: право
+        # roles_manage и живой Pro. Сервер проверяет его сам на сохранении.
+        "can_edit_matrix": access.has(PERM_ROLES_MANAGE) and access.subscription_active,
+        "accountants_imported": imported,
+        "catalog": roles_catalog(account),
+        "assignments": list_assignments(account),
+        "matrix_log": matrix_log(account),
+    })
+
+
+def _roles_assign(request: AuthorizedRequest, user_id, role):
+    account = request.bitrix24_account
+    try:
+        result = assign_role(
+            account, user_id, role,
+            by_id=str(account.b24_user_id or ""),
+            by_name=_current_user_display_name(request),
+        )
+    except RoleAssignmentError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    return JsonResponse({"status": "ok", **result, "assignments": list_assignments(account)})
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("roles_assign")
+@auth_required
+@feature_required(FEATURE_ROLES)
+@permission_required(PERM_ROLES_MANAGE, code="roles_forbidden", legacy_code="roles_forbidden")
+@rate_limit("roles_assign", 60, 60, key="account")
+def roles_assign(request: AuthorizedRequest):
+    """Назначить сотруднику роль. «Сотрудник» снимает назначенную роль.
+
+    Сначала тариф (@feature_required(FEATURE_ROLES)): без живого Pro роли не
+    меняются — ни на портале без тарифа, ни после его окончания, когда
+    назначенные роли продолжают действовать. Потом право roles_manage — роль
+    «Администратор» (администраторы портала имеют её всегда).
+    """
+    payload = _load_request_json(request)
+    role = str(payload.get("role") or "").strip().lower()
+    if normalize_role(role) is None:
+        return JsonResponse({"error": "Такой роли нет.", "code": "unknown_role"}, status=400)
+    return _roles_assign(request, payload.get("user_id"), role)
+
+
+# ---------------------------------------------------------------------------
+# Покупка Pro: заявка на счёт (main/pro_purchase_service.py)
+# ---------------------------------------------------------------------------
+#
+# Портал заявки — ТОЛЬКО из авторизации (request.bitrix24_account), тело
+# запроса портал не задаёт: запросить счёт на чужой портал нельзя. Право —
+# «выставлять счета» ролевой модели (администратор и «Бухгалтерия», при
+# ролях и без них — main/roles.py). Подписка на эти ручки не нужна: купить
+# Pro можно как раз без Pro.
+
+
+def pro_request_required(view_func):
+    """Гейт «запросить счёт на Pro». Применять ПОСЛЕ @auth_required."""
+    from functools import wraps
+
+    from .pro_purchase_service import can_request_pro
+
+    @wraps(view_func)
+    def wrapped(request, *args, **kwargs):
+        if not can_request_pro(getattr(request, "bitrix24_account", None)):
+            return JsonResponse(
+                {
+                    "error": "Счёт на Pro запрашивает администратор портала или сотрудник "
+                             "с ролью «Бухгалтерия».",
+                    "code": "pro_request_forbidden",
+                },
+                status=403,
+            )
+        return view_func(request, *args, **kwargs)
+
+    return wrapped
+
+
+def _pro_error(exc) -> JsonResponse:
+    return JsonResponse(exc.as_payload(), status=exc.status)
+
+
+def _pro_request_of_portal(request: AuthorizedRequest, request_id: str):
+    """Заявка ТОЛЬКО своего портала; чужая неотличима от несуществующей."""
+    import uuid as _uuid
+
+    from .models import ProRequest
+    from .pro_purchase_service import portal_for_account
+
+    try:
+        _uuid.UUID(str(request_id))
+    except ValueError:
+        return None
+    portal = portal_for_account(request.bitrix24_account)
+    return ProRequest.objects.filter(pk=request_id, portal=portal).first()
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_offer")
+@auth_required
+def pro_offer(request: AuthorizedRequest):
+    """Всё для экрана /pro одним ответом: цены по срокам, НДС, портал и код,
+    контакт, состояние подписки, текущая заявка, можно ли запрашивать счёт."""
+    from .pro_purchase_service import PurchaseError, build_offer, can_request_pro
+
+    try:
+        payload = build_offer(request.bitrix24_account, can_request=can_request_pro(request.bitrix24_account))
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    return JsonResponse(payload)
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_quote")
+@auth_required
+def pro_quote(request: AuthorizedRequest):
+    """Сумма за срок (?months=N). Считает только сервер."""
+    from .pro_purchase_service import PurchaseError, portal_for_account, quote_for
+
+    try:
+        quote = quote_for(portal_for_account(request.bitrix24_account), request.GET.get("months"))
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    return JsonResponse(quote.as_payload())
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_requisites")
+@auth_required
+@pro_request_required
+@rate_limit("pro_requisites", 30, 60, key="account")
+def pro_requisites(request: AuthorizedRequest):
+    """Реквизиты из CRM портала клиента.
+
+    Без ?inn — свои юрлица с реквизитами (подсказки формы); с ?inn — поиск
+    реквизита по ИНН. Внешнего справочника ЕГРЮЛ в этой версии нет.
+    """
+    from .inn_validation import validate_inn
+    from .pro_purchase_service import lookup_requisites_by_inn, my_company_requisites
+
+    inn = "".join(str(request.GET.get("inn") or "").split())
+    if not inn:
+        return JsonResponse(my_company_requisites(request.bitrix24_account))
+    error = validate_inn(inn)
+    if error:
+        return JsonResponse({"error": error, "code": "inn_invalid"}, status=400)
+    return JsonResponse(lookup_requisites_by_inn(request.bitrix24_account, inn))
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("pro_requests_create")
+@auth_required
+@pro_request_required
+@rate_limit("pro_requests_create", 10, 600, key="account")
+def pro_requests_create(request: AuthorizedRequest):
+    """Создать заявку на счёт и отправить её в CRM Mainsoft.
+
+    Заявка сохраняется до обращения к CRM: недоступный портал Mainsoft или
+    ненастроенный вебхук оставляют её со статусом «ожидает отправки».
+    """
+    from .pro_purchase_crm import load_crm_settings
+    from .pro_purchase_service import PurchaseError, create_request, dispatch, serialize_request
+
+    payload = _load_request_json(request)
+    try:
+        result = create_request(request.bitrix24_account, payload)
+    except PurchaseError as exc:
+        return _pro_error(exc)
+
+    crm_settings = load_crm_settings()
+    if result.replaced is not None:
+        from .pro_purchase_service import sync_cancellation
+
+        sync_cancellation(result.replaced, crm_settings=crm_settings)
+    pro_request = dispatch(result.request, crm_settings=crm_settings, use_env=False)
+    return JsonResponse(
+        {
+            "request": serialize_request(pro_request, crm_settings=crm_settings),
+            "replaced_invoice_number": result.replaced.invoice_number if result.replaced else None,
+            "updated_in_place": result.updated_in_place,
+            "crm_mode": "auto" if crm_settings is not None else "manual",
+        },
+        status=200 if result.updated_in_place else 201,
+    )
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_requests_current")
+@auth_required
+def pro_requests_current(request: AuthorizedRequest):
+    """Текущая заявка портала и её статус. Сотруднику без права — без реквизитов."""
+    from .pro_purchase_crm import load_crm_settings
+    from .pro_purchase_service import (
+        PurchaseError,
+        can_request_pro,
+        current_request,
+        portal_for_account,
+        serialize_request,
+    )
+
+    account = request.bitrix24_account
+    try:
+        pro_request = current_request(portal_for_account(account))
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    if pro_request is None:
+        return JsonResponse({"request": None})
+    return JsonResponse({
+        "request": serialize_request(pro_request, full=can_request_pro(account), crm_settings=load_crm_settings()),
+    })
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("pro_requests_cancel")
+@auth_required
+@pro_request_required
+@rate_limit("pro_requests_cancel", 20, 600, key="account")
+def pro_requests_cancel(request: AuthorizedRequest, request_id: str):
+    from .pro_purchase_crm import load_crm_settings
+    from .pro_purchase_service import PurchaseError, cancel_request, display_name, serialize_request
+
+    try:
+        pro_request = _pro_request_of_portal(request, request_id)
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    if pro_request is None:
+        return JsonResponse({"error": "Заявка не найдена.", "code": "not_found"}, status=404)
+    account = request.bitrix24_account
+    reason = str(_load_request_json(request).get("reason") or "").strip()[:500]
+    crm_settings = load_crm_settings()
+    try:
+        cancel_request(
+            pro_request,
+            actor=display_name(account) or f"user:{account.b24_user_id}",
+            reason=reason or "Отменена в приложении",
+            crm_settings=crm_settings,
+        )
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    return JsonResponse({"request": serialize_request(pro_request, crm_settings=crm_settings)})
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("pro_requests_invoice_pdf")
+@auth_required
+@pro_request_required
+@rate_limit("pro_requests_invoice_pdf", 20, 60, key="account")
+def pro_requests_invoice_pdf(request: AuthorizedRequest, request_id: str):
+    """PDF счёта через наш сервер: ссылка генератора документов наружу не отдаётся."""
+    from . import pro_purchase_service
+    from .pro_purchase_crm import CrmSyncError, load_crm_settings
+    from .pro_purchase_service import PurchaseError
+
+    try:
+        pro_request = _pro_request_of_portal(request, request_id)
+    except PurchaseError as exc:
+        return _pro_error(exc)
+    if pro_request is None:
+        return JsonResponse({"error": "Заявка не найдена.", "code": "not_found"}, status=404)
+    crm_settings = load_crm_settings()
+    if not pro_request.crm_pdf_url or crm_settings is None:
+        return JsonResponse(
+            {"error": "PDF счёта ещё не готов — пришлём его на почту.", "code": "pdf_not_ready"},
+            status=404,
+        )
+    from urllib.parse import urlsplit
+
+    # Скачиваем только с портала Mainsoft: ссылка пришла из ответа REST, и
+    # ходить сервером по произвольному адресу из базы незачем.
+    pdf_url = urlsplit(pro_request.crm_pdf_url)
+    if pdf_url.scheme != "https" or pdf_url.netloc != urlsplit(crm_settings.webhook).netloc:
+        return JsonResponse({"error": "PDF счёта недоступен — пришлём его на почту.", "code": "pdf_unavailable"},
+                            status=502)
+    try:
+        content = pro_purchase_service.build_transport(crm_settings).fetch_bytes(pro_request.crm_pdf_url)
+    except CrmSyncError as exc:
+        return JsonResponse({"error": str(exc), "code": "pdf_unavailable"}, status=502)
+    response = HttpResponse(content, content_type="application/pdf")
+    filename = f"Счёт-{pro_request.invoice_number}.pdf"
+    response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return response
+
+
+# Права ролей: сохранение матрицы (см. блок «Роли и права» выше).
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
+@log_errors("roles_matrix_save")
+@auth_required
+@feature_required(FEATURE_ROLES)
+@permission_required(PERM_ROLES_MANAGE, code="roles_forbidden", legacy_code="roles_forbidden")
+@rate_limit("roles_matrix_save", 30, 60, key="account")
+def roles_matrix_save(request: AuthorizedRequest):
+    """Сохранить права ролей портала: {"matrix": {роль: [права]}, "revision": N}.
+
+    Как и назначение ролей: сначала тариф (@feature_required(FEATURE_ROLES) —
+    после окончания Pro сохранённая матрица действует, но не меняется), потом
+    право roles_manage. Неизменяемые ячейки, зависимости прав и неизвестные
+    права проверяет roles.validate_permission_matrix; «вернуть по умолчанию»
+    для роли или всей таблицы экран присылает той же матрицей.
+    """
+    account = request.bitrix24_account
+    payload = _load_request_json(request)
+    try:
+        result = save_permission_matrix(
+            account, payload.get("matrix"),
+            base_revision=payload.get("revision"),
+            by_id=str(account.b24_user_id or ""),
+            by_name=_current_user_display_name(request),
+        )
+    except PermissionMatrixError as exc:
+        return JsonResponse(exc.as_payload(), status=exc.status)
+    access = resolve_access(account)
+    return JsonResponse({
+        **result,
+        "me": access.as_payload(),
+        "catalog": roles_catalog(account),
+        "matrix_log": matrix_log(account),
+    })
