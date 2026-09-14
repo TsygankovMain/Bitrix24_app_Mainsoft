@@ -1759,10 +1759,25 @@ export const useApiStore = defineStore(
 
     /** PDF счёта через наш сервер. */
     const downloadProInvoice = async (id: string): Promise<Blob> => {
-      return await $api(`/api/pro/requests/${encodeURIComponent(id)}/invoice.pdf`, {
-        headers: { Authorization: `Bearer ${tokenJWT.value}` },
-        responseType: 'blob',
-      })
+      try {
+        return await $api(`/api/pro/requests/${encodeURIComponent(id)}/invoice.pdf`, {
+          headers: { Authorization: `Bearer ${tokenJWT.value}` },
+          responseType: 'blob',
+        })
+      } catch (error) {
+        // С responseType 'blob' ofetch и тело ОШИБКИ отдаёт Blob-ом: текст
+        // «PDF ещё формируется» и код ответа до экрана не доходили. Разворачиваем
+        // JSON обратно, чтобы describeProApiError показал слова сервера.
+        const failure = error as { data?: unknown }
+        if (typeof Blob !== 'undefined' && failure?.data instanceof Blob) {
+          try {
+            failure.data = JSON.parse(await failure.data.text())
+          } catch {
+            // не JSON — оставляем как есть, сработает общий текст ошибки
+          }
+        }
+        throw error
+      }
     }
     // endregion ////
 
