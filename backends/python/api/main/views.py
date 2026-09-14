@@ -4660,23 +4660,29 @@ def pro_requests_invoice_pdf(request: AuthorizedRequest, request_id: str):
     if pro_request is None:
         return JsonResponse({"error": "Заявка не найдена.", "code": "not_found"}, status=404)
     crm_settings = load_crm_settings()
-    if not pro_request.crm_pdf_url or crm_settings is None:
+    if not pro_request.crm_document_id or crm_settings is None:
         return JsonResponse(
             {"error": "PDF счёта ещё не готов — пришлём его на почту.", "code": "pdf_not_ready"},
             status=404,
         )
-    from urllib.parse import urlsplit
-
-    # Скачиваем только с портала Mainsoft: ссылка пришла из ответа REST, и
-    # ходить сервером по произвольному адресу из базы незачем.
-    pdf_url = urlsplit(pro_request.crm_pdf_url)
-    if pdf_url.scheme != "https" or pdf_url.netloc != urlsplit(crm_settings.webhook).netloc:
-        return JsonResponse({"error": "PDF счёта недоступен — пришлём его на почту.", "code": "pdf_unavailable"},
-                            status=502)
+    # PDF берём методом REST по id документа, а не по pdfUrl: та ссылка ведёт
+    # на ajax.php портала и без браузерной сессии отвечает 403.
     try:
-        content = pro_purchase_service.build_transport(crm_settings).fetch_bytes(pro_request.crm_pdf_url)
-    except CrmSyncError as exc:
-        return JsonResponse({"error": str(exc), "code": "pdf_unavailable"}, status=502)
+        content = pro_purchase_service.build_transport(crm_settings).call_bytes(
+            "crm.documentgenerator.document.getpdf", {"id": int(pro_request.crm_document_id)},
+        )
+    except CrmSyncError:
+        logger.warning("Pro %s: PDF счёта не получен с портала Mainsoft", pro_request.invoice_number, exc_info=True)
+        return JsonResponse(
+            {"error": "PDF счёта пока не получается скачать — попробуйте через минуту или напишите на timesheet@mainsoft.su.",
+             "code": "pdf_unavailable"},
+            status=502,
+        )
+    if not content.startswith(b"%PDF"):
+        return JsonResponse(
+            {"error": "PDF счёта ещё формируется — попробуйте через минуту.", "code": "pdf_not_ready"},
+            status=404,
+        )
     response = HttpResponse(content, content_type="application/pdf")
     filename = f"Счёт-{pro_request.invoice_number}.pdf"
     response["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"

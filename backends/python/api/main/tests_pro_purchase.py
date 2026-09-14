@@ -900,18 +900,44 @@ class ProRequestTaskTest(ProPurchaseFixture):
 
 
 class InvoicePdfTest(ProPurchaseFixture):
-    def test_pdf_goes_through_our_server_only_from_mainsoft_host(self):
+    def test_pdf_is_taken_by_document_id_through_our_server(self):
         self.enable_webhook()
         request_id = self.create().json()["request"]["id"]
-        self.mainsoft.fetch_bytes = lambda url: b"%PDF-1.4 test"
+        asked = []
+        self.mainsoft.call_bytes = lambda method, params: asked.append((method, params)) or b"%PDF-1.7 test"
 
         response = self.get(f"/api/pro/requests/{request_id}/invoice.pdf")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
-        self.assertEqual(response.content, b"%PDF-1.4 test")
+        self.assertEqual(response.content, b"%PDF-1.7 test")
+        self.assertEqual(asked, [("crm.documentgenerator.document.getpdf", {"id": 55})])
 
-        ProRequest.objects.update(crm_pdf_url="https://evil.invalid/steal")
-        self.assertEqual(self.get(f"/api/pro/requests/{request_id}/invoice.pdf").status_code, 502)
+    def test_not_a_pdf_yet_is_reported_as_not_ready(self):
+        self.enable_webhook()
+        request_id = self.create().json()["request"]["id"]
+        self.mainsoft.call_bytes = lambda method, params: b"<html>login</html>"
+        response = self.get(f"/api/pro/requests/{request_id}/invoice.pdf")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["code"], "pdf_not_ready")
+
+    def test_portal_error_gives_502_without_details(self):
+        self.enable_webhook()
+        request_id = self.create().json()["request"]["id"]
+
+        def fail(method, params):
+            raise CrmSyncError(f"{method}: Access denied", method=method)
+
+        self.mainsoft.call_bytes = fail
+        response = self.get(f"/api/pro/requests/{request_id}/invoice.pdf")
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("Access denied", response.json()["error"])
+
+    def test_without_document_there_is_no_pdf(self):
+        self.enable_webhook()
+        request_id = self.create().json()["request"]["id"]
+        ProRequest.objects.update(crm_document_id="")
+        self.assertEqual(self.get(f"/api/pro/requests/{request_id}/invoice.pdf").status_code, 404)
+        self.assertFalse(service.serialize_request(ProRequest.objects.get())["pdf_available"])
 
 
 class WebhookTransportTest(SimpleTestCase):
