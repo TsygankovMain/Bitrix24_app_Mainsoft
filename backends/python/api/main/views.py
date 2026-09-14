@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.core.paginator import Paginator
 from django.db.models import Count, Sum
@@ -1971,7 +1971,7 @@ def periods_list(request: AuthorizedRequest):
     periods = PeriodService(account)
     checker = PeriodCheckService(account)
 
-    closed = {(p.year, p.month): p for p in periods.list_periods()}
+    closed = periods.period_map()
 
     months = (
         TimesheetItem.objects.filter(**scope_to_tenant(account))
@@ -2066,6 +2066,22 @@ def period_close(request: AuthorizedRequest):
 
     account = request.bitrix24_account
     periods = PeriodService(account)
+
+    # Уже закрытый месяц — отдельный ответ, а не «сначала закройте следующий»:
+    # проверка очерёдности такой месяц пропускает и указывает вперёд.
+    already = periods.closed_period_for(date(year, month, 1))
+    if already is not None:
+        from .period_service import MONTHS
+
+        closed_at = timezone.localtime(already.closed_at).strftime("%d.%m.%Y")
+        who = f" ({already.closed_by_name})" if already.closed_by_name else ""
+        return JsonResponse(
+            {
+                "error": f"{MONTHS[month]} {year} уже закрыт {closed_at}{who}.",
+                "code": "already_closed",
+            },
+            status=409,
+        )
 
     # Порядок закрытия: строго от старого к новому. Проверяем на сервере, а не
     # полагаемся на то, что экран спрятал кнопку — запрос можно отправить и

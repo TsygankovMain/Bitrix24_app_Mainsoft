@@ -101,27 +101,41 @@ class PeriodService:
 
     def close(self, year: int, month: int, stats: Dict[str, Any],
               by_id: str = "", by_name: str = "") -> ClosedPeriod:
-        """Закрывает период. Идемпотентно: повторный вызов вернёт существующий.
+        """Закрывает период. Идемпотентно: уже закрытый вернётся как есть.
 
         Переоткрытый период закрывается заново — поля переоткрытия при этом
         чистятся, а сам факт остаётся в логе аудита. Хранить всю цепочку
         закрытий-переоткрытий в этой таблице не нужно: это журнал событий, а
         для него есть system_log.
+
+        Месяц закрывается на ПОРТАЛ, а уникальность в таблице — по аккаунту.
+        Поэтому запись ищем по порталу и переиспользуем, чей бы аккаунт её ни
+        создал. Прежняя версия заводила вторую запись на каждого закрывшего:
+        на проде 02.09.2026 у августа оказались переоткрытая запись одного
+        администратора и закрытая другого, экран брал случайную из них и
+        показывал закрытый месяц открытым.
         """
-        period, created = ClosedPeriod.objects.update_or_create(
-            **scope_to_tenant(self.account, write=True),
-            year=year, month=month,
-            defaults={
-                "closed_at": timezone.now(),
-                "closed_by": str(by_id or ""),
-                "closed_by_name": by_name or "",
-                "stats": stats or {},
-                "reopened_at": None,
-                "reopened_by": "",
-                "reopened_by_name": "",
-                "reopen_reason": "",
-            },
+        rows = list(ClosedPeriod.objects.filter(
+            **scope_to_tenant(self.account), year=year, month=month,
+        ))
+        active = next((row for row in rows if row.reopened_at is None), None)
+        if active is not None:
+            return active
+
+        # Своя переоткрытая запись — первой, чужую берём, только если своей нет.
+        rows.sort(key=lambda row: row.bitrix24_account_id != self.account.pk)
+        period = rows[0] if rows else ClosedPeriod(
+            **scope_to_tenant(self.account, write=True), year=year, month=month,
         )
+        period.closed_at = timezone.now()
+        period.closed_by = str(by_id or "")
+        period.closed_by_name = by_name or ""
+        period.stats = stats or {}
+        period.reopened_at = None
+        period.reopened_by = ""
+        period.reopened_by_name = ""
+        period.reopen_reason = ""
+        period.save()
         self._cache = None
         audit.info(
             "Period closed: %s-%02d by %s (%s), %s hours in %s entries",
@@ -132,21 +146,29 @@ class PeriodService:
 
     def reopen(self, year: int, month: int, reason: str,
                by_id: str = "", by_name: str = "") -> Optional[ClosedPeriod]:
-        """Переоткрывает период. Причина обязательна — см. докстринг модели."""
-        period = ClosedPeriod.objects.filter(
+        """Переоткрывает период. Причина обязательна — см. докстринг модели.
+
+        Гасит ВСЕ активные записи месяца на портале, а не первую попавшуюся:
+        дубли от прежней версии close() иначе оставили бы месяц закрытым после
+        «успешного» переоткрытия.
+        """
+        periods = list(ClosedPeriod.objects.filter(
             **scope_to_tenant(self.account), year=year, month=month,
             reopened_at__isnull=True,
-        ).first()
-        if period is None:
+        ))
+        if not periods:
             return None
 
-        period.reopened_at = timezone.now()
-        period.reopened_by = str(by_id or "")
-        period.reopened_by_name = by_name or ""
-        period.reopen_reason = reason
-        period.save(update_fields=[
-            "reopened_at", "reopened_by", "reopened_by_name", "reopen_reason", "updated_at",
-        ])
+        now = timezone.now()
+        for period in periods:
+            period.reopened_at = now
+            period.reopened_by = str(by_id or "")
+            period.reopened_by_name = by_name or ""
+            period.reopen_reason = reason
+            period.save(update_fields=[
+                "reopened_at", "reopened_by", "reopened_by_name", "reopen_reason", "updated_at",
+            ])
+        period = periods[0]
         self._cache = None
         audit.info(
             "Period reopened: %s-%02d by %s (%s), reason: %s",
@@ -191,6 +213,31 @@ class PeriodService:
 
     def list_periods(self) -> List[ClosedPeriod]:
         return list(ClosedPeriod.objects.filter(**scope_to_tenant(self.account)))
+
+    def period_map(self) -> Dict[tuple, ClosedPeriod]:
+        """По записи на месяц — ту, что определяет его состояние.
+
+        На одном портале у месяца может лежать несколько записей (разные
+        аккаунты, см. close). Действующее закрытие важнее переоткрытого
+        следа, среди переоткрытых — самое позднее. Экран обязан решать
+        «закрыт ли месяц» так же, как is_closed, иначе он предлагает закрыть
+        уже закрытый месяц, а сервер отвечает «сначала закройте следующий».
+        """
+        result: Dict[tuple, ClosedPeriod] = {}
+        for row in self.list_periods():
+            key = (row.year, row.month)
+            current = result.get(key)
+            if current is None or self._outranks(row, current):
+                result[key] = row
+        return result
+
+    @staticmethod
+    def _outranks(row: ClosedPeriod, current: ClosedPeriod) -> bool:
+        if (row.reopened_at is None) != (current.reopened_at is None):
+            return row.reopened_at is None
+        if row.reopened_at is None:
+            return row.closed_at > current.closed_at
+        return row.reopened_at > current.reopened_at
 
 
 MONTHS = {

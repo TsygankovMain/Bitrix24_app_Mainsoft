@@ -16,10 +16,10 @@
 import json
 from datetime import datetime
 
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
-from .models import Bitrix24Account, ClosedPeriod, PortalTask, TimesheetItem
+from .models import Bitrix24Account, ClosedPeriod, Portal, PortalTask, TimesheetItem
 from .period_service import PeriodService
 
 
@@ -420,3 +420,120 @@ class ClosingOrderTest(TestCase):
         self._close(2026, 7)
 
         self.assertEqual(self._close(2026, 8).status_code, 200)
+
+
+@override_settings(USE_PORTAL_SCOPING=True)
+class SharedPortalClosingTest(TestCase):
+    """Месяц закрывается на портал, а записи в таблице — по аккаунту.
+
+    Случай с прода 14.09.2026. Один администратор закрыл август и
+    переоткрыл, второй закрыл заново — у августа стало две записи:
+    переоткрытая и действующая. Экран брал случайную, показывал август
+    открытым, а проверка очерёдности видела его закрытым и отвечала
+    «Сначала закройте Сентябрь 2026».
+    """
+
+    def setUp(self):
+        self.portal = Portal.objects.create(
+            member_id="m-shared", domain_url="shared.bitrix24.ru", status="active",
+        )
+        self.first, self.second = (
+            Bitrix24Account.objects.create(
+                b24_user_id=user_id, is_b24_user_admin=True, member_id="m-shared",
+                is_master_account=user_id == 11, domain_url="shared.bitrix24.ru",
+                status="active", application_version=1, portal=self.portal,
+            )
+            for user_id in (11, 1203)
+        )
+        for month, bid in ((7, 1), (8, 2), (9, 3)):
+            TimesheetItem.objects.create(
+                bitrix24_account=self.first, portal=self.portal, bitrix_id=bid,
+                task_id="1", employee_id="11", hours=1, project_id="73",
+                project_title="Мейнсофт", task_hierarchy_ids=["1"],
+                task_hierarchy_titles=["Задача"],
+                date_reflection=timezone.make_aware(datetime(2026, month, 15, 0, 0)),
+            )
+
+    def _post(self, account, path, body):
+        return Client().post(
+            path, data=json.dumps(body), content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {account.create_jwt_token()}",
+        )
+
+    def _august(self, account):
+        periods = Client().get(
+            "/api/periods", HTTP_AUTHORIZATION=f"Bearer {account.create_jwt_token()}",
+        ).json()["periods"]
+        return next(p for p in periods if (p["year"], p["month"]) == (2026, 8))
+
+    def _prod_state(self):
+        """Как на проде: переоткрытая запись первого и закрытая второго."""
+        periods = PeriodService(self.first)
+        periods.close(2026, 7, stats={})
+        periods.close(2026, 8, stats={})
+        periods.reopen(2026, 8, reason="поправить")
+        ClosedPeriod.objects.create(
+            bitrix24_account=self.second, portal=self.portal, year=2026, month=8,
+            closed_at=timezone.now(), closed_by="1203", closed_by_name="Второй админ",
+        )
+
+    def test_list_shows_closed_month_as_closed_despite_reopened_duplicate(self):
+        self._prod_state()
+
+        for account in (self.first, self.second):
+            august = self._august(account)
+            self.assertTrue(august["closed"])
+            self.assertEqual(august["closed_by_name"], "Второй админ")
+
+    def test_closing_closed_month_says_so_instead_of_pointing_forward(self):
+        self._prod_state()
+
+        response = self._post(self.first, "/api/periods/close", {"year": 2026, "month": 8})
+
+        self.assertEqual(response.status_code, 409)
+        body = response.json()
+        self.assertEqual(body["code"], "already_closed")
+        self.assertIn("Август 2026 уже закрыт", body["error"])
+        self.assertNotIn("Сентябрь", body["error"])
+
+    def test_queue_continues_to_september(self):
+        self._prod_state()
+
+        response = self._post(self.first, "/api/periods/close", {"year": 2026, "month": 9})
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_second_admin_reuses_portal_record(self):
+        """Закрытие другим администратором не плодит вторую запись месяца."""
+        periods = PeriodService(self.first)
+        periods.close(2026, 7, stats={})
+        periods.reopen(2026, 7, reason="поправить")
+
+        response = self._post(self.second, "/api/periods/close", {"year": 2026, "month": 7})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ClosedPeriod.objects.filter(year=2026, month=7).count(), 1)
+        self.assertTrue(PeriodService(self.first).is_closed(datetime(2026, 7, 15)))
+
+    def test_repeated_close_keeps_original_closing(self):
+        original = PeriodService(self.first).close(2026, 7, stats={}, by_name="Первый")
+
+        again = PeriodService(self.second).close(2026, 7, stats={}, by_name="Второй")
+
+        self.assertEqual(again.pk, original.pk)
+        self.assertEqual(again.closed_by_name, "Первый")
+        self.assertEqual(ClosedPeriod.objects.count(), 1)
+
+    def test_reopen_clears_every_duplicate(self):
+        """Иначе после «успешного» переоткрытия месяц остался бы закрытым."""
+        self._prod_state()
+        ClosedPeriod.objects.filter(year=2026, month=8).update(reopened_at=None)
+
+        response = self._post(
+            self.first, "/api/periods/reopen",
+            {"year": 2026, "month": 8, "reason": "поправить"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(PeriodService(self.first).is_closed(datetime(2026, 8, 15)))
+        self.assertFalse(self._august(self.second)["closed"])
