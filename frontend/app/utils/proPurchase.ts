@@ -997,6 +997,7 @@ const PRO_ERROR_TEXTS: Record<string, string> = {
   validation_failed: 'Проверьте отмеченные поля формы.',
   request_paid: 'Счёт уже оплачен — отменить заявку нельзя. Напишите на timesheet@mainsoft.su.',
   pdf_not_ready: 'PDF счёта ещё не готов — пришлём его на почту.',
+  pdf_unavailable: 'PDF счёта пока не получается скачать — попробуйте через минуту или напишите на timesheet@mainsoft.su.',
   portal_unknown: 'Портал не определён: откройте приложение из Битрикс24 заново.',
 }
 

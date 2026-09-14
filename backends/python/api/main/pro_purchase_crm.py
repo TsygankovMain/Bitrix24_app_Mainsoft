@@ -225,6 +225,39 @@ class WebhookTransport:
             raise CrmSyncError(f"{method}: {self._scrub(description)}", method=method)
         return payload
 
+    def call_bytes(self, method: str, params: Optional[Dict[str, Any]] = None,
+                   limit: int = 20 * 1024 * 1024) -> bytes:
+        """Метод REST, который отдаёт файл, а не JSON.
+
+        Так скачивается PDF счёта: crm.documentgenerator.document.getpdf по
+        вебхуку возвращает сам application/pdf. Ссылки pdfUrl/downloadUrl из
+        ответа генератора ведут на /bitrix/services/main/ajax.php и требуют
+        браузерной сессии портала — сервер получает там 403 (проверено
+        14.09.2026 на портале Mainsoft). Ошибку метод отдаёт JSON-ом.
+        """
+        body = json.dumps(params or {}, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self._webhook}{method}", data=body, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout * 2) as response:  # noqa: S310 — https из настройки
+                content_type = str(response.headers.get("Content-Type") or "")
+                data = response.read(limit + 1)
+        except urllib.error.HTTPError as exc:
+            payload = _json_or_empty(exc.read() if hasattr(exc, "read") else b"")
+            description = payload.get("error_description") or payload.get("error") or f"HTTP {exc.code}"
+            raise CrmSyncError(f"{method}: {self._scrub(description)}", method=method) from None
+        except Exception as exc:  # noqa: BLE001 — сеть, таймаут, TLS
+            raise CrmSyncError(f"{method}: портал Mainsoft не ответил ({type(exc).__name__})", method=method) from None
+        if len(data) > limit:
+            raise CrmSyncError("Файл больше допустимого размера", method=method)
+        if "json" in content_type.lower():
+            payload = _json_or_empty(data)
+            description = payload.get("error_description") or payload.get("error") or "портал вернул не файл"
+            raise CrmSyncError(f"{method}: {self._scrub(description)}", method=method)
+        return data
+
     def fetch_bytes(self, url: str, limit: int = 20 * 1024 * 1024) -> bytes:
         """Скачать файл генератора документов (ссылка может содержать токен)."""
         try:
