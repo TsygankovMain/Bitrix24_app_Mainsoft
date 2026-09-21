@@ -12,6 +12,12 @@ export interface AppConfigurationPayload {
   project_sp_entity_type_id?: number | string | null
   finance_sp_entity_type_id?: number | string | null
   hourly_rate?: number | string | null
+  /**
+   * Вид доступа к проекту, который создаёт кнопка «Создать проект»:
+   * true — открытый (вступить может любой сотрудник), false — закрытый.
+   * app.option отдаёт значения строками, сервер нормализует к bool.
+   */
+  project_group_opened?: boolean | string | number | null
   fields_mapping?: Record<string, string>
   project_fields_mapping?: Record<string, string>
   finance_fields_mapping?: Record<string, string>

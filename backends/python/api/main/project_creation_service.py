@@ -764,7 +764,7 @@ class ProjectCreationService:
 
         return StepResult(status="created", id=created_id, name=inn)
 
-    def ensure_group(self, group_name: str) -> StepResult:
+    def ensure_group(self, group_name: str, opened: bool = False) -> StepResult:
         """Шаг 3: проект/группа в Задачах (после компании и её реквизита —
         см. докстринг create()).
 
@@ -774,6 +774,11 @@ class ProjectCreationService:
 
         Группа создаётся под токеном текущего сотрудника, он же становится
         владельцем; отдельно владельца не назначаем и участников не добавляем.
+
+        opened — настройка портала project_group_opened: открытый проект
+        (OPENED=Y, вступить может любой сотрудник) или закрытый (OPENED=N,
+        только по приглашению). Найденную группу не трогаем: вид доступа
+        существующего проекта — решение его владельца.
         """
         group_name = _clean_str(group_name)
         if not group_name:
@@ -812,7 +817,12 @@ class ProjectCreationService:
         try:
             created = self._call(
                 "sonet_group.create",
-                {"NAME": group_name, "PROJECT": "Y", "VISIBLE": "Y", "OPENED": "N"},
+                {
+                    "NAME": group_name,
+                    "PROJECT": "Y",
+                    "VISIBLE": "Y",
+                    "OPENED": "Y" if opened else "N",
+                },
             )
         except Exception as exc:
             logger.warning("ensure_group: sonet_group.create failed: %s", exc)
@@ -1094,7 +1104,10 @@ class ProjectCreationService:
         # (шаг сам решает свою применимость по конфигу, а не вызывающий код).
         requisite = self.ensure_requisite(company.id, company.name, fields.inn)
 
-        group = self.ensure_group(fields.project_name)
+        group = self.ensure_group(
+            fields.project_name,
+            opened=ConfigurationService._normalize_bool(config.get("project_group_opened")),
+        )
         if not group.id:
             return {
                 "company": company.as_dict(),

@@ -118,6 +118,13 @@ const creatingKey = ref<string | null>(null)
 const smartProcesses = ref<SmartProcessOption[]>([])
 const config = ref<AppConfigurationPayload>({})
 
+// app.option хранит всё строками: 'false' тоже непустая строка, поэтому
+// голое приведение к bool включило бы переключатель само.
+const projectGroupOpened = computed<boolean>({
+  get: () => ['1', 'true', 'yes', 'y', 'on'].includes(String(config.value.project_group_opened ?? '').trim().toLowerCase()),
+  set: (value) => { config.value.project_group_opened = value },
+})
+
 /**
  * Конфигурация в том виде, в каком она лежит на СЕРВЕРЕ.
  *
@@ -1606,6 +1613,25 @@ onMounted(async () => {
             Применяется к проектам, у которых своя ставка в карточке не заполнена. Без ставки суммы
             в счетах и БДДС посчитаются нулевыми. Сохраняется вместе с сопоставлением, кнопкой
             наверху.
+          </p>
+        </div>
+      </B24Card>
+
+      <!-- Вид доступа к новым проектам: тоже сохраняется общей кнопкой -->
+      <B24Card>
+        <template #header>
+          <span class="text-base font-semibold text-slate-900">Новые проекты в Задачах</span>
+        </template>
+
+        <div class="max-w-[36rem]">
+          <label class="flex items-center gap-3 text-sm font-semibold text-slate-800">
+            <B24Switch v-model="projectGroupOpened" />
+            {{ projectGroupOpened ? 'Создавать открытыми' : 'Создавать закрытыми' }}
+          </label>
+          <p class="mt-1 text-xs text-slate-500">
+            Касается проектов, которые создаёт кнопка «Создать проект». Открытый — вступить может
+            любой сотрудник портала. Закрытый — только по приглашению владельца. Уже созданные
+            проекты не меняются. Сохраняется вместе с сопоставлением, кнопкой наверху.
           </p>
         </div>
       </B24Card>

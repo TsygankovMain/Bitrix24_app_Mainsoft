@@ -160,6 +160,9 @@ class ConfigurationService:
         if not isinstance(normalized.get('finance_fields_mapping'), dict):
             normalized['finance_fields_mapping'] = {}
 
+        normalized['project_group_opened'] = self._normalize_bool(
+            normalized.get('project_group_opened')
+        )
         normalized['billing_allow_open_period'] = self._normalize_bool(
             normalized.get('billing_allow_open_period')
         )
@@ -311,6 +314,11 @@ class ConfigurationService:
             'finance_fields_mapping': {},
             'is_configured': False,
             'hourly_rate': 0,
+            # Вид доступа к проекту, который создаёт кнопка «Создать проект»:
+            # False — закрытый (вступление по приглашению), True — открытый
+            # (вступить может любой сотрудник). По умолчанию закрытый — так
+            # приложение создавало проекты до появления настройки.
+            'project_group_opened': False,
             # Счёт и акт (billing). Настройки живут в том же app.option, что и
             # остальная конфигурация приложения, — отдельного механизма не
             # заводим. Выключатель ПОДПИСКИ сюда не кладётся принципиально:

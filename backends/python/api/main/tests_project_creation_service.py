@@ -920,6 +920,21 @@ class EnsureGroupTest(_ServiceTestCase):
         self.assertEqual(params["PROJECT"], "Y")
         # Владельца не назначаем: им становится создатель — текущий сотрудник.
         self.assertNotIn("OWNER_ID", params)
+        # Без настройки портала проект закрытый — как до её появления.
+        self.assertEqual(params["OPENED"], "N")
+
+    def test_opened_flag_creates_open_project_group(self):
+        client = _FakeClient({
+            "sonet_group.get": {"result": []},
+            "sonet_group.create": {"result": 44},
+        })
+        result = self.service(client).ensure_group("Портал АО Ромашка", opened=True)
+
+        self.assertEqual(result.status, "created")
+        method, params = client.calls[-1]
+        self.assertEqual(method, "sonet_group.create")
+        self.assertEqual(params["OPENED"], "Y")
+        self.assertEqual(params["VISIBLE"], "Y")
 
     def test_two_matches_return_ambiguous_and_create_nothing(self):
         client = _FakeClient({
@@ -1319,6 +1334,37 @@ class CreateOrchestrationTest(_ServiceTestCase):
         self.assertEqual(result["card"]["status"], "created")
         self.assertTrue(result["done"])
         self.assertEqual(ProjectCard.objects.filter(project_id="44").count(), 1)
+
+    def _group_create_params(self, client):
+        calls = [params for method, params in client.calls if method == "sonet_group.create"]
+        self.assertEqual(len(calls), 1)
+        return calls[0]
+
+    def _client_with_opened(self, value):
+        return self._client(**{"app.option.get": {"result": {"timestamp_config": (
+            '{"project_group_opened": ' + value + ', "project_sp_entity_type_id": 180,'
+            ' "project_fields_mapping": {"title": "title",'
+            ' "bitrix_group_id": "ufCrm7Group", "stage_id": "stageId"}}'
+        )}}})
+
+    def test_portal_setting_open_creates_open_project(self):
+        client = self._client_with_opened('"true"')
+        result = self._create(client)
+
+        self.assertEqual(result["group"]["status"], "created")
+        self.assertEqual(self._group_create_params(client)["OPENED"], "Y")
+
+    def test_portal_setting_closed_creates_closed_project(self):
+        client = self._client_with_opened("false")
+        self._create(client)
+
+        self.assertEqual(self._group_create_params(client)["OPENED"], "N")
+
+    def test_portal_without_setting_creates_closed_project(self):
+        client = self._client()
+        self._create(client)
+
+        self.assertEqual(self._group_create_params(client)["OPENED"], "N")
 
     def test_repeat_call_does_not_create_second_entities(self):
         client = self._client(
