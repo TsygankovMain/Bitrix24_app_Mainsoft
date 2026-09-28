@@ -18,6 +18,11 @@ export interface AppConfigurationPayload {
    * app.option отдаёт значения строками, сервер нормализует к bool.
    */
   project_group_opened?: boolean | string | number | null
+  /**
+   * Можно ли сотруднику списать больше 24 часов за сутки (сумма записей за
+   * дату). По умолчанию нельзя; проверяет сервер при записи.
+   */
+  allow_over_24h_per_day?: boolean | string | number | null
   fields_mapping?: Record<string, string>
   project_fields_mapping?: Record<string, string>
   finance_fields_mapping?: Record<string, string>

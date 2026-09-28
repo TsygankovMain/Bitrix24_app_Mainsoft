@@ -81,7 +81,8 @@ test('validateEntryDraft: ноль часов сохранять нельзя', 
 })
 
 test('validateEntryDraft: больше суток за день — опечатка, а не трудовой подвиг', () => {
-  assert.ok(validateEntryDraft({ hours: 25, employeeId: '7', date: '2026-04-05' }))
+  // Больше 24 часов решает сервер по настройке портала, форма не держит.
+  assert.equal(validateEntryDraft({ hours: 25, employeeId: '7', date: '2026-04-05' }), null)
   assert.equal(validateEntryDraft({ hours: 24, employeeId: '7', date: '2026-04-05' }), null)
 })
 

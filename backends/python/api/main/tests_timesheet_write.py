@@ -208,3 +208,146 @@ class TimesheetWriteEndpointTest(TestCase):
             HTTP_AUTHORIZATION=f"Bearer {self.token}",
         )
         self.assertEqual(response.status_code, 405)
+
+
+class RoutedToken:
+    """Токен, отвечающий по методу: list — записи дня, get — правимая запись."""
+
+    def __init__(self, day_items=None, current_item=None):
+        self.calls = []
+        self.day_items = day_items or []
+        self.current_item = current_item or {}
+
+    def call_method(self, method, params):
+        self.calls.append((method, params))
+        if method == "crm.item.list":
+            return {"result": {"items": self.day_items}}
+        if method == "crm.item.get":
+            return {"result": {"item": self.current_item}}
+        return {"result": {"item": {"id": 777}}}
+
+
+class DailyHoursLimitTest(TestCase):
+    """Больше 24 часов в сутки на сотрудника — только если портал разрешил.
+
+    Раньше лимит жил во фронте и касался одной записи: три записи по 10 часов
+    за день проходили. Теперь считается сумма за день, на сервере.
+    """
+
+    MAPPING = {"kolichestvo_chasov": "ufHours", "sotrudnik": "ufEmployee", "data": "ufDate"}
+
+    def setUp(self):
+        self.account = Bitrix24Account.objects.create(
+            b24_user_id=304, is_b24_user_admin=False, member_id="m-limit",
+            is_master_account=False, domain_url="example.bitrix24.ru",
+            status="active", application_version=1,
+        )
+
+    def _service(self, token, allow=None):
+        config = {"sp_entity_type_id": 1058, "fields_mapping": self.MAPPING}
+        if allow is not None:
+            config["allow_over_24h_per_day"] = allow
+        client = FakeClient()
+        client._bitrix_token = token
+        with mock.patch.object(Bitrix24Account, "client", client):
+            return TimesheetWriteService(self.account, config)
+
+    @staticmethod
+    def _methods(token):
+        return [method for method, _ in token.calls]
+
+    def test_create_over_limit_rejected_by_default(self):
+        token = RoutedToken(day_items=[{"id": 1, "ufHours": 10}, {"id": 2, "ufHours": 10.5}])
+        with self.assertRaises(TimesheetWriteError) as ctx:
+            self._service(token).create({"ufHours": 4, "ufEmployee": "7", "ufDate": "2026-09-28"})
+
+        self.assertEqual(ctx.exception.status, 409)
+        self.assertIn("28.09.2026", ctx.exception.message)
+        self.assertIn("20,5", ctx.exception.message)
+        self.assertIn("24,5", ctx.exception.message)
+        self.assertNotIn("crm.item.add", self._methods(token))
+
+    def test_day_filter_is_employee_and_calendar_day(self):
+        token = RoutedToken()
+        self._service(token).create({"ufHours": 2, "ufEmployee": ["7"], "ufDate": "2026-09-28T00:00:00+03:00"})
+
+        _, params = token.calls[0]
+        self.assertEqual(params["filter"], {
+            "ufEmployee": "7", ">=ufDate": "2026-09-28", "<ufDate": "2026-09-29",
+        })
+
+    def test_exactly_24_is_allowed(self):
+        token = RoutedToken(day_items=[{"id": 1, "ufHours": 20}])
+        self._service(token).create({"ufHours": 4, "ufEmployee": "7", "ufDate": "2026-09-28"})
+        self.assertIn("crm.item.add", self._methods(token))
+
+    def test_single_entry_over_24_rejected(self):
+        """Прежнее фронтовое правило «одна запись не больше 24 ч» сохраняется."""
+        token = RoutedToken()
+        with self.assertRaises(TimesheetWriteError):
+            self._service(token).create({"ufHours": 25, "ufEmployee": "7", "ufDate": "2026-09-28"})
+
+    def test_setting_allows_over_limit_without_extra_calls(self):
+        token = RoutedToken(day_items=[{"id": 1, "ufHours": 20}])
+        self._service(token, allow="true").create({"ufHours": 30, "ufEmployee": "7", "ufDate": "2026-09-28"})
+        self.assertEqual(self._methods(token), ["crm.item.add"])
+
+    def test_string_false_does_not_allow(self):
+        """app.option хранит строки: 'false' не должно включать настройку."""
+        token = RoutedToken()
+        with self.assertRaises(TimesheetWriteError):
+            self._service(token, allow="false").create({"ufHours": 25, "ufEmployee": "7", "ufDate": "2026-09-28"})
+
+    def test_update_excludes_itself_from_day_sum(self):
+        token = RoutedToken(
+            day_items=[{"id": 2, "ufHours": 16}],
+            current_item={"id": 5, "ufHours": 4, "ufEmployee": 7, "ufDate": "2026-09-28T00:00:00+03:00"},
+        )
+        self._service(token).update(5, {"ufHours": 8})
+
+        list_params = next(params for method, params in token.calls if method == "crm.item.list")
+        self.assertEqual(list_params["filter"]["!id"], 5)
+        self.assertIn("crm.item.update", self._methods(token))
+
+    def test_update_that_adds_hours_over_limit_rejected(self):
+        token = RoutedToken(
+            day_items=[{"id": 2, "ufHours": 16}],
+            current_item={"id": 5, "ufHours": 4, "ufEmployee": 7, "ufDate": "2026-09-28"},
+        )
+        with self.assertRaises(TimesheetWriteError):
+            self._service(token).update(5, {"ufHours": 9})
+        self.assertNotIn("crm.item.update", self._methods(token))
+
+    def test_reducing_update_passes_even_when_day_already_over(self):
+        """Разделение записи шлёт только часы, и их становится меньше.
+
+        День, где лимит уже превышен старыми данными, не должен запирать
+        правку — иначе такую запись не исправить вовсе.
+        """
+        token = RoutedToken(
+            day_items=[{"id": 2, "ufHours": 30}],
+            current_item={"id": 5, "ufHours": 6, "ufEmployee": 7, "ufDate": "2026-09-28"},
+        )
+        self._service(token).update(5, {"ufHours": 3})
+
+        self.assertEqual(self._methods(token), ["crm.item.get", "crm.item.update"])
+
+    def test_move_to_another_day_checks_new_day(self):
+        token = RoutedToken(
+            day_items=[{"id": 2, "ufHours": 22}],
+            current_item={"id": 5, "ufHours": 4, "ufEmployee": 7, "ufDate": "2026-09-27"},
+        )
+        with self.assertRaises(TimesheetWriteError):
+            self._service(token).update(5, {"ufHours": 4, "ufDate": "2026-09-28"})
+
+    def test_unmapped_fields_skip_check(self):
+        token = RoutedToken(day_items=[{"id": 1, "ufHours": 30}])
+        service = self._service(token)
+        service.config["fields_mapping"] = {"kolichestvo_chasov": "ufHours"}
+        service.create({"ufHours": 30, "ufEmployee": "7", "ufDate": "2026-09-28"})
+        self.assertEqual(self._methods(token), ["crm.item.add"])
+
+    def test_russian_date_format_is_understood(self):
+        token = RoutedToken()
+        self._service(token).create({"ufHours": 1, "ufEmployee": "7", "ufDate": "28.09.2026"})
+        self.assertEqual(token.calls[0][1]["filter"][">=ufDate"], "2026-09-28")
