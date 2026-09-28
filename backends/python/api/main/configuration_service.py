@@ -163,6 +163,9 @@ class ConfigurationService:
         normalized['project_group_opened'] = self._normalize_bool(
             normalized.get('project_group_opened')
         )
+        normalized['allow_over_24h_per_day'] = self._normalize_bool(
+            normalized.get('allow_over_24h_per_day')
+        )
         normalized['billing_allow_open_period'] = self._normalize_bool(
             normalized.get('billing_allow_open_period')
         )
@@ -319,6 +322,10 @@ class ConfigurationService:
             # (вступить может любой сотрудник). По умолчанию закрытый — так
             # приложение создавало проекты до появления настройки.
             'project_group_opened': False,
+            # Можно ли сотруднику списать больше 24 часов за одни сутки (сумма
+            # всех его записей за дату). По умолчанию нельзя: до настройки
+            # приложение и так не пускало запись больше 24 часов.
+            'allow_over_24h_per_day': False,
             # Счёт и акт (billing). Настройки живут в том же app.option, что и
             # остальная конфигурация приложения, — отдельного механизма не
             # заводим. Выключатель ПОДПИСКИ сюда не кладётся принципиально:

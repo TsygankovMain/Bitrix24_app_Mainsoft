@@ -105,9 +105,9 @@ export function validateEntryDraft(draft: Pick<TaskEntryDraft, 'hours' | 'employ
     return 'Укажите часы больше нуля.'
   }
 
-  if (hours > 24) {
-    return 'За один день нельзя списать больше 24 часов.'
-  }
+  // Лимит 24 часа в сутки проверяет сервер: он считает сумму за день и
+  // знает настройку портала allow_over_24h_per_day. Здесь проверка одной
+  // записи мешала бы порталам, где такое списание разрешено.
 
   if (!String(draft.employeeId || '').trim()) {
     return 'Выберите сотрудника.'

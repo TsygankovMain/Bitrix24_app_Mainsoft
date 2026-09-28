@@ -125,6 +125,11 @@ const projectGroupOpened = computed<boolean>({
   set: (value) => { config.value.project_group_opened = value },
 })
 
+const allowOver24hPerDay = computed<boolean>({
+  get: () => ['1', 'true', 'yes', 'y', 'on'].includes(String(config.value.allow_over_24h_per_day ?? '').trim().toLowerCase()),
+  set: (value) => { config.value.allow_over_24h_per_day = value },
+})
+
 /**
  * Конфигурация в том виде, в каком она лежит на СЕРВЕРЕ.
  *
@@ -1632,6 +1637,26 @@ onMounted(async () => {
             Касается проектов, которые создаёт кнопка «Создать проект». Открытый — вступить может
             любой сотрудник портала. Закрытый — только по приглашению владельца. Уже созданные
             проекты не меняются. Сохраняется вместе с сопоставлением, кнопкой наверху.
+          </p>
+        </div>
+      </B24Card>
+
+      <!-- Лимит часов в сутки: тоже сохраняется общей кнопкой -->
+      <B24Card>
+        <template #header>
+          <span class="text-base font-semibold text-slate-900">Списание часов за день</span>
+        </template>
+
+        <div class="max-w-[36rem]">
+          <label class="flex items-center gap-3 text-sm font-semibold text-slate-800">
+            <B24Switch v-model="allowOver24hPerDay" />
+            {{ allowOver24hPerDay ? 'Разрешать больше 24 часов в сутки' : 'Не больше 24 часов в сутки' }}
+          </label>
+          <p class="mt-1 text-xs text-slate-500">
+            Считается сумма всех записей сотрудника за одну дату. Если лимит включён, запись, после
+            которой сумма превысит 24 часа, не сохранится. Разрешите, если у вас принято списывать
+            часы за несколько дней одной записью. Уже внесённые часы не меняются. Сохраняется
+            вместе с сопоставлением, кнопкой наверху.
           </p>
         </div>
       </B24Card>
