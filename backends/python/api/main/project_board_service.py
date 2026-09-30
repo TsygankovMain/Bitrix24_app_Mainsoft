@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 # долгий (сутки). Отдельная константа от BITRIX_REFERENCE_CACHE_TTL (общий
 # справочник компаний целиком, project_board_shared.py) — её здесь не трогаем.
 COMPANY_INN_CACHE_TTL = 60 * 60 * 24
+# Сколько id компаний уходит в один crm.requisite.list с фильтром @ENTITY_ID
+# (resolve_reference_inns). У компании бывает несколько реквизитов, поэтому
+# меньше 50: пачка обычно умещается в одну страницу ответа.
+INN_LOOKUP_CHUNK = 25
 
 
 def _extract_items_from_response(response: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[int]]:
@@ -709,19 +713,14 @@ class ProjectCardService:
         ждала в очереди 5с из-за забитых обработчиков (их всего восемь), а сам
         Битрикс под конец обхода отваливался по таймауту.
 
-        ПРЕДНАЗНАЧЕН ТОЛЬКО ДЛЯ АДМИНСКОГО ПУТИ дозаполнения ИНН
-        (inn_backfill_service.py) — разового административного действия,
-        которому действительно нужен весь справочник компаний с реквизитами,
-        а не только то, что уже встречалось в карточках проектов. Звать с
-        пользовательского пути (доска, meta, главный экран, резолверы имён)
-        НЕЛЬЗЯ — для них есть быстрый get_companies() (локальная база, без
-        обращений к Битриксу).
-
-        inn_backfill_service._inn_maps() зовёт именно этот метод явно (Task 6
-        плана) — свой собственный кэш-суффикс ("admin-company-directory", не
-        "project-board-companies") отражает это: имя больше не про общий
-        список компаний "для пользовательских списков", а именно про
-        админский полный справочник с ИНН.
+        С 30.09.2026 ВЫЗОВОВ В ПРИЛОЖЕНИИ НЕТ. Последний потребитель —
+        админское дозаполнение ИНН (inn_backfill_service._inn_maps) — перешёл
+        на resolve_reference_inns: ему нужны ИНН ~125 компаний из карточек
+        проектов, а не 23 252 компании портала. Экраны «Незаполненные проекты»
+        и поиск карточек без ИНН из-за этого обхода открывались минутами.
+        Метод оставлен до отдельной уборки вместе с _fetch_companies_live,
+        _fetch_company_inn_map и invalidate_company_directory_cache. Звать с
+        пользовательского пути по-прежнему НЕЛЬЗЯ.
         """
         return self._fetch_references_with_cache(
             "admin-company-directory",
@@ -982,6 +981,77 @@ class ProjectCardService:
         реквизитов (см. его докстринг). Пользуется inn_backfill_service.
         """
         return self._fetch_single_reference_inn(reference_id)
+
+    def resolve_reference_inns(self, reference_ids: List[Any]) -> Dict[str, str]:
+        """ИНН сразу для СПИСКА компаний/юрлиц: id -> ИНН ("" если ИНН нет).
+
+        Пакетный вариант resolve_reference_inn для админских экранов ИНН
+        (projects_health, scan): им нужны ИНН компаний из карточек проектов —
+        на боевом портале это ~125 компаний, — а не весь справочник портала.
+        Раньше они шли через get_full_company_directory(): ~930 страниц
+        компаний и реквизитов, пакетный обход которых регулярно падал по
+        10-секундному таймауту Битрикса и начинался заново постранично.
+
+        Кэш общий с resolve_reference_inn (ключ company-inn:<id>, сутки,
+        отрицательный результат тоже кэшируется). Промахи добираются
+        crm.requisite.list с фильтром @ENTITY_ID пачками по
+        INN_LOOKUP_CHUNK id — одна-две страницы на пачку. Сбой пачки не
+        кэшируется (временная ошибка), её id возвращаются с пустым ИНН.
+        """
+        ids: List[str] = []
+        for reference_id in reference_ids or []:
+            key = self._clean_str(reference_id)
+            if key and key not in ids:
+                ids.append(key)
+        if not ids:
+            return {}
+
+        key_by_id = {rid: build_account_cache_key(self.account, f"company-inn:{rid}") for rid in ids}
+        cached = cache.get_many(list(key_by_id.values()))
+        resolved: Dict[str, str] = {}
+        missing: List[str] = []
+        for rid in ids:
+            value = cached.get(key_by_id[rid])
+            if value is None:
+                missing.append(rid)
+            else:
+                resolved[rid] = value
+
+        for offset in range(0, len(missing), INN_LOOKUP_CHUNK):
+            chunk = missing[offset: offset + INN_LOOKUP_CHUNK]
+            try:
+                rows = self._fetch_paginated(
+                    "crm.requisite.list",
+                    {
+                        "filter": {
+                            "ENTITY_TYPE_ID": 4,
+                            "@ENTITY_ID": [self._to_bitrix_id(rid) for rid in chunk],
+                        },
+                        "select": ["ENTITY_ID", "RQ_INN"],
+                        "order": {"ID": "ASC"},
+                    },
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[ProjectBoard][INN] Bulk crm.requisite.list failed for domain=%s ids=%s: %s",
+                    self.account.domain_url, len(chunk), exc,
+                )
+                for rid in chunk:
+                    resolved[rid] = ""
+                continue
+
+            chunk_inn: Dict[str, str] = {rid: "" for rid in chunk}
+            for row in rows:
+                entity_id = self._clean_str(row.get("ENTITY_ID") or row.get("entityId"))
+                inn = self._clean_str(row.get("RQ_INN") or row.get("rqInn"))
+                # Первый непустой ИНН по возрастанию ID реквизита — как в
+                # _fetch_company_inn_map.
+                if entity_id in chunk_inn and inn and not chunk_inn[entity_id]:
+                    chunk_inn[entity_id] = inn
+            cache.set_many({key_by_id[rid]: inn for rid, inn in chunk_inn.items()}, COMPANY_INN_CACHE_TTL)
+            resolved.update(chunk_inn)
+
+        return resolved
 
     def _fetch_single_reference_inn(self, reference_id: str) -> Optional[str]:
         cache_key = build_account_cache_key(self.account, f"company-inn:{reference_id}")

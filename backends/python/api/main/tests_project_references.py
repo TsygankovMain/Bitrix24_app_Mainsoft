@@ -227,14 +227,12 @@ class CompaniesFromDbTest(TestCase):
         self.assertEqual([c["id"] for c in directory], ["15"])
 
 
-class InnBackfillUsesFullDirectoryTest(TestCase):
-    """Task 6 плана ("вне очереди", блокирует выкатку ветки): get_companies()
-    после Task 3 читает локальную проекцию карточек и не отдаёт ИНН вовсе (в
-    project_card такого поля нет). Дозаполнению ИНН (inn_backfill_service.py)
-    нужен явный полный обход портала — единственное место во всём приложении,
-    которому обход разрешён. Все пользовательские пути (доска/meta/главный
-    экран/резолверы имён — см. остальные тесты этого файла) обход НЕ
-    выполняют; здесь, наоборот, обход обязателен и ожидаем."""
+class InnBackfillResolvesProjectCompaniesTest(TestCase):
+    """Дозаполнению ИНН (inn_backfill_service.py) нужны ИНН компаний и юрлиц
+    из карточек проектов. get_companies() читает локальную проекцию карточек
+    и ИНН не отдаёт (Task 6 плана), поэтому ИНН идёт из Битрикса — но с
+    30.09.2026 не полным обходом справочника портала (~930 страниц на боевом),
+    а пакетным crm.requisite.list по id из карточек."""
 
     def setUp(self):
         cache.clear()
@@ -260,37 +258,47 @@ class InnBackfillUsesFullDirectoryTest(TestCase):
             "our_inn": "UF_OUR", "client_inn": "UF_CLIENT"}}
         return InnBackfillService(client, self.account, cfg)
 
-    def test_inn_maps_performs_full_scan_not_local_list(self):
+    def test_inn_maps_resolves_only_project_companies(self):
         client = _FakeClient({
-            "crm.item.list": {"result": [
-                {"id": "15", "title": "АО Ромашка", "isMyCompany": "N"},
-                {"id": "9", "title": "ООО Свои", "isMyCompany": "Y"},
-            ]},
             "crm.requisite.list": {"result": [
                 {"ENTITY_ID": "15", "RQ_INN": "7701234567"},
                 {"ENTITY_ID": "9", "RQ_INN": "7709876543"},
             ]},
         })
+        cards = list(ProjectCard.objects.all())
 
-        companies_inn, legal_inn = self._service(client)._inn_maps()
+        companies_inn, legal_inn = self._service(client)._inn_maps(cards)
 
-        # ИНН резолвится через полный обход. До этой правки _inn_maps()
-        # звал get_companies()/get_legal_entities() — оба после Task 3 не
-        # отдают "inn" вовсе, и карты были бы {'15': ''} / {'9': ''}
-        # (ревьюер подтвердил прогоном: resolve_card_inn(...) -> ('', '')).
-        self.assertEqual(companies_inn.get("15"), "7701234567")
-        self.assertEqual(legal_inn.get("9"), "7709876543")
-        # "Чужая" (не своя) компания попадает в общий справочник компаний,
-        # но не в юрлица — is_my_company=N её отсеивает.
-        self.assertNotIn("15", legal_inn)
+        self.assertEqual(companies_inn, {"15": "7701234567"})
+        self.assertEqual(legal_inn, {"9": "7709876543"})
+        # Ни одной страницы справочника компаний — только реквизиты нужных id,
+        # одним запросом с серверным фильтром.
+        self.assertEqual(client.methods_called(), ["crm.requisite.list"])
+        _, params = client.calls[0]
+        self.assertEqual(sorted(params["filter"]["@ENTITY_ID"]), [9, 15])
 
-        # Постраничный обход РЕАЛЬНО произошёл — здесь, в отличие от всех
-        # пользовательских путей этого файла, это ожидаемо и правильно:
-        # это разовое админское действие с экрана настроек, которому
-        # действительно нужен весь справочник компаний с реквизитами.
-        methods_called = client.methods_called()
-        self.assertIn("crm.item.list", methods_called)
-        self.assertIn("crm.requisite.list", methods_called)
+    def test_inn_maps_uses_cache_on_second_call(self):
+        client = _FakeClient({
+            "crm.requisite.list": {"result": [{"ENTITY_ID": "15", "RQ_INN": "7701234567"}]},
+        })
+        cards = list(ProjectCard.objects.all())
+        self._service(client)._inn_maps(cards)
+        companies_inn, legal_inn = self._service(client)._inn_maps(cards)
+
+        # У юрлица 9 реквизита нет — отрицательный результат тоже кэшируется.
+        self.assertEqual(companies_inn, {"15": "7701234567"})
+        self.assertEqual(legal_inn, {"9": ""})
+        self.assertEqual(client.methods_called(), ["crm.requisite.list"])
+
+    def test_requisite_failure_is_not_cached(self):
+        client = _FakeClient({"crm.requisite.list": RuntimeError("timeout")})
+        cards = list(ProjectCard.objects.all())
+        companies_inn, _ = self._service(client)._inn_maps(cards)
+        self.assertEqual(companies_inn, {"15": ""})
+
+        client._responses["crm.requisite.list"] = {"result": [{"ENTITY_ID": "15", "RQ_INN": "7701234567"}]}
+        companies_inn, _ = self._service(client)._inn_maps(cards)
+        self.assertEqual(companies_inn, {"15": "7701234567"})
 
 
 class EmployeesFromDbTest(TestCase):
