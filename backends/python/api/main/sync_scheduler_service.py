@@ -51,6 +51,7 @@ advisory-lock из 2.2 (на Postgres лок берётся честно, на s
 """
 
 import logging
+import time
 from datetime import timedelta
 from typing import List
 
@@ -74,9 +75,14 @@ from .task_sync_service import TaskSyncService
 from .user_sync_service import UserSyncService
 # Под USE_PORTAL_SCOPING account_sync_lock ключуется по portal.pk (замок «по
 # компании»), выбор субъекта — внутри замка по флагу; вызовы ниже не меняются.
+from .utils.db_connection import ensure_db_connection as _ensure_db_connection
 from .utils.decorators.sync_lock import account_sync_lock, SyncLockBusy
 
 logger = logging.getLogger(__name__)
+
+# Синк одного аккаунта дольше этого — предупреждение в system_log с порталом и
+# scope: иначе по журналу не понять, кто растягивает прогон.
+SLOW_ACCOUNT_SYNC_SECONDS = 120
 
 DEFAULT_WINDOW_DAYS = 7
 
@@ -293,6 +299,7 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
     # timesheet — незасинканными.
     reps = _account_scoped_sync_accounts()
     run.portals_total = len(reps)
+    run.save(update_fields=["portals_total"])
 
     # Мёртвые порталы уже исключены из reps (см. _account_scoped_sync_accounts/
     # select_portal_accounts — фильтр по sync_disabled_until), поэтому здесь
@@ -311,6 +318,8 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
     errors: List[str] = []
 
     for account in reps:
+        _ensure_db_connection()
+        account_started = time.monotonic()
         try:
             cfg_service = ConfigurationService(account.client, account)
             config = cfg_service.get_configuration_sync()
@@ -446,6 +455,9 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                 logger.info("Scheduled sync portal %s: %s items.", account.member_id, count)
 
         except Exception as exc:  # noqa: BLE001
+            # Сбой мог случиться как раз из-за закрытого сервером соединения —
+            # ниже снова пишем в БД (account.save, лог ошибки в system_log).
+            _ensure_db_connection()
             if is_permanent_sync_failure(exc):
                 # Мёртвый портал (снесли приложение, кончилась подписка,
                 # заблокирован, домен не резолвится...) — не трейсбек в лог на
@@ -479,7 +491,16 @@ def run_scheduled_sync(days: int = DEFAULT_WINDOW_DAYS, scope: str = "timesheet"
                 account.sync_failure_reason = None
                 account.sync_disabled_until = None
                 account.save(update_fields=["sync_failure_count", "sync_failure_reason", "sync_disabled_until"])
+        finally:
+            elapsed = time.monotonic() - account_started
+            if elapsed > SLOW_ACCOUNT_SYNC_SECONDS:
+                _ensure_db_connection()
+                logger.warning(
+                    "Scheduled sync: scope=%s portal %s (account %s, %s) took %.0f s.",
+                    scope, account.member_id, account.pk, account.domain_url, elapsed,
+                )
 
+    _ensure_db_connection()
     run.portals_synced = synced
     run.items_synced = items_total
     run.finished_at = timezone.now()
