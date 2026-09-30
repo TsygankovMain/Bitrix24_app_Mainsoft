@@ -1174,3 +1174,78 @@ class SyncCooldownTest(TestCase):
         rep_ids = {a.pk for a in reps}
         self.assertIn(alive.pk, rep_ids)
         self.assertNotIn(dead.pk, rep_ids)
+
+
+class RunScheduledSyncDbConnectionTest(TestCase):
+    """Прод-БД рвёт соединение после 15 минут простоя (idle_session_timeout),
+    а фоновая команда держит одно соединение на весь прогон. До правки
+    30.09.2026 синк проектов из-за этого не завершился ни разу с 28.07."""
+
+    def _cfg(self, mock_cfg_cls):
+        mock_cfg = MagicMock()
+        mock_cfg.get_configuration_sync.return_value = {"auto_sync_enabled": True}
+        mock_cfg_cls.return_value = mock_cfg
+
+    @patch("main.sync_scheduler_service._ensure_db_connection")
+    @patch("main.sync_scheduler_service.ProjectSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_connection_checked_before_each_account_and_final_save(self, mock_cfg_cls, mock_proj_cls, mock_ensure):
+        _account("m1")
+        _account("m2")
+        self._cfg(mock_cfg_cls)
+        mock_proj_cls.return_value.sync.return_value = {"synced": 1}
+
+        run_scheduled_sync(scope="project")
+
+        # по разу перед каждым аккаунтом и перед финальным сохранением
+        self.assertEqual(mock_ensure.call_count, 3)
+
+    @patch("main.sync_scheduler_service.ProjectSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_portals_total_saved_before_accounts_are_synced(self, mock_cfg_cls, mock_proj_cls):
+        """Если процесс всё же умрёт посреди прогона, журнал покажет, сколько
+        порталов было в очереди, а не 0."""
+        _account("m1")
+        self._cfg(mock_cfg_cls)
+        seen = {}
+
+        def sync():
+            seen["total"] = SyncRun.objects.get(scope="project").portals_total
+            return {"synced": 1}
+
+        mock_proj_cls.return_value.sync.side_effect = sync
+        run_scheduled_sync(scope="project")
+        self.assertEqual(seen["total"], 1)
+
+    @patch("main.sync_scheduler_service.SLOW_ACCOUNT_SYNC_SECONDS", -1)
+    @patch("main.sync_scheduler_service.ProjectSyncService")
+    @patch("main.sync_scheduler_service.ConfigurationService")
+    def test_slow_account_is_logged_with_scope_and_portal(self, mock_cfg_cls, mock_proj_cls):
+        _account("m-slow")
+        self._cfg(mock_cfg_cls)
+        mock_proj_cls.return_value.sync.return_value = {"synced": 1}
+        with self.assertLogs("main.sync_scheduler_service", level="WARNING") as logs:
+            run_scheduled_sync(scope="project")
+        self.assertTrue(any("scope=project portal m-slow" in line for line in logs.output))
+
+
+class EnsureDbConnectionTest(TestCase):
+    def test_closes_connection_the_server_dropped(self):
+        from main.utils import db_connection
+
+        fake = MagicMock()
+        fake.connection = object()
+        fake.is_usable.return_value = False
+        with patch.object(db_connection, "connection", fake):
+            db_connection.ensure_db_connection()
+        fake.close.assert_called_once()
+
+    def test_keeps_live_connection(self):
+        from main.utils import db_connection
+
+        fake = MagicMock()
+        fake.connection = object()
+        fake.is_usable.return_value = True
+        with patch.object(db_connection, "connection", fake):
+            db_connection.ensure_db_connection()
+        fake.close.assert_not_called()

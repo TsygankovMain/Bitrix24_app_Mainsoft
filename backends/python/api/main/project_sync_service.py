@@ -20,6 +20,7 @@ from .project_board_shared import (
 )
 from .stage_automation_service import ProjectStageAutomationService
 from .tenant_scoping import scope_to_tenant
+from .utils.db_connection import ensure_db_connection
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,9 @@ class ProjectSyncService:
         if project_sp_entity_type_id:
             try:
                 project_items = self.fetch_project_sp_items(project_sp_entity_type_id, updated_since=incremental_from)
+                # Выкачка из Битрикса могла идти дольше idle_session_timeout БД
+                # (15 минут на проде) — дальше пишем в БД, см. ensure_db_connection.
+                ensure_db_connection()
                 sync_mode = "project_spa_incremental" if incremental_from else "project_spa"
                 synced_total = len(project_items)
                 if schema_ready:
@@ -84,6 +88,7 @@ class ProjectSyncService:
                     )
                     warning = f"{warning} {conflict_warning}".strip() if warning else conflict_warning
             except Exception as exc:
+                ensure_db_connection()
                 logger.warning("Project SPA sync failed, falling back to group sync: %s", exc)
                 warning = (
                     "Не удалось получить проекты из Smart Process ПРОЕКТ. "
@@ -93,7 +98,9 @@ class ProjectSyncService:
         if not sync_mode.startswith("project_spa"):
             try:
                 groups = self.fetch_project_groups()
+                ensure_db_connection()
             except Exception as exc:
+                ensure_db_connection()
                 logger.warning("Project sync Bitrix fetch failed, falling back to local timesheets: %s", exc)
                 groups = build_local_project_groups(self.account)
                 local_warning = (
