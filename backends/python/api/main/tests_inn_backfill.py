@@ -387,6 +387,20 @@ class HealthTests(unittest.TestCase):
         self.assertIn("NoInn", names)
         self.assertEqual(names["NoInn"]["client_inn"], "")
 
+    @mock.patch("main.inn_backfill_service.get_project_card_queryset")
+    def test_projects_health_treats_zero_company_as_missing(self, m_qs):
+        """Смарт-процесс «Проекты» отдаёт companyId = 0, когда клиент не выбран."""
+        m_qs.return_value = [
+            SimpleNamespace(project_id="G4", project_name="Zero", company_id="0", our_legal_entity_id="L1"),
+        ]
+        cfg = {"sp_entity_type_id": 1, "fields_mapping": {"our_inn": "UF_OUR", "client_inn": "UF_CLIENT"}}
+        svc = InnBackfillService(FakeClient(), object(), cfg)
+        seen = []
+        svc._inn_maps = lambda cards: (seen.append(cards), ({}, {"L1": "7709"}))[1]
+        row = svc.projects_health()["projects"][0]
+        self.assertFalse(row["has_company"])
+        self.assertTrue(row["has_legal_entity"])
+
 
 if __name__ == "__main__":
     unittest.main()

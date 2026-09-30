@@ -40,6 +40,13 @@ logger = logging.getLogger(__name__)
 # долгий (сутки). Отдельная константа от BITRIX_REFERENCE_CACHE_TTL (общий
 # справочник компаний целиком, project_board_shared.py) — её здесь не трогаем.
 COMPANY_INN_CACHE_TTL = 60 * 60 * 24
+# «ИНН нет» кэшируется коротко: его исправляют в CRM и сразу жмут «Обновить»
+# на экране «Незаполненные проекты». С суточным сроком дозаполненные компании
+# висели бы «без ИНН» до завтра (прод, 30.09.2026).
+COMPANY_INN_NEGATIVE_CACHE_TTL = 60 * 5
+# Префикс ключа кэша ИНН. v2 — чтобы отрицательные записи, закэшированные на
+# сутки до появления короткого срока, не дожили свой срок.
+COMPANY_INN_CACHE_PREFIX = "company-inn-v2"
 # Сколько id компаний уходит в один crm.requisite.list с фильтром @ENTITY_ID
 # (resolve_reference_inns). У компании бывает несколько реквизитов, поэтому
 # меньше 50: пачка обычно умещается в одну страницу ответа.
@@ -973,7 +980,8 @@ class ProjectCardService:
     def resolve_reference_inn(self, reference_id: str) -> Optional[str]:
         """ИНН ОДНОЙ компании/юрлица по её id — один crm.requisite.list с
         серверным фильтром по ENTITY_ID, результат в кэше на сутки
-        (COMPANY_INN_CACHE_TTL), отрицательный результат тоже кэшируется.
+        (COMPANY_INN_CACHE_TTL), отрицательный — пять минут
+        (COMPANY_INN_NEGATIVE_CACHE_TTL).
 
         Публичная точка входа для тех, кому нужны ИНН нескольких конкретных
         компаний, а не весь справочник портала: звать get_full_company_directory()
@@ -992,8 +1000,8 @@ class ProjectCardService:
         компаний и реквизитов, пакетный обход которых регулярно падал по
         10-секундному таймауту Битрикса и начинался заново постранично.
 
-        Кэш общий с resolve_reference_inn (ключ company-inn:<id>, сутки,
-        отрицательный результат тоже кэшируется). Промахи добираются
+        Кэш общий с resolve_reference_inn (ключ company-inn-v2:<id>, найденный
+        ИНН — сутки, «ИНН нет» — пять минут). Промахи добираются
         crm.requisite.list с фильтром @ENTITY_ID пачками по
         INN_LOOKUP_CHUNK id — одна-две страницы на пачку. Сбой пачки не
         кэшируется (временная ошибка), её id возвращаются с пустым ИНН.
@@ -1006,7 +1014,7 @@ class ProjectCardService:
         if not ids:
             return {}
 
-        key_by_id = {rid: build_account_cache_key(self.account, f"company-inn:{rid}") for rid in ids}
+        key_by_id = {rid: build_account_cache_key(self.account, f"{COMPANY_INN_CACHE_PREFIX}:{rid}") for rid in ids}
         cached = cache.get_many(list(key_by_id.values()))
         resolved: Dict[str, str] = {}
         missing: List[str] = []
@@ -1048,13 +1056,18 @@ class ProjectCardService:
                 # _fetch_company_inn_map.
                 if entity_id in chunk_inn and inn and not chunk_inn[entity_id]:
                     chunk_inn[entity_id] = inn
-            cache.set_many({key_by_id[rid]: inn for rid, inn in chunk_inn.items()}, COMPANY_INN_CACHE_TTL)
+            found = {key_by_id[rid]: inn for rid, inn in chunk_inn.items() if inn}
+            empty = {key_by_id[rid]: "" for rid, inn in chunk_inn.items() if not inn}
+            if found:
+                cache.set_many(found, COMPANY_INN_CACHE_TTL)
+            if empty:
+                cache.set_many(empty, COMPANY_INN_NEGATIVE_CACHE_TTL)
             resolved.update(chunk_inn)
 
         return resolved
 
     def _fetch_single_reference_inn(self, reference_id: str) -> Optional[str]:
-        cache_key = build_account_cache_key(self.account, f"company-inn:{reference_id}")
+        cache_key = build_account_cache_key(self.account, f"{COMPANY_INN_CACHE_PREFIX}:{reference_id}")
         cached_inn = cache.get(cache_key)
         if cached_inn is not None:
             # "" — закэшированный отрицательный результат (у компании нет ИНН).
@@ -1088,7 +1101,11 @@ class ProjectCardService:
             )
             return None
 
-        cache.set(cache_key, resolved_inn or "", COMPANY_INN_CACHE_TTL)
+        cache.set(
+            cache_key,
+            resolved_inn or "",
+            COMPANY_INN_CACHE_TTL if resolved_inn else COMPANY_INN_NEGATIVE_CACHE_TTL,
+        )
         return resolved_inn
 
     def _load_config(self) -> Dict[str, Any]:

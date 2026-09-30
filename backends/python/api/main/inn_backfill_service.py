@@ -55,6 +55,17 @@ def _clean(value: Any) -> str:
     return str(value).strip()
 
 
+def _ref_id(value: Any) -> str:
+    """id компании/юрлица из карточки проекта; "0" — «не выбрано».
+
+    Смарт-процесс «Проекты» отдаёт companyId = 0, когда клиент не указан, и
+    синк проектов кладёт его в карточку как есть. Без этой нормализации экран
+    «Незаполненные проекты» показывал такой проект с клиентом «указана».
+    """
+    key = _clean(value)
+    return "" if key == "0" else key
+
+
 def is_blank(value: Any) -> bool:
     """Пусто ли значение поля ИНН в карточке (None / '' / пробелы / [] )."""
     if value is None:
@@ -95,8 +106,8 @@ def resolve_card_inn(card, companies_inn: Dict[str, str], legal_inn: Dict[str, s
     """ИНН (наш, клиента) для проекта карточки. '' если не резолвится."""
     if card is None:
         return "", ""
-    our = legal_inn.get(_clean(getattr(card, "our_legal_entity_id", "")), "")
-    client = companies_inn.get(_clean(getattr(card, "company_id", "")), "")
+    our = legal_inn.get(_ref_id(getattr(card, "our_legal_entity_id", "")), "")
+    client = companies_inn.get(_ref_id(getattr(card, "company_id", "")), "")
     return _clean(our), _clean(client)
 
 
@@ -281,10 +292,10 @@ class InnBackfillService:
         company_ids: List[str] = []
         legal_ids: List[str] = []
         for card in cards:
-            company_id = _clean(getattr(card, "company_id", ""))
+            company_id = _ref_id(getattr(card, "company_id", ""))
             if company_id:
                 company_ids.append(company_id)
-            legal_id = _clean(getattr(card, "our_legal_entity_id", ""))
+            legal_id = _ref_id(getattr(card, "our_legal_entity_id", ""))
             if legal_id:
                 legal_ids.append(legal_id)
         if not company_ids and not legal_ids:
@@ -349,10 +360,10 @@ class InnBackfillService:
         companies: Dict[str, str] = {}
         legal: Dict[str, str] = {}
         for card in cards:
-            company_id = _clean(getattr(card, "company_id", ""))
+            company_id = _ref_id(getattr(card, "company_id", ""))
             if company_id and company_id not in companies:
                 companies[company_id] = lookup(company_id)
-            legal_id = _clean(getattr(card, "our_legal_entity_id", ""))
+            legal_id = _ref_id(getattr(card, "our_legal_entity_id", ""))
             if legal_id and legal_id not in legal:
                 legal[legal_id] = lookup(legal_id)
 
@@ -639,8 +650,8 @@ class InnBackfillService:
         companies_inn, legal_inn = self._inn_maps(cards)
         out: List[Dict[str, Any]] = []
         for card in cards:
-            company_id = _clean(getattr(card, "company_id", ""))
-            legal_id = _clean(getattr(card, "our_legal_entity_id", ""))
+            company_id = _ref_id(getattr(card, "company_id", ""))
+            legal_id = _ref_id(getattr(card, "our_legal_entity_id", ""))
             client_inn = companies_inn.get(company_id, "")
             our_inn = legal_inn.get(legal_id, "")
             has_company = bool(company_id)
