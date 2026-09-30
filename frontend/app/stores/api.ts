@@ -191,6 +191,23 @@ export const useApiStore = defineStore(
       return Boolean(tokenJWT.value) && isJwtFresh(tokenExpiresAtMs, Date.now())
     }
 
+    // Свежий токен перед запросом. Обновление в initApp() срабатывает только
+    // при навигации, а экран, открытый дольше часа (дозаполнение ИНН: поиск,
+    // затем простановка по проектам), слал запросы с истёкшим токеном и
+    // получал 401 пачкой — прод, 29.09.2026. Промис общий, поэтому параллельные
+    // запросы ждут один getToken, а не шлют каждый свой.
+    const ensureFreshToken = async (): Promise<void> => {
+      if (isTokenFresh() || $b24 === null) {
+        return
+      }
+      if (!tokenRequest) {
+        tokenRequest = reinitToken().finally(() => {
+          tokenRequest = null
+        })
+      }
+      await tokenRequest
+    }
+
     // Сообщение для серверного отказа по правам (admin-only эндпоинты).
     const FORBIDDEN_MESSAGE = 'Недостаточно прав'
 
@@ -198,6 +215,19 @@ export const useApiStore = defineStore(
       baseURL: apiUrl,
       headers: {
         'Content-Type': 'application/json'
+      },
+      async onRequest(ctx) {
+        // Заголовок Authorization вызывающий код собирает из tokenJWT в момент
+        // вызова — если токен протух, подменяем его свежим. Запросы без
+        // Authorization (сам /api/getToken) не трогаем: иначе рекурсия.
+        const headers = ctx.options.headers
+        if (!(headers instanceof Headers) || !headers.has('Authorization') || isTokenFresh()) {
+          return
+        }
+        await ensureFreshToken()
+        if (tokenJWT.value) {
+          headers.set('Authorization', `Bearer ${tokenJWT.value}`)
+        }
       },
       onResponseError(ctx) {
         // Бэкенд закрывает админские операции и денежные отчёты декоратором
@@ -1336,21 +1366,9 @@ export const useApiStore = defineStore(
       $b24 = b24
 
       // Токен ещё живой — второй getToken на том же открытии не нужен.
-      if (isTokenFresh()) {
-        return
-      }
-
       // Дедупликация: index.client.vue и task.vue монтируются подряд, их initApp
-      // могут перекрыться по времени. Без общего промиса это снова два запроса.
-      if (tokenRequest) {
-        await tokenRequest
-        return
-      }
-
-      tokenRequest = reinitToken().finally(() => {
-        tokenRequest = null
-      })
-      await tokenRequest
+      // могут перекрыться по времени — общий промис в ensureFreshToken.
+      await ensureFreshToken()
     }
 
     const reinitToken = async () => {
@@ -1359,9 +1377,11 @@ export const useApiStore = defineStore(
         return
       }
 
-      const authData = $b24.auth.getAuthData()
+      // Авторизация фрейма тоже живёт около часа: по истечении getAuthData()
+      // отдаёт false, и новый токен приложения без refreshAuth() не получить.
+      const authData = $b24.auth.getAuthData() || await $b24.auth.refreshAuth()
 
-      if (authData === false) {
+      if (!authData) {
         throw new Error('Some problem with auth. See App logic')
       }
 

@@ -166,8 +166,9 @@ class ScanTests(unittest.TestCase):
             "project_item_id": "UF_PITEM", "sotrudnik": "UF_EMP",
             "title_zadach_ierarhiya": "UF_TASK", "opisanie": "UF_DESC", "data": "UF_DATE"}}
         svc = InnBackfillService(FakeClient(), object(), cfg)
-        svc._fetch_cards = lambda df, dt: self.items
-        svc._inn_maps = lambda: (self.companies, self.legal)
+        svc._fetch_blank_cards = lambda df, dt: self.items
+        svc._count_cards = lambda df, dt: len(self.items)
+        svc._inn_maps = lambda cards: (self.companies, self.legal)
         svc._resolve_employee_names = lambda ids: {"e1": "Иванов И."}
         return svc
 
@@ -195,7 +196,7 @@ class ScanTests(unittest.TestCase):
     def test_scan_warns_on_degraded_resolution(self, m_qs):
         m_qs.return_value = [self.card]
         svc = self._service()
-        svc._inn_maps = lambda: ({}, {})  # реквизиты недоступны
+        svc._inn_maps = lambda cards: ({}, {})  # реквизиты недоступны
         res = svc.scan("2026-05-01", "2026-05-31")
         self.assertIsNotNone(res["warning"])
 
@@ -211,7 +212,7 @@ class ScanTests(unittest.TestCase):
         намёка, что источник ИНН сломан."""
         m_qs.return_value = [self.card]
         svc = self._service()
-        svc._inn_maps = lambda: ({"C1": ""}, {"L1": ""})  # ключи есть, ИНН пуст
+        svc._inn_maps = lambda cards: ({"C1": ""}, {"L1": ""})  # ключи есть, ИНН пуст
         res = svc.scan("2026-05-01", "2026-05-31")
         self.assertIsNotNone(res["warning"])
 
@@ -274,7 +275,7 @@ class ScanTests(unittest.TestCase):
     def test_project_items_blank_only_vs_overwrite(self, m_qs):
         m_qs.return_value = [self.card]
         svc = self._service()
-        svc._fetch_cards = lambda df, dt: [
+        svc._fetch_cards = lambda df, dt, extra=None: [
             {"id": 1, "UF_PITEM": "100", "UF_OUR": "", "UF_CLIENT": ""},
             {"id": 2, "UF_PITEM": "100", "UF_OUR": "OLD", "UF_CLIENT": "OLD"},
             {"id": 3, "UF_PITEM": "999", "UF_OUR": "", "UF_CLIENT": ""},
@@ -288,6 +289,85 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(by_id[2]["client_inn"], "NEWCLI")
 
 
+class ListToken:
+    """crm.item.list, отвечающий по фильтру: ключ — кортеж пар фильтра
+    без периода. Пишет каждый фильтр, чтобы проверить, ЧТО мы спросили."""
+
+    def __init__(self, answers, total=None):
+        self.answers = answers
+        self.total = total
+        self.filters = []
+
+    def call_method(self, method, params):
+        assert method == "crm.item.list", method
+        flt = {k: v for k, v in params["filter"].items() if not k.startswith((">=", "<="))}
+        self.filters.append(flt)
+        if params.get("select") == ["id"]:
+            return {"result": {"items": []}, "total": self.total}
+        key = tuple(sorted((k, tuple(v) if isinstance(v, list) else v) for k, v in flt.items()))
+        items = self.answers.get(key, [])
+        return {"result": {"items": items}, "total": len(items)}
+
+
+class TargetedFetchTests(unittest.TestCase):
+    CFG = {"sp_entity_type_id": 123, "fields_mapping": {
+        "our_inn": "UF_OUR", "client_inn": "UF_CLIENT", "project_id": "UF_PID",
+        "project_item_id": "UF_PITEM", "data": "UF_DATE"}}
+
+    def _service(self, token, cfg=None):
+        client = FakeClient()
+        client._bitrix_token = token
+        return InnBackfillService(client, object(), cfg or self.CFG)
+
+    def test_blank_cards_fetched_by_empty_field_filters_and_deduplicated(self):
+        both_blank = {"id": 1, "UF_OUR": "", "UF_CLIENT": ""}
+        token = ListToken({
+            (("UF_OUR", ""),): [both_blank, {"id": 2, "UF_OUR": "", "UF_CLIENT": "7701"}],
+            (("UF_CLIENT", ""),): [both_blank, {"id": 3, "UF_OUR": "7709", "UF_CLIENT": ""}],
+        })
+        cards = self._service(token)._fetch_blank_cards("2026-09-01", "2026-09-30")
+        self.assertEqual([c["id"] for c in cards], [1, 2, 3])
+        self.assertEqual(token.filters, [{"UF_OUR": ""}, {"UF_CLIENT": ""}])
+
+    def test_blank_cards_without_both_fields_fetch_whole_period(self):
+        """Незамапленное поле is_blank считает пустым у всех карточек —
+        фильтровать по второму полю нельзя."""
+        cfg = {"sp_entity_type_id": 123, "fields_mapping": {"our_inn": "UF_OUR", "data": "UF_DATE"}}
+        token = ListToken({(): [{"id": 1, "UF_OUR": "7709"}]})
+        cards = self._service(token, cfg)._fetch_blank_cards("", "")
+        self.assertEqual([c["id"] for c in cards], [1])
+        self.assertEqual(token.filters, [{}])
+
+    @mock.patch("main.inn_backfill_service.get_project_card_queryset")
+    def test_project_items_asks_only_for_project_cards(self, m_qs):
+        m_qs.return_value = [
+            SimpleNamespace(project_item_id="100", project_id="G1"),
+            SimpleNamespace(project_item_id="101", project_id="G1"),
+            SimpleNamespace(project_item_id="200", project_id="G2"),
+        ]
+        token = ListToken({
+            (("UF_PID", "G1"),): [{"id": 1, "UF_PID": "G1", "UF_OUR": "", "UF_CLIENT": ""}],
+            (("@UF_PITEM", ("100", "101")),): [
+                {"id": 1, "UF_PID": "G1", "UF_OUR": "", "UF_CLIENT": ""},
+                {"id": 2, "UF_PITEM": "101", "UF_OUR": "", "UF_CLIENT": ""},
+            ],
+        })
+        res = self._service(token).project_items("G1", "", "", "7709", "7701", overwrite=False)
+        self.assertEqual({i["bitrix_id"] for i in res["items"]}, {1, 2})
+        self.assertEqual(token.filters, [{"UF_PID": "G1"}, {"@UF_PITEM": ["100", "101"]}])
+
+    @mock.patch("main.inn_backfill_service.get_project_card_queryset")
+    def test_scan_total_comes_from_count_request(self, m_qs):
+        m_qs.return_value = []
+        token = ListToken({(("UF_OUR", ""),): [{"id": 5, "UF_OUR": "", "UF_CLIENT": "7701"}]}, total=519)
+        svc = self._service(token)
+        svc._inn_maps = lambda cards: ({}, {})
+        svc._resolve_employee_names = lambda ids: {}
+        kpi = svc.scan("2026-09-01", "2026-09-30")["kpi"]
+        self.assertEqual(kpi["total"], 519)
+        self.assertEqual(kpi["without_inn"], 1)
+
+
 class HealthTests(unittest.TestCase):
     @mock.patch("main.inn_backfill_service.get_project_card_queryset")
     def test_projects_health_flags(self, m_qs):
@@ -298,7 +378,7 @@ class HealthTests(unittest.TestCase):
         ]
         cfg = {"sp_entity_type_id": 1, "fields_mapping": {"our_inn": "UF_OUR", "client_inn": "UF_CLIENT"}}
         svc = InnBackfillService(FakeClient(), object(), cfg)
-        svc._inn_maps = lambda: ({"C1": "7701"}, {"L1": "7709"})
+        svc._inn_maps = lambda cards: ({"C1": "7701"}, {"L1": "7709"})
         res = svc.projects_health()
         names = {r["project_name"]: r for r in res["projects"]}
         self.assertNotIn("OK", names)

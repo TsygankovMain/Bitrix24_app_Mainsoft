@@ -5,12 +5,18 @@
 → company_id (клиент) / our_legal_entity_id (наше юрлицо) → ИНН из реквизитов → запись в
 поля OUR_INN/CLIENT_INN элемента СП через crm.item.update.
 
-Резолв ИНН идёт двумя разными путями, и путать их нельзя:
-  * админские Scan/Apply/projects_health — _inn_maps(), полный обход справочника
-    компаний портала (get_full_company_directory): им нужны ИНН всех компаний разом;
-  * autofill после синхронизации — _inn_maps_for_cards(), точечный резолв только тех
-    компаний и юрлиц, что встретились в новых карточках. Синк идёт на пользовательском
-    пути и под advisory-замком, полный обход портала там недопустим.
+Резолв ИНН идёт двумя путями:
+  * админские Scan/projects_health — _inn_maps(cards), пакетный резолв компаний и
+    юрлиц из карточек проектов (crm.requisite.list с @ENTITY_ID пачками). До 30.09.2026
+    здесь был полный обход справочника компаний портала (~930 страниц на боевом
+    портале), из-за которого оба экрана открывались минутами;
+  * autofill после синхронизации — _inn_maps_for_cards(), точечный резолв с потолком
+    AUTOFILL_INN_LOOKUP_LIMIT: синк идёт под advisory-замком.
+
+Карточки списания из Битрикса тоже берутся прицельно: Scan забирает только карточки
+с пустым ИНН (фильтр по пустому полю), project_items — только карточки нужного
+проекта (фильтр по полям проекта). Раньше оба выкачивали весь период целиком, а
+project_items — заново на каждый проект.
 
 Поля OUR_INN/CLIENT_INN существуют в СП, но не заполняются автоматически — этот сервис
 закрывает разрыв (Спринт 2, вариант A: пишем ИНН обратно в Bitrix).
@@ -64,10 +70,10 @@ def has_resolved_inn(mapping: Dict[str, str]) -> bool:
     Отличие от простого `bool(mapping)`/пустоты словаря: словарь может быть
     непустым (ключи компаний/юрлиц из карточек проектов есть), но каждое
     значение — пустая строка, если источник карты не отдаёт ИНН вовсе.
-    Именно так выглядит `_inn_maps()` после перехода ProjectCardService на
-    локальную базу (Task 3 плана "справочники из локальной базы"), пока сам
-    `_inn_maps()` явно не запросит полный обход портала: `bool({"C1": ""})`
-    — `True`, поэтому проверка "словарь пуст" такую деградацию не ловит."""
+    Именно так выглядит `_inn_maps()`, когда crm.requisite.list недоступен:
+    ключи — все компании из карточек проектов, значения пусты.
+    `bool({"C1": ""})` — `True`, поэтому проверка "словарь пуст" такую
+    деградацию не ловит."""
     return any(_clean(v) for v in mapping.values())
 
 
@@ -135,7 +141,17 @@ class InnBackfillService:
         return None
 
     # --- чтение карточек из Bitrix ---
-    def _fetch_cards(self, date_from: str, date_to: str) -> List[Dict[str, Any]]:
+    def _period_filter(self, date_from: str, date_to: str) -> Dict[str, Any]:
+        field_date = self.date_field()
+        crm_filter: Dict[str, Any] = {}
+        if date_from:
+            crm_filter[f">={field_date}"] = date_from
+        if date_to:
+            crm_filter[f"<={field_date}"] = date_to
+        return crm_filter
+
+    def _fetch_cards(self, date_from: str, date_to: str,
+                     extra_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         field_date = self.date_field()
         select = ["id", field_date]
         for key in ("our_inn", "client_inn", "project_id", "project_item_id",
@@ -144,11 +160,8 @@ class InnBackfillService:
             if code and code not in select:
                 select.append(code)
 
-        crm_filter: Dict[str, Any] = {}
-        if date_from:
-            crm_filter[f">={field_date}"] = date_from
-        if date_to:
-            crm_filter[f"<={field_date}"] = date_to
+        crm_filter = self._period_filter(date_from, date_to)
+        crm_filter.update(extra_filter or {})
 
         items: List[Dict[str, Any]] = []
         start = 0
@@ -159,6 +172,8 @@ class InnBackfillService:
                     "entityTypeId": self.entity_type_id,
                     "filter": crm_filter,
                     "select": select,
+                    # Без order постраничный обход по start нестабилен.
+                    "order": {"id": "ASC"},
                     "start": start,
                 },
             )
@@ -171,36 +186,114 @@ class InnBackfillService:
                 break
         return items
 
-    def _inn_maps(self) -> Tuple[Dict[str, str], Dict[str, str]]:
-        """Карта company_id/legal_entity_id -> ИНН для дозаполнения.
+    def _fetch_cards_union(self, date_from: str, date_to: str,
+                           filters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Объединение нескольких выборок по id (фильтры Битрикса — только И)."""
+        seen = set()
+        out: List[Dict[str, Any]] = []
+        for extra in filters:
+            for it in self._fetch_cards(date_from, date_to, extra):
+                key = _clean(it.get("id") or it.get("ID"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(it)
+        return out
 
-        Единственное место во всём приложении, которому оправдан явный
-        полный постраничный обход справочника компаний Битрикса
-        (ProjectCardService.get_full_company_directory) вместо быстрого
-        get_companies() (локальная база, без ИНН — см. Task 3 плана
-        "справочники из локальной базы"): это админское действие
-        (Scan/Apply с экрана настроек дозаполнения ИНН), запускается
-        вручную самим администратором, а не при открытии приложения и не
-        на пользовательском пути (доска/meta/главный экран/резолверы
-        имён — им обход запрещён, см. project_board_service.py), и ему
-        по сути нужны ИНН всех компаний портала разом, а не только тех,
-        что уже встречались в карточках проектов.
+    def _fetch_blank_cards(self, date_from: str, date_to: str) -> List[Dict[str, Any]]:
+        """Только карточки с пустым «Нашим ИНН» или «ИНН клиента».
 
-        "Свои" юрлица за тем же обходом — get_legal_entities() тоже не
-        отдаёт ИНН (свой быстрый серверный фильтр IS_MY_COMPANY=Y, без
-        обхода и без реквизитов), поэтому вместо отдельного вызова
-        отбираем их из ТОГО ЖЕ полного справочника по признаку
-        is_my_company: это поле есть только в результате обхода Битрикса
-        (_fetch_companies_live), в локальной проекции карточек его нет.
+        Фильтр {поле: ""} в crm.item.list ловит и NULL, и пустую строку
+        (проверено на боевом портале 30.09.2026: 6 + 513 = 519 карточек за
+        сентябрь). Незаполненных карточек единицы процентов, поэтому вместо
+        сотни страниц за год выходит несколько. Если одно из полей ИНН не
+        замаплено, is_blank считает его пустым у ВСЕХ карточек — тогда нужен
+        весь период без фильтра.
         """
+        f_our, f_client = self.field("our_inn"), self.field("client_inn")
+        if not (f_our and f_client):
+            return self._fetch_cards(date_from, date_to)
+        return self._fetch_cards_union(date_from, date_to, [{f_our: ""}, {f_client: ""}])
+
+    def _count_cards(self, date_from: str, date_to: str) -> Optional[int]:
+        """Число карточек за период одним запросом (total первой страницы)."""
+        try:
+            response = self.client._bitrix_token.call_method(
+                "crm.item.list",
+                {
+                    "entityTypeId": self.entity_type_id,
+                    "filter": self._period_filter(date_from, date_to),
+                    "select": ["id"],
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — KPI не должен ронять поиск
+            logger.warning("INN scan: card count failed: %s", exc)
+            return None
+        if not isinstance(response, dict):
+            return None
+        result = response.get("result", {})
+        total = response.get("total", result.get("total") if isinstance(result, dict) else None)
+        try:
+            return int(total)
+        except (TypeError, ValueError):
+            return None
+
+    def _fetch_project_cards(self, date_from: str, date_to: str, target: str,
+                             project_cards: List[Any]) -> List[Dict[str, Any]]:
+        """Карточки списания, которые МОГУТ относиться к проекту target.
+
+        Карточка сопоставляется с проектом по project_item_id, а если он не
+        найден — по project_id (см. project_items). Значит, достаточно двух
+        выборок: project_id == target и project_item_id из карточек проектов с
+        этим project_id. Окончательное сопоставление project_items делает сам,
+        той же логикой, что и раньше. Если нужного поля нет в маппинге —
+        весь период, как было.
+        """
+        f_pid, f_pitem = self.field("project_id"), self.field("project_item_id")
+        item_ids = sorted({
+            _clean(getattr(card, "project_item_id", ""))
+            for card in project_cards
+            if _clean(getattr(card, "project_id", "")) == target
+            and _clean(getattr(card, "project_item_id", ""))
+        })
+        if not f_pid or (item_ids and not f_pitem):
+            return self._fetch_cards(date_from, date_to)
+        filters: List[Dict[str, Any]] = [{f_pid: target}]
+        if item_ids:
+            filters.append({f"@{f_pitem}": item_ids})
+        return self._fetch_cards_union(date_from, date_to, filters)
+
+    def _inn_maps(self, cards: List[Any]) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """Карты company_id/legal_entity_id -> ИНН для компаний и юрлиц из `cards`.
+
+        Для админских Scan и projects_health. Резолвятся только id, указанные в
+        карточках проектов, — одним пакетом через
+        ProjectCardService.resolve_reference_inns (кэш на сутки, общий с
+        точечным резолвом). Раньше здесь был полный обход справочника
+        компаний портала (get_full_company_directory): на боевом портале
+        23 252 компании и столько же реквизитов ради ~125 нужных.
+
+        "Своё" юрлицо, как и в _inn_maps_for_cards, берётся из поля карточки
+        our_legal_entity_id без перепроверки флага is_my_company: прежний
+        отбор по флагу давал пустой ИНН юрлицу без этого флага, и проект
+        ложно попадал в «незаполненные».
+        """
+        company_ids: List[str] = []
+        legal_ids: List[str] = []
+        for card in cards:
+            company_id = _clean(getattr(card, "company_id", ""))
+            if company_id:
+                company_ids.append(company_id)
+            legal_id = _clean(getattr(card, "our_legal_entity_id", ""))
+            if legal_id:
+                legal_ids.append(legal_id)
+        if not company_ids and not legal_ids:
+            return {}, {}
+
         board = ProjectCardService(self.client, self.account)
-        directory = board.get_full_company_directory()
-        companies = {_clean(c.get("id")): _clean(c.get("inn")) for c in directory if c.get("id")}
-        legal = {
-            _clean(c.get("id")): _clean(c.get("inn"))
-            for c in directory
-            if c.get("id") and c.get("is_my_company")
-        }
+        resolved = board.resolve_reference_inns(company_ids + legal_ids)
+        companies = {cid: _clean(resolved.get(cid, "")) for cid in company_ids}
+        legal = {lid: _clean(resolved.get(lid, "")) for lid in legal_ids}
         return companies, legal
 
     def _inn_maps_for_cards(self, cards: List[Any]) -> Tuple[Dict[str, str], Dict[str, str]]:
@@ -210,17 +303,12 @@ class InnBackfillService:
         legal_entity_id -> ИНН), поэтому resolve_card_inn работает с обеими
         картами без изменений.
 
-        Зачем отдельный метод. _inn_maps() строит карты из
-        get_full_company_directory() — полного постраничного обхода
-        справочника компаний портала (на боевом портале 23 252 компании:
-        465 страниц плюс столько же за реквизитами). Его докстринг прямо
-        запрещает пользовательский путь, и для админских Scan/Apply это
-        оправдано: там нужны ИНН всех компаний разом. Но autofill зовётся из
-        синхронизации таймшитов — то есть с кнопки «Обновить» и из фонового
-        планировщика, — где нужны ИНН двух-трёх компаний из новых карточек.
-        Обход портала ради них превращал синк из 5 секунд в 5-7 минут и всё
-        это время держал advisory-замок синка, отдавая 409 остальным
-        сотрудникам портала (инцидент 31.08.2026).
+        Зачем отдельный метод. autofill зовётся из синхронизации таймшитов —
+        с кнопки «Обновить» и из фонового планировщика — под advisory-замком
+        синка. До 31.08.2026 он шёл через полный обход справочника компаний
+        портала, синк растягивался с 5 секунд до 5-7 минут и отдавал 409
+        остальным сотрудникам. Отличие от _inn_maps(): потолок числа запросов
+        (первый синк портала создаёт карточки тысячами).
 
         Здесь на каждый УНИКАЛЬНЫЙ id — один crm.requisite.list через
         ProjectCardService.resolve_reference_inn с его суточным кэшем и
@@ -231,13 +319,10 @@ class InnBackfillService:
         просто поменяли один долгий обход на тысячу коротких запросов.
         Записей всё равно применяется не больше AUTOFILL_LIMIT, поэтому
         потолок взят с запасом к нему; что не поместилось — дозаполняется
-        админским экраном, для которого полный обход и предназначен.
+        админским экраном.
 
-        Отличие от _inn_maps() по существу: там "свои" юрлица отбирались из
-        справочника по признаку is_my_company, и юрлицо без этого флага
-        молча давало пустой ИНН. Здесь id берётся из поля карточки
-        our_legal_entity_id, то есть оно уже выбрано как наше юрлицо, и
-        флаг не перепроверяется.
+        "Своё" юрлицо берётся из поля карточки our_legal_entity_id, флаг
+        is_my_company не перепроверяется.
         """
         if not cards:
             return {}, {}
@@ -283,9 +368,9 @@ class InnBackfillService:
     # --- SCAN ---
     def scan(self, date_from: str, date_to: str,
              project_ids: Optional[List[str]] = None) -> Dict[str, Any]:
-        cards_qs = get_project_card_queryset(self.account)
+        cards_qs = list(get_project_card_queryset(self.account))
         by_item, by_id = build_project_lookup(cards_qs)
-        companies_inn, legal_inn = self._inn_maps()
+        companies_inn, legal_inn = self._inn_maps(cards_qs)
 
         f_our, f_client = self.field("our_inn"), self.field("client_inn")
         f_pid, f_pitem = self.field("project_id"), self.field("project_item_id")
@@ -293,7 +378,7 @@ class InnBackfillService:
         f_desc, f_date = self.field("opisanie"), self.date_field()
         project_filter = {str(p) for p in (project_ids or []) if str(p).strip()}
 
-        raw = self._fetch_cards(date_from, date_to)
+        raw = self._fetch_blank_cards(date_from, date_to)
 
         kpi = {"total": 0, "without_inn": 0, "resolvable": 0, "attention": 0}
         emp_ids: set = set()
@@ -301,7 +386,6 @@ class InnBackfillService:
         with_project = 0
 
         for it in raw:
-            kpi["total"] += 1
             cur_our = it.get(f_our) if f_our else None
             cur_client = it.get(f_client) if f_client else None
             our_blank, client_blank = is_blank(cur_our), is_blank(cur_client)
@@ -347,6 +431,11 @@ class InnBackfillService:
                 "suggest_client_inn": suggest_client,
                 "status": status,
             })
+
+        # Заполненные карточки из Битрикса больше не выкачиваются, поэтому
+        # «всего за период» — отдельным запросом-счётчиком.
+        total = self._count_cards(date_from, date_to)
+        kpi["total"] = total if total is not None else kpi["without_inn"]
 
         names = self._resolve_employee_names(list(emp_ids)) if emp_ids else {}
         for r in rows:
@@ -486,9 +575,8 @@ class InnBackfillService:
         by_item, by_id = build_project_lookup(get_project_card_queryset(self.account))
 
         # Сначала сопоставляем карточки, и только потом резолвим ИНН — ровно
-        # для тех компаний и юрлиц, которые в них встретились. Порядок важен:
-        # _inn_maps() строит карты ДО того, как известно, что вообще нужно, и
-        # потому вынужден обходить портал целиком (см. _inn_maps_for_cards).
+        # для тех компаний и юрлиц, которые в них встретились (см.
+        # _inn_maps_for_cards).
         matched: List[Tuple[Dict[str, Any], Any]] = [
             (
                 ci,
@@ -520,8 +608,9 @@ class InnBackfillService:
         our_inn = _clean(our_inn)
         client_inn = _clean(client_inn)
         target = _clean(project_id)
-        raw = self._fetch_cards(date_from, date_to)
-        by_item, by_id = build_project_lookup(get_project_card_queryset(self.account))
+        project_cards = list(get_project_card_queryset(self.account))
+        by_item, by_id = build_project_lookup(project_cards)
+        raw = self._fetch_project_cards(date_from, date_to, target, project_cards)
         f_our, f_client = self.field("our_inn"), self.field("client_inn")
         f_pid, f_pitem = self.field("project_id"), self.field("project_item_id")
         items: List[Dict[str, Any]] = []
@@ -546,9 +635,10 @@ class InnBackfillService:
     # --- PROJECTS_HEALTH ---
     def projects_health(self) -> Dict[str, Any]:
         """Список проектов, которым не хватает данных для ИНН."""
-        companies_inn, legal_inn = self._inn_maps()
+        cards = list(get_project_card_queryset(self.account))
+        companies_inn, legal_inn = self._inn_maps(cards)
         out: List[Dict[str, Any]] = []
-        for card in get_project_card_queryset(self.account):
+        for card in cards:
             company_id = _clean(getattr(card, "company_id", ""))
             legal_id = _clean(getattr(card, "our_legal_entity_id", ""))
             client_inn = companies_inn.get(company_id, "")
