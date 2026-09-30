@@ -290,6 +290,19 @@ class InnBackfillResolvesProjectCompaniesTest(TestCase):
         self.assertEqual(legal_inn, {"9": ""})
         self.assertEqual(client.methods_called(), ["crm.requisite.list"])
 
+    def test_missing_inn_is_cached_briefly(self):
+        """«ИНН нет» исправляют в CRM и сразу жмут «Обновить» — суточный кэш
+        пустого значения держал бы компанию «без ИНН» до завтра."""
+        from unittest import mock
+        from . import project_board_service as pbs
+
+        client = _FakeClient({"crm.requisite.list": {"result": [{"ENTITY_ID": "15", "RQ_INN": "7701234567"}]}})
+        with mock.patch.object(pbs.cache, "set_many", wraps=pbs.cache.set_many) as set_many:
+            self._service(client)._inn_maps(list(ProjectCard.objects.all()))
+        ttl_by_value = {tuple(call.args[0].values()): call.args[1] for call in set_many.call_args_list}
+        self.assertEqual(ttl_by_value[("7701234567",)], pbs.COMPANY_INN_CACHE_TTL)
+        self.assertEqual(ttl_by_value[("",)], pbs.COMPANY_INN_NEGATIVE_CACHE_TTL)
+
     def test_requisite_failure_is_not_cached(self):
         client = _FakeClient({"crm.requisite.list": RuntimeError("timeout")})
         cards = list(ProjectCard.objects.all())
