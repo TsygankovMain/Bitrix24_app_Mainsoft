@@ -174,3 +174,31 @@ export interface ProjectTaskReportNode {
   children?: ProjectTaskReportNode[]
   employees?: ProjectTaskReportEmployee[]
 }
+
+/** Узел отчёта «План / факт»: проект, задача или сотрудник. */
+export interface PlanFactNode {
+  type: 'project' | 'task' | 'employee'
+  id: string
+  name: string
+  plan_hours?: number
+  /** Оценка самой задачи (без подзадач). */
+  own_plan_hours?: number
+  /** Сумма оценок подзадач — расходится с own_plan_hours, если спланировано по-разному. */
+  children_plan_hours?: number
+  total_hours: number
+  billable_hours: number
+  non_billable_hours: number
+  /** Факт только по задачам с планом — с ним сравнивается план. */
+  planned_fact_hours?: number
+  responsible_name?: string
+  is_closed?: boolean
+  children?: PlanFactNode[]
+  employees?: PlanFactNode[]
+}
+
+export interface PlanFactReport {
+  projects: PlanFactNode[]
+  employees: PlanFactNode[]
+  /** Непустое — оценки с портала прочитать не удалось, показан только факт. */
+  plan_warning?: string
+}

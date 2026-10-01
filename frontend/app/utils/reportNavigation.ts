@@ -6,6 +6,7 @@ export type ReportRouteName =
   | 'revenue-leakage'
   | 'time-discipline'
   | 'focus-analysis'
+  | 'plan-fact'
 
 export type ReportRoutePayload = {
   report: ReportRouteName
@@ -22,6 +23,7 @@ const REPORT_ROUTES: Record<ReportRouteName, string> = {
   'revenue-leakage': '/reports/revenue-leakage',
   'time-discipline': '/reports/time-discipline',
   'focus-analysis': '/reports/focus-analysis',
+  'plan-fact': '/reports/plan-fact',
 }
 
 export function buildReportRouteLocation(target: ReportRouteName | ReportRoutePayload) {

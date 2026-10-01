@@ -40,6 +40,7 @@ const EXISTING_ROUTES = new Set([
   '/reports/revenue-leakage',
   '/reports/time-discipline',
   '/reports/focus-analysis',
+  '/reports/plan-fact',
   '/settings',
   '/settings/mapping',
   '/settings/periods',
@@ -510,4 +511,24 @@ test('buildAppNavigation: без Pro пункт с замком, пробный 
 test('buildAppNavigation: реестр операций подсвечивает раздел «Финансы»', () => {
   const sections = buildAppNavigation(BASE_OPTIONS)
   assert.equal(resolveActiveSectionId('/finance/bdds/operations', sections), 'finance')
+})
+
+// --- Отчёт «План / факт»: только для порталов из белого списка сервера ---
+
+function reportLinks(options: Parameters<typeof buildAppNavigation>[0]) {
+  const reports = buildAppNavigation(options).find(section => section.id === 'reports')
+
+  return (reports?.groups || []).flatMap(group => group.links)
+}
+
+test('buildAppNavigation: пункта «План / факт» нет, пока сервер его не включил', () => {
+  assert.ok(!reportLinks(BASE_OPTIONS).some(link => link.to === '/reports/plan-fact'))
+  assert.ok(!reportLinks({ ...BASE_OPTIONS, planFactEnabled: false }).some(link => link.to === '/reports/plan-fact'))
+})
+
+test('buildAppNavigation: «План / факт» появляется в «Учёте часов» при planFactEnabled', () => {
+  const links = reportLinks({ ...BASE_OPTIONS, planFactEnabled: true })
+  const link = links.find(item => item.id === 'report-plan-fact')
+
+  assert.equal(link?.to, '/reports/plan-fact')
 })

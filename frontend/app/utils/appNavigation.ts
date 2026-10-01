@@ -90,6 +90,12 @@ export type AppNavigationOptions = {
    * «пробный, осталось N дней».
    */
   financeBddsBadge?: string | null
+  /**
+   * Отчёт «План / факт» включён для этого портала (ключ plan_fact_report в
+   * ответе /api/features). Сервер отдаёт ключ только порталам из своего
+   * белого списка, поэтому по умолчанию пункта в меню нет.
+   */
+  planFactEnabled?: boolean
 }
 
 function reportPath(report: ReportRouteName): string {
@@ -138,6 +144,9 @@ export function buildAppNavigation(options: AppNavigationOptions): NavSection[] 
             { id: 'report-project-task', label: 'Учёт по проектам и задачам', to: reportPath('project-task'), description: 'Проект → задача → сотрудник' },
             { id: 'report-employee', label: 'Отчёт по сотрудникам', to: reportPath('employee'), description: 'Детальные часы по людям' },
             { id: 'report-daily', label: 'Ежедневная нагрузка', to: reportPath('daily'), description: 'Матрица часов по дням' },
+            ...(options.planFactEnabled === true
+              ? [{ id: 'report-plan-fact', label: 'План / факт', to: reportPath('plan-fact'), description: 'Оценка задач против списанных часов' }]
+              : []),
           ],
         },
         {

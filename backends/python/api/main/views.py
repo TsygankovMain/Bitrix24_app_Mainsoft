@@ -74,6 +74,14 @@ from .report_excel import (
     ExportTooLargeError,
     _safe_cell_text,
 )
+from .plan_fact_report import (
+    PLAN_FACT_FEATURE_KEY,
+    build_plan_fact_report,
+    build_plan_fact_workbook,
+    fetch_plan_tasks,
+    plan_fact_feature_payload,
+    plan_fact_settings,
+)
 from .inn_backfill_service import InnBackfillService
 from .company_search_service import CompanySearchService
 from .project_creation_service import ProjectCreationService
@@ -193,6 +201,8 @@ __all__ = [
     "billing_document_act",
     "billing_document_invoice_print",
     "billing_document_detail_export",
+    "report_plan_fact",
+    "report_plan_fact_export",
     "roles_me",
     "roles_list",
     "roles_assign",
@@ -1477,6 +1487,101 @@ def report_project_task_employee_export(request: AuthorizedRequest):
 
     suffix = f"_{date_from}_{date_to}".strip("_")
     filename = f"report_project_task{('_' + suffix) if suffix else ''}.xlsx".replace("__", "_")
+    response = HttpResponse(
+        output.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+def _plan_fact_unavailable() -> JsonResponse:
+    """Отчёт «План / факт» включён только для порталов из белого списка
+    (plan_fact_report.PLAN_FACT_PORTALS). Остальным — 404, как несуществующей
+    ручке: функции для них нет, а не «нет прав»."""
+    return JsonResponse(
+        {"error": "Отчёт недоступен на этом портале.", "code": "plan_fact_unavailable"},
+        status=404,
+    )
+
+
+def _build_plan_fact(request: AuthorizedRequest, config: dict) -> dict:
+    """Собирает отчёт «План / факт» из живых данных: списания из БД, оценки
+    задач — с портала в момент запроса. Сбой чтения оценок не роняет отчёт:
+    факт отдаётся как есть, а в plan_warning — что план не загрузился."""
+    account = request.bitrix24_account
+    rows = materialize_rows(_get_filtered_timesheet_queryset(request), TREE_REPORT_FIELDS)
+
+    plan_warning = ""
+    try:
+        plan_tasks = fetch_plan_tasks(account.client, config["estimate_field"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("plan_fact: не удалось прочитать оценки задач (account %s): %s", account.pk, exc)
+        plan_tasks = {}
+        plan_warning = (
+            "Не удалось прочитать оценки задач с портала — показан только факт. "
+            "Сформируйте отчёт ещё раз чуть позже."
+        )
+
+    user_ids = {row["employee_id"] for row in rows if row.get("employee_id")}
+    user_ids.update(task["responsible_id"] for task in plan_tasks.values() if task.get("responsible_id"))
+    user_map = _get_user_map(request, user_ids)
+    _by_item, project_name_by_group = build_project_title_lookups(account)
+    archived_group_ids = [
+        str(value) for value in
+        ProjectCard.objects.filter(**scope_to_tenant(account), is_archived=True)
+        .values_list("project_id", flat=True) if value
+    ]
+
+    report = build_plan_fact_report(
+        rows,
+        plan_tasks,
+        user_map=user_map,
+        task_lookup=build_task_lookup(account),
+        project_name_by_group=project_name_by_group,
+        employee_ids=request.GET.getlist("employee_ids[]"),
+        employee_mode=request.GET.get("employee_mode", "include"),
+        project_group_ids=request.GET.getlist("project_ids[]"),
+        project_mode=request.GET.get("project_mode", "include"),
+        archived_group_ids=archived_group_ids,
+    )
+    report["plan_warning"] = plan_warning
+    return report
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_plan_fact")
+@auth_required
+def report_plan_fact(request: AuthorizedRequest):
+    """Отчёт «План / факт»: проект → задача → сотрудник и сотрудник → проект → задача."""
+    config = plan_fact_settings(request.bitrix24_account)
+    if not config:
+        return _plan_fact_unavailable()
+    return JsonResponse(_build_plan_fact(request, config))
+
+
+@xframe_options_exempt
+@require_GET
+@log_errors("report_plan_fact_export")
+@auth_required
+@rate_limit("export", 12, 60, key="account")
+def report_plan_fact_export(request: AuthorizedRequest):
+    """Excel-выгрузка отчёта «План / факт» со сворачиваемой структурой."""
+    config = plan_fact_settings(request.bitrix24_account)
+    if not config:
+        return _plan_fact_unavailable()
+    report = _build_plan_fact(request, config)
+
+    date_from = request.GET.get("date_from") or ""
+    date_to = request.GET.get("date_to") or ""
+    try:
+        output = build_plan_fact_workbook(report, date_from=date_from, date_to=date_to)
+    except ExportTooLargeError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    suffix = f"_{date_from}_{date_to}".strip("_")
+    filename = f"report_plan_fact{('_' + suffix) if suffix else ''}.xlsx".replace("__", "_")
     response = HttpResponse(
         output.read(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3952,7 +4057,13 @@ def get_features(request: AuthorizedRequest):
     иначе подписку включил бы токен приложения из консоли браузера. Менять —
     management-командой pro_plan (тариф портала, billing_features).
     """
-    return JsonResponse(feature_states(request.bitrix24_account))
+    payload = feature_states(request.bitrix24_account)
+    # Отчёт «План / факт» — не платная функция, а включение по белому списку
+    # порталов. Ключ отдаётся ТОЛЬКО своим: остальным порталам о нём знать
+    # незачем, и меню у них не меняется.
+    if plan_fact_settings(request.bitrix24_account):
+        payload[PLAN_FACT_FEATURE_KEY] = plan_fact_feature_payload()
+    return JsonResponse(payload)
 
 
 @xframe_options_exempt
