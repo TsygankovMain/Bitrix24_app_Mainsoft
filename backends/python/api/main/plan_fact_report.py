@@ -477,9 +477,12 @@ def build_plan_fact_report(
 # Excel
 # --------------------------------------------------------------------------
 
-_HEAD = ("Наименование", "Уровень", "Ответственный", "План, ч", "Факт всего, ч", "Факт учит., ч",
-         "Факт неучит., ч", "Остаток по задачам с планом, ч", "Примечание")
-_WIDTHS = (70, 12, 24, 10, 13, 13, 14, 16, 44)
+_HEAD = ("Наименование", "Уровень", "Ответственный", "План, ч", "Сумма подзадач, ч", "Факт всего, ч",
+         "Факт учит., ч", "Факт неучит., ч", "Остаток по задачам с планом, ч", "Примечание")
+_WIDTHS = (70, 12, 24, 10, 13, 13, 13, 14, 16, 44)
+_COL_CHILDREN_PLAN = 5
+_COL_REMAINDER = 9
+_FILL_MISMATCH = PatternFill("solid", fgColor="FDF3DC")
 _FILL_HEAD = PatternFill("solid", fgColor="DCE6F5")
 _FILL_TOP = PatternFill("solid", fgColor="EEF2F4")
 _LEVELS = {"project": "Проект", "task": "Задача", "employee": "Сотрудник"}
@@ -510,7 +513,8 @@ def _write_sheet(ws, title: str, roots: Sequence[Mapping[str, Any]]) -> None:
         if name[:1] in ("=", "+", "-", "@"):
             name = "'" + name
         ws.append([
-            name, level, node.get("responsible_name") or None, plan or None, total,
+            name, level, node.get("responsible_name") or None, plan or None,
+            float(node.get("children_plan_hours") or 0) or None, total,
             float(node.get("billable_hours") or 0), float(node.get("non_billable_hours") or 0),
             round(plan - planned_fact, 2) if plan else None, note or None,
         ])
@@ -522,7 +526,9 @@ def _write_sheet(ws, title: str, roots: Sequence[Mapping[str, Any]]) -> None:
                 cell.font = Font(bold=True)
                 cell.fill = _FILL_TOP
         if plan and planned_fact > plan:
-            ws.cell(row, 8).font = Font(bold=True, color="C0392B")
+            ws.cell(row, _COL_REMAINDER).font = Font(bold=True, color="C0392B")
+        if "≠" in note:
+            ws.cell(row, _COL_CHILDREN_PLAN).fill = _FILL_MISMATCH
 
     def walk(node: Mapping[str, Any], depth: int) -> None:
         notes = []
@@ -553,7 +559,7 @@ def _write_sheet(ws, title: str, roots: Sequence[Mapping[str, Any]]) -> None:
         ws.column_dimensions[get_column_letter(index)].width = width
     ws.freeze_panes = "B3"
     ws.sheet_properties.outlinePr.summaryBelow = False
-    for row in ws.iter_rows(min_row=3, min_col=4, max_col=8):
+    for row in ws.iter_rows(min_row=3, min_col=4, max_col=_COL_REMAINDER):
         for cell in row:
             cell.number_format = "#,##0.0"
 

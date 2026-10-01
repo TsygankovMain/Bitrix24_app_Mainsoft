@@ -85,6 +85,18 @@ function planText(node: PlanFactNode): string {
   return node.plan_hours ? formatHours(node.plan_hours) : '—'
 }
 
+function childrenPlanText(node: PlanFactNode): string {
+  return node.children_plan_hours ? formatHours(node.children_plan_hours) : '—'
+}
+
+function childrenPlanClass(node: PlanFactNode): string {
+  if (!node.children_plan_hours) {
+    return 'text-slate-400'
+  }
+
+  return hasPlanMismatch(node) ? 'rounded bg-amber-100 font-semibold text-amber-800' : 'text-slate-500'
+}
+
 function remainderText(node: PlanFactNode): string {
   const value = remainderOf(node)
 
@@ -129,6 +141,10 @@ function rowClass(depth: number, node: PlanFactNode): string {
         <tr>
           <th class="text-left">{{ nameHeader || 'Проект / задача / сотрудник' }}</th>
           <th class="text-right">План, ч</th>
+          <th
+            class="text-right"
+            title="Сумма оценок подзадач. Если у задачи есть своя оценка, в план идёт она, а не эта сумма"
+          >Сумма подзадач, ч</th>
           <th class="text-right">Факт всего, ч</th>
           <th class="text-right">Факт учит., ч</th>
           <th class="text-right">Факт неучит., ч</th>
@@ -140,6 +156,7 @@ function rowClass(depth: number, node: PlanFactNode): string {
         <tr v-if="rows.length" class="border-b-2 border-slate-300 bg-slate-100 font-bold">
           <td class="px-4 py-3 text-left text-slate-700">Итого</td>
           <td class="px-4 py-3 text-right text-slate-800">{{ planText(totalsNode) }}</td>
+          <td class="px-4 py-3 text-right text-slate-400">—</td>
           <td class="px-4 py-3 text-right text-slate-800">{{ formatHours(totals.total) }}</td>
           <td class="px-4 py-3 text-right text-emerald-700">{{ formatHours(totals.billable) }}</td>
           <td class="px-4 py-3 text-right text-rose-600">{{ formatHours(totals.nonBillable) }}</td>
@@ -175,11 +192,6 @@ function rowClass(depth: number, node: PlanFactNode): string {
                   :class="row.node.type === 'employee' ? 'italic' : ''"
                 >{{ row.node.name }}</span>
                 <span
-                  v-if="hasPlanMismatch(row.node)"
-                  class="ml-2 rounded bg-amber-100 px-1.5 text-xs font-normal text-amber-800"
-                  :title="`Оценка этапа ${formatHours(row.node.own_plan_hours)} ч, сумма оценок подзадач ${formatHours(row.node.children_plan_hours)} ч`"
-                >≠ подзадачи {{ formatHours(row.node.children_plan_hours) }}</span>
-                <span
                   v-if="row.node.is_closed"
                   class="ml-2 rounded bg-emerald-50 px-1.5 text-xs font-normal text-emerald-700"
                 >завершена</span>
@@ -191,6 +203,11 @@ function rowClass(depth: number, node: PlanFactNode): string {
             </div>
           </td>
           <td class="px-4 py-2 text-right">{{ planText(row.node) }}</td>
+          <td
+            class="px-4 py-2 text-right font-normal"
+            :class="childrenPlanClass(row.node)"
+            :title="hasPlanMismatch(row.node) ? `Оценка задачи ${formatHours(row.node.own_plan_hours)} ч не равна сумме оценок подзадач` : undefined"
+          >{{ childrenPlanText(row.node) }}</td>
           <td class="px-4 py-2 text-right">{{ formatHours(row.node.total_hours) }}</td>
           <td class="px-4 py-2 text-right text-emerald-600">{{ formatHours(row.node.billable_hours) }}</td>
           <td
@@ -213,7 +230,7 @@ function rowClass(depth: number, node: PlanFactNode): string {
         </tr>
 
         <tr v-if="rows.length && visibleRows.length === 0">
-          <td colspan="7" class="px-4 py-6 text-center text-slate-400">По запросу ничего не найдено</td>
+          <td colspan="8" class="px-4 py-6 text-center text-slate-400">По запросу ничего не найдено</td>
         </tr>
       </tbody>
     </table>

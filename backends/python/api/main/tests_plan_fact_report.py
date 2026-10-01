@@ -157,7 +157,12 @@ class PlanFactBuilderTest(SimpleTestCase):
         self.assertEqual(book.sheetnames, ["Проекты-задачи-сотрудники", "Сотрудники"])
         total = [c.value for c in book.worksheets[0][3]]
         self.assertEqual(total[0], "ИТОГО")
-        self.assertEqual((total[3], total[4], total[7]), (960.0, 206.0, 804.0))
+        self.assertEqual((total[3], total[5], total[8]), (960.0, 206.0, 804.0))
+        sheet = book.worksheets[0]
+        self.assertEqual(sheet.cell(2, 5).value, "Сумма подзадач, ч")
+        stage = next(r for r in sheet.iter_rows(min_row=3, values_only=True) if r[0] == "6. Моделирование")
+        self.assertEqual((stage[3], stage[4]), (960.0, 360.0))
+        self.assertIn("≠", stage[9])
 
 
 class FakeToken:
