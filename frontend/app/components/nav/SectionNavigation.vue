@@ -25,6 +25,7 @@ import SettingsIcon from '@bitrix24/b24icons-vue/main/SettingsIcon'
 import ProNavButton from '~/components/pro/ProNavButton.vue'
 import ProFinanceFooter from '~/components/pro/ProFinanceFooter.vue'
 import { shouldShowProNavButton } from '~/utils/proPurchase'
+import { isPlanFactEnabled } from '~/utils/planFactReport'
 import {
   buildAppNavigation,
   buildOverflowSection,
@@ -97,6 +98,8 @@ const { access: billingAccess } = useBillingFeature()
  * resolveBddsAccess, а меню читает готовое решение, а не флаг.
  */
 const { access: bddsAccess } = useBddsFeature()
+/** Отчёт «План / факт»: ключ приходит в /api/features только порталам из белого списка сервера. */
+const { features: portalFeatures } = usePortalFeatures()
 
 const sections = computed<NavSection[]>(() => buildAppNavigation({
   controlIssuesCount: controlIssues.value,
@@ -104,6 +107,7 @@ const sections = computed<NavSection[]>(() => buildAppNavigation({
   financeBddsBadge: bddsAccess.value.badge,
   financeBillingEnabled: billingAccess.value.enabled,
   financeBillingBadge: billingAccess.value.badge,
+  planFactEnabled: isPlanFactEnabled(portalFeatures.value),
 }))
 
 const split = computed(() => splitNavigationByWidth(

@@ -10,6 +10,7 @@ import type {
   FocusAnalysisReport,
   HierarchicalReportNode,
   ProjectTaskReportNode,
+  PlanFactReport,
   ReportFilterOptions,
   RevenueLeakageReport,
   TimeEntryDisciplineReport,
@@ -532,6 +533,30 @@ export const useApiStore = defineStore(
     ): Promise<Blob> => {
       const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
       return await $api(`/api/report-project-task-employee-export?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`
+        },
+        responseType: 'blob'
+      })
+    }
+
+    const getReportPlanFact = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<PlanFactReport> => {
+      return await runReportRequest<PlanFactReport>('/api/report-plan-fact', dateFrom, dateTo, empIds, projIds)
+    }
+
+    const exportReportPlanFact = async (
+      dateFrom?: string,
+      dateTo?: string,
+      empIds?: FilterValue | string[],
+      projIds?: FilterValue | string[]
+    ): Promise<Blob> => {
+      const params = buildReportSearchParams(dateFrom, dateTo, empIds, projIds)
+      return await $api(`/api/report-plan-fact-export?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${tokenJWT.value}`
         },
@@ -1806,6 +1831,8 @@ export const useApiStore = defineStore(
       getReportProjectEmployee,
       getReportProjectTaskEmployee,
       exportReportProjectTaskEmployee,
+      getReportPlanFact,
+      exportReportPlanFact,
       exportReportEmployeeProject,
       exportReportProjectEmployee,
       exportReportDailyWorkload,
