@@ -1,0 +1,63 @@
+/* Токены — из темы «Нуар» сайта mainsoft.su (themes/noir/style.css, :root) */
+:root {
+  --bg: #09080d; --bg-1: #0e0c14; --bg-2: #15121d;
+  --ink: #eeecf4; --ink-2: #cac4d8; --muted: #9a93ad; --dim: #857e98;
+  --line: rgba(185, 170, 235, 0.14); --line-2: rgba(185, 170, 235, 0.28);
+  --grid: rgba(185, 170, 235, 0.045);
+  --accent: #a98bff; --accent-2: #c9b8ff;
+  --grad-mark: linear-gradient(100deg, #8f9bff 0%, #a98bff 45%, #c77dff 100%);
+  --font: "Onest", "Helvetica Neue", Arial, system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; }
+body { position: relative; background: var(--bg); color: var(--ink); font: 400 34px/1.35 var(--font); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+.bg { position: absolute; inset: 0;
+  background:
+    radial-gradient(46% 62% at 74% 52%, rgba(169, 139, 255, 0.30), transparent 72%),
+    radial-gradient(40% 46% at 22% 34%, rgba(169, 139, 255, 0.13), transparent 72%),
+    radial-gradient(36% 50% at 0% 100%, rgba(143, 155, 255, 0.14), transparent 70%),
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 96px 96px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 96px 96px,
+    var(--bg); }
+.l-b .bg { background:
+    radial-gradient(60% 55% at 50% 78%, rgba(169, 139, 255, 0.30), transparent 72%),
+    radial-gradient(46% 40% at 30% 16%, rgba(169, 139, 255, 0.13), transparent 72%),
+    radial-gradient(30% 45% at 100% 0%, rgba(143, 155, 255, 0.14), transparent 70%),
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 96px 96px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 96px 96px,
+    var(--bg); }
+.orbit { position: absolute; width: 900px; height: 900px; border-radius: 50%; border: 1px dashed rgba(169, 139, 255, 0.22); }
+.l-a .orbit { left: -420px; bottom: -520px; }
+.l-b .orbit { right: -380px; top: -560px; }
+
+.logo { position: absolute; height: 40px; width: auto; }
+.l-a .logo { left: 96px; top: 84px; }
+.l-b .logo { right: 96px; top: 84px; }
+
+.text { position: absolute; left: 96px; }
+.l-a .text { top: 216px; width: 640px; }
+.l-b .text { top: 84px; width: 1400px; }
+.kicker { font: 500 22px/1.3 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.kicker::before { content: ""; display: inline-block; width: 36px; height: 2px; margin-right: 16px; vertical-align: middle; background: var(--grad-mark); }
+h1 { margin: 24px 0 0; font: 500 80px/1.04 var(--font); letter-spacing: -0.03em; color: var(--ink); }
+.l-b h1 { font-size: 84px; }
+.is-cover h1 { font-size: 92px; font-weight: 600; }
+.sub { margin: 28px 0 0; font-size: 34px; line-height: 1.32; color: var(--ink-2); }
+.l-b .sub { margin-top: 22px; max-width: 1280px; }
+.list { margin: 36px 0 0; padding: 0; list-style: none; font-size: 28px; line-height: 1.3; color: var(--ink); }
+.list li { position: relative; padding: 14px 0 14px 34px; border-top: 1px solid var(--line-2); }
+.list li::before { content: ""; position: absolute; left: 0; top: 27px; width: 14px; height: 14px; border-radius: 50%; background: var(--grad-mark); }
+.note { margin: 26px 0 0; font: 400 20px/1.4 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.tags { margin-top: 44px; display: flex; flex-wrap: wrap; gap: 12px; }
+.tags span { padding: 10px 18px; border: 1px solid var(--line-2); border-radius: 999px; font: 500 20px/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2); background: rgba(169, 139, 255, 0.08); }
+
+.win { position: absolute; border-radius: 20px; overflow: hidden; background: #f3f5f8;
+  box-shadow: 0 0 0 1px rgba(201, 184, 255, 0.45), 0 48px 120px rgba(0, 0, 0, 0.65), 0 0 160px rgba(169, 139, 255, 0.22); }
+.win--front { box-shadow: 0 0 0 2px var(--accent), 0 40px 110px rgba(0, 0, 0, 0.75), 0 0 120px rgba(169, 139, 255, 0.35); }
+.win__bar { height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 18px; background: var(--bg-2); border-bottom: 1px solid var(--line-2); }
+.win__bar i { width: 11px; height: 11px; border-radius: 50%; background: rgba(185, 170, 235, 0.32); }
+.win__bar span { margin-left: 12px; font: 500 14px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.win__body { position: relative; overflow: hidden; }
+.win__body img { position: absolute; display: block; max-width: none; height: auto; }
