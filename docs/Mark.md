@@ -123,8 +123,9 @@ Pro подключается отдельно, заявка оформляетс
 ## Ссылки и Юридическая информация
 * **Связаться с разработчиком:** https://max.ru/id7300031612_bot
 * **Запросить демонстрацию:** https://max.ru/id7300031612_bot
-* **Лицензионное соглашение:** https://mainsoft.su/soglashenie/
-* **Политика конфиденциальности:** https://mainsoft.su/confident/
+* **Лендинг приложения:** https://mainsoft.su/timeandwork/
+* **Лицензионное соглашение:** https://mainsoft.su/soglasheniyailendingidlyaprilozheniy/uchetchasovitrudozatrat/soglashenie/
+* **Политика конфиденциальности:** https://mainsoft.su/soglasheniyailendingidlyaprilozheniy/uchetchasovitrudozatrat/confident-uchet/
 
 ---
 
