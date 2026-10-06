@@ -60,6 +60,23 @@ type SaveConfigurationResponse = {
   error?: string
 }
 
+export type OneClickSetupBlock = {
+  block: 'timesheet' | 'project' | 'finance'
+  title: string
+  entity_type_id: number
+  created: boolean
+  created_fields: number
+  stages_prepared: boolean
+  ready: boolean
+  warnings: string[]
+  error?: string
+}
+
+export type OneClickSetupResponse = {
+  status: 'done' | 'partial'
+  blocks: OneClickSetupBlock[]
+}
+
 type SmartProcessCreateResponse = {
   status: string
   config: AppConfigurationPayload
@@ -1521,6 +1538,24 @@ export const useApiStore = defineStore(
       return result as SmartProcessCreateResponse
     }
 
+    /**
+     * Настройка «в одно нажатие»: три смарт-процесса, их поля, стадии проектов
+     * и сохранение конфигурации одним запросом (main/one_click_setup_service.py).
+     * status "partial" — часть блоков не получилась, причина лежит в блоке.
+     */
+    const runOneClickSetup = async (): Promise<OneClickSetupResponse> => {
+      const result = await $api('/api/setup/one-click', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenJWT.value}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
+      })
+      clearCache('app-configuration')
+      return result as OneClickSetupResponse
+    }
+
     const createFields = async (
       entityTypeId: number,
       mappingType: MappingType = 'timesheet'
@@ -1900,6 +1935,7 @@ export const useApiStore = defineStore(
       getRequestLogs,
       getSystemLogs,
       createSmartProcess,
+      runOneClickSetup,
       createFields,
       createMappedField,
 

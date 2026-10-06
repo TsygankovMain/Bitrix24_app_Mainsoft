@@ -105,6 +105,7 @@ const isLoading = ref(false)
 const isInit = ref(false)
 const isSaving = ref(false)
 const isCreatingSP = ref(false)
+const isAutoSetup = ref(false)
 const isLoadingSpFields = ref(false)
 const isLoadingProjectFields = ref(false)
 const isValidating = ref(false)
@@ -393,6 +394,44 @@ async function runValidation(silent = false) {
     }
   } finally {
     isValidating.value = false
+  }
+}
+
+/**
+ * Настройка «в одно нажатие». Сервер сам создаёт недостающие смарт-процессы,
+ * поля и стадии проектов и сохраняет конфигурацию; уже настроенное руками он
+ * не трогает, поэтому кнопку безопасно нажимать повторно. После ответа экран
+ * перечитывает настройки целиком — показываем то, что реально лежит на портале.
+ */
+async function handleAutoSetup() {
+  if (isAutoSetup.value) {
+    return
+  }
+  isAutoSetup.value = true
+  try {
+    const result = await apiStore.runOneClickSetup()
+    await loadData()
+
+    const created = result.blocks.filter(block => block.created).map(block => `«${block.title}»`)
+    const failed = result.blocks.filter(block => !block.ready)
+    if (result.status === 'done') {
+      showStatus(
+        'success',
+        created.length > 0
+          ? `Готово. Созданы смарт-процессы ${created.join(', ')}, поля сопоставлены. Можно списывать часы.`
+          : 'Готово. Все смарт-процессы и поля на месте, досоздано недостающее.'
+      )
+    } else {
+      showStatus(
+        'error',
+        `Настроено не всё. ${failed.map(block => `${block.title}: ${block.error || 'не удалось создать'}`).join('. ')}. Остальное сохранено — нажмите кнопку ещё раз или доделайте блок ниже вручную.`
+      )
+    }
+  } catch (error) {
+    const message = (error as { data?: { error?: string } })?.data?.error
+    showStatus('error', message || 'Не удалось выполнить настройку. Проверьте связь с порталом и попробуйте ещё раз.')
+  } finally {
+    isAutoSetup.value = false
   }
 }
 
@@ -1106,6 +1145,32 @@ onMounted(async () => {
           <p class="mt-1 text-sm">
             {{ overall.text }}
           </p>
+        </div>
+
+        <!--
+          Настройка в одно нажатие. Показываем, пока обязательные шаги не закрыты:
+          на настроенном портале кнопка была бы лишним соблазном.
+        -->
+        <div
+          v-if="overall.state !== 'ready' && overall.state !== 'ready-with-gaps'"
+          class="flex flex-col gap-3 rounded-xl border border-[#0075ff]/30 bg-[#e8f3ff] p-4 md:flex-row md:items-center md:justify-between"
+        >
+          <div>
+            <p class="text-sm font-semibold text-slate-900">Настроить всё за одно нажатие</p>
+            <p class="mt-1 text-sm text-slate-700">
+              Приложение само создаст смарт-процессы для часов, проектов и доходов-расходов, все нужные поля
+              и стадии проектов. Уже выбранные процессы и сопоставленные поля останутся как есть.
+            </p>
+          </div>
+          <B24Button
+            label="Настроить автоматически"
+            color="primary"
+            size="lg"
+            class="shrink-0"
+            :loading="isAutoSetup"
+            :disabled="isAutoSetup || isSaving || !isInit"
+            @click="handleAutoSetup"
+          />
         </div>
 
         <!--
