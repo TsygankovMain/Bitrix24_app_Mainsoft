@@ -501,16 +501,11 @@ class InstallationService:
         except Exception as e:
              logger.error(f"Failed to bind SONET_GROUP_DETAIL_TAB: {e}")
 
-        try:
-             self.client._bitrix_token.call_method('placement.bind', {
-                 'PLACEMENT': 'CRM_DEAL_DETAIL_TAB',
-                 'HANDLER': deal_handler_url,
-                 'TITLE': 'Финансы проекта',
-                 'DESCRIPTION': 'Доходы и расходы проекта из сделки'
-             })
-             logger.info("Bound CRM_DEAL_DETAIL_TAB")
-        except Exception as e:
-             logger.error(f"Failed to bind CRM_DEAL_DETAIL_TAB: {e}")
+        # CRM_DEAL_DETAIL_TAB не привязываем: экран вкладки в сделке — заглушка
+        # «в разработке» (FINANCE_FEATURE_ENABLED=false на фронте), и пользователь видел
+        # бы в карточке сделки пустую вкладку «Финансы проекта». Отвязка выше оставлена
+        # намеренно — она убирает вкладку с порталов, где её привязали прежние версии.
+        # Вернуть привязку вместе с включением экрана: placement.bind с deal_handler_url.
 
     def _get_or_create_installation(self) -> ApplicationInstallation:
         installation, _ = ApplicationInstallation.objects.get_or_create(

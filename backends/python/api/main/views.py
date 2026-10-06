@@ -3145,6 +3145,31 @@ def get_project_spa_stages(request: AuthorizedRequest):
 @xframe_options_exempt
 @csrf_exempt
 @require_POST
+@log_errors("one_click_setup")
+@auth_required
+@permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")
+@rate_limit("one_click_setup", 6, 60, key="account")
+def one_click_setup(request: AuthorizedRequest):
+    """Настройка «в одно нажатие»: три смарт-процесса, поля, стадии проектов, сохранение.
+
+    Отказ отдельного блока — не ошибка запроса: ответ 200 со status="partial" и
+    причиной в блоке, чтобы экран показал, что получилось, а что нет.
+    """
+    from .one_click_setup_service import OneClickSetupBusy, OneClickSetupService
+
+    try:
+        service = OneClickSetupService(request.bitrix24_account.client, request.bitrix24_account)
+        return JsonResponse(service.run())
+    except OneClickSetupBusy as e:
+        return JsonResponse({"error": str(e), "code": "setup_in_progress"}, status=409)
+    except Exception:
+        logger.exception("one-click setup failed")
+        return JsonResponse({"error": "Не удалось выполнить настройку. Попробуйте ещё раз."}, status=500)
+
+
+@xframe_options_exempt
+@csrf_exempt
+@require_POST
 @log_errors("create_smart_process")
 @auth_required
 @permission_required(PERM_SETTINGS_MANAGE, code="settings_forbidden")

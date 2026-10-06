@@ -103,6 +103,7 @@ urlpatterns = [
     # честно отдаётся кодом finance_spa_not_configured прямо оттуда.
     # path('api/finance-spa/validation', views.get_finance_spa_validation, name='get_finance_spa_validation'),
     path('api/project-spa/stages', views.get_project_spa_stages, name='get_project_spa_stages'),
+    path('api/setup/one-click', views.one_click_setup, name='one_click_setup'),
     path('api/smart-processes/create', views.create_smart_process, name='create_smart_process'),
     path('api/smart-processes/create-fields', views.create_fields, name='create_fields'),
     path('api/smart-processes/create-field', views.create_mapped_field, name='create_mapped_field'),
