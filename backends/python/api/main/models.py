@@ -160,6 +160,10 @@ class Portal(models.Model):
     member_id = models.CharField(max_length=255, unique=True)
     domain_url = models.CharField(max_length=255, null=True, blank=True)
     status = models.CharField(max_length=50, default="active")
+    # Адрес обработчика, на который привязаны вкладки приложения. Расходится с текущим
+    # адресом — значит, приложение переехало и вкладки надо перепривязать
+    # (InstallationService.ensure_placements_current_sync).
+    placements_handler_url = models.CharField(max_length=255, null=True, blank=True)
     created_at_utc = models.DateTimeField(auto_now_add=True)
     updated_at_utc = models.DateTimeField(auto_now=True)
 

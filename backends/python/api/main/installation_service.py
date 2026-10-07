@@ -7,6 +7,7 @@ from django.utils import timezone
 from config import config
 
 from .models import Bitrix24Account
+from .models import Portal
 from .models import ApplicationInstallation
 from .configuration_service import ConfigurationService
 
@@ -142,7 +143,8 @@ class InstallationService:
             config = self.config_service.get_configuration_sync()
 
             # 2. Install Placements
-            self._install_placements_sync()
+            if self._install_placements_sync():
+                self._remember_placements_handler()
             self.rollback_stack.append(('delete_placement', None))
 
             # 3. Connect support line without blocking installation.
@@ -436,76 +438,91 @@ class InstallationService:
         logger.info("Final %s mapping (%s fields): %s", normalized_mapping_type, len(verified_mapping), verified_mapping)
         return verified_mapping, warnings
 
-    def _install_placements_sync(self) -> None:
-        """Installs the Task Tab placement"""
-        base_url = config.app_base_url
+    @staticmethod
+    def _placement_handler_url() -> str:
+        """Адрес обработчика вкладок; пустая строка, если адрес приложения не задан."""
+        base_url = str(config.app_base_url or "").strip()
+        if not base_url:
+            return ""
         if not base_url.startswith("http"):
             base_url = f"https://{base_url}"
-            
-        handler_url = f"{base_url}" # App handles routing on client side via placement checks
-        deal_handler_url = f"{base_url}/handler/placement-crm-deal-detail-tab"
+        return base_url  # App handles routing on client side via placement checks
 
-        # Ensure we unbind before bind to avoid duplicates?
-        # placement.unbind is safe
+    def ensure_placements_current_sync(self) -> bool:
+        """Перепривязывает вкладки, если адрес приложения сменился с прошлой привязки.
+
+        После переезда на новый домен (06.10.2026) на порталах осталась вкладка
+        «Учет трудозатрат» со старым адресом: она открывала мёртвый сервер, а рядом
+        висела рабочая «Учет времени». Вызывается при выдаче токена администратору:
+        placement.bind и placement.unbind доступны только ему.
+
+        Возвращает True, если привязка выполнялась.
+        """
+        handler_url = self._placement_handler_url()
+        portal = getattr(self.bitrix24_account, "portal", None)
+        if not handler_url or portal is None:
+            return False
+
+        # Отметку ставим до вызовов Bitrix одним UPDATE: при одновременном входе двух
+        # администраторов привязку выполнит только один.
+        claimed = Portal.objects.filter(pk=portal.pk).exclude(
+            placements_handler_url=handler_url
+        ).update(placements_handler_url=handler_url)
+        if not claimed:
+            return False
+
         try:
-             self.client._bitrix_token.call_method('placement.unbind', {
-                 'PLACEMENT': 'TASK_VIEW_TAB',
-                 'HANDLER': handler_url
-             })
+            bound = self._install_placements_sync()
         except Exception:
-             pass
+            bound = False
+            logger.warning("Placement rebind failed for %s", self.bitrix24_account.domain_url, exc_info=True)
 
-        logger.info("Placement TASK_VIEW_TAB unbind attempt finished")
+        if not bound:
+            Portal.objects.filter(pk=portal.pk).update(placements_handler_url=None)
+        return bound
 
-        # Install Project/Group Tab Placement
-        try:
-             self.client._bitrix_token.call_method('placement.unbind', {
-                 'PLACEMENT': 'SONET_GROUP_DETAIL_TAB',
-                 'HANDLER': handler_url
-             })
-        except Exception:
-             pass
+    def _remember_placements_handler(self) -> None:
+        portal = getattr(self.bitrix24_account, "portal", None)
+        handler_url = self._placement_handler_url()
+        if portal is not None and handler_url:
+            Portal.objects.filter(pk=portal.pk).update(placements_handler_url=handler_url)
 
-        logger.info("Placement SONET_GROUP_DETAIL_TAB unbind attempt finished")
+    def _install_placements_sync(self) -> bool:
+        """Привязывает вкладки задачи и проекта. Возвращает True, если обе привязаны."""
+        handler_url = self._placement_handler_url() or "https://"
 
-        try:
-             self.client._bitrix_token.call_method('placement.unbind', {
-                 'PLACEMENT': 'CRM_DEAL_DETAIL_TAB',
-                 'HANDLER': deal_handler_url
-             })
-        except Exception:
-             pass
+        # Отвязываем без HANDLER — так Bitrix снимает все обработчики приложения на
+        # этом месте, включая привязанные на прежний адрес и прежними версиями
+        # (старая страница установки ставила вкладку «Учет трудозатрат»). С HANDLER
+        # снимался только текущий адрес, и после смены домена вкладки двоились.
+        for placement in ('TASK_VIEW_TAB', 'SONET_GROUP_DETAIL_TAB', 'CRM_DEAL_DETAIL_TAB'):
+            try:
+                self.client._bitrix_token.call_method('placement.unbind', {'PLACEMENT': placement})
+            except Exception:
+                pass
+            logger.info("Placement %s unbind attempt finished", placement)
 
-        logger.info("Placement CRM_DEAL_DETAIL_TAB unbind attempt finished")
-
-        # 3. Bind Placements
-        try:
-             self.client._bitrix_token.call_method('placement.bind', {
-                 'PLACEMENT': 'TASK_VIEW_TAB',
-                 'HANDLER': handler_url,
-                 'TITLE': 'Учет времени',
-                 'DESCRIPTION': 'Приложение для отражения часов'
-             })
-             logger.info("Bound TASK_VIEW_TAB")
-        except Exception as e:
-             logger.error(f"Failed to bind TASK_VIEW_TAB: {e}")
-
-        try:
-             self.client._bitrix_token.call_method('placement.bind', {
-                 'PLACEMENT': 'SONET_GROUP_DETAIL_TAB',
-                 'HANDLER': handler_url,
-                 'TITLE': 'Учет времени',
-                 'DESCRIPTION': 'Приложение для отражения часов'
-             })
-             logger.info("Bound SONET_GROUP_DETAIL_TAB")
-        except Exception as e:
-             logger.error(f"Failed to bind SONET_GROUP_DETAIL_TAB: {e}")
+        bound = True
+        for placement in ('TASK_VIEW_TAB', 'SONET_GROUP_DETAIL_TAB'):
+            try:
+                self.client._bitrix_token.call_method('placement.bind', {
+                    'PLACEMENT': placement,
+                    'HANDLER': handler_url,
+                    'TITLE': 'Учет времени',
+                    'DESCRIPTION': 'Приложение для отражения часов'
+                })
+                logger.info("Bound %s", placement)
+            except Exception as e:
+                bound = False
+                logger.error(f"Failed to bind {placement}: {e}")
 
         # CRM_DEAL_DETAIL_TAB не привязываем: экран вкладки в сделке — заглушка
         # «в разработке» (FINANCE_FEATURE_ENABLED=false на фронте), и пользователь видел
         # бы в карточке сделки пустую вкладку «Финансы проекта». Отвязка выше оставлена
         # намеренно — она убирает вкладку с порталов, где её привязали прежние версии.
-        # Вернуть привязку вместе с включением экрана: placement.bind с deal_handler_url.
+        # Вернуть привязку вместе с включением экрана: placement.bind с адресом
+        # f"{handler_url}/handler/placement-crm-deal-detail-tab".
+        return bound
 
     def _get_or_create_installation(self) -> ApplicationInstallation:
         installation, _ = ApplicationInstallation.objects.get_or_create(

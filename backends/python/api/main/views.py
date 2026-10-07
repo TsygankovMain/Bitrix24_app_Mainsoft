@@ -807,6 +807,20 @@ def _refresh_admin_flag(account, force: bool = False) -> None:
         logger.warning("Could not refresh is_b24_user_admin via user.admin for account %s", account.pk, exc_info=True)
 
 
+def _ensure_placements_current(account) -> None:
+    """Перепривязывает вкладки приложения, если его адрес сменился (переезд на новый домен).
+
+    Привязкой управляет только администратор портала, поэтому остальным — сразу выход.
+    В обычном случае это одно обращение к БД; сбой не должен ломать выдачу токена.
+    """
+    if not account.is_b24_user_admin:
+        return
+    try:
+        InstallationService(account.client, account).ensure_placements_current_sync()
+    except Exception:
+        logger.warning("Could not check placements for account %s", account.pk, exc_info=True)
+
+
 @xframe_options_exempt
 @csrf_exempt
 @log_errors("install")
@@ -878,6 +892,7 @@ def _install_post_logic(request: AuthorizedRequest):
 @auth_required
 def get_token(request: AuthorizedRequest):
     _refresh_admin_flag(request.bitrix24_account)
+    _ensure_placements_current(request.bitrix24_account)
     return JsonResponse({"token": request.bitrix24_account.create_jwt_token()})
 
 
